@@ -15,11 +15,14 @@
 #
 ################################################################################
 
+from typing import Optional
+
 import torch
 import torch.distributed
 
 import flux
 from flux.testing import all_gather_into_tensor_with_fp8, gen_moe_gating_args, matmul_int8
+from flux.testing.moe_utils import moe_gating_args
 from flux.testing.utils import generate_data
 
 
@@ -43,6 +46,7 @@ class MoeMlp1Ctx:
         debug: bool = False,
         generator: torch.Generator = None,  # torch random generator
         stable: bool = True,
+        gating_args: Optional[moe_gating_args] = None,  # prebuilt gating, overrides dist
     ) -> None:
         self.b = b
         self.s = s
@@ -72,29 +76,33 @@ class MoeMlp1Ctx:
         is_s8_dequant = input_dtype == torch.int8
         is_fp8 = flux.is_fp8_dtype(input_dtype)
 
-        if dist == "uniform":
-            weights = None
-        elif dist == "random_uniform":
-            weights = torch.ones(self.nexperts, device=device, dtype=torch.float32)
+        if gating_args is not None:
+            assert not drop_token
+            gating = gating_args
         else:
-            weights = torch.rand(self.nexperts, device=device, dtype=torch.float32)
-            if dist == "random_with_first_k_experts":
-                weights[self.topk :].fill_(0)
+            if dist == "uniform":
+                weights = None
+            elif dist == "random_uniform":
+                weights = torch.ones(self.nexperts, device=device, dtype=torch.float32)
+            else:
+                weights = torch.rand(self.nexperts, device=device, dtype=torch.float32)
+                if dist == "random_with_first_k_experts":
+                    weights[self.topk :].fill_(0)
 
-        moe_gating_args = gen_moe_gating_args(
-            nexperts,
-            topk,
-            self.ntokens,
-            0.1 if drop_token else 0.0,
-            stable=stable,
-            weights=weights,
-            generator=generator,
-        )
+            gating = gen_moe_gating_args(
+                nexperts,
+                topk,
+                self.ntokens,
+                0.1 if drop_token else 0.0,
+                stable=stable,
+                weights=weights,
+                generator=generator,
+            )
 
-        self.splits_gpu = moe_gating_args.splits_gpu
-        self.splits_cpu = moe_gating_args.splits_gpu.to("cpu")
-        self.scatter_index = moe_gating_args.scatter_index
-        self.gather_index = moe_gating_args.gather_index
+        self.splits_gpu = gating.splits_gpu
+        self.splits_cpu = gating.splits_gpu.to("cpu")
+        self.scatter_index = gating.scatter_index
+        self.gather_index = gating.gather_index
 
         self.nrows_ep = int(
             torch.sum(

@@ -163,6 +163,7 @@ def gen_moe_gating_args(
     weights: Optional[torch.Tensor] = None,
     generator: torch.Generator = None,
     stable=True,
+    choosed_experts: Optional[torch.Tensor] = None,
 ):
     """
     Args:
@@ -176,6 +177,8 @@ def gen_moe_gating_args(
                 * weights only *guides* the token count by distribution, not precisely set the count
         generator: torch.Generator
         stable: whether to use stable moe gating
+        choosed_experts: optional prebuilt [ntokens, topk] expert choices; if set,
+            weights/drop_token_ratio must be unset and only the derived indices are computed
     Returns:
         moe_gating_args:
             choosed_experts: shape [ntokens, topk]
@@ -189,7 +192,11 @@ def gen_moe_gating_args(
         if not weights.is_cuda:
             weights = weights.to("cuda")
     drop_token = drop_token_ratio > 0.0
-    if weights is None:
+    if choosed_experts is not None:
+        assert weights is None and not drop_token
+        assert choosed_experts.shape == (ntokens, topk), f"{choosed_experts.shape}"
+        choosed_experts = choosed_experts.to(device="cuda", dtype=torch.int32)
+    elif weights is None:
         # use the very deterministic moe gating. don't respect drop_ratio.
         if drop_token:
             E = E + 1
