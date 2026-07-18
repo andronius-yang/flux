@@ -517,6 +517,75 @@ ag_scatter_sort_impl_v2(AGScatterSortOpArgumentsV2 const &args, cudaStream_t str
   cutlass::device_kernel<Op><<<grid, block, smem_size, stream>>>(params);
 }
 
+// a2av dispatch stage 1: single-pass decode + counts + pack keys. smem holds
+// the inclusive splits prefix (thread 0, nexperts is small) and a block-local
+// [W,W] histogram flushed with one global atomicAdd per nonzero bin.
+__global__ void
+a2av_stage1_kernel(A2AVStage1Arguments args) {
+  extern __shared__ int a2av_smem[];
+  int *splits_cum = a2av_smem;                  // [nexperts], inclusive
+  int *hist = a2av_smem + args.nexperts;        // [W*W]
+  const int WW = args.world_size * args.world_size;
+  if (threadIdx.x == 0) {
+    int acc = 0;
+    for (int e = 0; e < args.nexperts; e++) {
+      acc += args.splits[e];
+      splits_cum[e] = acc;
+    }
+  }
+  for (int i = threadIdx.x; i < WW; i += blockDim.x) {
+    hist[i] = 0;
+  }
+  __syncthreads();
+  if (blockIdx.x == 0) {
+    for (int e = threadIdx.x; e < args.nexperts; e += blockDim.x) {
+      args.expert_base[e] = splits_cum[e] - args.splits[e];
+    }
+  }
+  const int64_t my_start = (int64_t)args.rank * args.copies_per_rank;
+  for (int64_t p = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; p < args.n_copies;
+       p += (int64_t)gridDim.x * blockDim.x) {
+    int d = args.scatter_index[p];
+    int lo = 0, hi = args.nexperts - 1;  // first e with splits_cum[e] > d
+    while (lo < hi) {
+      int mid = (lo + hi) >> 1;
+      if (splits_cum[mid] > d) {
+        hi = mid;
+      } else {
+        lo = mid + 1;
+      }
+    }
+    int e = lo;
+    int owner = e / args.ep_nexperts;
+    int64_t s = p / args.copies_per_rank;
+    args.e_all[p] = e;
+    args.s_all[p] = s;
+    args.flat_dst[p] = d;
+    args.not_mine[p] = owner != args.rank;
+    atomicAdd(&hist[(int)s * args.world_size + owner], 1);
+    int64_t lp = p - my_start;
+    if (lp >= 0 && lp < args.copies_per_rank) {
+      args.pack_key[lp] = (int64_t)e * args.copies_per_rank + lp;
+    }
+  }
+  __syncthreads();
+  for (int i = threadIdx.x; i < WW; i += blockDim.x) {
+    if (hist[i] != 0) {
+      atomicAdd(&args.chunks[i], hist[i]);
+    }
+  }
+}
+
+void
+a2av_stage1_impl(A2AVStage1Arguments const &args, cudaStream_t stream) {
+  constexpr int kThreads = 256;
+  int blocks = (int)std::min<int64_t>((args.n_copies + kThreads - 1) / kThreads, 432);
+  blocks = std::max(blocks, 1);
+  size_t smem = (args.nexperts + args.world_size * args.world_size) * sizeof(int);
+  a2av_stage1_kernel<<<blocks, kThreads, smem, stream>>>(args);
+  CUDA_CHECK(cudaGetLastError());
+}
+
 std::vector<ProblemSchedule>
 get_sorted_problem_schedule(
     std::vector<int32_t> const &sorted_splits_cpu,

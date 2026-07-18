@@ -93,6 +93,29 @@ struct AGScatterSortOpArgumentsV2 {
 };
 void ag_scatter_sort_impl_v2(AGScatterSortOpArgumentsV2 const &args, cudaStream_t stream);
 
+// a2av dispatch stage 1, fused: one grid-stride pass over all global copies
+// decodes expert/source/owner, produces every tensor stage 2 needs, the [W,W]
+// chunk-count matrix (must be pre-zeroed), and the producer pack keys
+// (e * copies_per_rank + local_p — pack tie-break is the global copy index).
+struct A2AVStage1Arguments {
+  int32_t const *scatter_index;  // [n_copies] global dst rows
+  int32_t const *splits;         // [nexperts]
+  int nexperts;
+  int ep_nexperts;
+  int world_size;
+  int rank;
+  int64_t copies_per_rank;
+  int64_t n_copies;
+  int64_t *e_all;        // [n_copies] global expert id
+  int64_t *s_all;        // [n_copies] source rank
+  int64_t *flat_dst;     // [n_copies] dst row (int64 copy of scatter_index)
+  bool *not_mine;        // [n_copies] owner != rank
+  int64_t *expert_base;  // [nexperts] exclusive row base per expert
+  int32_t *chunks;       // [world_size * world_size], pre-zeroed
+  int64_t *pack_key;     // [copies_per_rank]
+};
+void a2av_stage1_impl(A2AVStage1Arguments const &args, cudaStream_t stream);
+
 void sort_scatter_index_to_per_expert(
     int *sorted_scatter_index,
     int *splits_gpu,

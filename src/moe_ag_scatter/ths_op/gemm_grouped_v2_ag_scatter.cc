@@ -268,8 +268,14 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // one-shot dispatch scratch: allocated once (setup), contents rebuilt every
   // iteration — routing is never cached across forwards
   torch::Tensor a2av_arange_i64_;   // [n_copies_max] iota, routing-independent
-  torch::Tensor a2av_ones_i32_;     // [n_copies_max] ones (scatter_add counts src)
   torch::Tensor a2av_chunks_cpu_;   // pinned int32 [W * W] chunk-count matrix
+  torch::Tensor a2av_e_all_;        // i64 [n_copies_max] fused-kernel outputs...
+  torch::Tensor a2av_s_all_buf_;    // i64 [n_copies_max]
+  torch::Tensor a2av_flat_dst_;     // i64 [n_copies_max]
+  torch::Tensor a2av_not_mine_;     // bool [n_copies_max]
+  torch::Tensor a2av_expert_base_;  // i64 [nexperts]
+  torch::Tensor a2av_chunks_gpu_;   // i32 [W * W]
+  torch::Tensor a2av_pack_key_;     // i64 [copies_per_rank_max]
   cudaEvent_t counts_event_ = nullptr;  // gates the put loop on the 1 KB counts D2H
   // FLUX_A2AV_TIMING=1 diagnostics: per-forward segment boundaries on the main stream
   static constexpr int kNumTimingEvents = 6;
@@ -365,14 +371,21 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       this->a2av_signal_buffer =
           nvshmem_create_tensor({world_size}, at::ScalarType::Long, /*init_zero=*/true);
       const int64_t n_copies_max = tokens_per_rank_max * (int64_t)topk * world_size;
-      this->a2av_arange_i64_ = torch::arange(
-          n_copies_max,
-          torch::TensorOptions(torch::kCUDA).dtype(torch::kLong));
-      this->a2av_ones_i32_ = torch::ones(
-          {n_copies_max}, torch::TensorOptions(torch::kCUDA).dtype(torch::kInt));
+      auto opt_cuda_i64 = torch::TensorOptions(torch::kCUDA).dtype(torch::kLong);
+      this->a2av_arange_i64_ = torch::arange(n_copies_max, opt_cuda_i64);
       this->a2av_chunks_cpu_ = torch::empty(
           {(int64_t)world_size * world_size},
           torch::TensorOptions(torch::kCPU).dtype(torch::kInt).pinned_memory(true));
+      this->a2av_e_all_ = torch::empty({n_copies_max}, opt_cuda_i64);
+      this->a2av_s_all_buf_ = torch::empty({n_copies_max}, opt_cuda_i64);
+      this->a2av_flat_dst_ = torch::empty({n_copies_max}, opt_cuda_i64);
+      this->a2av_not_mine_ = torch::empty(
+          {n_copies_max}, torch::TensorOptions(torch::kCUDA).dtype(torch::kBool));
+      this->a2av_expert_base_ = torch::empty({nexperts}, opt_cuda_i64);
+      this->a2av_chunks_gpu_ = torch::empty(
+          {(int64_t)world_size * world_size},
+          torch::TensorOptions(torch::kCUDA).dtype(torch::kInt));
+      this->a2av_pack_key_ = torch::empty({tokens_per_rank_max * (int64_t)topk}, opt_cuda_i64);
       if (rank == 0) {
         double sym_mb = (this->a2av_send_buffer.nbytes() + this->a2av_recv_buffer.nbytes() +
                          this->a2av_signal_buffer.nbytes()) /
@@ -554,35 +567,46 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     auto opt_i64 = torch::TensorOptions(torch::kCUDA)
                        .dtype(torch::kLong)
                        .device_index(at::cuda::current_device());
-    auto opt_i32 = torch::TensorOptions(torch::kCUDA)
-                       .dtype(torch::kInt)
-                       .device_index(at::cuda::current_device());
     constexpr int64_t kShift = int64_t(1) << 32;
     auto iota = this->a2av_arange_i64_.narrow(0, 0, n_copies);
 
-    // ---- stage 1 (pre-wire, minimal): counts chain first so the tiny D2H
-    // launches as early as possible, then the producer pack. No host sync of any
-    // kind in this stage — CUDA bincount/nonzero are banned (both hide a full
-    // stream drain), which is why counts use a fixed-shape scatter_add_.
-    auto flat_dst = scatter_index.view({-1}).to(torch::kLong);  // [n_copies]
-    auto splits64 = splits_gpu.to(torch::kLong);
-    auto splits_cum = splits64.cumsum(0);  // inclusive
-    auto e_all = torch::searchsorted(splits_cum, flat_dst, /*out_int32=*/false, /*right=*/true);
-    auto s_all = iota.div(copies_per_rank, "floor");
-    auto owner_all = e_all.div(E, "floor");
-    auto chunks_full = torch::zeros({(int64_t)W * W}, opt_i32);  // [src, dst] counts
-    chunks_full.scatter_add_(0, s_all * W + owner_all, this->a2av_ones_i32_.narrow(0, 0, n_copies));
+    // ---- stage 1 (pre-wire, minimal): one fused kernel decodes every copy,
+    // fills the [W,W] chunk counts and all stage-2 inputs, and emits the pack
+    // keys; then the tiny D2H and the producer pack. No host sync of any kind
+    // in this stage — CUDA bincount/nonzero are banned (both hide a full
+    // stream drain).
+    auto e_all = this->a2av_e_all_.narrow(0, 0, n_copies);
+    auto s_all = this->a2av_s_all_buf_.narrow(0, 0, n_copies);
+    auto flat_dst = this->a2av_flat_dst_.narrow(0, 0, n_copies);
+    auto not_mine = this->a2av_not_mine_.narrow(0, 0, n_copies);
+    auto chunks_full = this->a2av_chunks_gpu_;
+    CUDA_CHECK(cudaMemsetAsync(chunks_full.data_ptr(), 0, chunks_full.nbytes(), stream));
+    a2av_stage1_impl(
+        A2AVStage1Arguments{
+            .scatter_index = scatter_index.data_ptr<int32_t>(),
+            .splits = splits_gpu.data_ptr<int32_t>(),
+            .nexperts = this->nexperts,
+            .ep_nexperts = (int)E,
+            .world_size = W,
+            .rank = rank,
+            .copies_per_rank = copies_per_rank,
+            .n_copies = n_copies,
+            .e_all = e_all.data_ptr<int64_t>(),
+            .s_all = s_all.data_ptr<int64_t>(),
+            .flat_dst = flat_dst.data_ptr<int64_t>(),
+            .not_mine = not_mine.data_ptr<bool>(),
+            .expert_base = this->a2av_expert_base_.data_ptr<int64_t>(),
+            .chunks = chunks_full.data_ptr<int32_t>(),
+            .pack_key = this->a2av_pack_key_.data_ptr<int64_t>()},
+        stream);
     this->a2av_chunks_cpu_.copy_(chunks_full, /*non_blocking=*/true);  // 1 KB into pinned
     CUDA_CHECK(cudaEventRecord(this->counts_event_, stream));
 
-    // producer pack: my copies only, destination-major (owner is monotone in the
-    // global expert id, so the (expert, dst_row) key already yields the
-    // (destination, expert, dst_row) send order)
-    auto e_src = e_all.narrow(0, (int64_t)rank * copies_per_rank, copies_per_rank);
-    auto d_src = flat_dst.narrow(0, (int64_t)rank * copies_per_rank, copies_per_rank);
-    auto perm_s = (e_src * kShift + d_src).argsort();
-    auto t_local = this->a2av_arange_i64_.narrow(0, 0, copies_per_rank).div((int64_t)topk, "floor");
-    auto send_gather_index = t_local.index_select(0, perm_s);
+    // producer pack: my copies only, destination-major. pack_key = e * cpr +
+    // local_p, so ascending order is (destination, expert, copy index) — the
+    // copy-index tie-break is mirrored by the consumer keys in stage 2.
+    auto perm_s = this->a2av_pack_key_.narrow(0, 0, copies_per_rank).argsort();
+    auto send_gather_index = perm_s.div((int64_t)topk, "floor");
     auto send_view = this->a2av_send_buffer.narrow(0, 0, copies_per_rank);
     at::index_select_out(send_view, inputs_shard, 0, send_gather_index);
     CUDA_CHECK(cudaEventRecord(this->ready_event, stream));
@@ -603,17 +627,17 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         }
       };
       mark(0);
-      auto mask = owner_all.eq((int64_t)rank);
-      auto not_mine = mask.logical_not();
       auto e_loc = e_all.sub((int64_t)ep_start);  // negative for foreign copies (masked below)
       mark(1);
       constexpr int64_t kMax64 = std::numeric_limits<int64_t>::max();
-      // sorted mat-A order: (expert, source, dst_row); recv order: (source, expert, dst_row)
-      auto key_a = ((e_loc * W + s_all) * kShift + flat_dst).masked_fill_(not_mine, kMax64);
+      // sorted mat-A order: (expert, source, copy); recv order: (source, expert,
+      // copy). The copy-index (iota) tie-break matches the producer pack_key, so
+      // every s->d message's interior order equals its recv region's.
+      auto key_a = ((e_loc * W + s_all) * kShift + iota).masked_fill_(not_mine, kMax64);
       mark(2);
       auto perm_a = key_a.argsort();
       mark(3);
-      auto key_r = ((s_all * E + e_loc) * kShift + flat_dst).masked_fill_(not_mine, kMax64);
+      auto key_r = ((s_all * E + e_loc) * kShift + iota).masked_fill_(not_mine, kMax64);
       mark(4);
       // sort (values + indices) instead of argsort: the sorted keys also yield the
       // per-(source, expert) group boundaries below
@@ -626,7 +650,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       mark(6);
       sorted_gather_index = recv_pos.index_select(0, perm_a).to(torch::kInt);
       mark(7);
-      auto scatter_val = flat_dst - (splits_cum - splits64).index_select(0, e_all);
+      auto scatter_val = flat_dst - this->a2av_expert_base_.index_select(0, e_all);
       sorted_scatter_index = scatter_val.index_select(0, perm_a).to(torch::kInt);
       mark(8);
       // per-(source, expert) counts WITHOUT atomics: W*E binary searches for the
