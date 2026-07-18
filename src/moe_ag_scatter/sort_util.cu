@@ -526,6 +526,9 @@ a2av_stage1_kernel(A2AVStage1Arguments args) {
   int *splits_cum = a2av_smem;                  // [nexperts], inclusive
   int *hist = a2av_smem + args.nexperts;        // [W*W]
   const int WW = args.world_size * args.world_size;
+  // chunks/expert_base may be nullptr: the metadata path (host-provided
+  // splits_per_source) derives both on the CPU and only needs the decode
+  const bool count_chunks = args.chunks != nullptr;
   if (threadIdx.x == 0) {
     int acc = 0;
     for (int e = 0; e < args.nexperts; e++) {
@@ -533,11 +536,13 @@ a2av_stage1_kernel(A2AVStage1Arguments args) {
       splits_cum[e] = acc;
     }
   }
-  for (int i = threadIdx.x; i < WW; i += blockDim.x) {
-    hist[i] = 0;
+  if (count_chunks) {
+    for (int i = threadIdx.x; i < WW; i += blockDim.x) {
+      hist[i] = 0;
+    }
   }
   __syncthreads();
-  if (blockIdx.x == 0) {
+  if (blockIdx.x == 0 && args.expert_base != nullptr) {
     for (int e = threadIdx.x; e < args.nexperts; e += blockDim.x) {
       args.expert_base[e] = splits_cum[e] - args.splits[e];
     }
@@ -562,16 +567,20 @@ a2av_stage1_kernel(A2AVStage1Arguments args) {
     args.s_all[p] = s;
     args.flat_dst[p] = d;
     args.not_mine[p] = owner != args.rank;
-    atomicAdd(&hist[(int)s * args.world_size + owner], 1);
+    if (count_chunks) {
+      atomicAdd(&hist[(int)s * args.world_size + owner], 1);
+    }
     int64_t lp = p - my_start;
     if (lp >= 0 && lp < args.copies_per_rank) {
       args.pack_key[lp] = (int64_t)e * args.copies_per_rank + lp;
     }
   }
-  __syncthreads();
-  for (int i = threadIdx.x; i < WW; i += blockDim.x) {
-    if (hist[i] != 0) {
-      atomicAdd(&args.chunks[i], hist[i]);
+  if (count_chunks) {
+    __syncthreads();
+    for (int i = threadIdx.x; i < WW; i += blockDim.x) {
+      if (hist[i] != 0) {
+        atomicAdd(&args.chunks[i], hist[i]);
+      }
     }
   }
 }

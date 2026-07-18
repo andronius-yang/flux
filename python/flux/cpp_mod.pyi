@@ -755,6 +755,7 @@ class GemmGroupedV2AGScatterOp:
         fast_accum: bool = False,
         sm_margin: int = 0,
         ag_option: AllGatherOption = AllGatherOption(),
+        splits_per_source: Optional[torch.Tensor] = None,
     ) -> torch.Tensor: ...
     """
     2 modes supported: FP16/BF16, or FP8 mode.  INT8 is not supported yet.

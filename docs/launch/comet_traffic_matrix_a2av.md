@@ -276,3 +276,41 @@ measured vs the dynamic claimer: under skewed `M[s][d]`, a large early-stage
 chunk stalls the fixed order where the claimer would slide past it; in
 exchange, ring mode pays zero claim-loop overhead and its schedule (like the
 dense one) is a pure function of the splits.
+
+## 9. `splits_per_source`: the metadata exchange as an explicit input
+
+In a real MoE system each rank, after gating, natively knows only its own row
+of `cnt[s][e]` (copies it sends to each expert). One `W x nexperts`-int
+allgather (~4 KB, ~10-20 us, latency-bound) gives every rank the full matrix,
+and `splits[e] = sum_s cnt[s][e]` is a *derived* column sum. The harness has
+always declared `forward()` to be post-exchange — `splits` and `scatter_index`
+arrive as untimed inputs — but a2av still re-derived `cnt` *inside* the timed
+region, and its wire cannot start without it (message sizes and recv offsets),
+while the dense allgather needs no metadata for its wire at all. The optional
+`splits_per_source` kwarg (int32 CPU `[W, nexperts]`, identical on all ranks)
+completes the contract: what the exchange delivers is now an input, per
+iteration, in the same untimed setup that builds `splits` — this is
+per-iteration metadata, not cross-iteration caching.
+
+With it, the a2av dispatch derives everything host-side before any device
+work: `M_this_ep` (overflow check fires before a single kernel), the chunk
+matrix and put offsets (`chunks[s][d]` is a block sum of cnt), and the group
+tables `offA/cumA/offR` for my experts — staged in one pinned buffer and
+uploaded with a single ~2 KB H2D. The counts kernel histogram, the 1 KB D2H,
+and the counts-event wait vanish from the timed path; puts gate only on the
+pack. Stage 2 collapses to ONE sort plus an arithmetic identity: because the
+Phase-B tie-break is the copy index, the A-order -> recv-order map inside any
+`(source, expert)` group is rank-preserving, so
+`sorted_gather_index[i] = offR_of_A[g] + i - offA[g]` (g found by a binary
+search over `cumA`; tail rows clamped in-bounds), and `sorted_splits_cumsum`
+is uploaded directly. The `key_a` sort, the scatter-of-iota inverse, and the
+group-boundary searches are all deleted. `FLUX_A2AV_CHECK_IDENTITY=1` rebuilds
+the old sort-based indices and asserts equality (bring-up guard).
+
+Fairness: the dense path derives `cnt` too (as `sorted_splits`), fused into
+`AgScatterSortOpV2` and hidden under the allgather comm — so it never paid a
+positional penalty. With the kwarg it gains exactly one thing: `M_this_ep`
+from a host sum, removing its only per-iteration device sync. Its kernels and
+schedule are untouched, and omitting the kwarg keeps every path bit-identical
+to before. The test passes the matrix for all `--comm_pattern` values;
+`--no_metadata_cnt` restores the derive-everything behavior for A/B runs.

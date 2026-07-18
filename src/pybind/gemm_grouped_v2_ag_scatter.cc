@@ -68,7 +68,8 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("allgather_output") = py::none(),
             py::arg("fast_accum") = false,
             py::arg("sm_margin") = 0,
-            py::arg("ag_option") = AllGatherOptionWithOptional())
+            py::arg("ag_option") = AllGatherOptionWithOptional(),
+            py::arg("splits_per_source") = py::none())
         .def(
             "forward_triton_aot",
             &GemmGroupedV2AGScatterOpCls::forward_triton_aot,
@@ -100,7 +101,8 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("allgather_output") = py::none(),
             py::arg("fast_accum") = false,
             py::arg("sm_margin") = 0,
-            py::arg("ag_option") = AllGatherOptionWithOptional())
+            py::arg("ag_option") = AllGatherOptionWithOptional(),
+            py::arg("splits_per_source") = py::none())
         .def(
             "profiling",
             &GemmGroupedV2AGScatterOpCls::profiling,

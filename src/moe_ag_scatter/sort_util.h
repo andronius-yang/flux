@@ -110,8 +110,9 @@ struct A2AVStage1Arguments {
   int64_t *s_all;        // [n_copies] source rank
   int64_t *flat_dst;     // [n_copies] dst row (int64 copy of scatter_index)
   bool *not_mine;        // [n_copies] owner != rank
-  int64_t *expert_base;  // [nexperts] exclusive row base per expert
-  int32_t *chunks;       // [world_size * world_size], pre-zeroed
+  int64_t *expert_base;  // [nexperts] exclusive row base per expert; nullptr = skip
+  int32_t *chunks;       // [world_size * world_size], pre-zeroed; nullptr = skip
+                         // counting (metadata path derives it host-side)
   int64_t *pack_key;     // [copies_per_rank]
 };
 void a2av_stage1_impl(A2AVStage1Arguments const &args, cudaStream_t stream);

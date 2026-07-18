@@ -73,7 +73,11 @@ class GemmGroupedV2AGScatterOp {
       c10::optional<torch::Tensor> allgather_output,
       bool fast_accum,
       int sm_margin,
-      AllGatherOptionWithOptional ag_option);
+      AllGatherOptionWithOptional ag_option,
+      // metadata-exchange result: int32 CPU [world_size, nexperts] per-source
+      // per-expert copy counts; splits is its column sum. nullopt = derive
+      // everything from splits/scatter_index as before.
+      c10::optional<torch::Tensor> splits_per_source = c10::nullopt);
   torch::Tensor forward_triton_aot(
       torch::Tensor inputs_shard,
       torch::Tensor weights,
@@ -101,7 +105,8 @@ class GemmGroupedV2AGScatterOp {
       c10::optional<torch::Tensor> allgather_output,
       bool fast_accum,
       int sm_margin,
-      AllGatherOptionWithOptional ag_option);
+      AllGatherOptionWithOptional ag_option,
+      c10::optional<torch::Tensor> splits_per_source = c10::nullopt);
   std::vector<torch::Tensor> profiling(
       torch::Tensor inputs_shard,
       std::vector<torch::Tensor> weights,

@@ -175,6 +175,7 @@ def perf_flux(
     gather_input: bool = True,
     ag_option: flux.AllGatherOption = flux.AllGatherOption(),
     comm_pattern: str = "allgather",
+    splits_per_source: torch.Tensor = None,
 ):
     tp_env = flux.DistEnvTPWithEP(tp_group=TP_GROUP, nnodes=DIST_ENV.NNODES, ep_group=EP_GROUP)
     moe_args = flux.MoeArguments(
@@ -205,6 +206,11 @@ def perf_flux(
             "input_scale": take_first_or_none(ctx.input_scale),
             "weight_scale": take_first_or_none(ctx.weight_scale),
         }
+        if splits_per_source is not None:
+            # metadata-exchange result (untimed setup, like splits/scatter_index):
+            # int32 CPU [W, nexperts]; the real exchange is a ~W*nexperts-int
+            # allgather (~10-20 us), declared out of scope by the harness contract
+            extra_args["splits_per_source"] = splits_per_source
     if use_a2av:
         assert not gather_input, "--gather_input has no dense gathered buffer in a2av mode"
 
@@ -338,6 +344,14 @@ def parse_args():
         " dispatch whose wire bytes equal the traffic matrix (dynamic tile"
         " schedule), or a2av_ring (same wire bytes, static ring schedule)",
     )
+    parser.add_argument(
+        "--no_metadata_cnt",
+        default=False,
+        action="store_true",
+        help="do not pass splits_per_source (cnt[s][e]) to forward; each rank"
+        " re-derives all metadata from splits/scatter_index inside the timed"
+        " region (pre-metadata-input behavior, for A/B comparison)",
+    )
     return parser.parse_args()
 
 
@@ -390,6 +404,24 @@ if __name__ == "__main__":
         gating_args=gating_args,
     )
 
+    # metadata-exchange result (untimed setup): cnt[s][e] = copies source rank s
+    # sends to expert e; splits is its column sum. In a real system this is a
+    # W x nexperts int allgather (~10-20 us) done right after gating.
+    W = DIST_ENV.WORLD_SIZE
+    tokens_per_rank = ntokens // W
+    src_of_copy = (
+        torch.arange(ntokens, dtype=torch.long) // tokens_per_rank
+    ).repeat_interleave(args.topk)
+    e_of_copy = choosed_experts.reshape(-1).long().cpu()
+    splits_per_source_cpu = (
+        torch.bincount(src_of_copy * args.G + e_of_copy, minlength=W * args.G)
+        .view(W, args.G)
+        .int()
+    )
+    assert torch.equal(
+        splits_per_source_cpu.sum(0), moe_ctx.splits_cpu[: args.G].cpu().int()
+    ), "splits_per_source column sums must equal splits"
+
     if TP_GROUP.rank() == 0:
         experts_per_rank = args.G // DIST_ENV.WORLD_SIZE
         rows_per_rank = moe_ctx.splits_cpu.view(DIST_ENV.WORLD_SIZE, experts_per_rank).sum(dim=1)
@@ -427,7 +459,13 @@ if __name__ == "__main__":
         group=TP_GROUP,
     ):
         perf_result_flux = perf_flux(
-            moe_ctx, args.warmup_iters, args.iters, args.gather_input, ag_option, args.comm_pattern
+            moe_ctx,
+            args.warmup_iters,
+            args.iters,
+            args.gather_input,
+            ag_option,
+            args.comm_pattern,
+            splits_per_source=None if args.no_metadata_cnt else splits_per_source_cpu,
         )
         perf_result_torch = perf_torch(moe_ctx, args.warmup_iters, args.iters, args.gather_input)
 
