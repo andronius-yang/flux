@@ -192,9 +192,22 @@ struct TopKReduceGatherRSV2Arguments {
   int rank;
   int world_size;
   int n_split;
-  int **barrier;            // [world_size, n_split * 2]
-  void **reduce_ptrs;       // [world_size, ntokens * n] of output_dtype
-  int **tile_barrier_ptrs;  // [world_size * num_tiles]
+  // peer pointer arrays below are local (intra-node) scoped: [local_world_size] entries,
+  // indexed by local rank. for nnodes == 1 local == global.
+  int **barrier;            // [local_world_size][n_split * 2]
+  void **reduce_ptrs;       // [local_world_size][ntokens * n] of output_dtype
+  int **tile_barrier_ptrs;  // [local_world_size][num_tiles]
+  // hierarchical multi-node reduce-scatter (nnodes > 1). identity values for nnodes == 1.
+  int nnodes = 1;
+  int node_idx = 0;
+  int local_rank = 0;        // == rank when nnodes == 1
+  int local_world_size = 1;  // must be set to world_size when nnodes == 1
+  int staging_rows = 0;      // max token rows per (node, split) staging slot: max_m/topk/world_size
+  // [nnodes, n_split, staging_rows, n/n_split] on the NVSHMEM symmetric heap; the accumulated
+  // per-node partial for remote-owned segments is staged here for host-issued putmem_signal
+  void *staging_send = nullptr;
+  int *group_flags = nullptr;     // [nnodes * n_split] kernel -> host chunk-ready flags
+  int *group_counters = nullptr;  // [nnodes * n_split] per-block completion counters
 };
 
 }  // namespace bytedance::flux

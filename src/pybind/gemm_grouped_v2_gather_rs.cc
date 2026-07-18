@@ -76,6 +76,7 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
                         int64_t tp_world_size,
                         int64_t ep_world_size,
                         int64_t max_input_groups,
+                        int64_t nnodes,
                         int64_t n_split,
                         bool do_all_reduce,
                         bool use_read_mode) {
@@ -91,7 +92,8 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
                   max_input_groups,
                   n_split,
                   do_all_reduce,
-                  use_read_mode);
+                  use_read_mode,
+                  nnodes);
             }),
             py::arg("tp_group"),
             py::arg("total_num_experts"),
@@ -102,6 +104,7 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("tp_world_size"),
             py::arg("ep_world_size"),
             py::arg("max_input_groups") = 1,
+            py::arg("nnodes") = 1,
             py::arg("n_split") = 4,
             py::arg("do_all_reduce") = false,
             py::arg("use_read_mode") = false)
@@ -175,7 +178,8 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
                         std::vector<torch::Tensor> barriers,
                         int n_split,
                         bool do_all_reduce,
-                        bool use_read_mode) {
+                        bool use_read_mode,
+                        int nnodes) {
               return new TopkReduceScatterOpCls(
                   std::make_shared<C10dProcessGroup>("", tp_group),
                   max_m,
@@ -187,7 +191,8 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
                   barriers,
                   n_split,
                   do_all_reduce,
-                  use_read_mode);
+                  use_read_mode,
+                  nnodes);
             }),
             py::arg("tp_group"),
             py::arg("max_m"),
@@ -199,7 +204,8 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("barriers"),
             py::arg("n_split") = 4,
             py::arg("do_all_reduce") = false,
-            py::arg("use_read_mode") = false)
+            py::arg("use_read_mode") = false,
+            py::arg("nnodes") = 1)
         .def(
             "run",
             &TopkReduceScatterOpCls::run,

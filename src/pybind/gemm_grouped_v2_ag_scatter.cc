@@ -30,20 +30,28 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
     m.def("prepare_moe_ag_scatter_args", &prepare_moe_ag_scatter_args);
     py::class_<GemmGroupedV2AGScatterOpCls>(m, "GemmGroupedV2AGScatterOp")
         .def(
-            py::init([](DistEnvTPWithEP &tp_env, MoeArguments &moe_args) {
+            py::init([](DistEnvTPWithEP &tp_env,
+                        MoeArguments &moe_args,
+                        bool a2av_dispatch,
+                        bool a2av_ring) {
               return new GemmGroupedV2AGScatterOpCls(
                   std::make_shared<C10dProcessGroup>("", tp_env.tp_group),
                   tp_env.ep_size,
+                  tp_env.nnodes,
                   moe_args.max_ntokens,
                   moe_args.ffn_hidden,
                   moe_args.hidden,
                   moe_args.nexperts,
                   moe_args.topk,
                   moe_args.input_dtype,
-                  moe_args.output_dtype);
+                  moe_args.output_dtype,
+                  a2av_dispatch,
+                  a2av_ring);
             }),
             py::arg("tp_env"),
-            py::arg("moe_args"))
+            py::arg("moe_args"),
+            py::arg("a2av_dispatch") = false,
+            py::arg("a2av_ring") = false)
         .def("clear_buffers", &GemmGroupedV2AGScatterOpCls::clear_buffers)
         .def(
             "forward",

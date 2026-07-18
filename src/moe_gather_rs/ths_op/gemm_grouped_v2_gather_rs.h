@@ -36,7 +36,8 @@ class TopkReduceScatterOp {
       std::vector<torch::Tensor> barriers,
       int n_split,
       bool do_all_reduce = false,
-      bool use_read_mode = false);
+      bool use_read_mode = false,
+      int nnodes = 1);
   ~TopkReduceScatterOp();
   void reset_buffer();
   torch::Tensor run(
@@ -69,7 +70,8 @@ class GemmGroupedV2GatherRSOp {
       int64_t max_input_groups,
       int64_t n_split,
       bool do_all_reduce = false,
-      bool use_read_mode = false);
+      bool use_read_mode = false,
+      int64_t nnodes = 1);
   ~GemmGroupedV2GatherRSOp();
   torch::Tensor forward_gather_rs(
       torch::Tensor input,

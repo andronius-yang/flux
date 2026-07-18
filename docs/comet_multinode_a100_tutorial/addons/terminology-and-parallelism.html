@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Terminology contract · Flux COMET A100 addon</title>
+<style>
+:root{--bg:#f7f7f3;--fg:#17201d;--muted:#5d6964;--card:#fff;--line:#ccd5d0;--a:#086b59;--warn:#9b4b16;--code:#10221d;--codefg:#dcf5e9}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,Segoe UI,sans-serif}.skip{position:absolute;left:-999px}.skip:focus{left:1rem;top:1rem;background:var(--card);padding:.7rem;z-index:9}header,main,footer{max-width:1050px;margin:auto;padding:1.2rem}header{padding-top:3.5rem}h1{font-size:clamp(2.2rem,6vw,4.4rem);line-height:1;letter-spacing:-.04em;margin:.4rem 0}h2{margin-top:3.6rem;border-top:1px solid var(--line);padding-top:1.2rem}h3{margin-top:2rem}a{color:var(--a);text-underline-offset:3px}.lede{font-size:1.2rem;max-width:820px}.toc ol{columns:2}.card,.note{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:1rem 1.2rem;margin:1rem 0}.callout{border-left:4px solid var(--warn)}.tag{display:inline-block;font-size:.7rem;font-weight:800;letter-spacing:.05em;padding:.12rem .45rem;border-radius:99px;color:#fff;background:var(--a)}.paper{background:#5750a4}.infer{background:#765d15}.codehead{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;background:#17372e;color:#fff;padding:.6rem .9rem;border-radius:12px 12px 0 0;font-size:.82rem}.code{overflow-x:auto;margin:0 0 1rem;background:var(--code);color:var(--codefg);padding:1rem;border-radius:0 0 12px 12px}.code code{font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre}.equation{font:1rem/1.65 ui-monospace,monospace;background:var(--card);border-left:4px solid var(--a);padding:1rem;overflow:auto}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem}.small{font-size:.9rem;color:var(--muted)}table{border-collapse:collapse;width:100%;display:block;overflow:auto}th,td{padding:.65rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}.rankgrid td,.rankgrid th{text-align:center}.code:focus,table:focus{outline:3px solid var(--a);outline-offset:2px}.codehead{break-after:avoid}.code{break-before:avoid}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}@media(max-width:650px){header{padding-top:2rem}.toc ol{columns:1}.code code{font-size:12px}}@media(prefers-color-scheme:dark){:root{--bg:#0e1513;--fg:#e4eee9;--muted:#a5b3ad;--card:#151e1b;--line:#35443e;--a:#67d5ba;--warn:#e18c53;--code:#07110e;--codefg:#d7f4e8}}@media print{body{background:#fff;color:#000;font-size:10pt}.toc,.skip{display:none}.card{break-inside:avoid}.code{background:#eee;color:#000}.code code{white-space:pre-wrap}.tag{background:#fff;color:#000;border:1px solid}}
+</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header>
+  <p><a href="../01-prerequisites.html#ownership">← TP and EP ownership</a> · Terminology addon</p>
+  <h1>Model dimensions, parallel axes, and “experts per rank”</h1>
+  <p class="lede">A source-grounded contract for <code>T</code>, <code>H</code>, <code>F</code>, <code>E</code>, <code>W</code>, <code>EP</code>, and <code>P</code>—including the important difference between an expert identity and a complete expert weight.</p>
+</header>
+<main id="content">
+<nav class="toc" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#answer">The short answer</a></li><li><a href="#mapping">Paper-to-code notation</a></li><li><a href="#origins">Configured and derived values</a></li><li><a href="#rank-grid">Concrete rank grids</a></li><li><a href="#hopper-proof">What Hopper V3 implements</a></li><li><a href="#fusion">How this enters fusion</a></li><li><a href="#checks">Understanding checks</a></li><li><a href="#sources">Snapshot and sources</a></li></ol></nav>
+
+<section id="answer">
+<h2>1. The short answer</h2>
+<p><span class="tag">CODE</span> Yes: <code>F</code> is the intermediate or FFN width of each expert. For expert <code>e</code>, the layer-0 mathematical problem has <code>splits[e]</code> token rows, so its unsharded shapes are:</p>
+<div class="equation">input rows:       [splits[e], H]
+layer-0 weight:    [F, H]       (PyTorch storage convention)
+layer-0 output:    [splits[e], F]
+layer-1 weight:    [H, F]
+layer-1 output:    [splits[e], H]</div>
+<p>Under FFN tensor parallelism of size <code>P</code>, the rank-local layer-0 weight is <code>[F/P,H]</code>, and the rank-local intermediate is <code>[splits[e],F/P]</code>. The same <code>splits[e]</code> appears on all <code>P</code> ranks holding shards of expert <code>e</code>: the token-row dimension is preserved while those ranks divide the feature dimension.</p>
+<div class="note callout"><strong>Terminology correction.</strong> <code>E</code>, <code>H</code>, and <code>F</code> are chosen by the <em>MoE model architecture/configuration</em>. They are not chosen by the GPU architecture. Hopper versus Ampere selects a kernel family and execution strategy; it does not define how many experts the model has or the width of an expert.</div>
+</section>
+
+<section id="mapping">
+<h2>2. COMET paper notation versus this tutorial and source</h2>
+<p><span class="tag paper">PAPER</span> The COMET paper calls the token/row dimension <code>M</code>, token embedding width <code>N</code>, and expert feed-forward width <code>K</code>. This tutorial deliberately uses model-oriented names <code>T</code>, <code>H</code>, and <code>F</code>. Do not mechanically identify the tutorial’s <code>H/F</code> with every local GEMM variable named <code>N/K</code>; the latter can change with operand layout and layer.</p>
+<table><thead><tr><th>Concept</th><th>Tutorial</th><th>COMET paper</th><th>Representative source field</th></tr></thead><tbody>
+<tr><td>Global input token rows before top-k expansion</td><td><code>T</code></td><td><code>M</code></td><td><code>ntokens</code></td></tr>
+<tr><td>Token embedding / model hidden width</td><td><code>H</code></td><td><code>N</code></td><td><code>hidden</code></td></tr>
+<tr><td>Expert FFN / intermediate width</td><td><code>F</code></td><td><code>K</code></td><td><code>ffn_hidden</code>, <code>ffn_size</code></td></tr>
+<tr><td>Total expert identities</td><td><code>E</code></td><td><code>E</code></td><td><code>nexperts</code></td></tr>
+<tr><td>Top-k destinations per token</td><td><code>k</code></td><td><code>topk</code></td><td><code>topk</code></td></tr>
+<tr><td>FFN tensor-parallel group size</td><td><code>P</code></td><td><code>TP</code></td><td><code>ffn_tp_size</code></td></tr>
+<tr><td>Expert-parallel group size</td><td><code>EP</code></td><td><code>EP</code></td><td><code>ep_size</code></td></tr>
+<tr><td>Total participating ranks</td><td><code>W</code></td><td><code>W = TP × EP</code></td><td><code>world_size</code></td></tr>
+</tbody></table>
+</section>
+
+<section id="origins">
+<h2>3. Which quantities are chosen, and which are derived?</h2>
+<table><thead><tr><th>Quantity</th><th>Origin in this walkthrough</th><th>Constraint / meaning</th></tr></thead><tbody>
+<tr><td><code>E</code>, <code>H</code>, <code>F</code>, <code>k</code></td><td>MoE model configuration</td><td>Expert count, token width, expert FFN width, and routing fan-out.</td></tr>
+<tr><td><code>T</code></td><td>Current batch/sequence workload</td><td>Global token count before top-k expansion.</td></tr>
+<tr><td><code>W</code></td><td>Distributed process group, constrained by allocated topology</td><td>Total ranks participating in this fused MoE operation.</td></tr>
+<tr><td><code>EP</code></td><td>Configured parallel strategy</td><td>Must divide <code>E</code> here.</td></tr>
+<tr><td><code>P</code></td><td>Derived by Flux</td><td><code>P = W/EP</code>; must divide <code>F</code>.</td></tr>
+<tr><td><code>E_local</code></td><td>Derived by Flux</td><td><code>E_local = E/EP</code> expert identities represented on each rank.</td></tr>
+<tr><td><code>F_local</code></td><td>Derived by Flux</td><td><code>F_local = F/P</code> columns/rows of each represented expert held on one rank.</td></tr>
+<tr><td><code>T_local</code></td><td>Derived in this sequence-parallel example</td><td><code>T_local = T/W</code> input token rows initially supplied by one rank.</td></tr>
+</tbody></table>
+<p><span class="tag infer">INFERENCE</span> Saying “experts per rank” without a qualifier is safe only in pure EP. Prefer:</p>
+<ul><li><strong>local expert identities:</strong> always <code>E/EP</code> in this implementation;</li><li><strong>complete experts physically held per rank:</strong> <code>E/EP</code> only when <code>P=1</code>;</li><li><strong>expert weight shards per rank:</strong> <code>E/EP</code>, each with width <code>F/P</code>, when <code>P&gt;1</code>.</li></ul>
+
+<div class="codehead"><span><strong>src/ths_op/ths_op.cc:334–346</strong> · HEAD · exact</span><span>Host constructor · topology metadata</span></div>
+<pre class="code"><code>DistEnvTPWithEP::DistEnvTPWithEP(
+    c10::intrusive_ptr&lt;c10d::ProcessGroup&gt; tp_group_,
+    int nnodes,
+    c10::intrusive_ptr&lt;c10d::ProcessGroup&gt; ep_group)
+    : DistEnv(tp_group_-&gt;getRank(), tp_group_-&gt;getSize(), nnodes),
+      tp_group(tp_group_),
+      ep_group(ep_group),
+      ep_rank(ep_group != nullptr ? ep_group-&gt;getRank() : 0),
+      ep_size(ep_group != nullptr ? ep_group-&gt;getSize() : 1),
+      ffn_tp_size(world_size / ep_size),
+      ffn_tp_rank(rank % ffn_tp_size) {
+  FLUX_CHECK_DIV(world_size, ep_size);
+}</code></pre>
+<div class="card"><p><strong>Execution.</strong> Flux reads <code>W</code> from the full process group, reads <code>EP</code> from the expert-parallel group, and derives <code>P</code>.</p><p><strong>Ownership / stream.</strong> This is host-side persistent operator metadata; no CUDA stream owns the calculation.</p><p><strong>Invariant.</strong> <code>W</code> must be divisible by <code>EP</code>.</p><p><strong>Why this code exists.</strong> Every later shape check and expert offset uses one consistent factorization of the global rank group.</p></div>
+</section>
+
+<section id="rank-grid">
+<h2>4. Two concrete rank grids</h2>
+<h3>Hybrid example: <code>W=8</code>, <code>EP=4</code>, <code>P=2</code>, <code>E=8</code></h3>
+<p>Each EP partition represents <code>E/EP=2</code> expert identities. Each identity is split across two FFN-TP ranks, so no rank has a complete expert weight. If <code>F=14336</code>, each rank has <code>F/P=7168</code> of the expert width.</p>
+<table class="rankgrid"><thead><tr><th>EP partition</th><th>FFN-TP shard 0</th><th>FFN-TP shard 1</th></tr></thead><tbody>
+<tr><th>EP 0</th><td>experts 0–1, width 0–7167</td><td>experts 0–1, width 7168–14335</td></tr>
+<tr><th>EP 1</th><td>experts 2–3, width 0–7167</td><td>experts 2–3, width 7168–14335</td></tr>
+<tr><th>EP 2</th><td>experts 4–5, width 0–7167</td><td>experts 4–5, width 7168–14335</td></tr>
+<tr><th>EP 3</th><td>experts 6–7, width 0–7167</td><td>experts 6–7, width 7168–14335</td></tr>
+</tbody></table>
+<p>If <code>splits[3]=300</code>, both ranks in EP partition 1 build a 300-row GEMM for expert 3. They use different <code>F/P</code> weight shards and produce different 300-by-7168 intermediate shards.</p>
+
+<h3>Your pure-EP case: <code>W=8</code>, <code>EP=8</code>, <code>P=1</code>, <code>E=8</code></h3>
+<p>Each rank represents <code>E/EP=1</code> expert identity, and because <code>P=1</code>, that rank holds the full <code>F</code> width. In this specific case, “one expert per rank” really does mean one complete expert weight per rank.</p>
+</section>
+
+<section id="hopper-proof">
+<h2>5. What the original Hopper V3 path actually constructs</h2>
+<p><span class="tag">CODE</span> The committed Hopper layer-0 V3 operator does not merely suggest these formulas: its constructor stores them, checks both divisibilities, and validates every weight against the resulting local shape.</p>
+<div class="codehead"><span><strong>src/moe_ag_scatter/ths_op/gemm_grouped_v3_ag_scatter.cc:112–122, 239–250</strong> · HEAD · abridged</span><span>Host operator · persistent shape contract</span></div>
+<pre class="code"><code>nexperts_ep(moe_args.nexperts / tp_env.ep_size),
+expert_idx_offset(nexperts_ep * tp_env.ep_rank),
+ffn_size_shard(moe_args.ffn_hidden / tp_env.ffn_tp_size) {
+  CHECK_DIV(moe_args.nexperts, tp_env.ep_size);
+  CHECK_DIV(moe_args.ffn_hidden, tp_env.ffn_tp_size);
+  ...
+}
+
+int ntokens = ntokens_shard * tp_env.world_size;
+...
+CHECK_3D(weights[i], nexperts_ep, ffn_size_shard, moe_args.hidden);</code></pre>
+<div class="card"><p><strong>Execution.</strong> The operator computes <code>E_local</code>, the first global expert ID for the EP partition, and <code>F_local</code> once at construction. At invocation it reconstructs global <code>T</code> from <code>T/W</code>.</p><p><strong>Ownership / stream.</strong> Shapes and offsets are host metadata; weight storage belongs to the current GPU. All-gather and grouped GEMM later use auxiliary and caller streams.</p><p><strong>Invariant.</strong> A local weight group is exactly <code>[E/EP,F/P,H]</code>.</p><p><strong>Why this code exists.</strong> The fused kernel must know both which expert problems are local and which slice of each expert output it computes.</p></div>
+
+<div class="codehead"><span><strong>src/moe_ag_scatter/ths_op/gemm_grouped_v3_ag_scatter.cc:293–321, 333–365</strong> · HEAD · abridged</span><span>Caller stream · local expert problem construction</span></div>
+<pre class="code"><code>calc_gather_index_impl(
+    moe_args.nexperts, ntokens, moe_args.topk,
+    expert_idx_offset, expert_idx_offset + nexperts_ep,
+    splits_gpu, scatter_index, gather_index, total_nrows_ep_gpu, stream);
+
+ag_scatter_sort_impl(AGScatterSortOpArguments{
+    ..., nexperts_ep, splits_gpu + expert_idx_offset, ...}, stream);
+
+outputs.emplace_back(
+    torch::empty({total_nrows_ep, ffn_size_shard}, inputs_shard.options()));
+...
+int const N = ffn_size_shard;</code></pre>
+<div class="card"><p><strong>Execution.</strong> Global routing metadata is narrowed to the contiguous local expert-ID interval, while output columns use only <code>F_local</code>.</p><p><strong>Ownership / stream.</strong> Helper kernels and GEMM launch are ordered on the caller’s CUDA stream; all-gather has its own orchestrated dependencies.</p><p><strong>Invariant.</strong> Token counts come from global <code>splits</code>, but only the rank’s <code>E/EP</code> expert identities become local grouped-GEMM problems.</p><p><strong>Why this code exists.</strong> EP removes nonlocal expert rows; FFN TP preserves those rows and divides their feature columns.</p></div>
+
+<p><span class="tag">CODE</span> Hopper layer 1 states the other half of the contract directly: local inputs and weights are partial to the current EP rank, while <code>splits_cpu</code> and <code>routing_idx</code> remain global.</p>
+<div class="codehead"><span><strong>src/moe_gather_rs/ths_op/gemm_grouped_v3_gather_rs.cc:549–581, 610–615</strong> · HEAD · abridged</span><span>Host operator · global routing contract</span></div>
+<pre class="code"><code>CHECK(this-&gt;tp_world_size * this-&gt;ep_world_size == this-&gt;world_size);
+CHECK(this-&gt;total_num_experts % this-&gt;ep_world_size == 0);
+this-&gt;num_experts = this-&gt;total_num_experts / this-&gt;ep_world_size;
+
+/* When expert parallel is enabled, the inputs/weights tensor should be
+   the partial [for] the current expert parallel rank. But splits_cpu and
+   routing_idx should be global ... [and contain] all experts / tokens. */</code></pre>
+<div class="card"><p><strong>Execution.</strong> Layer 1 forms problems for <code>E/EP</code> local experts, then uses global inverse routing to reconstruct token outputs.</p><p><strong>Ownership / stream.</strong> Local input/weight tensors reside on the current GPU; routing metadata describes the whole fused group.</p><p><strong>Invariant.</strong> <code>sum(splits)</code> matches the global routing length (absent dropped tokens), including when EP is enabled.</p><p><strong>Why this code exists.</strong> Width-sharded ranks must agree on identical token rows so their partial feature results can be combined correctly.</p></div>
+</section>
+
+<section id="fusion">
+<h2>6. How these dimensions enter Hopper’s communication–computation fusion</h2>
+<svg role="img" aria-labelledby="flow-title flow-desc" viewBox="0 0 960 220" style="width:100%;height:auto"><title id="flow-title">Hopper V3 dimension and fusion flow</title><desc id="flow-desc">All ranks contribute token shards to all-gather. Routing selects local expert identities. M-oriented scheduling launches local expert GEMM tiles with a local feature-width shard.</desc><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="currentColor"/></marker></defs><g fill="none" stroke="currentColor" stroke-width="2" marker-end="url(#arrow)"><path d="M210 80H365"/><path d="M570 80H730"/></g><g fill="var(--card)" stroke="currentColor"><rect x="20" y="35" width="190" height="90" rx="12"/><rect x="365" y="35" width="205" height="90" rx="12"/><rect x="730" y="35" width="210" height="90" rx="12"/></g><g fill="currentColor" font-family="system-ui" font-size="15" text-anchor="middle"><text x="115" y="65">W token shards</text><text x="115" y="90">each [T/W,H]</text><text x="467" y="65">all-gather + routing</text><text x="467" y="90">global splits; local IDs</text><text x="835" y="65">local grouped GEMM</text><text x="835" y="90">E/EP problems, F/P width</text><text x="480" y="175">M-oriented tile readiness overlaps arriving token rows with compute</text></g></svg>
+<p><span class="tag paper">PAPER</span> COMET describes pure EP as distributing intact experts and TP as partitioning expert weights along a hidden/FFN dimension; hybrid parallelism combines them and uses <code>W=TP×EP</code>. It then identifies the independent overlap dimension as token rows for layer 0 and output columns for layer 1.</p>
+<p><span class="tag">CODE</span> Hopper V3 realizes that decomposition by all-gathering the <code>W</code> input token shards, filtering routing to the current <code>E/EP</code> expert-ID interval, scheduling layer-0 tiles along arriving token rows, and computing only <code>F/P</code> feature columns on each FFN-TP rank. Its layer-1 path keeps the same local expert identities and global routing contract while splitting work along output columns.</p>
+<div class="note"><strong>Conclusion.</strong> The paper’s terminology and the original Hopper V3 implementation agree with your reasoning. The only refinement is linguistic: with <code>P&gt;1</code>, say that a rank <em>represents</em> <code>E/EP</code> experts or owns <code>E/EP</code> expert shards—not that it owns that many complete experts.</div>
+</section>
+
+<section id="checks">
+<h2>7. Check your understanding</h2>
+<ol><li>For <code>W=8</code>, <code>EP=4</code>, <code>E=8</code>, and <code>F=14336</code>, does one rank own two complete experts, or two expert identities with half-width weight shards? State the local layer-0 weight shape using <code>H</code>.</li><li>If <code>splits[3]=300</code>, why must both FFN-TP ranks representing expert 3 see the same value even though their <code>F_local</code> regions differ?</li></ol>
+</section>
+
+<section id="sources">
+<h2>Snapshot and sources</h2>
+<p><strong>Snapshot:</strong> base <code>19831ca</code>; generated 2026-07-15 UTC; current dirty tree. All source excerpts on this addon are from paths unchanged relative to <code>HEAD</code>.</p>
+<ul><li><a href="https://arxiv.org/abs/2502.19811">COMET paper (canonical arXiv record)</a></li><li><a href="../01-prerequisites.html#ownership">Prerequisites: tensor ownership under TP and EP</a></li><li><a href="../02-top-down.html#hopper0">Top-down: Hopper layer-0 fusion</a></li></ul>
+</section>
+</main>
+<footer><p><a href="../01-prerequisites.html#ownership">← Back to ownership</a> · <a href="#content">Top</a> · <a href="../index.html">Tutorial map</a></p></footer>
+<script>document.documentElement.classList.add('js');document.querySelectorAll('pre.code,table').forEach(function(e){e.tabIndex=0;if(!e.hasAttribute('aria-label'))e.setAttribute('aria-label',e.tagName==='TABLE'?'Scrollable data table':'Scrollable source code')});document.querySelectorAll('th').forEach(function(e){if(!e.hasAttribute('scope'))e.scope='col'})</script>
+</body>
+</html>

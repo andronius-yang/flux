@@ -1,0 +1,115 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Ground-up · Flux COMET A100</title><style>
+:root{--bg:#f7f5f1;--fg:#211d18;--muted:#6c6258;--card:#fff;--line:#d8cfc5;--a:#7a3f0e;--diff:#a54716;--code:#24170d;--codefg:#fae8d6}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,Segoe UI,sans-serif}.skip{position:absolute;left:-999px}.skip:focus{left:1rem;top:1rem;background:var(--card);padding:.7rem;z-index:9}header,main,footer{max-width:1080px;margin:auto;padding:1.2rem}header{padding-top:3.5rem}h1{font-size:clamp(2.3rem,6vw,4.6rem);line-height:1;letter-spacing:-.04em;margin:.4rem 0}h2{margin-top:3.6rem;border-top:1px solid var(--line);padding-top:1.2rem}h3{margin-top:2rem}a{color:var(--a);text-underline-offset:3px}.lede{font-size:1.2rem;max-width:820px}.toc ol{columns:2}.card,.note{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:1rem 1.2rem;margin:1rem 0}.tag{display:inline-block;font-size:.7rem;font-weight:800;letter-spacing:.05em;padding:.12rem .45rem;border-radius:99px;color:#fff;background:var(--a)}.diff{background:var(--diff)}.infer{background:#6e5a13}.codehead{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;background:#523019;color:#fff;padding:.6rem .9rem;border-radius:12px 12px 0 0;font-size:.82rem}.code{overflow:auto;margin:0 0 1rem;background:var(--code);color:var(--codefg);padding:1rem;border-radius:0 0 12px 12px}.code code{font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre}.eq{font:14px/1.7 ui-monospace,monospace;white-space:pre;overflow:auto;background:var(--card);border-left:4px solid var(--a);padding:1rem}.ladder{counter-reset:n;list-style:none;padding:0}.ladder li{counter-increment:n;margin:1rem 0;padding:1rem 1rem 1rem 3.5rem;background:var(--card);border:1px solid var(--line);border-radius:12px;position:relative}.ladder li:before{content:counter(n);position:absolute;left:1rem;top:1rem;border-radius:50%;width:1.7rem;height:1.7rem;background:var(--a);color:#fff;text-align:center;font-weight:800}table{border-collapse:collapse;width:100%;display:block;overflow:auto}th,td{padding:.65rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}.code:focus,table:focus{outline:3px solid var(--a);outline-offset:2px}.codehead{break-after:avoid}.code{break-before:avoid}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}@media(max-width:650px){header{padding-top:2rem}.toc ol{columns:1}.code code{font-size:12px}}@media(prefers-color-scheme:dark){:root{--bg:#17120e;--fg:#f0e7df;--muted:#bcaea1;--card:#211a15;--line:#4b3b30;--a:#efa76b;--diff:#ed8e50;--code:#0f0905;--codefg:#f7e2d1}}@media print{body{background:#fff;color:#000;font-size:10pt}.toc,.skip{display:none}.card{break-inside:avoid}.code{background:#eee;color:#000}.code code{white-space:pre-wrap}.tag{background:#fff;color:#000;border:1px solid}}
+</style></head><body><a class="skip" href="#content">Skip to content</a><header><p><a href="02-top-down.html">← Top-down</a> · Chapter 03</p><h1>Ground-up: one value’s route through the hierarchy</h1><p class="lede">Start with an FP16/BF16 element and rebuild the final Python tensor through rows, expert problems, tiles, rank segments, local rings, remote staging, and ordered publication.</p></header><main id="content"><svg role="img" aria-labelledby="mini-title-3 mini-desc-3" viewBox="0 0 900 110" style="width:100%;height:auto"><title id="mini-title-3">Ground-up storage hierarchy</title><desc id="mini-desc-3">Packed elements form rows, local rings form node partials, remote staging forms final output.</desc><path d="M90 55H810" stroke="currentColor" stroke-width="2"/><g fill="currentColor" text-anchor="middle" font-family="system-ui" font-size="16"><text x="90" y="42">pack</text><text x="270" y="82">row</text><text x="450" y="42">local ring</text><text x="630" y="82">RMA slot</text><text x="810" y="42">output</text></g></svg><nav class="toc" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#elements">Elements and rows</a></li><li><a href="#problems">Expert GEMMs and tiles</a></li><li><a href="#mapping">Rank mapping</a></li><li><a href="#storage">Pointer and staging layouts</a></li><li><a href="#barriers">Flags and barriers</a></li><li><a href="#rings">Hierarchical rings</a></li><li><a href="#publication">Publication ladder</a></li><li><a href="#reconstruct">Final reconstruction</a></li><li><a href="#audit">Invariants</a></li><li><a href="#glossary">Glossary and sources</a></li></ol></nav>
+
+<section id="elements"><h2>1–2. Element → token row → expanded row</h2><p><span class="tag diff">DIFF</span> Multi-node final accumulation accepts FP16 or BF16. The kernel moves a <code>uint4</code> pack: 16 bytes, hence eight 16-bit elements. Arithmetic is converted through packed helpers; layer-1 top-k accumulation uses FP32 temporaries before converting back.</p>
+<div class="eq">token row x[t, 0:H]
+expanded row x̂[r, 0:H], where r identifies (token t, selected expert j)
+0 ≤ t &lt; T, 0 ≤ j &lt; topk, 0 ≤ r &lt; T×topk</div>
+<p><code>scatter_index</code> maps expanded choices to expert-contiguous rows for GEMM0. The inverse routing index makes GEMM1 results addressable again by original token/top-k slot.</p></section>
+
+<section id="problems"><h2>3–4. Expert-local problems, M tiles, and N splits</h2><p>For expert <code>e</code>, layer 0 computes <code>[M_e,H] × [H,F_local] → [M_e,F_local]</code>. Layer 1 computes <code>[M_e,F_local] × [F_local,H] → [M_e,H]</code>. <code>M_e = splits[e]</code> varies, so these are grouped GEMMs.</p>
+<table><thead><tr><th>Layer</th><th>Independent overlap dimension</th><th>Reason</th></tr></thead><tbody><tr><td>0</td><td>M / routed rows</td><td>Rows become legal as each source-rank token shard arrives.</td></tr><tr><td>1</td><td>N / output columns</td><td>An N slice can be gathered and reduced once every expert problem publishes that slice.</td></tr></tbody></table>
+<p><span class="tag">CODE</span> V2 gather-RS fixes tile M=128 and tile N=1024; <code>N</code> must be divisible by <code>n_split</code>, and <code>N/n_split</code> must be divisible by 1024. CTA blocks stride through more logical tiles than the GPU can host at once.</p></section>
+
+<section id="mapping"><h2>5. Convert global ranks into node groups</h2><div class="eq">W = world_size
+G = nnodes
+L = W / G                 # GPUs per node
+rank = node_idx × L + local_rank</div>
+<p>The AG schedule orders ranks relative to the current rank: same-node cyclic local ranks first, then the next node group. Its inverse maps that schedule order back to a global source rank.</p>
+<div class="codehead"><span><strong>src/moe_ag_scatter/sort_util.h:166–188</strong> · HEAD · abridged pseudocode</span><span>host/device rank schedule</span></div><pre class="code"><code>shift_rank_to_order(rank, dist_env) {
+  (node, local) = global_rank_to_node_idx_local_rank(rank);
+  order_node  = (node  - dist_env.node_idx  + nnodes) % nnodes;
+  order_local = (local - dist_env.local_rank + L) % L;
+  return order_node * L + order_local;
+}
+revert_order_to_rank(order, dist_env) {
+  return ((order / L + dist_env.node_idx) % nnodes) * L
+       + ((order % L + dist_env.local_rank) % L);
+}</code></pre>
+<div class="card"><p><strong>Execution.</strong> Workspace scheduling uses this order to align M tiles with node-first AG arrival.</p><p><strong>Ownership.</strong> It is pure topology math; no communication occurs here.</p><p><strong>Invariant.</strong> The two functions are inverses only under equal, node-contiguous rank groups.</p><p><strong>Why.</strong> A schedule should consume the shards communication produces earliest.</p></div></section>
+
+<section id="storage"><h2>6. Local peer lists and symmetric slots</h2><p>V2 local rings receive pointer arrays indexed by <code>local_rank</code>, not global rank:</p><ul><li><code>reduce_ptrs[L]</code>: transient local-ring rows;</li><li><code>tile_barrier_ptrs[L]</code>: one readiness word per logical tile;</li><li><code>barrier[L]</code>: one producer-completion word per N split.</li></ul>
+<p>Inter-node storage is symmetric and four-dimensional:</p><div class="eq">staging_send[G, n_split, staging_rows, n_per]
+staging_recv[G, n_split, staging_rows, n_per]
+staging_rows = max_m / topk / W
+n_per = N / n_split
+
+slot(g, sid) = g × n_split + sid
+slot_base_elements = slot × staging_rows × n_per
+element_offset = slot_base_elements
+               + local_row × n_per
+               + local_col</div>
+<div class="codehead"><span><strong>src/moe_gather_rs/ths_op/gemm_grouped_v2_gather_rs.cc:159–190</strong> · DIFF · abridged</span><span>constructor-time persistent storage</span></div><pre class="code"><code>reduce_buffers = flux_create_tensor_list([max_m/topk, N], dtype, group);
+staging_rows = max_m / topk / world_size;
+n_per = N / n_split;
+staging_send = nvshmem_create_tensor([nnodes,n_split,staging_rows,n_per], dtype);
+staging_recv = nvshmem_create_tensor([nnodes,n_split,staging_rows,n_per], dtype);
+internode_signals = nvshmem_create_tensor([nnodes*n_split], uint64, true);
+group_flags.reset(nnodes*n_split);
+group_counters.reset(nnodes*n_split);</code></pre>
+<div class="card"><p><strong>Execution.</strong> Constructor-time allocation creates capacity-sized storage before any forward call.</p><p><strong>Ownership.</strong> The operator owns these across calls; only runtime rows within each capacity-sized slot are transferred.</p><p><strong>Invariant.</strong> <code>max_m/topk</code> and runtime <code>T</code> are divisible by W, and the symmetric heap is large enough on every PE.</p><p><strong>Why.</strong> Fixed slot strides make sender and receiver address calculations agree while allowing runtime chunks smaller than capacity.</p></div></section>
+
+<section id="barriers"><h2>7–8. Per-source AG flags; per-tile and per-group layer-1 state</h2><table><thead><tr><th>State</th><th>Producer</th><th>Consumer</th><th>Meaning</th></tr></thead><tbody><tr><td>AG <code>barrier[src_rank]</code></td><td>intra-node copy stream</td><td>V2 GEMM tile fetcher</td><td>source rank’s token shard is locally readable</td></tr><tr><td><code>barrier[local][sid]</code></td><td>GEMM epilogues</td><td>gather-RS kernel</td><td>all expert problems for N split are ready</td></tr><tr><td><code>tile_barrier[local][tile]</code></td><td>one local ring stage</td><td>next local ring stage</td><td>peer reduce-buffer tile is visible</td></tr><tr><td><code>group_counter[g,sid]</code></td><td>every CTA</td><td>last CTA</td><td>how many blocks finished the staging group</td></tr><tr><td><code>group_flag[g,sid]</code></td><td>last CTA, release/system</td><td>internode stream</td><td>entire remote staging slot is transferable</td></tr><tr><td><code>signal[source,sid]</code></td><td>remote put-with-signal</td><td>receiver stream</td><td>source’s chunk for this run arrived</td></tr></tbody></table></section>
+
+<section id="rings"><h2>9–10. One local ring for every owner-node group</h2>
+<div class="codehead"><span><strong>src/moe_gather_rs/topk_gather_rs_v2.cu:640–678</strong> · DIFF · abridged pseudocode</span><span>gather-RS stream · GPU CTAs</span></div><pre class="code"><code>for (int sid = 0; sid &lt; params.n_split; sid++) {
+  Barrier::wait_eq(params.barrier[params.local_rank], ..., sid, 1);
+  for (int g_iter = 0; g_iter &lt; params.nnodes; g_iter++) {
+    int g = (params.node_idx + 1 + g_iter) % params.nnodes; // remote first
+    for (int stage = 0; stage &lt; params.local_world_size; stage++)
+      for (int blk_id = blockIdx.x; blk_id &lt; tiles; blk_id += gridDim.x)
+        TopkGatherRsOp{}(..., sid, stage, g);
+    publish_group_if_remote(g, sid);
+  }
+}</code></pre><div class="card"><p><strong>Execution.</strong> Each N split waits for GEMM production, then walks remote owner groups first and this node last.</p><p><strong>Ownership / stream.</strong> Gather-RS CTAs read node-local peer buffers and write output or symmetric staging on the consumer stream.</p><p><strong>Invariant.</strong> Every group executes exactly L local stages; remote publication follows all grid blocks.</p><p><strong>Why.</strong> Produce network-ready node partials early while preserving the V2 local ring.</p></div>
+<p>At each stage, this rank is responsible for segment:</p><div class="eq">segment(g, stage, local_rank)
+  = g × L + (stage + local_rank + 1) mod L</div>
+<p>Stage zero computes this GPU’s local contribution. Intermediate stages add a partial read from this local rank’s reduce buffer and write toward the previous local rank. System-scope tile barriers make the next stage legal.</p>
+<h3>The last-stage invariant</h3><div class="eq">stage = L − 1
+segment = g × L + (L − 1 + local_rank + 1) mod L
+        = g × L + local_rank</div>
+<p>That segment is owned by the PE with the <em>same local rank</em> on node <code>g</code>. This is why the host ladder sends to <code>pe = g×L + local_rank</code>.</p>
+<div class="codehead"><span><strong>src/moe_gather_rs/topk_gather_rs_v2.cu:295–315</strong> · DIFF · abridged</span><span>last-stage address selection</span></div><pre class="code"><code>if (group_idx == params.node_idx)
+  return output + row_g*N + col_g - segment*rows_per_rank*N;
+slot = group_idx * params.n_split + sid;
+return staging_send + slot*params.staging_rows*n_per
+     + (row_g - segment*rows_per_rank)*n_per
+     + (col_g - sid*n_per);</code></pre>
+<div class="card"><p><strong>Execution.</strong> A locally owned segment becomes final output immediately; a remotely owned segment is compacted into its owner-node slot.</p><p><strong>Ownership.</strong> Local output belongs to this rank; symmetric send staging belongs to the sender until RMA completion/reuse boundary.</p><p><strong>Invariant.</strong> Subtracting global segment row/column origins yields <code>0≤local_row&lt;runtime_rows</code> and <code>0≤local_col&lt;n_per</code>.</p><p><strong>Why.</strong> Convert strided global output coordinates into one contiguous network chunk per <code>(g,sid)</code>.</p></div></section>
+
+<section id="publication"><h2>11. The fence → flag → put → signal ladder</h2><ol class="ladder"><li><strong>Reset.</strong> The gather-RS stream zeros every flag/counter and records <code>staging_reset_event</code>. The internode stream waits on it, so a previous call’s flag cannot satisfy the current wait.</li><li><strong>Produce.</strong> All CTAs write their portion of <code>staging_send[g,sid]</code>.</li><li><strong>Publish.</strong> <code>__threadfence_system()</code>, CTA sync, per-block counter, and last-block system-release store set <code>group_flag[g,sid]=1</code>.</li><li><strong>Send.</strong> The internode stream waits for that flag then issues a nonblocking <code>putmem_signal</code> to <code>g×L+local_rank</code>.</li><li><strong>Name the run.</strong> Signal is SET to monotonically increasing <code>run_id</code>, not a reusable binary one.</li><li><strong>Receive.</strong> Main gather-RS stream waits for every remote source node’s signal for this N split to reach <code>run_id</code>.</li><li><strong>Reduce and retire.</strong> GPU accumulation adds remote slots. The normal outer wrapper waits for gather-RS completion, then all ranks enter a group barrier before staging reuse.</li></ol>
+<div class="codehead"><span><strong>src/moe_gather_rs/ths_op/gemm_grouped_v2_gather_rs.cc:367–436</strong> · DIFF · abridged pseudocode</span><span>gather-RS + internode streams</span></div><pre class="code"><code>run_id_++;
+cudaMemsetAsync(group_flags, 0, bytes, gather_rs_stream);
+cudaMemsetAsync(group_counters, 0, bytes, gather_rs_stream);
+cudaEventRecord(staging_reset_event, gather_rs_stream);
+cudaStreamWaitEvent(internode_stream, staging_reset_event);
+
+CUStreamWaitValue(internode_stream, group_flags + idx, 1, GEQ);
+nvshmemx_putmem_signal_nbi_on_stream(
+  recv[source_node,sid], send[owner_node,sid], chunk_bytes,
+  signal[source_node,sid], run_id_, SET, owner_node*L+local_rank, internode_stream);
+
+nvshmemx_signal_wait_until_on_stream(signal[source,sid], GE, run_id_, gather_rs_stream);
+internode_reduce_gather_rs(..., sid, rows, n_per, ...);</code></pre>
+<div class="card"><p><strong>Execution.</strong> Reset, GPU production, flag wait, RMA, signal wait, and accumulation form one ordered ladder.</p><p><strong>Ownership / stream.</strong> Sender readiness is a CUDA device flag observed by <code>internode_stream</code>; receiver arrival is a symmetric NVSHMEM signal observed on <code>gather_rs_stream</code>.</p><p><strong>Invariant.</strong> Flag observation orders producer stores; signal observation establishes delivery for its paired put. Run IDs prevent stale receiver success only when all PEs invoke the operator in the same lock-step order.</p><p><strong>Why.</strong> Preserve GPU-resident dataflow while letting host-enqueued NVSHMEM move coarse contiguous node partials.</p></div></section>
+
+<section id="reconstruct"><h2>12. Reconstruct the Python-visible output</h2><div class="eq">own = local-ring result for segment node_idx×L + local_rank
+remote[m] = staging_recv[m, sid, 0:runtime_rows, :]
+
+output[row, sid×n_per + col]
+  = own[row, sid×n_per + col]
+  + Σ remote[m,row,col] for m != node_idx</div>
+<div class="codehead"><span><strong>src/moe_gather_rs/topk_gather_rs_v2.cu:1021–1056</strong> · DIFF · abridged</span><span>GPU final accumulation · FP16/BF16 packs</span></div><pre class="code"><code>PackT acc; acc.data = loadPack(output + row*out_n + sid*n_per + col);
+for (int m = 0; m &lt; nnodes; m++) {
+  if (m == node_idx) continue;
+  slot = m*n_split + sid;
+  PackT part = loadPack(staging_recv + slot*staging_rows*n_per + row*n_per + col);
+  acc.data = addPack(acc, part);
+}
+storePack(output + row*out_n + sid*n_per + col, acc.data);</code></pre>
+<div class="card"><p><strong>Execution.</strong> Each launch handles one N split, starting from the own-node contribution already in output.</p><p><strong>Ownership.</strong> It writes the tensor returned to Python, shape <code>[T/W,N]</code>.</p><p><strong>Invariant.</strong> Every source-node slot has passed its current-run signal wait; packing divides <code>n_per</code> exactly.</p><p><strong>Why.</strong> Finish cross-node reduction on the owner GPU without another global ring.</p></div></section>
+
+<section id="audit"><h2>Audit checklist</h2><ul><li><span class="tag">CODE</span> <code>nnodes==1</code> makes <code>L=W</code>, one group, and preserves the old V2 path.</li><li><span class="tag diff">DIFF</span> Multi-node forbids <code>do_all_reduce</code>, <code>use_read_mode</code>, and Triton paths.</li><li><span class="tag diff">DIFF</span> Layer-1 final accumulation dispatches FP16/BF16 only.</li><li><span class="tag diff">DIFF</span> Gather-RS checks runtime <code>m_full≤max_m</code>; AG allocates by <code>max_ntokens</code> but lacks an explicit runtime upper-bound check.</li><li><span class="tag">CODE</span> Compile-time ceilings are eight local GPUs, 32 world ranks, and eight nodes; V2 AG’s source-segment wait also fits one warp.</li><li><span class="tag infer">INFERENCE</span> The normal wrapper’s final collective barrier strongly protects send-staging reuse after all incoming signals. Direct use of the low-level <code>TopkReduceScatterOp.run</code> still deserves a formal NBI source-lifetime audit.</li><li><span class="tag infer">INFERENCE</span> Binary AG flags rely on serialized object reuse and a final world barrier; concurrent invocation of one operator object is not documented as safe.</li></ul></section>
+<section id="glossary"><h2>Glossary, snapshot, and sources</h2><dl><dt><strong>Segment</strong></dt><dd>The final token-row shard owned by one global rank.</dd><dt><strong>Owner-node group</strong></dt><dd>The L rank segments whose global ranks share a node index.</dd><dt><strong>Slot stride</strong></dt><dd>The capacity-sized distance between adjacent symmetric staging slots, independent of runtime row count.</dd></dl><p><strong>Snapshot:</strong> base <code>19831ca</code>; generated 2026-07-15 UTC; current dirty tree. Unbadged walkthrough prose inherits the CODE or DIFF provenance of its nearest source card.</p><ul><li><a href="https://docs.nvidia.com/nvshmem/api/gen/api/ordering.html">NVSHMEM ordering</a></li><li><a href="https://docs.nvidia.com/nvshmem/api/gen/api/signal.html">NVSHMEM signaling</a></li><li>Worktree code ranges embedded above.</li></ul></section>
+</main><footer><p><a href="02-top-down.html">← Top-down</a> · <a href="#content">Top</a> · <a href="04-alternatives.html">Alternatives →</a></p></footer><script>document.documentElement.classList.add('js');document.querySelectorAll('pre.code,table').forEach(function(e){e.tabIndex=0;if(!e.hasAttribute('aria-label'))e.setAttribute('aria-label',e.tagName==='TABLE'?'Scrollable data table':'Scrollable source code')});document.querySelectorAll('th').forEach(function(e){e.scope='col'})</script></body></html>

@@ -180,7 +180,8 @@ class GemmGroupedV2AGScatter_Device
         sizeof(ElementD),
         threadblock_count,
         args_workspace,
-        (cudaStream_t)stream);
+        (cudaStream_t)stream,
+        get_a2av_ws(args, args_workspace));
 #if 0
     int workspace_size = get_args_workspace_size(unify_args);
     std::cerr << "workspace size: " << workspace_size << "\n";
@@ -281,6 +282,16 @@ class GemmGroupedV2AGScatter_Device
         args.accum_per_rank_ptr,
         ws_args.tile_count,
         args.ep_nexperts};
+    if (args.signal_ptr != nullptr) {
+      // a2av dispatch mode: per-source signals + dynamically claimed tile buckets
+      A2AVScheduleWorkspace a2av_ws = get_a2av_ws(args, args_workspace);
+      gemm_args.signal_ptr = args.signal_ptr;
+      gemm_args.signal_expected = args.signal_expected;
+      gemm_args.bucket_tiles_ptr = (void *)a2av_ws.bucket_tiles;
+      gemm_args.bucket_offsets = a2av_ws.bucket_offsets;
+      gemm_args.bucket_cursors = a2av_ws.bucket_cursors;
+      gemm_args.multi_masks = a2av_ws.multi_masks;
+    }
     return gemm_args;
   }
 
@@ -295,13 +306,21 @@ class GemmGroupedV2AGScatter_Device
   std::size_t
   get_args_workspace_size(std::any const &unify_args) const override {
     const auto &args = std::any_cast<GemmGroupedV2AGScatterArguments>(unify_args);
+    std::size_t bytes = get_dense_args_workspace_size(args);
+    if (args.signal_ptr != nullptr && !args.a2av_ring_schedule) {
+      bytes = get_a2av_ws(args, nullptr).bytes_end;
+    }
+    return bytes;
+  }
+
+ private:
+  std::size_t
+  get_dense_args_workspace_size(const GemmGroupedV2AGScatterArguments &args) const {
     int problem_count = args.num_groups * args.ep_nexperts;
     // not the accurate num_tiles but num_tiles won't exceed this
-    int num_tiles = get_tile_count_approx(args);
-    int threadblock_count = get_threadblock_count(args.sm_margin);
-    num_tiles = pad_to(num_tiles, threadblock_count);
+    int num_tiles = get_max_tiles_padded(args);
     // the workspace size
-    int bytes =
+    std::size_t bytes =
         pad_to(sizeof(cutlass::gemm::GemmCoord) * problem_count, kAlignment) * 1  // problem_sizes
         + pad_to(sizeof(void *) * problem_count, kAlignment) * 4    // ptr_A/ptr_B/ptr_C/ptr_D
         + pad_to(sizeof(float *) * problem_count, kAlignment) * 1   // scale_D
@@ -309,11 +328,29 @@ class GemmGroupedV2AGScatter_Device
         + pad_to(sizeof(int *) * problem_count, kAlignment) * 2     // gather_A/scatter_D
         + pad_to(sizeof(int) * 1, kAlignment) * 1                   // tile_count
         + pad_to(sizeof(ProblemInfo) * num_tiles, kAlignment) * 1;  // problem_info
-
     return bytes;
   }
 
- private:
+  int
+  get_max_tiles_padded(const GemmGroupedV2AGScatterArguments &args) const {
+    int threadblock_count = get_threadblock_count(args.sm_margin);
+    return pad_to(get_tile_count_approx(args), threadblock_count);
+  }
+
+  A2AVScheduleWorkspace
+  get_a2av_ws(const GemmGroupedV2AGScatterArguments &args, void *args_workspace) const {
+    // a2av_ring keeps the dense static schedule: all-null bucket pointers route
+    // both the prepare kernel and the GEMM kernel to the ProblemVisitor path.
+    if (args.signal_ptr == nullptr || args.a2av_ring_schedule) {
+      return {};
+    }
+    return get_a2av_schedule_workspace(
+        args_workspace,
+        get_dense_args_workspace_size(args),
+        get_max_tiles_padded(args),
+        args.world_size);
+  }
+
   int
   get_threadblock_count(int sm_margin) const {
     using Gemm = identity_t<decltype(this->gemm_device())>;

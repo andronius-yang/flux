@@ -136,7 +136,10 @@ def _nvshmem_path_by_pip():
 
 @pathlib_wrapper
 def nvshmem_deps():
-    nvshmem_home = Path(os.environ.get("NVSHMEM_HOME", _nvshmem_path_by_pip()))
+    if "NVSHMEM_HOME" in os.environ:
+        nvshmem_home = Path(os.environ["NVSHMEM_HOME"])
+    else:
+        nvshmem_home = Path(_nvshmem_path_by_pip())
     include_dirs = [nvshmem_home / "include"]
     library_dirs = [nvshmem_home / "lib"]
     libraries = ["nvshmem_host"]

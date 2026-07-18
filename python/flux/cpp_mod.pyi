@@ -738,6 +738,8 @@ class GemmGroupedV2AGScatterOp:
         self,
         tp_env: DistEnvTP,
         moe_args: MoeArguments,
+        a2av_dispatch: bool = False,
+        a2av_ring: bool = False,
     ): ...
     def forward(
         self,
@@ -879,6 +881,7 @@ class GemmGroupedV2GatherRSOp:
         tp_world_size: int,
         ep_world_size: int,
         max_input_groups: int = 1,
+        nnodes: int = 1,
         n_split: int = 4,
         do_all_reduce: bool = False,
         use_read_mode: bool = False,
@@ -887,6 +890,7 @@ class GemmGroupedV2GatherRSOp:
         such conditions expected:
             max_input_groups <= 2
             tp_world_size * ep_world_size == tp_group.size
+            nnodes > 1 requires do_all_reduce=False and use_read_mode=False
         """
         ...
 

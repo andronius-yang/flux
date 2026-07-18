@@ -141,6 +141,7 @@ def perf_flux(
             args.T,
             args.E,
             args.input_groups,
+            nnodes=flux.testing.NNODES(),
             do_all_reduce=do_all_reduce,
             use_read_mode=use_read_mode,
         )

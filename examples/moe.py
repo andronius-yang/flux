@@ -145,7 +145,7 @@ class MoE_layer_flux(torch.nn.Module):
         self.ctx = ctx
         self.activation_func = torch.nn.functional.gelu
 
-        tp_env = flux.DistEnvTPWithEP(tp_group=TP_GROUP, nnodes=1, ep_group=EP_GROUP)
+        tp_env = flux.DistEnvTPWithEP(tp_group=TP_GROUP, nnodes=DIST_ENV.NNODES, ep_group=EP_GROUP)
         flux_m_max = ctx.ntokens * ctx.topk
         moe_args = flux.MoeArguments(
             max_ntokens=ctx.ntokens,
@@ -182,6 +182,7 @@ class MoE_layer_flux(torch.nn.Module):
                 ctx.ffn_tp_size,
                 ctx.ep_size,
                 1,
+                nnodes=DIST_ENV.NNODES,
             )
 
     def forward(self):

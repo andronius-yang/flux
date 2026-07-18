@@ -17,10 +17,13 @@
 #include "moe_ag_scatter/ths_op/gemm_grouped_v2_ag_scatter.h"
 #include "coll/ths_op/all_gather_op.h"
 #include "coll/ths_op/all_gather_types.h"
+#include "cute/tensor.hpp"
+#include "cutlass/util/device_memory.h"
 #include "flux/args/moe_ag_scatter.h"
 #include "flux/cuda/cuda_common.h"
 #include "flux/cuda/cuda_stub.h"
 #include "flux/flux.h"
+#include "flux/utils.h"
 #include "flux/gemm_hparams.h"
 #include "flux/gemm_meta.h"
 #include "flux/op_registry.h"
@@ -28,9 +31,13 @@
 #include "flux/ths_op/ths_op.h"
 #include "flux/ths_op/topo_utils.h"
 #include "flux/ths_op/util.h"
+#include "host/nvshmem_api.h"
+#include "host/nvshmemx_api.h"
 #include "moe_ag_scatter/sort_util.h"
 #include "moe_ag_scatter/triton_util.h"
 #include "moe_ag_scatter/workspace_util.h"
+#include <nvshmemx.h>
+#include <optional>
 #include <ATen/core/jit_type.h>
 #include <ATen/core/List.h>
 #include <ATen/core/TensorBody.h>
@@ -211,6 +218,8 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   const int rank;
   const int world_size;
   const int ep_size;
+  const int nnodes;
+  const DistEnv dist_env;
   const int ffn_tp_size;
   const int ep_rank;
   const int ffn_tp_rank;
@@ -226,12 +235,34 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
 
   torch::Tensor workspace_buffer;
 
-  c10::cuda::CUDAStream cp_stream;
+  c10::cuda::CUDAStream cp_stream;             // intra-node copies (V3: cp_stream_intra_node)
+  c10::cuda::CUDAStream cp_stream_inter_node;  // remote-node fetches, used iff nnodes > 1
   cudaEvent_t ready_event;
+  cudaEvent_t fetch_remote_event;
   cudaEvent_t all_gather_event;
 
-  AllGatherOp ag_op;
+  // nnodes == 1: intra-node all-gather over CUDA-IPC buffers (legacy path)
+  std::optional<AllGatherOp> ag_op;
+  // nnodes > 1: V3-style all-gather over NVSHMEM symmetric memory
+  torch::Tensor input_buffer;
+  // we use cutlass::DeviceAllocation instead of pytorch tensor here,
+  // because if PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True is set,
+  // pytorch tensor .data_ptr() will return a virtual address which is invalid
+  // for cuStreamWriteValue32_v2
+  cutlass::DeviceAllocation<uint8_t> barrier_block;
   GroupBarrier group_barrier;
+
+  // a2av dispatch mode (raw alltoallv): each (token, topk-slot) copy goes
+  // directly producer -> expert-owner rank; wire bytes follow the routing.
+  const bool a2av_dispatch_;
+  // a2av_ring: puts follow the reverse hierarchical ring (mirror of the dense
+  // stage order), and the GEMM keeps the dense static problem schedule.
+  const bool a2av_ring_;
+  uint64_t run_id_ = 0;             // epoch value carried by the NVSHMEM signals
+  int64_t max_recv_ntokens_ = 0;    // rows of the symmetric recv buffer
+  torch::Tensor a2av_send_buffer;   // symmetric [tokens_per_rank_max * topk, hidden]
+  torch::Tensor a2av_recv_buffer;   // symmetric [max_recv_ntokens_, hidden]
+  torch::Tensor a2av_signal_buffer; // symmetric uint64[world_size], never memset
 
  private:
   c10::cuda::CUDAStream
@@ -264,16 +295,21 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   GemmGroupedV2AGScatterOpImpl(
       std::shared_ptr<Group> tp_group,
       int ep_size,
+      int nnodes,
       int max_ntokens,
       int ffn_hidden,  // before TP shard
       int hidden,
       int nexperts,
       int topk,
       at::ScalarType input_dtype,
-      at::ScalarType output_dtype)
+      at::ScalarType output_dtype,
+      bool a2av_dispatch = false,
+      bool a2av_ring = false)
       : tp_group(tp_group),
         world_size(tp_group->get_size()),
         ep_size(ep_size),
+        nnodes(nnodes),
+        dist_env(tp_group->get_rank(), tp_group->get_size(), nnodes),
         ffn_tp_size(world_size / ep_size),
         rank(tp_group->get_rank()),
         ffn_tp_rank(rank % ffn_tp_size),
@@ -288,24 +324,62 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         ep_nexperts(nexperts / ep_size),
         ep_start(this->ep_nexperts * ep_rank),
         cp_stream(create_cp_stream()),
-        ag_op(
-            this->tp_group,
-            1,  // TODO(houqi.1993) only support 1 nodes
-            max_ntokens,
-            hidden,
-            input_dtype),
-        group_barrier(this->tp_group, this->tp_group->get_size() > 8) {
+        cp_stream_inter_node(create_cp_stream()),
+        a2av_dispatch_(a2av_dispatch),
+        a2av_ring_(a2av_ring),
+        // ring_mode barriers are CUDA-IPC based and intra-node only; multi-node
+        // must take the NVSHMEM barrier (ring_mode = false)
+        group_barrier(this->tp_group, nnodes == 1 && this->tp_group->get_size() > 8) {
     _ensure_topo_initialized();
     CHECK_DIV(nexperts, ep_size);
     CHECK_DIV(ffn_hidden, ffn_tp_size);
+    FLUX_CHECK_GE(nnodes, 1);
+    CHECK_DIV(world_size, nnodes);
+    FLUX_CHECK(!a2av_ring || a2av_dispatch) << "a2av_ring requires a2av_dispatch";
+    if (a2av_dispatch) {
+      FLUX_CHECK_EQ(this->ffn_tp_size, 1) << "a2av dispatch requires ep_size == world_size";
+      FLUX_CHECK(nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE) == dist_env.local_rank);
+      int64_t tokens_per_rank_max = (max_ntokens + world_size - 1) / world_size;
+      // default recv capacity: 2x the balanced per-rank load (capped at the total);
+      // very skewed routings need FLUX_A2AV_MAX_RECV_NTOKENS
+      this->max_recv_ntokens_ = get_int_from_env(
+          "FLUX_A2AV_MAX_RECV_NTOKENS",
+          (int)std::min<int64_t>((int64_t)max_ntokens * topk, tokens_per_rank_max * topk * 2));
+      this->a2av_send_buffer =
+          nvshmem_create_tensor({tokens_per_rank_max * topk, hidden}, input_dtype);
+      this->a2av_recv_buffer =
+          nvshmem_create_tensor({this->max_recv_ntokens_, hidden}, input_dtype);
+      this->a2av_signal_buffer =
+          nvshmem_create_tensor({world_size}, at::ScalarType::Long, /*init_zero=*/true);
+      if (rank == 0) {
+        double sym_mb = (this->a2av_send_buffer.nbytes() + this->a2av_recv_buffer.nbytes() +
+                         this->a2av_signal_buffer.nbytes()) /
+                        1024.0 / 1024.0;
+        fprintf(
+            stderr,
+            "[flux a2av] recv rows %ld send rows %ld -> %.0f MiB symmetric heap per rank\n",
+            (long)this->max_recv_ntokens_,
+            (long)(tokens_per_rank_max * topk),
+            sym_mb);
+      }
+    } else if (nnodes == 1) {
+      ag_op.emplace(this->tp_group, 1, max_ntokens, hidden, input_dtype);
+    } else {
+      FLUX_CHECK(nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE) == dist_env.local_rank);
+      this->input_buffer = nvshmem_create_tensor({max_ntokens, hidden}, input_dtype);
+      this->barrier_block.reset(pad_to(world_size * (int64_t)sizeof(int), (int64_t)128));
+    }
     CUDA_CHECK(cudaEventCreateWithFlags(&this->ready_event, cudaEventDisableTiming));
+    CUDA_CHECK(cudaEventCreateWithFlags(&this->fetch_remote_event, cudaEventDisableTiming));
     CUDA_CHECK(cudaEventCreateWithFlags(&this->all_gather_event, cudaEventDisableTiming));
   }
 
   ~GemmGroupedV2AGScatterOpImpl() {
     CUDA_CHECK(cudaEventDestroy(this->all_gather_event));
+    CUDA_CHECK(cudaEventDestroy(this->fetch_remote_event));
     CUDA_CHECK(cudaEventDestroy(this->ready_event));
     CUDA_CHECK(cudaStreamDestroy(this->cp_stream));
+    CUDA_CHECK(cudaStreamDestroy(this->cp_stream_inter_node));
   }
 
  protected:
@@ -326,6 +400,228 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   auto
   get_rt_conf() const {
     return make_runtime_config(512, this->N, this->hidden);
+  }
+
+  // ported from GemmGroupedV3AGScatterOpImpl::all_gather_all2all: all-gather the
+  // input shards of all ranks into the NVSHMEM symmetric `input_buffer`, writing a
+  // per-source-rank ready flag (value 1) into `barrier_block` as each shard lands.
+  // used only when nnodes > 1.
+  void
+  all_gather_all2all(torch::Tensor const &inputs_shard) {
+    using namespace cute;
+
+    int ntokens_shard = inputs_shard.size(0);
+    Tensor full_input = make_tensor(
+        static_cast<uint8_t *>(input_buffer.data_ptr()),
+        make_shape(
+            make_shape(c10::elementSize(this->input_dtype), this->hidden),
+            ntokens_shard,
+            dist_env.world_size));
+
+    // fetch data from other ranks and write the flag to mark the data ready
+    // outer loop iterating the node_idx, processing the current node first then others
+    // inner loop iterating the local_rank, use all2all for communication
+    for (int node_idx = dist_env.node_idx, i = 0; i < dist_env.nnodes;
+         ++i, node_idx = (node_idx + 1) % dist_env.nnodes) {
+      if (node_idx == dist_env.node_idx) {
+        auto main_stream = c10::cuda::getCurrentCUDAStream();
+        auto shard_input = full_input(_, _, dist_env.rank);
+        CUDA_CHECK(cudaMemcpyAsync(
+            shard_input.data(),
+            inputs_shard.data_ptr(),
+            shard_input.size(),
+            cudaMemcpyDeviceToDevice,
+            main_stream));
+        nvshmemx_barrier_all_on_stream(main_stream);
+        CUDA_CHECK(cudaEventRecord(this->ready_event, main_stream));
+        CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream, this->ready_event));
+      } else {
+        if (i == 1) {
+          // the first remote fetch wait for data ready
+          CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream_inter_node, this->ready_event));
+        }
+        int src_rank = dist_env.local_rank_to_global_rank(dist_env.local_rank, node_idx);
+        auto shard_input = full_input(_, _, src_rank);
+        nvshmemx_getmem_on_stream(
+            shard_input.data(),
+            shard_input.data(),
+            shard_input.size(),
+            src_rank,
+            this->cp_stream_inter_node);
+        nvshmemx_barrier_on_stream(NVSHMEMX_TEAM_NODE, this->cp_stream_inter_node);
+        CUDA_CHECK(cudaEventRecord(this->fetch_remote_event, this->cp_stream_inter_node));
+        CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream, this->fetch_remote_event));
+      }
+      for (int local_rank = dist_env.local_rank, j = 0; j < dist_env.local_world_size;
+           ++j, local_rank = (local_rank + 1) % dist_env.local_world_size) {
+        int src_rank = dist_env.local_rank_to_global_rank(local_rank, node_idx);
+        int local_rank_global = dist_env.local_rank_to_global_rank(local_rank);
+        if (local_rank != dist_env.local_rank) {
+          auto shard_input = full_input(_, _, src_rank);
+          nvshmemx_getmem_on_stream(
+              shard_input.data(),
+              shard_input.data(),
+              shard_input.size(),
+              local_rank_global,
+              this->cp_stream);
+        }
+        CU_CHECK(CUStreamWriteValue(
+            this->cp_stream,
+            (CUdeviceptr)(ptr_offset(barrier_block.get(), src_rank * sizeof(int))),
+            1,
+            CU_STREAM_WRITE_VALUE_DEFAULT));
+      }
+    }
+    CUDA_CHECK(cudaEventRecord(this->all_gather_event, this->cp_stream));
+  }
+
+  struct A2AVDispatchState {
+    torch::Tensor sorted_gather_index;   // int32 [M_this_ep]: sorted-A row -> recv-buffer row
+    torch::Tensor sorted_scatter_index;  // int32 [M_this_ep]: sorted-D row -> per-expert D row
+    torch::Tensor sorted_splits_cumsum;  // int32 [ep_nexperts, world_size]
+    int M_this_ep = 0;
+  };
+
+  // Raw alltoallv dispatch: pack my (token, topk-slot) copies destination-major
+  // into the symmetric send buffer, then one putmem_signal per destination rank
+  // into its recv buffer. The recv layout is (source, expert, dst_row)-ordered so
+  // each src->dst message is a single contiguous put; the GEMM reads rows through
+  // sorted_gather_index, so no unpack kernel is needed.
+  // NOTE: a real system would exchange per-(source, expert) counts first; in this
+  // harness every rank holds the identical global scatter_index, so all offsets
+  // are computed locally.
+  A2AVDispatchState
+  a2av_dispatch(
+      torch::Tensor const &inputs_shard,
+      torch::Tensor const &splits_gpu,
+      torch::Tensor const &scatter_index,
+      cudaStream_t stream) {
+    const int W = this->world_size;
+    const int64_t E = this->ep_nexperts;
+    const int tokens_per_rank = inputs_shard.size(0);
+    const int64_t copies_per_rank = (int64_t)tokens_per_rank * topk;
+    const int64_t n_copies = copies_per_rank * W;
+    this->run_id_ += 1;
+
+    auto opt_i64 = torch::TensorOptions(torch::kCUDA)
+                       .dtype(torch::kLong)
+                       .device_index(at::cuda::current_device());
+    auto flat_dst = scatter_index.view({-1}).to(torch::kLong);  // [n_copies]
+    auto splits64 = splits_gpu.to(torch::kLong);
+    auto splits_cum = splits64.cumsum(0);  // inclusive
+    auto e_all = torch::searchsorted(splits_cum, flat_dst, /*out_int32=*/false, /*right=*/true);
+    auto s_all = torch::arange(n_copies, opt_i64).div_(copies_per_rank, "floor");
+    auto owner_all = e_all.div(E, "floor");
+
+    // full [src, dst] chunk-count matrix and exclusive recv-region offsets
+    auto chunks_full = torch::bincount(s_all * W + owner_all, {}, (int64_t)W * W).view({W, W});
+    auto recv_off_full = chunks_full.cumsum(0) - chunks_full;  // RO[s][d]
+
+    // ---- consumer side: sorted mat-A indices over the recv buffer ----
+    auto p_mine = owner_all.eq((int64_t)rank).nonzero().squeeze(1);
+    const int64_t M_this_ep = p_mine.numel();
+    auto e_g = e_all.index_select(0, p_mine);        // global expert id
+    auto e_mine = e_g.sub((int64_t)ep_start);        // local expert id
+    auto s_mine = s_all.index_select(0, p_mine);
+    auto d_mine = flat_dst.index_select(0, p_mine);
+    constexpr int64_t kShift = int64_t(1) << 32;
+    // sorted mat-A order: (expert, source, dst_row); recv order: (source, expert, dst_row)
+    auto perm_a = ((e_mine * W + s_mine) * kShift + d_mine).argsort();
+    auto recv_pos = ((s_mine * E + e_mine) * kShift + d_mine).argsort().argsort();
+    auto sorted_gather_index = recv_pos.index_select(0, perm_a).to(torch::kInt);
+    auto scatter_val = d_mine - (splits_cum - splits64).index_select(0, e_g);
+    auto sorted_scatter_index = scatter_val.index_select(0, perm_a).to(torch::kInt);
+    auto cnt_mine =
+        torch::bincount(s_mine * E + e_mine, {}, (int64_t)W * E).view({W, E});
+    auto sorted_splits_cumsum = cnt_mine.cumsum(0).t().contiguous().to(torch::kInt);
+
+    // ---- producer side: pack my copies destination-major ----
+    auto e_src = e_all.narrow(0, (int64_t)rank * copies_per_rank, copies_per_rank);
+    auto d_src = flat_dst.narrow(0, (int64_t)rank * copies_per_rank, copies_per_rank);
+    auto perm_s = (e_src * kShift + d_src).argsort();
+    auto t_local = torch::arange(copies_per_rank, opt_i64).div_((int64_t)topk, "floor");
+    auto send_gather_index = t_local.index_select(0, perm_s);
+    auto send_view = this->a2av_send_buffer.narrow(0, 0, copies_per_rank);
+    at::index_select_out(send_view, inputs_shard, 0, send_gather_index);
+
+    // one small D2H sync feeds the host-side put loop
+    auto chunks_cpu = chunks_full.cpu();
+    auto recv_off_cpu = recv_off_full.cpu();
+    auto chunks_acc = chunks_cpu.accessor<int64_t, 2>();
+    auto recv_off_acc = recv_off_cpu.accessor<int64_t, 2>();
+    FLUX_CHECK_LE(M_this_ep, this->max_recv_ntokens_)
+        << "a2av recv buffer overflow; raise FLUX_A2AV_MAX_RECV_NTOKENS";
+
+    CUDA_CHECK(cudaEventRecord(this->ready_event, stream));
+    CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream, this->ready_event));
+    CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream_inter_node, this->ready_event));
+
+    const int64_t row_bytes = (int64_t)hidden * c10::elementSize(input_dtype);
+    uint64_t *signal_base = reinterpret_cast<uint64_t *>(this->a2av_signal_buffer.data_ptr());
+    char *send_base = reinterpret_cast<char *>(this->a2av_send_buffer.data_ptr());
+    char *recv_base = reinterpret_cast<char *>(this->a2av_recv_buffer.data_ptr());
+    std::vector<int64_t> send_off(W, 0);
+    for (int d = 0, acc = 0; d < W; d++) {
+      send_off[d] = acc;
+      acc += chunks_acc[rank][d];
+    }
+    // self-delivery on cp_stream: the send segment's interior order equals the
+    // recv region's interior order, so one contiguous local copy suffices
+    if (chunks_acc[rank][rank] > 0) {
+      CUDA_CHECK(cudaMemcpyAsync(
+          recv_base + recv_off_acc[rank][rank] * row_bytes,
+          send_base + send_off[rank] * row_bytes,
+          chunks_acc[rank][rank] * row_bytes,
+          cudaMemcpyDeviceToDevice,
+          this->cp_stream));
+    }
+    nvshmemx_signal_op_on_stream(
+        signal_base + rank, this->run_id_, NVSHMEM_SIGNAL_SET, rank, this->cp_stream);
+    // zero-payload destinations still get the signal (the GEMM waits on every source)
+    auto issue_put = [&](int d, cudaStream_t put_stream) {
+      int64_t bytes = chunks_acc[rank][d] * row_bytes;
+      if (bytes > 0) {
+        nvshmemx_putmem_signal_nbi_on_stream(
+            recv_base + recv_off_acc[rank][d] * row_bytes,
+            send_base + send_off[d] * row_bytes,
+            bytes,
+            signal_base + rank,
+            this->run_id_,
+            NVSHMEM_SIGNAL_SET,
+            d,
+            put_stream);
+      } else {
+        nvshmemx_signal_op_on_stream(
+            signal_base + rank, this->run_id_, NVSHMEM_SIGNAL_SET, d, put_stream);
+      }
+    };
+    if (!a2av_ring_) {
+      // remote puts, ring order starting at rank+1 to avoid incast
+      for (int i = 1; i < W; i++) {
+        issue_put((rank + i) % W, this->cp_stream_inter_node);
+      }
+    } else {
+      // scheduled mode: reverse hierarchical ring — the mirror of the receivers'
+      // stage order (shift_rank_to_order), so destination d sees our chunk at
+      // exactly the stage the dense problem schedule expects source `rank` at.
+      // Each slot k is a bijection source->destination, so no incast. Intra-node
+      // puts ride cp_stream; inter-node puts start concurrently on
+      // cp_stream_inter_node (their tiles are scheduled last anyway).
+      const int L = dist_env.local_world_size;
+      const int NN = dist_env.nnodes;
+      for (int k = 1; k < W; k++) {
+        int dn = k / L, dl = k % L;
+        int d = dist_env.local_rank_to_global_rank(
+            (dist_env.local_rank - dl + L) % L, (dist_env.node_idx - dn + NN) % NN);
+        issue_put(d, dn == 0 ? this->cp_stream : this->cp_stream_inter_node);
+      }
+    }
+    CUDA_CHECK(cudaEventRecord(this->fetch_remote_event, this->cp_stream_inter_node));
+    CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream, this->fetch_remote_event));
+    CUDA_CHECK(cudaEventRecord(this->all_gather_event, this->cp_stream));
+
+    return A2AVDispatchState{
+        sorted_gather_index, sorted_scatter_index, sorted_splits_cumsum, (int)M_this_ep};
   }
 
   std::vector<torch::Tensor>
@@ -404,15 +700,47 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     bool is_s8_gemm = is_s8_torch_dtype(inputs_shard.scalar_type());
     FLUX_CHECK(!is_s8_gemm) << "not support INT8 MOE AG+Scatter yet";
 
-    CUDA_CHECK(cudaEventRecord(this->ready_event, stream));
-    CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream, this->ready_event));
-    ag_op.run(inputs_shard, c10::nullopt, opt, this->cp_stream);
-
-    // Step 3: helper kernels. for preparing gather_index & sort tokens & outputs
     int topk = this->topk;
     int ep_nexperts = this->ep_nexperts;
     int nexperts = this->nexperts;
     int ep_start = this->ep_start;
+    torch::Tensor sorted_gather_index, sorted_scatter_index, sorted_splits_cumsum;
+    torch::Tensor problem_schedules_gpu;
+    int num_problem_schedules = 0;
+    int M_this_ep = 0;
+
+    if (a2av_dispatch_) {
+      FLUX_CHECK_EQ((int)num_weights_group, 1) << "a2av mode supports a single weight group";
+      FLUX_CHECK(!allgather_output.has_value()) << "a2av mode has no dense gathered buffer";
+      FLUX_CHECK_EQ((int)splits_gpu.size(0), nexperts) << "drop-token unsupported in a2av mode";
+      A2AVDispatchState a2av_state =
+          this->a2av_dispatch(inputs_shard, splits_gpu, scatter_index, stream);
+      sorted_gather_index = a2av_state.sorted_gather_index;
+      sorted_scatter_index = a2av_state.sorted_scatter_index;
+      sorted_splits_cumsum = a2av_state.sorted_splits_cumsum;
+      M_this_ep = a2av_state.M_this_ep;
+      if (a2av_ring_) {
+        // static ring schedule: the prepare kernel takes the dense branch and
+        // writes ProblemSchedV2 into this buffer (bucket workspace is skipped)
+        num_problem_schedules = ep_nexperts * world_size * num_weights_group;
+        problem_schedules_gpu = empty_with_uninitialized_data(
+            std::vector<int64_t>{num_problem_schedules * (int64_t)sizeof(ProblemSchedule)},
+            torch::TensorOptions(torch::kInt8).device(torch::kCUDA));
+      }
+    } else {
+    if (nnodes == 1) {
+      CUDA_CHECK(cudaEventRecord(this->ready_event, stream));
+      CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream, this->ready_event));
+      ag_op->run(inputs_shard, c10::nullopt, opt, this->cp_stream);
+    } else {
+      // reset the per-source-rank ready flags on the main stream: ordered before the
+      // local shard copy (and hence before ready_event / any flag write) inside
+      // all_gather_all2all
+      CUDA_CHECK(cudaMemsetAsync(barrier_block.get(), 0, barrier_block.bytes(), stream));
+      this->all_gather_all2all(inputs_shard);
+    }
+
+    // Step 3: helper kernels. for preparing gather_index & sort tokens & outputs
     // should be M_this_ep, but never mind gather_index takes little memory
     auto opt_i32d = torch::TensorOptions(torch::kCUDA)
                         .dtype(at::ScalarType::Int)
@@ -421,15 +749,15 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         torch::TensorOptions(torch::kCPU).dtype(at::ScalarType::Int).pinned_memory(true);
     torch::Tensor gather_index =
         empty_with_uninitialized_data(std::vector<int64_t>{ntokens * topk}, opt_i32d);
-    torch::Tensor sorted_gather_index =
+    sorted_gather_index =
         empty_with_uninitialized_data(std::vector<int64_t>{ntokens * topk}, opt_i32d);
-    torch::Tensor sorted_scatter_index =
+    sorted_scatter_index =
         empty_with_uninitialized_data(std::vector<int64_t>{ntokens * topk}, opt_i32d);
     torch::Tensor M_this_ep_holder =
         empty_with_uninitialized_data(std::vector<int64_t>{1}, opt_i32h);
     torch::Tensor sorted_splits =
         empty_with_uninitialized_data(std::vector<int64_t>{ep_nexperts * world_size}, opt_i32d);
-    torch::Tensor sorted_splits_cumsum =
+    sorted_splits_cumsum =
         empty_with_uninitialized_data(std::vector<int64_t>{ep_nexperts * world_size}, opt_i32d);
     calc_gather_index_impl(
         nexperts,
@@ -464,19 +792,32 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         ep_nexperts,
         stream);
 
-    int M_this_ep = scatter_index.numel();  // for EP=1, M_this_ep is always M_full
+    M_this_ep = scatter_index.numel();  // for EP=1, M_this_ep is always M_full
     if (ep_nexperts != nexperts) {
       CUDA_CHECK(cudaStreamSynchronize((cudaStream_t)stream));
       M_this_ep = *M_this_ep_holder.data_ptr<int32_t>();
     }
 
-    int num_problem_schedules = ep_nexperts * world_size * num_weights_group;
-    torch::Tensor problem_schedules_gpu = empty_with_uninitialized_data(
+    num_problem_schedules = ep_nexperts * world_size * num_weights_group;
+    problem_schedules_gpu = empty_with_uninitialized_data(
         std::vector<int64_t>{num_problem_schedules * (int64_t)sizeof(ProblemSchedule)},
         torch::TensorOptions(torch::kInt8).device(torch::kCUDA));
+    }  // end dense (non-a2av) path
     // Step 4: prepare GEMM args
-    torch::Tensor barrier = ag_op.local_barrier_buffer();
-    torch::Tensor input_buffer = ag_op.local_input_buffer().slice(0, 0, ntokens);
+    torch::Tensor barrier;  // engaged iff nnodes == 1 (dense path)
+    int32_t *barrier_ptr = nullptr;
+    torch::Tensor input_buffer;
+    if (a2av_dispatch_) {
+      // rows are addressed through sorted_gather_index; signals replace the barrier
+      input_buffer = this->a2av_recv_buffer;
+    } else if (nnodes == 1) {
+      barrier = ag_op->local_barrier_buffer();
+      barrier_ptr = barrier.data_ptr<int32_t>();
+      input_buffer = ag_op->local_input_buffer().slice(0, 0, ntokens);
+    } else {
+      barrier_ptr = reinterpret_cast<int32_t *>(barrier_block.get());
+      input_buffer = this->input_buffer.slice(0, 0, ntokens);
+    }
 
     // shapes check
     std::vector<torch::Tensor> outputs = outputs_buf.value_or([&]() {
@@ -498,6 +839,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     auto args = GemmGroupedV2AGScatterArguments{
         .rank = rank,
         .world_size = world_size,
+        .dist_env = dist_env,
         .sm_margin = sm_margin,
         .num_groups = (int)num_weights_group,
         .ep_start = ep_start,
@@ -509,12 +851,18 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         .splits = splits_gpu.data_ptr<int>(),
         .gather_A = sorted_gather_index.data_ptr<int32_t>(),
         .scatter_D = sorted_scatter_index.data_ptr<int32_t>(),
-        .problem_schedules = problem_schedules_gpu.data_ptr(),
+        .problem_schedules =
+            problem_schedules_gpu.defined() ? problem_schedules_gpu.data_ptr() : nullptr,
         .num_problem_schedules = num_problem_schedules,
         .accum_per_rank_ptr = sorted_splits_cumsum.data_ptr<int32_t>(),
         .tile_size_m = tile_M,
         .tile_size_n = tile_N,
-        .barrier_ptr = barrier.data_ptr<int32_t>()};
+        .barrier_ptr = barrier_ptr};
+    if (a2av_dispatch_) {
+      args.signal_ptr = reinterpret_cast<uint64_t *>(this->a2av_signal_buffer.data_ptr());
+      args.signal_expected = this->run_id_;
+      args.a2av_ring_schedule = a2av_ring_;
+    }
     for (int gid = 0; gid < num_weights_group; gid++) {
       args.weight[gid] = weights[gid].data_ptr();
       args.output[gid] = outputs[gid].data_ptr();
@@ -522,7 +870,18 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           output_scales.has_value() ? output_scales->at(gid).data_ptr<float>() : nullptr;
     }
 
-    CUDA_CHECK(cudaStreamWaitEvent(stream, ag_op.get_local_prepare_event()));
+    if (a2av_dispatch_) {
+      // do not start the (SM-occupying) GEMM before all puts/signals are issued;
+      // in ring mode the intra-node puts live on cp_stream, which all_gather_event
+      // covers (it is recorded after cp_stream waits on fetch_remote_event)
+      CUDA_CHECK(
+          cudaStreamWaitEvent(stream, a2av_ring_ ? this->all_gather_event : this->fetch_remote_event));
+    } else if (nnodes == 1) {
+      CUDA_CHECK(cudaStreamWaitEvent(stream, ag_op->get_local_prepare_event()));
+    } else {
+      // do not start the (SM-occupying) GEMM before the remote fetches are issued
+      CUDA_CHECK(cudaStreamWaitEvent(stream, this->fetch_remote_event));
+    }
     if (M_this_ep > 0) {
       int64_t workspace_size = op->get_workspace_size(args);
       lazy_init_buffer_tensor(&this->workspace_buffer, workspace_size);
@@ -531,6 +890,14 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       op->run(args, workspace_size ? this->workspace_buffer.data_ptr() : nullptr, stream);
     }
     CUDA_CHECK(cudaStreamWaitEvent(stream, this->all_gather_event));
+    if (nnodes > 1 || a2av_dispatch_) {
+      // ensure that when the next time each rank copy data to itself's shard in the
+      // input_buffer, all ranks have already finished allgather so that we can
+      // safely modify input_buffer. In a2av mode this barrier additionally quiets
+      // our outstanding nbi puts and keeps iteration n+1 puts from racing
+      // iteration n's GEMM reads of the recv buffer.
+      nvshmemx_barrier_all_on_stream(stream);
+    }
 
     if (allgather_output.has_value()) {
       CHECK_INPUT(allgather_output.value(), this->input_dtype);
@@ -614,6 +981,8 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       int sm_margin,
       const AllGatherOption &opt) {
 #if defined(FLUX_WITH_TRITON_AOT)
+    FLUX_CHECK(nnodes == 1) << "moe_ag_scatter triton path is single-node only";
+    FLUX_CHECK(!a2av_dispatch_) << "a2av dispatch mode does not support the triton path";
     FLUX_CHECK(weights.size() == 1);
     bool is_fp8_gemm = is_fp8_torch_dtype(inputs_shard.scalar_type());
     bool is_s8_gemm = is_s8_torch_dtype(inputs_shard.scalar_type());
@@ -686,7 +1055,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
 
     CUDA_CHECK(cudaEventRecord(this->ready_event, stream));
     CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream, this->ready_event));
-    ag_op.run(
+    ag_op->run(
         inputs_shard,
         allgather_input_scale ? c10::optional<torch::Tensor>{input_scales->at(0)} : c10::nullopt,
         opt,
@@ -726,11 +1095,11 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             (intptr_t)stream);
 
     // Step 4: prepare GEMM args
-    torch::Tensor barrier = ag_op.local_barrier_buffer();
-    torch::Tensor input_buffer = ag_op.local_input_buffer().slice(0, 0, ntokens);
+    torch::Tensor barrier = ag_op->local_barrier_buffer();
+    torch::Tensor input_buffer = ag_op->local_input_buffer().slice(0, 0, ntokens);
     c10::optional<torch::Tensor> input_scale_tensor =
         allgather_input_scale
-            ? c10::optional<torch::Tensor>{ag_op.local_input_scale_buffer().slice(0, 0, ntokens)}
+            ? c10::optional<torch::Tensor>{ag_op->local_input_scale_buffer().slice(0, 0, ntokens)}
             : c10::nullopt;
 
     // shapes check
@@ -754,7 +1123,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     FLUX_CHECK(weight_scales.has_value());
 
     if (M_this_ep > 0) {
-      CUDA_CHECK(cudaStreamWaitEvent(stream, ag_op.get_local_prepare_event()));
+      CUDA_CHECK(cudaStreamWaitEvent(stream, ag_op->get_local_prepare_event()));
       auto rtn = moe_ag_scatter_grouped_gemm(
           (CUstream)stream,
           (CUdeviceptr)input_buffer.data_ptr(),
@@ -843,7 +1212,12 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
 
   void
   clear_buffers() {
-    // do nothing. just keep pace with v3 code
+    if (nnodes > 1 && this->input_buffer.defined()) {
+      this->input_buffer.zero_();
+    }
+    // a2av signal buffer is deliberately NOT cleared: the epoch scheme relies on
+    // monotonically increasing signal values and clearing would corrupt in-flight
+    // iterations. Data buffers need no clearing (rows fully overwritten per use).
   }
 
   torch::Tensor
@@ -1021,23 +1395,29 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
 GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOp(
     std::shared_ptr<Group> tp_group,
     int ep_size,
+    int nnodes,
     int max_ntokens,
     int ffn_hidden,  // before TP shard
     int hidden,
     int num_experts,
     int topk,
     at::ScalarType input_dtype,
-    at::ScalarType output_dtype)
+    at::ScalarType output_dtype,
+    bool a2av_dispatch,
+    bool a2av_ring)
     : impl_(new GemmGroupedV2AGScatterOpImpl(
           tp_group,
           ep_size,
+          nnodes,
           max_ntokens,
           ffn_hidden,  // before TP shard
           hidden,
           num_experts,
           topk,
           input_dtype,
-          output_dtype)) {}
+          output_dtype,
+          a2av_dispatch,
+          a2av_ring)) {}
 GemmGroupedV2AGScatterOp::~GemmGroupedV2AGScatterOp() { delete impl_; }
 
 void

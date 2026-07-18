@@ -45,5 +45,23 @@ void ep_topk_gather_rs_v2(
     int32_t ep_m_start,
     int32_t ep_m_end,
     cudaStream_t stream);
+
+// multi-node gather-RS: accumulate the remote-node partials received in staging_recv
+// (slots [m][sid] for all m != node_idx) of split `sid` into the output token shard.
+// rows/n_per are the runtime chunk shape, staging_rows the max slot row stride, out_n
+// the full output row stride (n_dim).
+void internode_reduce_gather_rs(
+    void *output,
+    void const *staging_recv,
+    DataTypeEnum dtype,
+    int nnodes,
+    int node_idx,
+    int n_split,
+    int sid,
+    int64_t rows,
+    int64_t n_per,
+    int64_t out_n,
+    int64_t staging_rows,
+    cudaStream_t stream);
 }  // namespace flux
 }  // namespace bytedance

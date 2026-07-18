@@ -28,7 +28,8 @@ FLUX_TORCH_EXTENSION_NAME = "flux_ths_pybind"
 
 
 def _preload_libs(libname, extra_path=None):
-    libdirs = [Path(__file__).parent / "lib"]
+    # cmake may install to lib/ or lib64/ depending on GNUInstallDirs
+    libdirs = [Path(__file__).parent / "lib", Path(__file__).parent / "lib64"]
     if extra_path is not None:
         libdirs.append(extra_path)
 
@@ -56,14 +57,17 @@ def _nvshmem_home_by_pip():
 
 @functools.lru_cache()
 def _nvshmem_home():
-    return os.getenv("NVSHMEM_HOME", _nvshmem_home_by_pip())
+    nvshmem_home = os.getenv("NVSHMEM_HOME")
+    if nvshmem_home:
+        return nvshmem_home
+    return _nvshmem_home_by_pip()
 
 
 def _load_deps():
     try:
         _preload_libs("libnvshmem_host.so.3", Path(_nvshmem_home()) / "lib")
         _preload_libs("nvshmem_bootstrap_uid.so.3", Path(_nvshmem_home()) / "lib")
-        _preload_libs("nvshmem_transport_ibrc.so.3", Path(_nvshmem_home()) / "lib")
+        # _preload_libs("nvshmem_transport_ibrc.so.3", Path(_nvshmem_home()) / "lib")
     except Exception as e:
         logging.warning("Failed to load NVSHMEM libs")
     _preload_libs("libflux_cuda.so")

@@ -86,7 +86,7 @@ class MoE_layer_flux(torch.nn.Module):
     def __init__(self, ctx):
         super().__init__()
         self.ctx = ctx
-        tp_env = flux.DistEnvTPWithEP(tp_group=TP_GROUP, nnodes=1, ep_group=EP_GROUP)
+        tp_env = flux.DistEnvTPWithEP(tp_group=TP_GROUP, nnodes=DIST_ENV.NNODES, ep_group=EP_GROUP)
         moe_args = flux.MoeArguments(
             max_ntokens=ctx.ntokens,
             hidden=ctx.h,

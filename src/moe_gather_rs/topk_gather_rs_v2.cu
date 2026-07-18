@@ -288,8 +288,31 @@ struct TopkGatherRsOp {
       const int blk_m,
       const int blk_n,
       const int sid,
-      const int stage);
+      const int stage,
+      const int group_idx);
 };
+
+// destination of the last intra-node ring stage: the output shard for the local node's
+// segment group, or the (group, split) staging slot bound for the owner node otherwise
+template <typename T>
+CUTLASS_DEVICE T *
+last_round_dst_ptr(
+    TopKReduceGatherRSV2Arguments const &params,
+    const int group_idx,
+    const int sid,
+    const int segment,
+    const int ntokens_per_rank,
+    const int64_t row_g,
+    const int64_t col_g,
+    const int64_t N) {
+  const int64_t n_per = N / params.n_split;
+  if (group_idx == params.node_idx) {
+    return (T *)params.output_ptr + row_g * N + col_g - (int64_t)segment * ntokens_per_rank * N;
+  }
+  int64_t slot = (int64_t)group_idx * params.n_split + sid;
+  return (T *)params.staging_send + slot * params.staging_rows * n_per +
+         (row_g - (int64_t)segment * ntokens_per_rank) * n_per + (col_g - (int64_t)sid * n_per);
+}
 
 template <
     typename T,
@@ -315,7 +338,8 @@ struct TopkGatherRsOp<
       const int blk_m,
       const int blk_n,
       const int sid,
-      const int stage) {
+      const int stage,
+      const int group_idx) {
     static_assert(
         std::is_same_v<T, __half> || std::is_same_v<T, __nv_bfloat16>, "unsupported type");
     using VecT = std::conditional_t<std::is_same_v<T, __half>, __half2, __nv_bfloat162>;
@@ -343,8 +367,9 @@ struct TopkGatherRsOp<
     constexpr int IDX_LOAD_UNROLL =
         (kTiledM * kTopk + kNumWorkerThreads - 1) / kNumWorkerThreads;  // 1 for most cases
 
-    int segment = (stage + params.rank + 1) % params.world_size;
-    int rank_to = (params.rank + params.world_size - 1) % params.world_size;  // ring to prev
+    const int L = params.local_world_size;
+    int segment = group_idx * L + (stage + params.local_rank + 1) % L;
+    int rank_to = (params.local_rank + L - 1) % L;  // ring to prev (intra-node)
     const int total_m_per_rank = params.m_full / params.world_size;
     const int ntokens_per_rank = total_m_per_rank / params.topk;
     const int64_t N = params.n;
@@ -379,7 +404,7 @@ struct TopkGatherRsOp<
       WorkerBarSync::sync();
 
       if (stage != 0) {
-        int *tile_barrier_ptr = params.tile_barrier_ptrs[params.rank];
+        int *tile_barrier_ptr = params.tile_barrier_ptrs[params.local_rank];
         // wait for tile ready
         WorkerBarrier::wait_eq(tile_barrier_ptr, threadIdx.x, tile_idx, 1);
       }
@@ -411,16 +436,18 @@ struct TopkGatherRsOp<
         for (int i = 0; i < kElemsVecPerPack; i++) {
           pack.elems_vec[i] = floats_to_element<VecT>(acc[i * 2], acc[i * 2 + 1]);
         }
-        bool last_round = stage == params.world_size - 1;
+        bool last_round = stage == L - 1;
         int64_t row_off = ((int64_t)row_g) * N + col_g;
-        int64_t row_out_off = last_round ? (row_off - segment * ntokens_per_rank * N) : row_off;
         void *output_ptr =
-            (T *)(last_round ? params.output_ptr : params.reduce_ptrs[rank_to]) + row_out_off;
+            last_round
+                ? (void *)last_round_dst_ptr<T>(
+                      params, group_idx, sid, segment, ntokens_per_rank, row_g, col_g, N)
+                : (void *)((T *)params.reduce_ptrs[rank_to] + row_off);
         if (stage == 0) {                    // copy only
           storePack(output_ptr, pack.data);  // copy to output (last round)
         } else {                             // reduce
           PackT pack_lr;
-          pack_lr.data = loadPack((T *)(params.reduce_ptrs[params.rank]) + row_off);
+          pack_lr.data = loadPack((T *)(params.reduce_ptrs[params.local_rank]) + row_off);
           storePack(output_ptr, addPack(pack_lr, pack));
         }
       }
@@ -460,7 +487,8 @@ struct TopkGatherRsOp<
       const int blk_m,
       const int blk_n,
       const int sid,
-      const int stage) {
+      const int stage,
+      const int group_idx) {
     static_assert(
         std::is_same_v<T, __half> || std::is_same_v<T, __nv_bfloat16>, "unsupported type");
     using VecT = std::conditional_t<std::is_same_v<T, __half>, __half2, __nv_bfloat162>;
@@ -488,8 +516,9 @@ struct TopkGatherRsOp<
     constexpr int IDX_LOAD_UNROLL =
         (kTiledM * kTopk + kNumWorkerThreads - 1) / kNumWorkerThreads;  // 1 for most cases
 
-    int segment = (stage + params.rank + 1) % params.world_size;
-    int rank_from = (params.rank + 1) % params.world_size;  // ring to prev
+    const int L = params.local_world_size;
+    int segment = group_idx * L + (stage + params.local_rank + 1) % L;
+    int rank_from = (params.local_rank + 1) % L;  // ring to next (intra-node)
     const int total_m_per_rank = params.m_full / params.world_size;
     const int ntokens_per_rank = total_m_per_rank / params.topk;
     const int64_t N = params.n;
@@ -525,7 +554,7 @@ struct TopkGatherRsOp<
 
       if (stage != 0) {
         int *tile_barrier_ptr = params.tile_barrier_ptrs[rank_from];
-        // wait for tile ready
+        // wait for tile ready (rank_from is a local index)
         WorkerBarrier::wait_eq(tile_barrier_ptr, threadIdx.x, tile_idx, 1);
       }
 
@@ -556,11 +585,13 @@ struct TopkGatherRsOp<
         for (int i = 0; i < kElemsVecPerPack; i++) {
           pack.elems_vec[i] = floats_to_element<VecT>(acc[i * 2], acc[i * 2 + 1]);
         }
-        bool last_round = stage == params.world_size - 1;
+        bool last_round = stage == L - 1;
         int64_t row_off = ((int64_t)row_g) * N + col_g;
-        int64_t row_out_off = last_round ? (row_off - segment * ntokens_per_rank * N) : row_off;
         void *output_ptr =
-            (T *)(last_round ? params.output_ptr : params.reduce_ptrs[params.rank]) + row_out_off;
+            last_round
+                ? (void *)last_round_dst_ptr<T>(
+                      params, group_idx, sid, segment, ntokens_per_rank, row_g, col_g, N)
+                : (void *)((T *)params.reduce_ptrs[params.local_rank] + row_off);
 
         if (stage == 0) {                    // copy only
           storePack(output_ptr, pack.data);  // copy to output (last round)
@@ -572,7 +603,7 @@ struct TopkGatherRsOp<
       }
       FullBarSync::sync();
     } else {
-      int *tile_barrier_ptr = params.tile_barrier_ptrs[params.rank];
+      int *tile_barrier_ptr = params.tile_barrier_ptrs[params.local_rank];
       FullBarSync::sync();
       int thread_idx = threadIdx.x - kNumWorkerThreads;
       if (thread_idx == 0) {
@@ -607,25 +638,42 @@ __launch_bounds__(kNumWorkerThreads + 32, 1) void topk_gather_rs_v2_kernel(
   int n_tiles_per_split = n_per_split / kTiledN;
   CUTLASS_PRAGMA_NO_UNROLL
   for (int sid = 0; sid < params.n_split; sid++) {
-    Barrier::wait_eq(params.barrier[params.rank], threadIdx.x, sid, 1);
+    Barrier::wait_eq(params.barrier[params.local_rank], threadIdx.x, sid, 1);
     if (kUseReadMode) {
-      int rank_to = (params.rank + params.world_size - 1) % params.world_size;  // ring to prev
+      int rank_to =
+          (params.local_rank + params.local_world_size - 1) % params.local_world_size;  // to prev
       Barrier::wait_eq(params.barrier[rank_to], threadIdx.x, sid, 1);
     }
-    for (int stage = 0; stage < params.world_size; stage++) {
-      for (int blk_id = blockIdx.x; blk_id < m_tiles_per_rank * n_tiles_per_split;
-           blk_id += gridDim.x) {
-        int blk_m = blk_id / n_tiles_per_split;
-        int blk_n = blk_id % n_tiles_per_split;
-        TopkGatherRsOp<
-            T,
-            kTiledM,
-            kTiledN,
-            kTopk,
-            kNumWeightGroups,
-            kNumWorkerThreads,
-            kHasVecScale,
-            kUseReadMode>{}(params, &smem_buf[0], blk_m, blk_n, sid, stage);
+    // hierarchical reduce-scatter: one intra-node ring per owner-node segment group.
+    // remote groups run first so their inter-node puts overlap the remaining work.
+    for (int g_iter = 0; g_iter < params.nnodes; g_iter++) {
+      int g = (params.node_idx + 1 + g_iter) % params.nnodes;
+      for (int stage = 0; stage < params.local_world_size; stage++) {
+        for (int blk_id = blockIdx.x; blk_id < m_tiles_per_rank * n_tiles_per_split;
+             blk_id += gridDim.x) {
+          int blk_m = blk_id / n_tiles_per_split;
+          int blk_n = blk_id % n_tiles_per_split;
+          TopkGatherRsOp<
+              T,
+              kTiledM,
+              kTiledN,
+              kTopk,
+              kNumWeightGroups,
+              kNumWorkerThreads,
+              kHasVecScale,
+              kUseReadMode>{}(params, &smem_buf[0], blk_m, blk_n, sid, stage, g);
+        }
+      }
+      if (params.nnodes > 1 && g != params.node_idx) {
+        // publish the (g, sid) staging slot to the host put ladder once every block is done
+        __threadfence_system();
+        __syncthreads();
+        if (threadIdx.x == 0) {
+          int done = atomicAdd(params.group_counters + g * params.n_split + sid, 1) + 1;
+          if (done == gridDim.x) {
+            atomic_store_release_sys(params.group_flags + g * params.n_split + sid, 1);
+          }
+        }
       }
     }
     if (params.do_all_reduce) {
@@ -718,6 +766,7 @@ ep_gather_rs_impl_v2(
     int blk_n,
     int sid,
     int stage,
+    int group_idx,
     int ep_m_start,
     int ep_m_end) {
   static_assert(std::is_same_v<T, __half> || std::is_same_v<T, __nv_bfloat16>, "unsupported type");
@@ -744,8 +793,9 @@ ep_gather_rs_impl_v2(
   constexpr int TOKEN_IDX_N = kTiledM * kTopk;
   constexpr int IDX_LOAD_UNROLL = (TOKEN_IDX_N + kNumWorkerThreads - 1) / kNumWorkerThreads;
 
-  int segment = (stage + params.rank + 1) % params.world_size;
-  int rank_to = (params.rank + params.world_size - 1) % params.world_size;  // ring to prev
+  const int L = params.local_world_size;
+  int segment = group_idx * L + (stage + params.local_rank + 1) % L;
+  int rank_to = (params.local_rank + L - 1) % L;  // ring to prev (intra-node)
 
   const int total_m_per_rank = params.m_full / params.world_size;
   // printf("total M :%d \n", totalM);
@@ -783,7 +833,7 @@ ep_gather_rs_impl_v2(
     WorkerBarSync::sync();
 
     if (stage != 0) {
-      int *tile_barrier_ptr = params.tile_barrier_ptrs[params.rank];
+      int *tile_barrier_ptr = params.tile_barrier_ptrs[params.local_rank];
       WorkerBarrier::wait_eq(tile_barrier_ptr, threadIdx.x, tile_idx, 1);
       // wait for tile ready
     }
@@ -818,12 +868,14 @@ ep_gather_rs_impl_v2(
         pack.elems_vec[i] = floats_to_element<VecT>(acc[i * 2], acc[i * 2 + 1]);
       }
 
-      bool last_round = stage == params.world_size - 1;
+      bool last_round = stage == L - 1;
       int64_t row_off = ((int64_t)row_g) * N + col_g;
-      int64_t row_off_out = last_round ? (row_off - segment * ntokens_per_rank * N) : row_off;
       void *output_ptr =
-          (T *)(last_round ? params.output_ptr : params.reduce_ptrs[rank_to]) + row_off_out;
-      auto *pack_lr_ptr = (PackT *)((T *)(params.reduce_ptrs[params.rank]) + row_off);
+          last_round
+              ? (void *)last_round_dst_ptr<T>(
+                    params, group_idx, sid, segment, ntokens_per_rank, row_g, col_g, N)
+              : (void *)((T *)params.reduce_ptrs[rank_to] + row_off);
+      auto *pack_lr_ptr = (PackT *)((T *)(params.reduce_ptrs[params.local_rank]) + row_off);
       PackT pack_lr;
       pack_lr.data = pack_lr_ptr->data;
 
@@ -875,14 +927,30 @@ __launch_bounds__(kNumWorkerThreads + 32, 1) void ep_topk_gather_rs_kernel_v2(
   int n_tiles_per_split = n_per_split / kTiledN;
   CUTLASS_PRAGMA_NO_UNROLL
   for (int sid = 0; sid < params.n_split; sid++) {
-    Barrier::wait_eq(params.barrier[params.rank], threadIdx.x, sid, 1);
-    for (int stage = 0; stage < params.world_size; stage++) {  // reduce_scatter stages
-      for (int blk_id = blockIdx.x; blk_id < m_tiles_per_rank * n_tiles_per_split;
-           blk_id += gridDim.x) {
-        int blk_m = blk_id / n_tiles_per_split;
-        int blk_n = blk_id % n_tiles_per_split;
-        ep_gather_rs_impl_v2<T, kTiledM, kTiledN, kTopk, kNumWorkerThreads, kHasVecScale>(
-            params, (int32_t *)shared_storage, blk_m, blk_n, sid, stage, ep_m_start, ep_m_end);
+    Barrier::wait_eq(params.barrier[params.local_rank], threadIdx.x, sid, 1);
+    // hierarchical reduce-scatter: one intra-node ring per owner-node segment group.
+    // remote groups run first so their inter-node puts overlap the remaining work.
+    for (int g_iter = 0; g_iter < params.nnodes; g_iter++) {
+      int g = (params.node_idx + 1 + g_iter) % params.nnodes;
+      for (int stage = 0; stage < params.local_world_size; stage++) {  // reduce_scatter stages
+        for (int blk_id = blockIdx.x; blk_id < m_tiles_per_rank * n_tiles_per_split;
+             blk_id += gridDim.x) {
+          int blk_m = blk_id / n_tiles_per_split;
+          int blk_n = blk_id % n_tiles_per_split;
+          ep_gather_rs_impl_v2<T, kTiledM, kTiledN, kTopk, kNumWorkerThreads, kHasVecScale>(
+              params, (int32_t *)shared_storage, blk_m, blk_n, sid, stage, g, ep_m_start, ep_m_end);
+        }
+      }
+      if (params.nnodes > 1 && g != params.node_idx) {
+        // publish the (g, sid) staging slot to the host put ladder once every block is done
+        __threadfence_system();
+        __syncthreads();
+        if (threadIdx.x == 0) {
+          int done = atomicAdd(params.group_counters + g * params.n_split + sid, 1) + 1;
+          if (done == gridDim.x) {
+            atomic_store_release_sys(params.group_flags + g * params.n_split + sid, 1);
+          }
+        }
       }
     }
 
@@ -947,6 +1015,85 @@ ep_topk_gather_rs_v2(
             <<<grid_dim, block_dim, shared_mem_size, stream>>>(args, ep_start, ep_nexperts);
       },
       [&]() { FLUX_CHECK(false) << "unsupported for topk=" << args.topk << " dtype:" << dtype; });
+}
+
+namespace {
+template <typename T>
+__global__ void
+internode_reduce_kernel(
+    T *output,
+    T const *staging_recv,
+    int nnodes,
+    int node_idx,
+    int n_split,
+    int sid,
+    int64_t rows,
+    int64_t n_per,
+    int64_t out_n,
+    int64_t staging_rows) {
+  using PackT = Pack<T, uint4>;
+  constexpr int kElemsPerPack = sizeof(uint4) / sizeof(T);
+  const int64_t packs_per_row = n_per / kElemsPerPack;
+  const int64_t total_packs = rows * packs_per_row;
+  for (int64_t i = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; i < total_packs;
+       i += (int64_t)gridDim.x * blockDim.x) {
+    int64_t row = i / packs_per_row;
+    int64_t col = (i % packs_per_row) * kElemsPerPack;
+    T *out_ptr = output + row * out_n + (int64_t)sid * n_per + col;
+    PackT acc;
+    acc.data = loadPack(out_ptr);
+    for (int m = 0; m < nnodes; m++) {
+      if (m == node_idx) {
+        continue;
+      }
+      int64_t slot = (int64_t)m * n_split + sid;
+      PackT part;
+      part.data = loadPack(
+          (T *)staging_recv + slot * staging_rows * n_per + row * n_per + col);
+      acc.data = addPack(acc, part);
+    }
+    storePack(out_ptr, acc.data);
+  }
+}
+}  // namespace
+
+void
+internode_reduce_gather_rs(
+    void *output,
+    void const *staging_recv,
+    DataTypeEnum dtype,
+    int nnodes,
+    int node_idx,
+    int n_split,
+    int sid,
+    int64_t rows,
+    int64_t n_per,
+    int64_t out_n,
+    int64_t staging_rows,
+    cudaStream_t stream) {
+  constexpr int kThreads = 512;
+  int64_t total_packs = rows * n_per / 8;  // 8 half/bf16 elements per uint4 pack
+  int64_t blocks64 = (total_packs + kThreads - 1) / kThreads;
+  int blocks = (int)(blocks64 < 1 ? 1 : (blocks64 > 128 ? 128 : blocks64));
+  tuple_return_if(
+      cute::make_tuple(_FP16{}, _BF16{}),
+      [&](auto cdtype) { return cdtype == dtype; },
+      [&](auto cdtype) {
+        using T = decltype(to_cuda_dtype(cdtype));
+        internode_reduce_kernel<T><<<blocks, kThreads, 0, stream>>>(
+            (T *)output,
+            (T const *)staging_recv,
+            nnodes,
+            node_idx,
+            n_split,
+            sid,
+            rows,
+            n_per,
+            out_n,
+            staging_rows);
+      },
+      [&]() { FLUX_CHECK(false) << "unsupported dtype for internode gather-RS reduce: " << dtype; });
+  CUDA_CHECK(cudaGetLastError());
 }
 
 }  // namespace bytedance::flux

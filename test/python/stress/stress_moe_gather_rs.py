@@ -22,6 +22,7 @@ import torch
 import torch.distributed
 
 import flux
+import flux.testing
 from flux.testing import (
     DTYPE_MAP,
     initialize_distributed,
@@ -137,6 +138,7 @@ if __name__ == "__main__":
             args.T,
             args.E,
             args.input_groups,
+            nnodes=flux.testing.NNODES(),
             do_all_reduce=args.all_reduce,
             use_read_mode=args.use_read_mode,
         )

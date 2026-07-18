@@ -48,13 +48,16 @@ class GemmGroupedV2AGScatterOp {
   GemmGroupedV2AGScatterOp(
       std::shared_ptr<Group> tp_group,
       int ep_size,
+      int nnodes,
       int max_ntokens,
       int ffn_hidden,  // before TP shard
       int hidden,
       int num_experts,
       int topk,
       at::ScalarType input_dtype,
-      at::ScalarType output_dtype);
+      at::ScalarType output_dtype,
+      bool a2av_dispatch = false,
+      bool a2av_ring = false);
   ~GemmGroupedV2AGScatterOp();
   void clear_buffers();
   torch::Tensor forward(

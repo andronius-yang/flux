@@ -1,0 +1,114 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Top-down · Flux COMET A100</title><style>
+:root{--bg:#f6f7f4;--fg:#18201e;--muted:#5f6b66;--card:#fff;--line:#cbd5d0;--a:#075f78;--diff:#a04a15;--code:#0b2028;--codefg:#dbf2f7}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,Segoe UI,sans-serif}.skip{position:absolute;left:-999px}.skip:focus{left:1rem;top:1rem;background:var(--card);padding:.7rem;z-index:9}header,main,footer{max-width:1080px;margin:auto;padding:1.2rem}header{padding-top:3.5rem}h1{font-size:clamp(2.3rem,6vw,4.6rem);line-height:1;letter-spacing:-.04em;margin:.4rem 0}h2{margin-top:3.6rem;border-top:1px solid var(--line);padding-top:1.2rem}h3{margin-top:2rem}a{color:var(--a);text-underline-offset:3px}.lede{font-size:1.2rem;max-width:820px}.toc ol{columns:2}.card,.note{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:1rem 1.2rem;margin:1rem 0}.tag{display:inline-block;font-size:.7rem;font-weight:800;letter-spacing:.05em;padding:.12rem .45rem;border-radius:99px;color:#fff;background:var(--a)}.diff{background:var(--diff)}.infer{background:#756016}.codehead{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;background:#153a46;color:#fff;padding:.6rem .9rem;border-radius:12px 12px 0 0;font-size:.82rem}.code{overflow:auto;margin:0 0 1rem;background:var(--code);color:var(--codefg);padding:1rem;border-radius:0 0 12px 12px}.code code{font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre}.steps{counter-reset:s}.steps>article{counter-increment:s}.steps>article h3:before{content:counter(s) ". ";color:var(--a)}table{border-collapse:collapse;width:100%;display:block;overflow:auto}th,td{padding:.65rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}.timeline{display:grid;grid-template-columns:8rem 1fr;gap:.3rem 1rem}.timeline dt{font-weight:750;color:var(--a)}.timeline dd{margin:0 0 .6rem;border-left:3px solid var(--line);padding-left:1rem}.small{font-size:.9rem;color:var(--muted)}.code:focus,table:focus{outline:3px solid var(--a);outline-offset:2px}.codehead{break-after:avoid}.code{break-before:avoid}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}@media(max-width:650px){header{padding-top:2rem}.toc ol{columns:1}.timeline{grid-template-columns:1fr}.code code{font-size:12px}}@media(prefers-color-scheme:dark){:root{--bg:#0d1518;--fg:#e6edef;--muted:#a9b5b8;--card:#141f23;--line:#34464c;--a:#6bd3ef;--diff:#ed9d64;--code:#061116;--codefg:#d8f3f8}}@media print{body{background:#fff;color:#000;font-size:10pt}.toc,.skip{display:none}.card{break-inside:avoid}.code{background:#eee;color:#000}.code code{white-space:pre-wrap}.tag{background:#fff;color:#000;border:1px solid}}
+</style></head><body><a class="skip" href="#content">Skip to content</a><header><p><a href="01-prerequisites.html">← Prerequisites</a> · Chapter 02</p><h1>Top-down: from MoE semantics to wires</h1><p class="lede">Follow the two Python calls downward through architecture dispatch, bindings, operator state, runtime arguments, registry selection, kernels, and finally the two-node launch.</p></header><main id="content"><svg role="img" aria-labelledby="mini-title-2 mini-desc-2" viewBox="0 0 900 110" style="width:100%;height:auto"><title id="mini-title-2">Top-down call stack</title><desc id="mini-desc-2">Python flows through bindings, operator state, runtime arguments, registry, and CUDA.</desc><path d="M90 55H810" stroke="currentColor" stroke-width="2"/><g fill="currentColor" text-anchor="middle" font-family="system-ui" font-size="16"><text x="90" y="42">Python</text><text x="270" y="82">pybind</text><text x="450" y="42">operator</text><text x="630" y="82">registry</text><text x="810" y="42">CUDA</text></g></svg><nav class="toc" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#semantics">Semantic baseline</a></li><li><a href="#calls">Two fused calls</a></li><li><a href="#dispatch">Architecture dispatch</a></li><li><a href="#stack">Binding-to-kernel stack</a></li><li><a href="#hopper0">Hopper layer 0</a></li><li><a href="#hopper1">Hopper layer 1</a></li><li><a href="#a100">Patched A100</a></li><li><a href="#launch">Launch</a></li><li><a href="#timeline">Execution timeline</a></li><li><a href="#glossary">Glossary and sources</a></li></ol></nav>
+
+<div class="steps"><article id="semantics"><h2>1. Plain PyTorch semantics</h2><p><span class="tag">CODE</span> The reference path makes the dependency chain explicit: communicate token shards, reorder them by expert, run expert GEMM0, apply GELU, run expert GEMM1, inverse-route the top-k copies, sum, and reduce-scatter.</p>
+<div class="codehead"><span><strong>examples/moe.py:117–138</strong> · HEAD · abridged</span><span>Python reference</span></div><pre class="code"><code>MoeAgScatterWithTorch.comm_impl(ctx, TP_GROUP)
+MoeAgScatterWithTorch.scatter_impl(ctx)
+MoeAgScatterWithTorch.gemm_impl(ctx)
+ctx.intermediate_output = gelu(ctx.intermediate_output)
+mlp_output = moe_gather_rs_forward_torch(
+    TP_GROUP, ctx.ntokens * ctx.topk, ..., ctx.intermediate_output,
+    ctx.weight1, ctx.splits_cpu, ctx.gather_index, ctx.topk_index, ctx.topk)
+</code></pre>
+<div class="card"><p><strong>Execution.</strong> The current stream executes the explicit reference stages in dependency order.</p><p><strong>Ownership / stream.</strong> Input starts one token shard per world rank; expert weights are EP/FFN-TP-sharded; output returns one token shard.</p><p><strong>Invariant.</strong> Routing metadata is identical across reference and fused paths.</p><p><strong>Why.</strong> This is the semantic oracle, not the performance model.</p></div></article>
+
+<article id="calls"><h2>2. Flux collapses the same graph into two calls</h2>
+<div class="codehead"><span><strong>examples/moe.py:188–210</strong> · WORKTREE · abridged</span><span>Python · current CUDA stream</span></div><pre class="code"><code>self.flux_ag_op.forward(
+    inputs_shard=ctx.inputs_shard, weights=ctx.weight0,
+    splits_gpu=ctx.splits_gpu, scatter_index=ctx.scatter_index,
+    outputs_buf=ctx.intermediate_output)
+ctx.intermediate_output = gelu(ctx.intermediate_output)
+mlp_output = self.flux_rs_op.forward_gather_rs(
+    input=ctx.intermediate_output, weight=ctx.weight1,
+    splits_cpu=ctx.splits_cpu, scatter_idx=ctx.scatter_index.view(-1))</code></pre>
+<div class="card"><p><strong>Execution.</strong> First call is all-gather + routing scatter + GEMM0. Second is GEMM1 + gather/top-k reduce + reduce-scatter.</p><p><strong>Ownership / streams.</strong> Python supplies activations and weights; the objects retain staging, peer pointer arrays, barriers, events, and auxiliary streams.</p><p><strong>Invariant.</strong> Fusing preserves the mathematical function and dependency order, subject to ordinary floating-point reassociation and rounding differences.</p><p><strong>Why.</strong> Exposing the producer/consumer relation inside an operator enables tile-scale overlap that separate framework collectives cannot express.</p></div></article>
+
+<article id="dispatch"><h2>3. SM90/V3 and pre-SM90/V2 diverge early</h2><p><span class="tag diff">DIFF</span> The architecture branch in <code>examples/moe.py:160–186</code> keeps V3 for <code>arch ≥ 90</code> and V2 otherwise. The new node count is orthogonal: it is propagated into <code>DistEnvTPWithEP</code>, V2 AG, and V2 gather-RS.</p><div class="note"><strong>Do not say “A100 port of the Hopper kernel.”</strong> Hopper’s TMA/warp-specialized execution model is not present on SM80. This patch reuses orchestration ideas and preserves Ampere kernels.</div></article>
+
+<article id="stack"><h2>4. Python export → pybind → operator → args → registry → CUDA</h2>
+<ol><li><code>python/flux/__init__.py:17–25</code> re-exports the compiled module.</li><li><code>src/pybind/ths_op.cc:38–57</code> initializes registered binding functions.</li><li><code>src/pybind/gemm_grouped_v2_ag_scatter.cc:28–64</code> constructs the C++ operator and binds <code>forward</code>.</li><li><code>src/moe_ag_scatter/ths_op/gemm_grouped_v2_ag_scatter.cc:616–655</code> fills the POD <code>GemmGroupedV2AGScatterArguments</code> and calls <code>op-&gt;run</code>.</li><li><code>OpRegistry</code> selects an implementation using dtype, architecture, communication op, layout, runtime shape, and tuned hparams.</li><li><code>src/moe_ag_scatter/gemm_grouped_v2_ag_scatter.hpp</code> converts unified arguments to CUTLASS kernel arguments.</li></ol>
+<div class="codehead"><span><strong>src/pybind/gemm_grouped_v2_ag_scatter.cc:28–47</strong> · DIFF · abridged pseudocode</span><span>pybind constructor</span></div><pre class="code"><code>py::class_&lt;GemmGroupedV2AGScatterOpCls&gt;(m, "GemmGroupedV2AGScatterOp")
+  .def(py::init([](DistEnvTPWithEP &amp;tp_env, MoeArguments &amp;moe_args) {
+    return new GemmGroupedV2AGScatterOpCls(
+      make_group(tp_env.tp_group), tp_env.ep_size, tp_env.nnodes,
+      moe_args.max_ntokens, moe_args.ffn_hidden, moe_args.hidden, ...);
+  }))</code></pre>
+<div class="card"><p><strong>Execution.</strong> Python construction crosses pybind once; each forward enters the retained C++ object and launches its selected implementation.</p><p><strong>Ownership.</strong> pybind transfers configuration into a persistent C++ object; each run passes transient POD arguments down to a generated/registered kernel.</p><p><strong>Invariant.</strong> Registry metadata must describe the actual architecture and runtime shape; hparams control tile shape and resource use.</p><p><strong>Why.</strong> Expensive topology setup is amortized without baking transport state into every generated kernel type.</p></div></article>
+
+<article id="hopper0"><h2>5. Hopper layer 0: node-aware all-gather and M scheduling</h2>
+<div class="codehead"><span><strong>src/moe_ag_scatter/ths_op/gemm_grouped_v3_ag_scatter.cc:158–224</strong> · HEAD · abridged</span><span>main + intra-node + inter-node streams</span></div><pre class="code"><code>for (int node_idx = tp_env.node_idx, i = 0; i &lt; tp_env.nnodes; ++i, ... ) {
+  if (node_idx == tp_env.node_idx) { copy local shard; barrier_all_on_stream(main); }
+  else { nvshmemx_getmem_on_stream(..., cp_stream_inter_node); ... }
+  for (int local_rank = tp_env.local_rank, j = 0; j &lt; tp_env.local_world_size; ++j, ...) {
+    if (local_rank != tp_env.local_rank) nvshmemx_getmem_on_stream(..., cp_stream_intra_node);
+    CUStreamWriteValue(cp_stream_intra_node, barrier_for(src_rank), 1, ...);
+  }
+}
+</code></pre>
+<div class="card"><p><strong>Execution.</strong> Process current node first, then remote nodes; within each, distribute shards all-to-all among same-node GPUs and publish per-source readiness.</p><p><strong>Ownership / stream.</strong> Full input is NVSHMEM symmetric; remote fetches use <code>cp_stream_inter_node</code>, local distribution and flag writes use <code>cp_stream_intra_node</code>.</p><p><strong>Invariant.</strong> A consumer only reads a source rank’s rows after that source flag is written.</p><p><strong>Why.</strong> Problem schedules order expert M tiles so ready token ranges can compute before the complete all-gather finishes.</p></div>
+<p><span class="tag">CODE</span> In <code>gemm_grouped_v3_ag_scatter.cc:360–417</code>, each scheduled expert interval becomes a grouped-GEMM problem with gather/scatter pointers. That is the concrete bridge from “M-oriented rescheduling” to input rows.</p></article>
+
+<article id="hopper1"><h2>6. Hopper layer 1: horizontal CTA specialization</h2>
+<p><span class="tag">CODE</span> V3 registers/tunes <code>gather_rs_ctas</code>. The persistent kernel reserves CTAs for communication while the remaining CTAs compute. Each N split has a barrier count equal to the number of compute CTAs.</p>
+<div class="codehead"><span><strong>src/moe_gather_rs/sm90_gemm_array_threadblock_specialized.hpp:1197–1216</strong> · HEAD · abridged</span><span>communication CTA branch</span></div><pre class="code"><code>int wait_flag = N_SMS_90 - GAHER_RS_N_CTAS;
+for (int sid = split_start; sid &lt; split_end; sid++) {
+  Barrier::wait_eq(barrier, threadIdx.x, sid, wait_flag);
+  for (int blk_m = dma_block_idx; blk_m &lt; token_M_blk_count; blk_m += dma_blks)
+    for (int blk_n = 0; blk_n &lt; new_n_dim / GATHER_RS_BN; blk_n++)
+      ep_gather_rs_impl_v3(..., sid, ...);
+}</code></pre>
+<div class="card"><p><strong>Execution.</strong> Compute CTAs publish completion for an N split; specialized CTAs wait and run gather/reduce-scatter work.</p><p><strong>Ownership / sync.</strong> Both roles live in one persistent launch and coordinate through system-scope barriers.</p><p><strong>Invariant.</strong> Compute arrivals plus block-0 compensation for an underfilled grid must reach the fixed target <code>132 − gather_rs_ctas</code>.</p><p><strong>Why.</strong> Isolate long-latency communication from Hopper’s efficient TMA/MMA warp pipeline.</p></div></article>
+
+<article id="a100"><h2>7–8. The A100 paths</h2><h3>Layer 0: same orchestration shape, V2 compute</h3>
+<p><span class="tag diff">DIFF</span> <code>src/moe_ag_scatter/ths_op/gemm_grouped_v2_ag_scatter.cc:359–431</code> ports V3’s node-first all-gather orchestration. At <code>616–655</code>, it still fills <code>GemmGroupedV2AGScatterArguments</code> and calls the V2 registry-selected GEMM. Before the SM-occupying launch, the main stream waits on <code>fetch_remote_event</code>; V2 tile fetchers then wait on source-rank flags.</p>
+<div class="codehead"><span><strong>src/moe_ag_scatter/ths_op/gemm_grouped_v2_ag_scatter.cc:362–433</strong> · DIFF · abridged pseudocode</span><span>V3-derived orchestration around V2</span></div><pre class="code"><code>for (int node_idx = dist_env.node_idx, i = 0; i &lt; dist_env.nnodes; ++i, ...) {
+  if (node_idx == dist_env.node_idx) {
+    cudaMemcpyAsync(local_symmetric_shard, inputs_shard, ..., main_stream);
+    nvshmemx_barrier_all_on_stream(main_stream);
+  } else {
+    nvshmemx_getmem_on_stream(remote_same_local_rank, ..., cp_stream_inter_node);
+    nvshmemx_barrier_on_stream(NVSHMEMX_TEAM_NODE, cp_stream_inter_node);
+  }
+  for (int local_rank = dist_env.local_rank, j = 0; j &lt; dist_env.local_world_size; ++j, ...)
+    { local_peer_get_if_needed(); CUStreamWriteValue(cp_stream, barrier[src_rank], 1, ...); }
+}</code></pre><div class="card"><p><strong>Execution.</strong> The loop shape deliberately mirrors V3’s node-first fetch order.</p><p><strong>Ownership / stream.</strong> The full input is symmetric; remote same-local-rank gets and intra-node fan-out use distinct auxiliary streams.</p><p><strong>Invariant.</strong> Each per-source flag follows the transfer that makes that shard locally readable.</p><p><strong>Why.</strong> Borrow the multi-node arrival protocol while leaving the registry-selected V2 grouped GEMM untouched.</p></div>
+<h3>Layer 1: hierarchy around the established V2 consumer</h3>
+<div class="codehead"><span><strong>src/moe_gather_rs/ths_op/gemm_grouped_v2_gather_rs.cc:816–842</strong> · WORKTREE · abridged</span><span>producer main stream + consumer stream</span></div><pre class="code"><code>group_barrier.barrier_all(stream);
+cudaEventRecord(gemm_start_event, stream);
+cudaStreamWaitEvent(gather_rs_stream, gemm_start_event);
+gemm_op-&gt;run(args, workspace, stream);             // producer
+output = topk_reduce_scatter_op-&gt;run(..., gather_rs_stream); // consumer
+cudaEventRecord(gather_rs_done_event, gather_rs_stream);
+cudaStreamWaitEvent(stream, gather_rs_done_event);
+barrier.zero_(); topk_reduce_scatter_op-&gt;reset_buffer();</code></pre><div class="card"><p><strong>Execution.</strong> Main-stream GEMM and high-priority gather-RS overlap after a start event, then rejoin through a done event.</p><p><strong>Ownership / stream.</strong> GEMM owns expert outputs and N-split producer barriers; the consumer stream owns local-ring progress and final output.</p><p><strong>Invariant.</strong> Reset and reuse occur only after both streams rejoin and the process group synchronizes.</p><p><strong>Why.</strong> Ampere obtains producer/consumer overlap with streams rather than Hopper CTA specialization.</p></div>
+<p><span class="tag diff">DIFF</span> The patched consumer replaces one world-size ring with one local-world-size ring per owner-node group. The last stage writes a local group directly to output and a remote group to symmetric <code>staging_send</code>. A separate stream performs put-with-signal; the main consumer stream waits for receiver signals and accumulates remote partials.</p></article>
+
+<article id="launch"><h2>9. Slurm/Perlmutter launch</h2>
+<div class="codehead"><span><strong>launch.sh:17–43</strong> · DIFF · abridged</span><span>host process setup</span></div><pre class="code"><code>nproc_per_node=${NPROC_PER_NODE:-$(nvidia-smi --list-gpus | wc -l)}
+nnodes=${SLURM_NNODES:-1}; node_rank=${SLURM_NODEID:-0}
+if [ "${nnodes}" -gt 1 ]; then
+  master_addr=$(scontrol show hostnames "${SLURM_JOB_NODELIST}" | head -n1)
+  export NVSHMEM_REMOTE_TRANSPORT=${NVSHMEM_REMOTE_TRANSPORT:-libfabric}
+  export NVSHMEM_LIBFABRIC_PROVIDER=${NVSHMEM_LIBFABRIC_PROVIDER:-cxi}
+fi
+torchrun --node_rank=${node_rank} --nproc_per_node=${nproc_per_node} \
+  --nnodes=${nnodes} --rdzv_endpoint=${master_addr}:${master_port} "$@"</code></pre>
+<div class="card"><p><strong>Execution.</strong> One <code>launch.sh</code> per node derives rendezvous and node rank from Slurm.</p><p><strong>Ownership.</strong> libfabric/CXI variables are transport policy outside generic CUDA kernels.</p><p><strong>Invariant.</strong> Slurm assigns node-contiguous global ranks and the symmetric heap fits AG plus both staging buffers/signals.</p><p><strong>Why.</strong> Perlmutter’s Slingshot/CXI setup is deployment-specific and should not be generalized to arbitrary A100 clusters.</p></div>
+<div class="codehead"><span><strong>CLAUDE.md:15–78</strong> · LOCAL NOTE · abridged</span><span>reproduction instructions, not evidence</span></div><pre class="code"><code># Instructions only — not an observed result. Perlmutter-specific.
+source ./module.sh
+salloc -A m4243_g -q interactive -C gpu -N 2 --gpus-per-node=4 -t 30
+srun --nodes=2 --ntasks-per-node=1 \
+  ./launch.sh test/python/moe_ag_scatter/test_moe_ag.py
+srun --nodes=2 --ntasks-per-node=1 \
+  ./launch.sh test/python/moe_gather_rs/test_moe_gather_rs.py -M 40960 -T 8 -E 1
+
+# For configurations whose symmetric allocations exceed the default:
+export NVSHMEM_SYMMETRIC_SIZE=4G
+</code></pre><div class="card"><p><strong>Execution.</strong> The allocation starts two four-GPU nodes; Slurm starts one launcher per node; <code>launch.sh</code> creates four ranks on each.</p><p><strong>Ownership.</strong> Slurm owns rank placement; the sourced local module file owns site libraries.</p><p><strong>Invariant.</strong> CLI <code>-T</code> is FFN tensor-parallel size, not the tutorial’s token-count symbol; the test requires <code>args.T × args.E = world_size</code> plus the divisibility/capacity contracts described elsewhere.</p><p><strong>Why.</strong> This combines the snapshot’s local environment and two-node recipe. No retained output proves that it passed.</p></div></article></div>
+
+<section id="timeline"><h2>Two-node execution timeline</h2><dl class="timeline"><dt>0 · Python</dt><dd><strong>CPU:</strong> V2 operator selected; topology says two nodes. Persistent buffers already belong to the operator.</dd><dt>1 · Main stream</dt><dd><strong>AG input:</strong> reset per-source flags; copy local shard into symmetric input; node barrier; record ready event.</dd><dt>2 · Inter-node stream</dt><dd><strong>Remote node:</strong> fetch same-local-rank remote shard with NVSHMEM get; record fetch event.</dd><dt>3 · Intra-node stream</dt><dd><strong>Local GPUs:</strong> peer-distribute each fetched shard; stream-write that global source rank’s readiness flag.</dd><dt>4 · Main stream</dt><dd><strong>V2 layer-0 GEMM:</strong> waits on the most recently recorded remote-fetch completion event; tile fetchers gate individual row reads on source flags; the stream waits for full AG completion before reuse.</dd><dt>5 · Main + gather-RS streams</dt><dd><strong>Layer 1:</strong> GEMM producer publishes N-split barriers; V2 consumer performs local rings for remote owner groups first.</dd><dt>6 · Consumer kernel</dt><dd><strong><code>staging_send[g,sid]</code>:</strong> system fence, all-block counter, release flag.</dd><dt>7 · Internode stream</dt><dd><strong>Same-local-rank PE on node g:</strong> wait sender flag, then <code>putmem_signal</code> partial into its <code>staging_recv[source,sid]</code>.</dd><dt>8 · Consumer stream</dt><dd><strong>Owner node:</strong> wait each source signal ≥ <code>run_id</code>; accumulate FP16/BF16 packed partials into Python-visible <code>[T/world,H]</code> output.</dd><dt>9 · Main stream</dt><dd><strong>Reuse boundary:</strong> wait consumer completion, synchronize group, reset local barriers/buffers for the next call.</dd></dl>
+<div class="note"><span class="tag infer">INFERENCE</span> This timeline is reconstructed from stream/event/flag code. It describes intended ordering, not a captured profiler trace.</div></section>
+
+<section id="glossary"><h2>Glossary, snapshot, and sources</h2><dl><dt><strong>Horizontal specialization</strong></dt><dd>Different CTAs in one launch receive compute and communication roles.</dd><dt><strong>Producer/consumer streams</strong></dt><dd>Separate ordered CUDA queues linked by events and device-visible readiness state.</dd><dt><strong>Reuse boundary</strong></dt><dd>The synchronization point after which persistent staging may be overwritten by the next call.</dd></dl><p><strong>Snapshot:</strong> base <code>19831ca</code>; generated 2026-07-15 UTC; current dirty tree. Unbadged walkthrough prose inherits the CODE or DIFF provenance of its nearest source card.</p><ul><li><a href="https://arxiv.org/abs/2502.19811">COMET paper</a></li><li><a href="https://docs.nvidia.com/nvshmem/api/">NVSHMEM API</a></li><li>Local paths and ranges embedded in every code card.</li></ul></section>
+</main><footer><p><a href="01-prerequisites.html">← Prerequisites</a> · <a href="#content">Top</a> · <a href="03-bottom-up.html">Ground-up →</a></p></footer><script>document.documentElement.classList.add('js');document.querySelectorAll('pre.code,table').forEach(function(e){e.tabIndex=0;if(!e.hasAttribute('aria-label'))e.setAttribute('aria-label',e.tagName==='TABLE'?'Scrollable data table':'Scrollable source code')});document.querySelectorAll('th').forEach(function(e){e.scope='col'})</script></body></html>

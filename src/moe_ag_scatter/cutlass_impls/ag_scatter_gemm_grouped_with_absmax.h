@@ -46,6 +46,7 @@
 #include <type_traits>
 #include <cuda/atomic>
 #include "ag_scatter_grouped_problem_visitor.hpp"
+#include "a2av_tile_claimer.hpp"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -175,6 +176,16 @@ public:
     int *split_tp_accum_ptr;
     int *tile_count = nullptr;
 
+    // a2av dispatch mode: per-source NVSHMEM signals + dynamically claimed tile
+    // buckets. All null/0 in dense (ring-scheduled) mode. Set by assignment after
+    // construction; not part of the legacy ctor.
+    uint64_t *signal_ptr = nullptr;
+    uint64_t signal_expected = 0;
+    void *bucket_tiles_ptr = nullptr;   // ProblemInfo[tile_count], bucketed by source
+    int *bucket_offsets = nullptr;      // [world_size + 2]
+    int *bucket_cursors = nullptr;      // [world_size + 1]
+    uint64_t *multi_masks = nullptr;    // one source-mask per multi-source tile
+
     //
     // Methods
     //
@@ -279,6 +290,13 @@ public:
     void *problem_info_ptr = nullptr;
     int *split_tp_accum_ptr = nullptr;
     int *tile_count = nullptr;
+    // a2av dispatch mode (see Arguments)
+    uint64_t *signal_ptr = nullptr;
+    uint64_t signal_expected = 0;
+    void *bucket_tiles_ptr = nullptr;
+    int *bucket_offsets = nullptr;
+    int *bucket_cursors = nullptr;
+    uint64_t *multi_masks = nullptr;
     //// added by flux /////
 
     //
@@ -317,7 +335,12 @@ public:
       split_tp_accum_ptr(args.split_tp_accum_ptr),
       tile_count(args.tile_count)
     {
-
+      signal_ptr = args.signal_ptr;
+      signal_expected = args.signal_expected;
+      bucket_tiles_ptr = args.bucket_tiles_ptr;
+      bucket_offsets = args.bucket_offsets;
+      bucket_cursors = args.bucket_cursors;
+      multi_masks = args.multi_masks;
     }
 
     CUTLASS_HOST_DEVICE
@@ -353,6 +376,12 @@ public:
       problem_info_ptr = args.problem_info_ptr;
       split_tp_accum_ptr = args.split_tp_accum_ptr;
       this->tile_count = args.tile_count;
+      signal_ptr = args.signal_ptr;
+      signal_expected = args.signal_expected;
+      bucket_tiles_ptr = args.bucket_tiles_ptr;
+      bucket_offsets = args.bucket_offsets;
+      bucket_cursors = args.bucket_cursors;
+      multi_masks = args.multi_masks;
     }
   };
 
@@ -363,8 +392,12 @@ public:
       typename Epilogue::SharedStorage epilogue;
     } kernel;
 
-    // ProblemVisitor shared storage can't be overlapped with others
-    typename ProblemVisitor::SharedStorage problem_visitor;
+    // ProblemVisitor shared storage can't be overlapped with the mma/epilogue
+    // storage, but the a2av claim slot can overlap the (unused-in-a2av) visitor.
+    union {
+      typename ProblemVisitor::SharedStorage problem_visitor;
+      int a2av_claimed;  // index into bucket_tiles, broadcast by thread 0
+    };
   };
 
 public:
@@ -400,6 +433,39 @@ public:
     using ElementC = typename Epilogue::OutputTileIterator::Element;
     using LayoutC = typename Epilogue::OutputTileIterator::Layout;
 
+    if (params.signal_ptr != nullptr && params.bucket_tiles_ptr != nullptr) {
+      // a2av dispatch mode: dynamically claim tiles from per-source buckets in
+      // arrival order instead of walking the precomputed ring-order schedule.
+      using ProblemInfo = typename ProblemVisitor::ProblemInfo;
+      ProblemInfo const *bucket_tiles =
+          reinterpret_cast<ProblemInfo const *>(params.bucket_tiles_ptr);
+      A2AVTileClaimer claimer(
+          params.bucket_offsets,
+          params.bucket_cursors,
+          params.multi_masks,
+          params.signal_ptr,
+          params.signal_expected,
+          params.world_size);
+      while (true) {
+        __syncthreads();  // previous tile done with the claim slot
+        if (threadIdx.x == 0) {
+          shared_storage.a2av_claimed = claimer.claim();
+        }
+        __syncthreads();
+        int claimed = shared_storage.a2av_claimed;
+        if (claimed < 0) {
+          break;
+        }
+        ProblemInfo const problem_info = bucket_tiles[claimed];
+        process_tile(
+            params,
+            shared_storage,
+            problem_info.problem_idx,
+            int32_t(problem_info.problem_start));
+      }
+      return;
+    }
+
     //
     // Problem visitor.
     //
@@ -412,13 +478,39 @@ public:
 
     // Outer 'persistent' loop to iterate over tiles
     while (problem_visitor.next_tile()) {
+      process_tile(
+          params,
+          shared_storage,
+          problem_visitor.problem_index(),
+          int32_t(problem_visitor.threadblock_idx()));
 
-      GemmCoord problem_size  = problem_visitor.problem_size();
-      int32_t problem_idx     = problem_visitor.problem_index();
-      int32_t threadblock_idx = int32_t(problem_visitor.threadblock_idx());
+      // Next tile
+      problem_visitor.advance(gridDim.x);
+    }
+  }
 
-      GemmCoord grid_shape = problem_visitor.grid_shape(problem_size);
+  /// Process a single output tile of one grouped-GEMM problem.
+  /// threadblock_idx is the problem-local tile index (tile_m * grid_n + tile_n).
+  CUTLASS_DEVICE
+  void process_tile(
+      Params const &params,
+      SharedStorage &shared_storage,
+      int32_t problem_idx,
+      int32_t threadblock_idx) {
 
+    using ElementA = typename Mma::IteratorA::Element;
+    using LayoutA = typename Mma::IteratorA::Layout;
+    using ElementB = typename Mma::IteratorB::Element;
+    using LayoutB = typename Mma::IteratorB::Layout;
+    using ElementC = typename Epilogue::OutputTileIterator::Element;
+    using LayoutC = typename Epilogue::OutputTileIterator::Layout;
+
+    using PSHelper = typename ProblemVisitor::ProblemSizeHelper;
+    GemmCoord problem_size = params.problem_visitor.problem_sizes[problem_idx];
+    PSHelper::possibly_transpose_problem(problem_size);
+    GemmCoord grid_shape = PSHelper::grid_shape(problem_size);
+
+    {
       // clang-format on
       int tile_idx_m = threadblock_idx / grid_shape.n();
       int tile_idx_n = threadblock_idx % grid_shape.n();
@@ -434,8 +526,17 @@ public:
       int segment_end =
           __ffs(__ballot_sync(0xffffffff, lane_idx < params.world_size ? (m_end < split_accum[lane_idx]) : false)) - 1;
       if (lane_idx >= segment_start && lane_idx <= segment_end) {
-        cuda::atomic_ref<int32_t, cuda::thread_scope_device> barrier(params.barrier_ptr[lane_idx]);
-        while (barrier.load(cuda::memory_order_acquire) != 1) {
+        if (params.signal_ptr != nullptr) {
+          // a2av mode: epoch signals delivered by NVSHMEM putmem_signal (proxy/NIC
+          // writer -> system scope). Signal-after-payload ordering is guaranteed by
+          // putmem_signal semantics; the acquire load orders our A reads after it.
+          cuda::atomic_ref<uint64_t, cuda::thread_scope_system> sig(params.signal_ptr[lane_idx]);
+          while (sig.load(cuda::memory_order_acquire) < params.signal_expected) {
+          }
+        } else {
+          cuda::atomic_ref<int32_t, cuda::thread_scope_device> barrier(params.barrier_ptr[lane_idx]);
+          while (barrier.load(cuda::memory_order_acquire) != 1) {
+          }
         }
       }
       __syncthreads();
@@ -605,9 +706,6 @@ public:
                iterator_Aux,
                problem_size.mn(),
                threadblock_offset.mn());
-
-      // Next tile
-      problem_visitor.advance(gridDim.x);
     }
   }
   // clang-format off

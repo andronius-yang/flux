@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Flux COMET: Hopper to Multi-Node A100</title>
+<style>
+:root{--bg:#f7f7f3;--fg:#17201d;--muted:#5d6964;--card:#fff;--line:#ccd5d0;--accent:#086b59;--accent2:#9b4b16;--code:#10221d;--codefg:#dcf5e9}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,Segoe UI,sans-serif}.skip{position:absolute;left:-999px}.skip:focus{left:1rem;top:1rem;background:var(--card);padding:.7rem;z-index:9}header,main,footer{max-width:1120px;margin:auto;padding:1.2rem}header{padding-top:4rem}h1{font-size:clamp(2.2rem,7vw,5.2rem);line-height:.98;letter-spacing:-.045em;max-width:900px;margin:.3rem 0 1.2rem}h2{margin-top:3.5rem;border-top:1px solid var(--line);padding-top:1.2rem}h3{margin-top:2rem}a{color:var(--accent);text-underline-offset:3px}.lede{font-size:1.25rem;max-width:850px}.meta,.note,.card,.path{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:1rem 1.2rem}.meta{display:flex;gap:1.2rem;flex-wrap:wrap}.meta span{white-space:nowrap}.toc ol{columns:2;max-width:900px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:1rem}.path{display:block;color:inherit;text-decoration:none}.path:hover,.path:focus{border-color:var(--accent);transform:translateY(-2px)}table{border-collapse:collapse;width:100%;display:block;overflow-x:auto}th,td{padding:.7rem;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--accent)}.tag{display:inline-block;font-size:.72rem;font-weight:750;letter-spacing:.05em;padding:.15rem .45rem;border-radius:99px;color:#fff;background:var(--accent);vertical-align:middle}.diff{background:#9b4b16}.paper{background:#5750a4}.infer{background:#765d15}.local{background:#6b526e}.codehead{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;background:#17372e;color:#fff;padding:.65rem .9rem;border-radius:12px 12px 0 0;font-size:.83rem}.code{overflow-x:auto;background:var(--code);color:var(--codefg);padding:1rem;margin:0;border-radius:0 0 12px 12px;tab-size:2}.code code{font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre}.audit{border-left:4px solid var(--accent2)}.files{columns:2;font-family:ui-monospace,monospace;font-size:.84rem}.legend{display:flex;gap:.5rem;flex-wrap:wrap}.diagram-wrap{overflow:auto}.diagram{min-width:720px;width:100%;height:auto;background:var(--card);border:1px solid var(--line);border-radius:14px}.small{color:var(--muted);font-size:.9rem}.code:focus,table:focus{outline:3px solid var(--a);outline-offset:2px}.codehead{break-after:avoid}.code{break-before:avoid}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}@media(max-width:650px){header{padding-top:2rem}.toc ol,.files{columns:1}.meta{display:block}.meta span{display:block}.code code{font-size:12px}}@media(prefers-color-scheme:dark){:root{--bg:#0e1513;--fg:#e4eee9;--muted:#a5b3ad;--card:#151e1b;--line:#35443e;--accent:#67d5ba;--accent2:#f0a36d;--code:#07110e;--codefg:#d7f4e8}}@media print{body{background:#fff;color:#000;font-size:10pt}header{padding-top:0}.path,.card,.meta{break-inside:avoid}a{color:#000}.toc,.skip{display:none}.code{white-space:pre-wrap;background:#eee;color:#000}.code code{white-space:pre-wrap}.tag{border:1px solid #000;color:#000;background:#fff}}
+</style>
+</head>
+<body>
+<a class="skip" href="#content">Skip to content</a>
+<header>
+  <p><span class="tag">CODE</span> A source-guided tutorial snapshot</p>
+  <h1>Flux COMET:<br>Hopper ideas, multi-node A100 mechanics</h1>
+  <p class="lede">How this working tree extends COMET across A100 nodes without pretending that an SM90 kernel can simply be recompiled for SM80. Read it as a systems tutorial and an audit, not a benchmark report.</p>
+  <div class="meta" aria-label="snapshot metadata"><span><strong>Base:</strong> <code>19831ca</code></span><span><strong>Generated:</strong> 2026-07-15 UTC</span><span><strong>Source snapshot:</strong> 21 modified + 3 original untracked inputs</span><span><strong>Target:</strong> ML / distributed-GPU engineers</span></div>
+</header>
+<main id="content">
+<nav class="toc" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#thesis">The thesis</a></li><li><a href="#pipelines">Two MoE pipelines</a></li><li><a href="#comparison">Architecture comparison</a></li><li><a href="#paths">Learning paths</a></li><li><a href="#dispatch">Dispatch walkthrough</a></li><li><a href="#snapshot">Evidence snapshot</a></li><li><a href="#glossary">Glossary</a></li><li><a href="#sources">Sources</a></li></ol></nav>
+
+<section id="thesis"><h2>The thesis</h2>
+  <div class="card"><p><span class="tag paper">PAPER</span> COMET overlaps MoE communication and computation by decomposing shared tensors, rescheduling independent tiles, and allocating GPU resources according to the target architecture.</p>
+  <p><span class="tag">CODE</span> In this repository, Hopper V3 uses persistent warp-specialized GEMM for layer 0 and horizontally specialized compute/communication CTAs for layer 1.</p>
+  <p><span class="tag diff">DIFF</span> The patch does <em>not</em> port those Hopper kernels wholesale. Layer 0 borrows node-aware NVSHMEM all-gather orchestration while retaining the Ampere V2 grouped GEMM. Layer 1 builds an A100-specific hierarchy: intra-node V2 rings, symmetric GPU staging, host-enqueued NVSHMEM put-with-signal transfers, then a GPU accumulation kernel.</p></div>
+</section>
+
+<section id="pipelines"><h2>The two data-dependency chains</h2>
+<div class="diagram-wrap" tabindex="0" aria-label="Scrollable MoE pipeline diagram"><svg class="diagram" role="img" aria-labelledby="flow-title flow-desc" viewBox="0 0 1000 280"><title id="flow-title">The two MoE pipelines</title><desc id="flow-desc">Layer zero all-gathers input tokens, routing scatters them, and runs grouped GEMM. After activation, layer one runs grouped GEMM, gathers top-k rows, reduces them, and reduce-scatters token shards.</desc><defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8z" fill="#086b59"/></marker></defs><g fill="none" stroke="#086b59" stroke-width="3" marker-end="url(#a)"><path d="M185 75H315"/><path d="M445 75H575"/><path d="M705 75H835"/><path d="M155 205H285"/><path d="M415 205H545"/><path d="M675 205H805"/></g><g fill="currentColor" font-family="system-ui" text-anchor="middle"><text x="70" y="30" font-weight="700">Layer 0 / dispatch</text><text x="70" y="160" font-weight="700">Layer 1 / combine</text></g><g fill="#e7f4ef" stroke="#086b59"><rect x="55" y="50" width="130" height="50" rx="10"/><rect x="315" y="50" width="130" height="50" rx="10"/><rect x="575" y="50" width="130" height="50" rx="10"/><rect x="835" y="50" width="120" height="50" rx="10"/><rect x="25" y="180" width="130" height="50" rx="10"/><rect x="285" y="180" width="130" height="50" rx="10"/><rect x="545" y="180" width="130" height="50" rx="10"/><rect x="805" y="180" width="150" height="50" rx="10"/></g><g fill="#17201d" font-family="system-ui" text-anchor="middle" font-size="15"><text x="120" y="80">token shard</text><text x="380" y="80">all-gather</text><text x="640" y="80">routing scatter</text><text x="895" y="80">grouped GEMM</text><text x="90" y="210">activation</text><text x="350" y="210">grouped GEMM</text><text x="610" y="210">top-k gather/reduce</text><text x="880" y="210">reduce-scatter</text></g></svg></div>
+  <p><span class="tag">CODE</span> Layer 0 communicates the token rows before expert computation: <code>all-gather → routing scatter → grouped GEMM</code>. Layer 1 computes expert outputs before combining copies of each token: <code>grouped GEMM → gather → top-k reduction → reduce-scatter</code>. Those directions explain why M is the useful layer-0 scheduling axis and N is the useful layer-1 split axis.</p>
+</section>
+
+<section id="comparison"><h2>Three execution models, one semantic layer</h2>
+<table><thead><tr><th>Dimension</th><th>Hopper / V3</th><th>A100 / V2 baseline</th><th>Patched multi-node A100</th></tr></thead><tbody>
+<tr><td>Layer-0 GEMM</td><td>SM90 persistent warp specialization; TMA-oriented pipeline</td><td>V2 grouped GEMM and local all-gather</td><td>Same V2 GEMM; V3-derived NVSHMEM fetch orchestration around it</td></tr>
+<tr><td>Layer-1 overlap</td><td>Horizontal CTA specialization: compute CTAs publish N-split readiness; communication CTAs consume it</td><td>Producer barrier plus consumer stream running V2 gather/reduce-scatter</td><td>V2 local rings per owner-node group; remote partials staged and sent with signal</td></tr>
+<tr><td>Peer memory</td><td>NVSHMEM symmetric input for the V3 all-gather; architecture-specific CUDA mechanisms inside kernels</td><td>Node-local peer pointer lists (NVSHMEM-backed by default, CUDA-IPC fallback)</td><td>Node-local peer pointers plus NVSHMEM symmetric AG input and inter-node staging</td></tr>
+<tr><td>Resource assignment</td><td>Warp roles or dedicated CTAs, tuned for SM90</td><td>Separate compute and consumer launches, tuned for pre-SM90</td><td>Preserves V2 resource model; adds a nonblocking host-enqueued RMA stream</td></tr>
+<tr><td>Evidence</td><td><span class="tag">CODE</span> committed HEAD</td><td><span class="tag">CODE</span> committed HEAD</td><td><span class="tag diff">DIFF</span> uncommitted worktree</td></tr>
+</tbody></table>
+</section>
+
+<section id="paths"><h2>Five learning paths</h2><p>Start with prerequisites if “system-scope release” or “symmetric heap” is unfamiliar. Otherwise go top-down, then use the ground-up chapter to audit the address arithmetic. Alternatives and meta-design are independent after that.</p>
+<div class="grid">
+<a class="path" href="01-prerequisites.html"><strong>01 · Prerequisites</strong><br><span class="small">Routing, shapes, tiles, streams, rank topology, IPC, PGAS, memory visibility.</span></a>
+<a class="path" href="02-top-down.html"><strong>02 · Top-down</strong><br><span class="small">Python semantics to pybind, registry, kernels, and a two-node timeline.</span></a>
+<a class="path" href="03-bottom-up.html"><strong>03 · Ground-up</strong><br><span class="small">Packs, rows, segments, staging offsets, flags, signals, and reconstruction.</span></a>
+<a class="path" href="04-alternatives.html"><strong>04 · Alternatives</strong><br><span class="small">What neighboring MoE systems optimize—and when they complement COMET.</span></a>
+<a class="path" href="05-meta-design.html"><strong>05 · Meta-design</strong><br><span class="small">Why the repository separates kernels, objects, POD arguments, registry, and launch policy.</span></a>
+</div></section>
+
+<section id="dispatch"><h2>First source walkthrough: architecture dispatch</h2>
+<div class="codehead"><span><strong>examples/moe.py:148–186</strong> · WORKTREE · abridged</span><span>Python / current stream</span></div><pre class="code"><code>tp_env = flux.DistEnvTPWithEP(
+    tp_group=TP_GROUP, nnodes=DIST_ENV.NNODES, ep_group=EP_GROUP)
+
+if flux.util.get_arch() &gt;= 90:
+    self.flux_ag_op = flux.GemmGroupedV3AGScatter(...)
+    self.flux_rs_op = flux.GemmGroupedV3GatherRS(...)
+else:
+    self.flux_ag_op = flux.GemmGroupedV2AGScatterOp(...)
+    self.flux_rs_op = flux.GemmGroupedV2GatherRSOp(
+        ..., nnodes=DIST_ENV.NNODES)
+</code></pre>
+<div class="card"><p><strong>Execution.</strong> Python captures node count in the topology object, selects V3 only for compute capability 9.0+, and passes <code>nnodes</code> into both pre-SM90 operators.</p><p><strong>Ownership and stream.</strong> These long-lived operator objects own communication buffers, peer mappings, events, and auxiliary streams. The calls themselves enter on PyTorch’s current CUDA stream.</p><p><strong>Invariant.</strong> Architecture dispatch and topology dispatch are separate: SM80 chooses V2; <code>nnodes &gt; 1</code> then activates the worktree’s hierarchy inside V2.</p><p><strong>Why it exists.</strong> Preserve architecture-native kernels while changing orchestration only where topology requires it.</p></div>
+</section>
+
+<section id="snapshot"><h2>Evidence snapshot and provenance</h2>
+<p class="legend"><span class="tag">CODE</span><span>committed or current source</span><span class="tag diff">DIFF</span><span>worktree change</span><span class="tag paper">PAPER</span><span>published source</span><span class="tag infer">INFERENCE</span><span>reasoned interpretation</span><span class="tag local">LOCAL NOTE</span><span>unverified local statement</span></p>
+<p><strong>Modified files (21).</strong></p><div class="files">build.sh<br>examples/moe.py<br>examples/moe_flux_only.py<br>examples/moe_layer1.py<br>include/flux/args/moe_ag_scatter.h<br>include/flux/args/moe_gather_rs.h<br>launch.sh<br>python/flux/cpp_mod.py<br>python/flux/cpp_mod.pyi<br>setup.py<br>src/moe_ag_scatter/ths_op/gemm_grouped_v2_ag_scatter.cc<br>src/moe_ag_scatter/ths_op/gemm_grouped_v2_ag_scatter.h<br>src/moe_ag_scatter/workspace_util.cu<br>src/moe_gather_rs/ths_op/gemm_grouped_v2_gather_rs.cc<br>src/moe_gather_rs/ths_op/gemm_grouped_v2_gather_rs.h<br>src/moe_gather_rs/topk_gather_rs.hpp<br>src/moe_gather_rs/topk_gather_rs_v2.cu<br>src/pybind/gemm_grouped_v2_ag_scatter.cc<br>src/pybind/gemm_grouped_v2_gather_rs.cc<br>test/python/moe_gather_rs/test_moe_gather_rs.py<br>test/python/stress/stress_moe_gather_rs.py</div>
+<p><strong>Original pre-generation untracked inputs (3).</strong> <code>CLAUDE.md</code>, <code>COMET.pdf</code>, <code>module.sh</code>. The PDF is supporting material; arXiv is canonical. The Markdown and shell module are deployment notes, not upstream guarantees. The tutorial directory itself is additionally untracked after generation.</p>
+<div class="note audit"><strong>Evidence boundary.</strong> <span class="tag local">LOCAL NOTE</span> A local statement about two-node validation is not backed by preserved logs. This suite provides reproduction instructions but reports no fresh correctness or performance result. Published H800/L20 results in the COMET paper do not validate this uncommitted A100 multi-node patch.</div>
+</section>
+
+<section id="glossary"><h2>Local glossary</h2><dl><dt><strong>CTA</strong></dt><dd>CUDA cooperative thread array; a thread block.</dd><dt><strong>EP / TP</strong></dt><dd>Expert parallelism / tensor parallelism.</dd><dt><strong>PE</strong></dt><dd>NVSHMEM processing element, mapped here to a global rank.</dd><dt><strong>PGAS</strong></dt><dd>Partitioned global address space: symmetric objects share an offset across PEs, while ownership remains distributed.</dd><dt><strong>Readiness flag</strong></dt><dd>Not merely a Boolean: a publication contract saying the associated bytes are visible at the required scope.</dd><dt><strong>V2 / V3</strong></dt><dd>Flux implementation families for pre-SM90 and SM90 execution models, respectively.</dd></dl></section>
+
+<section id="sources"><h2>Bibliography</h2><ul><li>Fu et al., <a href="https://arxiv.org/abs/2502.19811">COMET: Fine-grained Computation-communication Overlapping for Mixture-of-Experts</a>.</li><li><a href="https://docs.nvidia.com/nvshmem/api/">NVIDIA NVSHMEM API documentation</a>.</li><li>Repository sources at base <code>19831ca</code> and the current worktree; each chapter identifies paths, ranges, and provenance.</li></ul></section>
+</main><footer><p><a href="#content">Back to top</a> · Next: <a href="01-prerequisites.html">Prerequisites →</a></p></footer>
+<script>document.documentElement.classList.add('js');document.querySelectorAll('pre.code,table').forEach(function(e){e.tabIndex=0;if(!e.hasAttribute('aria-label'))e.setAttribute('aria-label',e.tagName==='TABLE'?'Scrollable data table':'Scrollable source code')});document.querySelectorAll('th').forEach(function(e){e.scope='col'})</script>
+</body></html>

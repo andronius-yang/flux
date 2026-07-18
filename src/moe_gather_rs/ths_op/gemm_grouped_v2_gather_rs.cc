@@ -40,11 +40,16 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <cutlass/util/device_memory.h>
 #include <cutlass/util/packed_stride.hpp>
 #include <iostream>
+#include <nvshmemx.h>
 #include <torch/csrc/distributed/c10d/ProcessGroup.hpp>
 #include <utility>
 #include <vector>
+
+#include "host/nvshmem_api.h"
+#include "host/nvshmemx_api.h"
 
 #include "flux/args/moe_gather_rs.h"
 #include "flux/cuda/cuda_common.h"
@@ -107,6 +112,10 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   std::shared_ptr<Group> tp_group;
   int32_t rank;
   int32_t world_size;  // the total world size
+  const int nnodes;
+  const int node_idx;
+  const int local_rank;
+  const int local_world_size;
   int32_t max_m;
   int32_t n_dim;
   int32_t topk;
@@ -117,6 +126,8 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   const bool use_read_mode;
   const int n_split;
 
+  // intra-node buffers: tensor lists / pointer arrays are [local_world_size],
+  // indexed by local rank (== global rank when nnodes == 1)
   torch::Tensor reduce_buffer;
   std::vector<torch::Tensor> reduce_buffers;
   torch::Tensor reduce_buffer_dptrs;
@@ -127,6 +138,20 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   std::vector<torch::Tensor> barriers;
   int **barrier_dev_ptrs = nullptr;
 
+  // inter-node staging (nnodes > 1 only): symmetric-heap send/recv buffers, one
+  // [staging_rows, n/n_split] slot per (node, split); host-issued putmem_signal
+  // moves each finished slot to the peer with the same local rank on the owner node
+  torch::Tensor staging_send;
+  torch::Tensor staging_recv;
+  torch::Tensor internode_signals;  // [nnodes * n_split] uint64 signal targets
+  // cuStreamWriteValue/WaitValue32 need real device addresses, so use
+  // cutlass::DeviceAllocation, not torch tensors (expandable_segments VA issue)
+  cutlass::DeviceAllocation<int> group_flags;     // [nnodes * n_split]
+  cutlass::DeviceAllocation<int> group_counters;  // [nnodes * n_split]
+  c10::cuda::CUDAStream internode_stream;
+  cudaEvent_t staging_reset_event;
+  uint64_t run_id_ = 0;
+
   bool buffer_initialized = false;
 
  private:
@@ -134,13 +159,14 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   init_buffer_once(at::ScalarType dtype) {
     if (this->buffer_initialized)
       return;
-    std::vector<void *> hptrs(this->world_size, nullptr);
-    const int ptr_bytes = sizeof(void *) * this->world_size;
+    std::vector<void *> hptrs(this->local_world_size, nullptr);
+    const int ptr_bytes = sizeof(void *) * this->local_world_size;
     // initialize the output buffer
     this->reduce_buffers = flux_create_tensor_list(
         {this->max_m / this->topk, this->n_dim}, dtype, this->tp_group.get());
-    this->reduce_buffer = this->reduce_buffers[this->rank];
-    for (int i = 0; i < this->world_size; ++i) {
+    FLUX_CHECK_EQ((int)this->reduce_buffers.size(), this->local_world_size);
+    this->reduce_buffer = this->reduce_buffers[this->local_rank];
+    for (int i = 0; i < this->local_world_size; ++i) {
       hptrs[i] = reduce_buffers[i].data_ptr();
     }
     CHECK(!reduce_buffer_dptrs.defined());
@@ -148,6 +174,21 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         torch::empty({ptr_bytes}, at::TensorOptions(at::kCUDA).dtype(at::ScalarType::Byte));
     CUDA_CHECK(cudaMemcpy(
         this->reduce_buffer_dptrs.data_ptr(), hptrs.data(), ptr_bytes, cudaMemcpyHostToDevice));
+    if (this->nnodes > 1) {
+      const int64_t staging_rows = this->max_m / this->topk / this->world_size;
+      const int64_t n_per = this->n_dim / this->n_split;
+      this->staging_send =
+          nvshmem_create_tensor({this->nnodes, this->n_split, staging_rows, n_per}, dtype);
+      this->staging_recv =
+          nvshmem_create_tensor({this->nnodes, this->n_split, staging_rows, n_per}, dtype);
+      this->internode_signals =
+          nvshmem_create_tensor({this->nnodes * this->n_split}, at::ScalarType::Long, true);
+      this->group_flags.reset(this->nnodes * this->n_split);
+      this->group_counters.reset(this->nnodes * this->n_split);
+      CUDA_CHECK(cudaMemset(this->group_flags.get(), 0, sizeof(int) * this->nnodes * this->n_split));
+      CUDA_CHECK(
+          cudaMemset(this->group_counters.get(), 0, sizeof(int) * this->nnodes * this->n_split));
+    }
     torch::cuda::synchronize();
     this->buffer_initialized = true;
   }
@@ -167,10 +208,11 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       // initialize the tile_barrier
       this->tile_barriers =
           flux_create_tensor_list({tile_barrier_size}, at::ScalarType::Int, this->tp_group.get());
-      this->tile_barrier = this->tile_barriers[this->rank];
-      std::vector<int *> hptrs(world_size, nullptr);
-      const int ptr_bytes = sizeof(int *) * this->world_size;
-      for (int i = 0; i < this->world_size; ++i) {
+      FLUX_CHECK_EQ((int)this->tile_barriers.size(), this->local_world_size);
+      this->tile_barrier = this->tile_barriers[this->local_rank];
+      std::vector<int *> hptrs(this->local_world_size, nullptr);
+      const int ptr_bytes = sizeof(int *) * this->local_world_size;
+      for (int i = 0; i < this->local_world_size; ++i) {
         hptrs[i] = (int *)this->tile_barriers[i].data_ptr();
       }
       CHECK(!tile_barrier_dptrs.defined());
@@ -179,6 +221,14 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       CUDA_CHECK(cudaMemcpy(
           this->tile_barrier_dptrs.data_ptr(), hptrs.data(), ptr_bytes, cudaMemcpyHostToDevice));
     }
+  }
+
+  c10::cuda::CUDAStream
+  create_internode_stream() const {
+    at::cuda::CUDAGuard guard(at::cuda::current_device());
+    cudaStream_t stream = nullptr;
+    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+    return at::cuda::getStreamFromExternal(stream, at::cuda::current_device());
   }
 
  public:
@@ -193,10 +243,15 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       const std::vector<torch::Tensor> &barriers,
       int n_split_,
       bool do_all_reduce_ = false,
-      bool use_read_mode_ = false)
+      bool use_read_mode_ = false,
+      int nnodes_ = 1)
       : tp_group(tp_group_),
         rank(tp_group_->get_rank()),
         world_size(tp_group_->get_size()),
+        nnodes(nnodes_),
+        node_idx(DistEnv(tp_group_->get_rank(), tp_group_->get_size(), nnodes_).node_idx),
+        local_rank(DistEnv(tp_group_->get_rank(), tp_group_->get_size(), nnodes_).local_rank),
+        local_world_size(tp_group_->get_size() / nnodes_),
         max_m(max_m),
         n_dim(n_dim),
         topk(topk),
@@ -206,22 +261,43 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         do_all_reduce(do_all_reduce_),
         use_read_mode(use_read_mode_),
         n_split(n_split_),
+        internode_stream(create_internode_stream()),
         barriers(barriers) {
+    FLUX_CHECK_GE(nnodes, 1);
+    FLUX_CHECK_DIV(world_size, nnodes);
+    if (nnodes > 1) {
+      FLUX_CHECK(!do_all_reduce) << "do_all_reduce not supported with nnodes > 1";
+      FLUX_CHECK(!use_read_mode) << "use_read_mode not supported with nnodes > 1";
+      FLUX_CHECK_DIV(max_m / topk, world_size);
+      FLUX_CHECK(nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE) == local_rank)
+          << "rank layout must be node-contiguous (rank = node_idx * local_world_size + "
+             "local_rank)";
+    }
     this->init_buffer_once(output_dtype);
     this->create_rs_barrier();
 
-    std::vector<void *> barrier_ptrs(world_size, nullptr);
-    for (int i = 0; i < this->tp_group->get_size(); i++) {
+    std::vector<void *> barrier_ptrs(this->local_world_size, nullptr);
+    FLUX_CHECK_EQ((int)this->barriers.size(), this->local_world_size);
+    for (int i = 0; i < this->local_world_size; i++) {
       barrier_ptrs[i] = this->barriers[i].data_ptr();
     }
-    CUDA_CHECK(cudaMalloc(&this->barrier_dev_ptrs, world_size * sizeof(void *)));
+    CUDA_CHECK(cudaMalloc(&this->barrier_dev_ptrs, this->local_world_size * sizeof(void *)));
     CUDA_CHECK(cudaMemcpy(
         this->barrier_dev_ptrs,
         barrier_ptrs.data(),
-        world_size * sizeof(void *),
+        this->local_world_size * sizeof(void *),
         cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaEventCreateWithFlags(&this->staging_reset_event, cudaEventDisableTiming));
     torch::cuda::synchronize();  // we don't assume create/run on the same stream so sync is safe
-    this->barrier = this->barriers[this->rank];
+    this->barrier = this->barriers[this->local_rank];
+  }
+
+  ~TopkReduceScatterOpImpl() {
+    CUDA_CHECK(cudaEventDestroy(this->staging_reset_event));
+    CUDA_CHECK(cudaStreamDestroy(this->internode_stream));
+    if (this->barrier_dev_ptrs != nullptr) {
+      CUDA_CHECK(cudaFree(this->barrier_dev_ptrs));
+    }
   }
 
   torch::Tensor
@@ -273,17 +349,92 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         .barrier = this->barrier_dev_ptrs,
         .reduce_ptrs = (void **)this->reduce_buffer_dptrs.data_ptr(),
         .tile_barrier_ptrs = (int **)this->tile_barrier_dptrs.data_ptr(),
+        .nnodes = this->nnodes,
+        .node_idx = this->node_idx,
+        .local_rank = this->local_rank,
+        .local_world_size = this->local_world_size,
+        .staging_rows = (int)(this->max_m / this->topk / this->world_size),
+        .staging_send = this->nnodes > 1 ? this->staging_send.data_ptr() : nullptr,
+        .group_flags = this->nnodes > 1 ? this->group_flags.get() : nullptr,
+        .group_counters = this->nnodes > 1 ? this->group_counters.get() : nullptr,
     };
     for (int i = 0; i < gemm_outs.size(); i++) {
       args.input_ptrs[i] = (void *)gemm_outs[i].data_ptr();
       args.output_vec_scale_ptrs[i] =
           output_vec_scales.has_value() ? (float *)output_vec_scales->at(i).data_ptr() : nullptr;
     }
+    cudaStream_t stream_raw = (cudaStream_t)cp_stream;
+    if (this->nnodes > 1) {
+      // per-run reset of the kernel->host chunk-ready flags/counters, published to the
+      // internode stream via an event so its waits cannot observe stale values
+      this->run_id_ += 1;
+      const size_t flag_bytes = sizeof(int) * this->nnodes * this->n_split;
+      CUDA_CHECK(cudaMemsetAsync(this->group_flags.get(), 0, flag_bytes, stream_raw));
+      CUDA_CHECK(cudaMemsetAsync(this->group_counters.get(), 0, flag_bytes, stream_raw));
+      CUDA_CHECK(cudaEventRecord(this->staging_reset_event, stream_raw));
+      CUDA_CHECK(cudaStreamWaitEvent(this->internode_stream, this->staging_reset_event));
+    }
     auto output_dtype = from_torch_dtype(dtype);
     if (this->ep_world_size == 1) {
       topk_gather_rs_v2(args, output_dtype, (cudaStream_t)cp_stream);
     } else {
       ep_topk_gather_rs_v2(args, output_dtype, ep_start, ep_nexperts, (cudaStream_t)cp_stream);
+    }
+    if (this->nnodes > 1) {
+      const int64_t rows = ntokens / this->world_size;  // runtime token rows per rank
+      const int64_t n_per = N / this->n_split;
+      const int64_t slot_bytes = (int64_t)args.staging_rows * n_per * output.element_size();
+      const int64_t chunk_bytes = rows * n_per * output.element_size();
+      char *send_base = (char *)this->staging_send.data_ptr();
+      char *recv_base = (char *)this->staging_recv.data_ptr();
+      uint64_t *sig_base = (uint64_t *)this->internode_signals.data_ptr();
+      // sender side: as the kernel finishes staging each (remote node, split) chunk, push it
+      // with one contiguous putmem_signal to the rank with the same local rank on that node.
+      // same (sid, group) order as the kernel produces the chunks.
+      for (int sid = 0; sid < this->n_split; sid++) {
+        for (int gi = 0; gi < this->nnodes - 1; gi++) {
+          int g = (this->node_idx + 1 + gi) % this->nnodes;
+          int idx = g * this->n_split + sid;
+          CU_CHECK(CUStreamWaitValue(
+              this->internode_stream,
+              (CUdeviceptr)(this->group_flags.get() + idx),
+              1,
+              CU_STREAM_WAIT_VALUE_GEQ));
+          nvshmemx_putmem_signal_nbi_on_stream(
+              recv_base + (int64_t)(this->node_idx * this->n_split + sid) * slot_bytes,
+              send_base + (int64_t)idx * slot_bytes,
+              chunk_bytes,
+              sig_base + this->node_idx * this->n_split + sid,
+              this->run_id_,
+              NVSHMEM_SIGNAL_SET,
+              /*pe=*/g * this->local_world_size + this->local_rank,
+              this->internode_stream);
+        }
+      }
+      // receiver side: wait for every remote node's partial of my token shard, then
+      // accumulate it into the output (own-node contribution was written by the kernel)
+      for (int sid = 0; sid < this->n_split; sid++) {
+        for (int m = 0; m < this->nnodes; m++) {
+          if (m == this->node_idx) {
+            continue;
+          }
+          nvshmemx_signal_wait_until_on_stream(
+              sig_base + m * this->n_split + sid, NVSHMEM_CMP_GE, this->run_id_, stream_raw);
+        }
+        internode_reduce_gather_rs(
+            output.data_ptr(),
+            this->staging_recv.data_ptr(),
+            output_dtype,
+            this->nnodes,
+            this->node_idx,
+            this->n_split,
+            sid,
+            rows,
+            n_per,
+            N,
+            args.staging_rows,
+            stream_raw);
+      }
     }
     if (this->do_all_reduce) {
       cudaMemcpyAsync(
@@ -320,10 +471,13 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
   int32_t world_size;     // the total world size
   int32_t tp_world_size;  // the world size of tensor parallel
   int32_t ep_world_size;  // the world size of expert parallel
+  int32_t nnodes;
+  int32_t local_rank;        // == rank when nnodes == 1
+  int32_t local_world_size;  // == world_size when nnodes == 1
   int n_split;
   bool do_all_reduce;
   torch::Tensor barrier;
-  std::vector<torch::Tensor> barriers;
+  std::vector<torch::Tensor> barriers;  // [local_world_size], indexed by local rank
   std::unique_ptr<TopkReduceScatterOp> topk_reduce_scatter_op = nullptr;
 
   torch::Tensor workspace;
@@ -345,7 +499,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     if (this->barriers.empty()) {
       this->barriers = flux_create_tensor_list(
           std::vector<int64_t>{barrier_size}, at::ScalarType::Int, this->tp_group.get(), true);
-      this->barrier = this->barriers[this->rank];
+      FLUX_CHECK_EQ((int)this->barriers.size(), this->local_world_size);
+      this->barrier = this->barriers[this->local_rank];
     }
   }
 
@@ -391,7 +546,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       int64_t max_input_groups,
       int64_t n_split_,
       bool do_all_reduce_ = false,
-      bool use_read_mode = false)
+      bool use_read_mode = false,
+      int64_t nnodes_ = 1)
       : tp_group(tp_group_),
         total_num_experts(total_num_experts),
         max_m(max_m),
@@ -403,6 +559,9 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         world_size(tp_group_->get_size()),
         tp_world_size(tp_world_size),
         ep_world_size(ep_world_size),
+        nnodes(nnodes_),
+        local_rank(DistEnv(tp_group_->get_rank(), tp_group_->get_size(), nnodes_).local_rank),
+        local_world_size(tp_group_->get_size() / nnodes_),
         n_split(n_split_fixed(n_split_, n_dim)),
         do_all_reduce(do_all_reduce_),
         group_barrier(tp_group_, false) {
@@ -413,6 +572,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     FLUX_CHECK_EQ(this->tp_world_size * this->ep_world_size, this->world_size);
     FLUX_CHECK_DIV(this->total_num_experts, this->ep_world_size);
     FLUX_CHECK_LE(max_input_groups, kMaxNumGroups);
+    FLUX_CHECK_GE(this->nnodes, 1);
+    FLUX_CHECK_DIV(this->world_size, this->nnodes);
     this->ep_nexperts = this->total_num_experts / this->ep_world_size;
     int ep_rank = this->rank / this->tp_world_size;
     this->ep_start = this->ep_nexperts * ep_rank;
@@ -431,7 +592,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         this->barriers,
         this->n_split,
         do_all_reduce_,
-        use_read_mode);
+        use_read_mode,
+        nnodes_);
   }
 
   torch::Tensor
@@ -737,6 +899,7 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       int sm_margin,
       bool with_stream_sync) {
 #if defined(FLUX_WITH_TRITON_AOT)
+    FLUX_CHECK(this->nnodes == 1) << "moe_gather_rs triton path is single-node only";
     int M_this_ep = input.size(0);
     int K = input.size(1);
     int E = weight.size(0);
@@ -1060,7 +1223,8 @@ TopkReduceScatterOp::TopkReduceScatterOp(
     std::vector<torch::Tensor> barriers,
     int n_split,
     bool do_all_reduce,
-    bool use_read_mode)
+    bool use_read_mode,
+    int nnodes)
     : impl_(new TopkReduceScatterOpImpl(
           tp_group,
           max_m,
@@ -1072,7 +1236,8 @@ TopkReduceScatterOp::TopkReduceScatterOp(
           barriers,
           n_split,
           do_all_reduce,
-          use_read_mode)) {}
+          use_read_mode,
+          nnodes)) {}
 TopkReduceScatterOp::~TopkReduceScatterOp() { delete impl_; }
 void
 TopkReduceScatterOp::reset_buffer() {
@@ -1115,7 +1280,8 @@ GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOp(
     int64_t max_input_groups,
     int64_t n_split_,
     bool do_all_reduce,
-    bool use_read_mode)
+    bool use_read_mode,
+    int64_t nnodes)
     : impl_(new GemmGroupedV2GatherRSOpImpl(
           tp_group_,
           total_num_experts,
@@ -1128,7 +1294,8 @@ GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOp(
           max_input_groups,
           n_split_,
           do_all_reduce,
-          use_read_mode)) {}
+          use_read_mode,
+          nnodes)) {}
 
 GemmGroupedV2GatherRSOp::~GemmGroupedV2GatherRSOp() { delete impl_; }
 torch::Tensor

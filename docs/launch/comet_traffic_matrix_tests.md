@@ -53,3 +53,27 @@ Note on semantics: layer0 physically performs a dense all-gather then a local
 scatter — the matrix shapes logical dispatch and per-rank GEMM load, not layer0
 wire bytes. Layer1's gather-RS payload realizes the matrix transpose
 (expert-owner -> token-home).
+
+## Layer0 a2av dispatch mode (`--comm_pattern a2av`, sm80/V2 only)
+
+Design walkthrough (what changed and why, from the communication-patterns
+narrative): `comet_traffic_matrix_a2av.md`.
+
+`test_moe_ag_traffic.py --comm_pattern a2av` replaces the dense all-gather with a
+raw alltoallv: each (token, topk-slot) copy is sent directly producer ->
+expert-owner rank via host-issued NVSHMEM `putmem_signal`, so wire bytes s->d
+equal exactly `M[s][d]`. The grouped GEMM claims tiles dynamically in
+signal-arrival order (per-source buckets + atomic cursors; the per-tile signal
+spin remains the correctness backstop). Signals are epoch-valued (`run_id`),
+never reset.
+
+- Requires `ep_size == world_size`, single weight group, no `--gather_input`.
+- Recv buffer capacity defaults to 2x the balanced per-rank load; skewed
+  matrices (the real a2av sets have ~3x hot columns) need
+  `FLUX_A2AV_MAX_RECV_NTOKENS=<rows>` (rows = received (token, slot) copies;
+  4x average, i.e. `ntokens * topk / world * 4`, is a safe choice). The op
+  prints its symmetric-heap need at construction; keep
+  `NVSHMEM_SYMMETRIC_SIZE=4G`.
+- Validated 2026-07-17 on 1 node (4r, synthetic + skewed matrices) and 4 nodes
+  (`4n_16r/{16mib,64mib}/dist_001`), 16/16 ranks allclose vs torch in every
+  configuration.

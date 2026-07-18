@@ -21,10 +21,17 @@ exactly M[s][d] / chunk_bytes (token, topk-slot) copies, where chunk_bytes =
 H * dtype_size. EP is fixed to ep_size == world_size so each expert's full FFN
 weight resides on one rank.
 
-NOTE on physical traffic: layer0 performs a dense all-gather of all token shards
-(fixed wire bytes independent of the matrix), then consumes chunks[s][d] token
-copies per (s, d) via the local scatter feeding the grouped GEMM. The matrix
-governs the logical dispatch and per-rank GEMM load, not the AG wire bytes.
+NOTE on physical traffic: with --comm_pattern allgather (default), layer0
+performs a dense all-gather of all token shards (fixed wire bytes independent of
+the matrix), then consumes chunks[s][d] token copies per (s, d) via the local
+scatter feeding the grouped GEMM — the matrix governs only the logical dispatch
+and per-rank GEMM load. With --comm_pattern a2av (sm80/V2 only), each (token,
+topk-slot) copy is sent directly producer -> expert-owner rank via NVSHMEM
+putmem_signal, so the wire bytes s->d equal exactly M[s][d], and the grouped
+GEMM claims tiles dynamically in signal-arrival order. --comm_pattern a2av_ring
+moves the same M[s][d] wire bytes, but sends follow the reverse hierarchical
+ring (the mirror of the allgather stage order), so the grouped GEMM keeps the
+dense path's static ring-order tile schedule.
 """
 
 import argparse
@@ -167,6 +174,7 @@ def perf_flux(
     iters: int,
     gather_input: bool = True,
     ag_option: flux.AllGatherOption = flux.AllGatherOption(),
+    comm_pattern: str = "allgather",
 ):
     tp_env = flux.DistEnvTPWithEP(tp_group=TP_GROUP, nnodes=DIST_ENV.NNODES, ep_group=EP_GROUP)
     moe_args = flux.MoeArguments(
@@ -179,17 +187,26 @@ def perf_flux(
         output_dtype=ctx.outputs[0].dtype,
     )
 
+    use_a2av = comm_pattern in ("a2av", "a2av_ring")
     extra_args = {}
     if flux.util.get_arch() >= 90:
+        assert not use_a2av, "--comm_pattern a2av is only implemented for the sm80/V2 op"
         op = flux.GemmGroupedV3AGScatter(tp_env=tp_env, moe_args=moe_args)
     else:
-        op = flux.GemmGroupedV2AGScatterOp(tp_env=tp_env, moe_args=moe_args)
+        op = flux.GemmGroupedV2AGScatterOp(
+            tp_env=tp_env,
+            moe_args=moe_args,
+            a2av_dispatch=use_a2av,
+            a2av_ring=(comm_pattern == "a2av_ring"),
+        )
         extra_args = {
             "ag_option": ag_option,
             "bias": take_first_or_none(ctx.bias),
             "input_scale": take_first_or_none(ctx.input_scale),
             "weight_scale": take_first_or_none(ctx.weight_scale),
         }
+    if use_a2av:
+        assert not gather_input, "--gather_input has no dense gathered buffer in a2av mode"
 
     total_iters = warmup_iters + iters
     start_events = [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
@@ -313,6 +330,14 @@ def parse_args():
         action=argparse.BooleanOptionalAction,
         help="use cuda core to impl all gather, auto select if not specified",
     )
+    parser.add_argument(
+        "--comm_pattern",
+        default="allgather",
+        choices=["allgather", "a2av", "a2av_ring"],
+        help="layer0 comm pattern: dense allgather (default), raw alltoallv"
+        " dispatch whose wire bytes equal the traffic matrix (dynamic tile"
+        " schedule), or a2av_ring (same wire bytes, static ring schedule)",
+    )
     return parser.parse_args()
 
 
@@ -371,6 +396,12 @@ if __name__ == "__main__":
         print(f"ntokens: {ntokens} ({ntokens // DIST_ENV.WORLD_SIZE} per rank), topk: {args.topk}")
         print(f"Splits: {moe_ctx.splits_cpu.tolist()}, Sum: {sum(moe_ctx.splits_cpu.tolist())}")
         print(f"Per-rank gemm rows: {rows_per_rank.tolist()}")
+        print(f"comm_pattern: {args.comm_pattern}")
+        if args.comm_pattern in ("a2av", "a2av_ring"):
+            send_bytes = (matrix.sum(dim=1) - matrix.diag()).tolist()
+            recv_bytes = (matrix.sum(dim=0) - matrix.diag()).tolist()
+            print(f"a2av wire bytes per rank (send): {send_bytes}")
+            print(f"a2av wire bytes per rank (recv): {recv_bytes}")
 
     if args.tune:
         prof_ctx = tune_flux(moe_ctx)
@@ -396,7 +427,7 @@ if __name__ == "__main__":
         group=TP_GROUP,
     ):
         perf_result_flux = perf_flux(
-            moe_ctx, args.warmup_iters, args.iters, args.gather_input, ag_option
+            moe_ctx, args.warmup_iters, args.iters, args.gather_input, ag_option, args.comm_pattern
         )
         perf_result_torch = perf_torch(moe_ctx, args.warmup_iters, args.iters, args.gather_input)
 

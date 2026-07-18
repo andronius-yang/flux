@@ -67,6 +67,37 @@ struct MoeAgScatterWorkspaceArgumements {
   ProblemInfo *problem_info;
 };
 
+// a2av dispatch mode: extra workspace regions appended after the dense layout,
+// holding the dynamically-claimed tile schedule. Pointers are computed host-side
+// only (get_a2av_schedule_workspace) and passed into the prepare kernel, so
+// there is no device-side offset mirror to keep in sync.
+struct A2AVScheduleWorkspace {
+  ProblemInfo *bucket_tiles = nullptr;  // [max_tiles], grouped by source bucket
+  int *bucket_offsets = nullptr;        // [world_size + 2] prefix offsets
+  int *bucket_cursors = nullptr;        // [world_size + 1] claim cursors
+  uint64_t *multi_masks = nullptr;      // [max_tiles] source masks (bucket W only)
+  size_t bytes_end = 0;                 // total workspace bytes incl. these regions
+};
+
+inline A2AVScheduleWorkspace
+get_a2av_schedule_workspace(
+    void *workspace_base, size_t dense_bytes, int max_tiles, int world_size) {
+  auto pad128 = [](size_t x) { return (x + 127) / 128 * 128; };
+  auto at = [&](size_t off) { return (void *)((char *)workspace_base + off); };
+  A2AVScheduleWorkspace w;
+  size_t off = pad128(dense_bytes);
+  w.bucket_tiles = (ProblemInfo *)at(off);
+  off = pad128(off + sizeof(ProblemInfo) * max_tiles);
+  w.bucket_offsets = (int *)at(off);
+  off = pad128(off + sizeof(int) * (world_size + 2));
+  w.bucket_cursors = (int *)at(off);
+  off = pad128(off + sizeof(int) * (world_size + 1));
+  w.multi_masks = (uint64_t *)at(off);
+  off = pad128(off + sizeof(uint64_t) * max_tiles);
+  w.bytes_end = off;
+  return w;
+}
+
 void make_workspace_async(
     const GemmGroupedV2AGScatterArguments &args,
     GemmLayoutEnum layout,
@@ -74,7 +105,8 @@ void make_workspace_async(
     int output_elem_size,
     int threadblock_count,
     void *workspace,
-    cudaStream_t stream);
+    cudaStream_t stream,
+    A2AVScheduleWorkspace a2av_ws = {});
 
 /**
  * @brief Get the sorted problem schedule cuda v2 object

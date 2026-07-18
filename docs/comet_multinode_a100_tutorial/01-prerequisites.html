@@ -1,0 +1,97 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Prerequisites · Flux COMET A100</title><style>
+:root{--bg:#f7f7f3;--fg:#17201d;--muted:#5d6964;--card:#fff;--line:#ccd5d0;--a:#086b59;--warn:#9b4b16;--code:#10221d;--codefg:#dcf5e9}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,Segoe UI,sans-serif}.skip{position:absolute;left:-999px}.skip:focus{left:1rem;top:1rem;background:var(--card);padding:.7rem;z-index:9}header,main,footer{max-width:1050px;margin:auto;padding:1.2rem}header{padding-top:3.5rem}h1{font-size:clamp(2.2rem,6vw,4.4rem);line-height:1;letter-spacing:-.04em;margin:.4rem 0}h2{margin-top:3.6rem;border-top:1px solid var(--line);padding-top:1.2rem}h3{margin-top:2rem}a{color:var(--a);text-underline-offset:3px}.lede{font-size:1.2rem;max-width:800px}.toc ol{columns:2}.card,.note{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:1rem 1.2rem;margin:1rem 0}.tag{display:inline-block;font-size:.7rem;font-weight:800;letter-spacing:.05em;padding:.12rem .45rem;border-radius:99px;color:#fff;background:var(--a)}.diff{background:var(--warn)}.paper{background:#5750a4}.infer{background:#765d15}.codehead{display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;background:#17372e;color:white;padding:.6rem .9rem;border-radius:12px 12px 0 0;font-size:.82rem}.code{overflow-x:auto;margin:0 0 1rem;background:var(--code);color:var(--codefg);padding:1rem;border-radius:0 0 12px 12px}.code code{font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem}.equation{font:1rem/1.6 ui-monospace,monospace;background:var(--card);border-left:4px solid var(--a);padding:1rem;overflow:auto}.small{font-size:.9rem;color:var(--muted)}table{border-collapse:collapse;width:100%;display:block;overflow:auto}th,td{padding:.65rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}.callout{border-left:4px solid var(--warn)}.code:focus,table:focus{outline:3px solid var(--a);outline-offset:2px}.codehead{break-after:avoid}.code{break-before:avoid}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}@media(max-width:650px){header{padding-top:2rem}.toc ol{columns:1}.code code{font-size:12px}}@media(prefers-color-scheme:dark){:root{--bg:#0e1513;--fg:#e4eee9;--muted:#a5b3ad;--card:#151e1b;--line:#35443e;--a:#67d5ba;--warn:#e18c53;--code:#07110e;--codefg:#d7f4e8}}@media print{body{background:#fff;color:#000;font-size:10pt}.toc,.skip{display:none}.card{break-inside:avoid}.code{background:#eee;color:#000}.code code{white-space:pre-wrap}.tag{background:#fff;color:#000;border:1px solid}}
+</style></head><body><a class="skip" href="#content">Skip to content</a><header><p><a href="index.html">← Tutorial map</a> · Chapter 01</p><h1>Prerequisites, only where the code needs them</h1><p class="lede">A compact bridge from MoE tensors to GPU memory ordering. The goal is to make every later flag, offset, stream wait, and rank conversion unsurprising.</p></header><main id="content"><svg role="img" aria-labelledby="mini-title-1 mini-desc-1" viewBox="0 0 900 110" style="width:100%;height:auto"><title id="mini-title-1">Prerequisite dependency ladder</title><desc id="mini-desc-1">Routing shapes lead to rank topology, peer memory, ordering, and finally signals.</desc><path d="M110 55H790" stroke="currentColor" stroke-width="2"/><g fill="currentColor" text-anchor="middle" font-family="system-ui" font-size="16"><text x="110" y="42">routing</text><text x="280" y="82">shapes</text><text x="450" y="42">ranks</text><text x="620" y="82">visibility</text><text x="790" y="42">signals</text></g></svg>
+<nav class="toc" aria-label="On this page"><h2>On this page</h2><ol><li><a href="#routing">Routing and shapes</a></li><li><a href="#ownership">TP and EP ownership</a></li><li><a href="#tiles">Grouped GEMM and tiles</a></li><li><a href="#streams">Streams and visibility</a></li><li><a href="#ranks">Rank topology</a></li><li><a href="#memory">IPC versus symmetric memory</a></li><li><a href="#signals">Signals as contracts</a></li><li><a href="#glossary">Glossary and sources</a></li></ol></nav>
+
+<section id="routing"><h2>1. One token becomes <em>top-k</em> expert rows</h2>
+<p><span class="tag">CODE</span> Let <code>T</code> be tokens, <code>H</code> hidden width, <code>F</code> expert FFN width, <code>E</code> experts, <code>k</code> selected experts per token, <code>W</code> the full process-group size, and <code>P=W/EP</code> the FFN tensor-parallel size. The example uses <code>T=1024</code>, <code>H=4096</code>, <code>F=14336</code>, <code>E=8</code>, <code>k=2</code>.</p>
+<div class="grid"><div class="card"><strong><code>splits[e]</code></strong><p>How many expanded rows are assigned to expert <code>e</code>. Its sum is <code>T × k</code>.</p></div><div class="card"><strong><code>scatter_index</code></strong><p>Where an expanded token/expert choice lands in expert-grouped order.</p></div><div class="card"><strong><code>routing_idx</code></strong><p>Layer 1’s inverse lookup: which expert-output row contributes to each token/top-k slot.</p></div></div>
+<div class="codehead"><span><strong>examples/moe.py:83–109</strong> · WORKTREE · abridged</span><span>Python · GPU tensors</span></div><pre class="code"><code>moe_gating_args = gen_moe_gating_args(nexperts, topk, ntokens)
+splits_gpu   = moe_gating_args.splits_gpu
+scatter_index = moe_gating_args.scatter_index
+gather_index  = moe_gating_args.gather_index
+topk_index    = moe_gating_args.topk_index
+
+inputs_shard = rand([ntokens / tp_size, h])
+weight0 = rand([nexperts / ep_size, ffn_size / ffn_tp_size, h])
+weight1 = rand([nexperts / ep_size, h, ffn_size / ffn_tp_size])
+intermediate_output = zeros([nrows_ep, ffn_size / ffn_tp_size])
+</code></pre>
+<div class="card"><p><strong>Execution.</strong> Routing metadata is made once for the example; layer 0 expands and groups rows, while layer 1 uses inverse routing to sum the selected expert results.</p><p><strong>Ownership / stream.</strong> Indices and activations are device tensors used on the caller’s CUDA stream.</p><p><strong>Invariant.</strong> <code>sum(splits) = T×k</code>; <code>scatter_index</code> and the layer-1 routing lookup must describe the same expansion.</p><p><strong>Why this exists.</strong> Grouped GEMM wants expert-contiguous problems even though Python starts with token-contiguous input.</p></div>
+</section>
+
+<section id="ownership"><h2>2. Tensor ownership under TP and EP</h2>
+<p><span class="tag">CODE</span> Sequence-parallel input means each rank in the full group initially owns <code>[T/W,H]</code>. All-gather reconstructs <code>[T,H]</code>. EP assigns each rank a subset of experts, while FFN tensor parallelism of size <code>P=W/EP</code> shards <code>F</code>.</p>
+<div class="note"><strong>Where each quantity comes from.</strong> <code>E</code>, <code>H</code>, and <code>F</code> belong to the MoE model configuration; Hopper versus Ampere does not choose them. The distributed run supplies <code>W</code> and configures <code>EP</code>. This implementation then derives <code>P=W/EP</code>, <code>E_local=E/EP</code>, and <code>F_local=F/P</code>. Crucially, <code>E_local</code> counts <em>expert identities represented on a rank</em>. They are complete experts only when <code>P=1</code>; for <code>P&gt;1</code>, each rank holds one width shard of each local expert identity. <a href="addons/terminology-and-parallelism.html">Open the source-grounded terminology deep dive →</a></div>
+<table><thead><tr><th>Object</th><th>Shape in the example</th><th>Owner before communication</th></tr></thead><tbody><tr><td><code>inputs_shard</code></td><td><code>[T/W, H]</code></td><td>one global rank</td></tr><tr><td>all-gathered input</td><td><code>[T,H]</code></td><td>logical replica; backing differs by path</td></tr><tr><td><code>weight0</code></td><td><code>[E/EP, F/P, H]</code></td><td>local EP/FFN-TP shard</td></tr><tr><td>expanded expert rows</td><td><code>[T×k,H]</code> globally</td><td>partitioned by expert after scatter</td></tr><tr><td>layer-1 output shard</td><td><code>[T/W,H]</code></td><td>one reduce-scatter rank</td></tr></tbody></table>
+<div class="equation">P = ffn_tp_size = W / EP
+E_local = E / EP
+F_local = F / P
+T_shard = T / W
+M_full = T × topk</div>
+</section>
+
+<section id="tiles"><h2>3. Grouped GEMM, tiles, CTAs, and SM pressure</h2>
+<p><span class="tag paper">PAPER</span> An MoE expert batch is not one rectangular GEMM: each expert has a different M from <code>splits</code>, but shares K and N. A grouped GEMM represents those expert problems together. A tile scheduler maps M×N tiles to CTAs; an SM runs resident CTAs subject to register/shared-memory limits.</p>
+<p><span class="tag infer">INFERENCE</span> “More CTAs” is not automatically more overlap. A communication kernel that occupies every SM can delay GEMM; too few communication resources can expose network latency. COMET’s resource assignment is therefore part of the algorithm.</p>
+<div class="card"><strong>Oversubscription in one sentence.</strong> There are usually more logical tiles than can be resident; persistent or strided CTA loops reuse a bounded set of blocks, which makes scheduling order—not just tile count—observable.</div>
+</section>
+
+<section id="streams"><h2>4. CUDA ordering is not global visibility</h2>
+<div class="grid"><div class="card"><strong>Stream order</strong><p>Commands in one stream execute in issue order. Different streams need an event, semaphore wait/write, or another dependency.</p></div><div class="card"><strong>CTA barrier</strong><p><code>__syncthreads()</code> coordinates threads of one CTA. It does not by itself publish bytes to a host-enqueued transfer.</p></div><div class="card"><strong>System scope</strong><p><code>__threadfence_system()</code> and system-scope release operations make publication meaningful beyond the issuing GPU’s ordinary device scope.</p></div></div>
+<p>The patch uses three distinct ideas and they must not be collapsed:</p><ol><li>a kernel finishes writes to a staging slot;</li><li>it makes those writes system-visible, then release-publishes a flag;</li><li>an auxiliary stream waits on the flag before issuing NVSHMEM RMA.</li></ol>
+<div class="codehead"><span><strong>src/moe_gather_rs/topk_gather_rs_v2.cu:667–675</strong> · DIFF · abridged</span><span>GPU kernel · system publication</span></div><pre class="code"><code>if (params.nnodes &gt; 1 &amp;&amp; g != params.node_idx) {
+  __threadfence_system();
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    int done = atomicAdd(params.group_counters + g * params.n_split + sid, 1) + 1;
+    if (done == gridDim.x)
+      atomic_store_release_sys(params.group_flags + g * params.n_split + sid, 1);
+  }
+}</code></pre>
+<div class="card"><p><strong>Execution.</strong> Every block completes its share; the last counter increment publishes the group flag.</p><p><strong>Ownership / stream.</strong> GPU CTAs write symmetric <code>staging_send</code>; flags/counters live in real device allocations and are watched by <code>internode_stream</code>.</p><p><strong>Invariant.</strong> Observing flag ≥ 1 must imply all bytes in that <code>(owner-node, N-split)</code> slot are system-visible.</p><p><strong>Why this exists.</strong> A host-enqueued put must never race unfinished producer stores.</p></div>
+</section>
+
+<section id="ranks"><h2>5. Node-contiguous rank topology</h2>
+<p><span class="tag">CODE</span> <code>DistEnv</code> assumes equal GPUs per node and contiguous global ranks:</p><div class="equation">local_world_size = world_size / nnodes
+node_idx  = global_rank / local_world_size
+local_rank = global_rank % local_world_size
+global_rank(node, local) = node × local_world_size + local</div>
+<div class="codehead"><span><strong>include/flux/utils.h:52–96</strong> · HEAD · abridged</span><span>Host/device POD topology</span></div><pre class="code"><code>struct DistEnv {
+  int32_t rank, world_size, nnodes;
+  int32_t local_world_size, local_rank, node_idx;
+
+  global_rank_to_node_idx_local_rank(int global_rank) const {
+    divmod_local_world_size.fast_divmod(node_idx, local_rank, global_rank);
+    return {node_idx, local_rank};
+  }
+  int local_rank_to_global_rank(int local_rank, int node_idx) const {
+    return node_idx * local_world_size + local_rank;
+  }
+};</code></pre>
+<div class="card"><p><strong>Execution.</strong> Fast div/mod is usable in host orchestration and device tile scheduling.</p><p><strong>Ownership.</strong> <code>DistEnv</code> is copied into the layer-0 runtime argument struct; layer 1 materializes the same fields.</p><p><strong>Invariant.</strong> Slurm/torchrun rank assignment and NVSHMEM node-team rank must agree; the worktree checks <code>nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE) == local_rank</code>.</p><p><strong>Why this exists.</strong> The algorithm sends remote partials to the same-local-rank PE on the owner node.</p></div>
+</section>
+
+<section id="memory"><h2>6. Node-local peer pointers versus NVSHMEM symmetric memory</h2>
+<table><thead><tr><th></th><th>Node-local peer pointer list</th><th>NVSHMEM symmetric allocation</th></tr></thead><tbody><tr><td>Reach</td><td>Same node / peer-access domain</td><td>All PEs through PGAS transport</td></tr><tr><td>Address model</td><td>Normally <code>nvshmem_ptr</code> for local PEs when NVSHMEM is enabled; CUDA IPC is fallback</td><td>Same symmetric offset; remote PE named separately</td></tr><tr><td>Used here</td><td>V2 intra-node rings, barriers, reduce buffers</td><td>multi-node AG input and layer-1 staging/signals</td></tr><tr><td>Transfer</td><td>GPU loads/stores or local copies</td><td>one-sided get/put/signal on a stream</td></tr></tbody></table>
+<div class="codehead"><span><strong>src/ths_op/flux_shm.cc:61–91</strong> · HEAD · abridged</span><span>Host allocation · symmetric heap</span></div><pre class="code"><code>at::cuda::device_synchronize();
+void *ptr = init_zero ? nvshmem_calloc(count, element_size)
+                      : nvshmem_malloc(size);
+FLUX_CHECK(ptr != nullptr) &lt;&lt; "set larger NVSHMEM_SYMMETRIC_SIZE";
+return at::from_blob(ptr, shape, /* device-sync then nvshmem_free deleter */, options);</code></pre>
+<div class="card"><p><strong>Execution.</strong> Allocation is collective/symmetric; Flux wraps the raw pointer as a CUDA tensor without transferring ownership to PyTorch’s allocator.</p><p><strong>Ownership.</strong> The symmetric heap owns storage; the tensor wrapper’s deleter synchronizes before <code>nvshmem_free</code>.</p><p><strong>Invariant.</strong> Every participating PE makes compatible symmetric allocations in the same order and the heap is large enough.</p><p><strong>Why this exists.</strong> Remote puts/gets require a remotely addressable symmetric object.</p></div>
+<div class="note callout"><span class="tag diff">DIFF</span> The patch deliberately uses <code>cutlass::DeviceAllocation</code> for CUDA stream wait/write addresses. Its comment records that PyTorch expandable segments can return a virtual address rejected by <code>cuStreamWriteValue32_v2</code>. This is a local implementation rationale, not a general ban on tensor-backed flags.</div>
+</section>
+
+<section id="signals"><h2>7. Put-with-signal: data plus its receipt</h2>
+<p><span class="tag paper">PAPER</span> NVSHMEM exposes one-sided RMA and signaling over symmetric memory. A put-with-signal couples destination data delivery with a signal update. The receiver waits until its signal reaches the per-run value before consuming the slot.</p>
+<p>A readiness flag answers “may the sender issue the put?” A receiver signal answers “has this sender’s put for this run arrived?” They are different addresses, on different sides of the transfer.</p>
+<div class="equation">producer stores → system fence → release flag = 1
+internode stream: wait(flag ≥ 1) → putmem_signal(..., signal = run_id)
+receiver stream: wait(signal ≥ run_id) → accumulate staging_recv</div>
+<div class="note callout"><strong>Stale-state prevention.</strong> Per-run flags and counters are memset to zero, an event orders that reset before auxiliary-stream waits, and monotonically increasing <code>run_id</code> values distinguish receiver signals across calls. Because each PE maintains its own counter, all PEs must invoke this operator in lock-step order so sender and receiver expect the same ID. Removing any one of those contracts can expose earlier state.</div>
+</section>
+
+<section id="glossary"><h2>Glossary, snapshot, and primary sources</h2><dl><dt><strong>M / N / K</strong></dt><dd>GEMM row, output-column, and reduction dimensions. In this code, M follows routed tokens; N follows output hidden width.</dd><dt><strong>Symmetric slot</strong></dt><dd>A fixed <code>(node, split)</code> region whose byte offset is identical in each PE’s corresponding allocation.</dd><dt><strong>Release publication</strong></dt><dd>A write whose observation also orders preceding writes at the required memory scope.</dd><dt><strong>Run ID</strong></dt><dd>A monotonically increasing signal value that prevents a prior invocation’s nonzero signal from satisfying a current wait.</dd></dl><p><strong>Snapshot:</strong> base <code>19831ca</code>; generated 2026-07-15 UTC; current dirty tree. Unbadged walkthrough prose inherits the CODE or DIFF provenance of its nearest source card.</p>
+<ul><li><a href="https://docs.nvidia.com/nvshmem/api/introduction.html">NVSHMEM PGAS introduction</a></li><li><a href="https://docs.nvidia.com/nvshmem/api/gen/api/ordering.html">NVSHMEM memory ordering</a></li><li><a href="https://docs.nvidia.com/nvshmem/api/gen/api/signal.html">NVSHMEM signaling operations</a></li><li><a href="https://docs.nvidia.com/cuda/cuda-c-programming-guide/">CUDA C++ Programming Guide</a></li></ul></section>
+</main><footer><p><a href="index.html">← Map</a> · <a href="#content">Top</a> · <a href="02-top-down.html">Top-down →</a></p></footer><script>document.documentElement.classList.add('js');document.querySelectorAll('pre.code,table').forEach(function(e){e.tabIndex=0;if(!e.hasAttribute('aria-label'))e.setAttribute('aria-label',e.tagName==='TABLE'?'Scrollable data table':'Scrollable source code')});document.querySelectorAll('th').forEach(function(e){e.scope='col'})</script></body></html>
