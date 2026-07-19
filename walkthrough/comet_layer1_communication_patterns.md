@@ -1,8 +1,10 @@
 # COMET MoE Layer 1 on SM80 — The Communication Pattern, and Why It Is Shaped That Way
 
 **Scope**: `src/moe_gather_rs` (Grouped GEMM + Gather + top-k Reduce + ReduceScatter), the
-V2/SM80 path on Perlmutter's 4×A100 nodes, including the multi-node port. Companion doc:
-[`comet_layer0_communication_patterns.md`](comet_layer0_communication_patterns.md).
+V2/SM80 path on Perlmutter's 4×A100 nodes, including the multi-node port. Companion docs:
+[`comet_layer0_communication_patterns.md`](comet_layer0_communication_patterns.md), and
+[`comet_layer1_multinode_design_provenance.md`](comet_layer1_multinode_design_provenance.md)
+for where each piece of the multi-node design came from (upstream shipped none for this layer).
 
 Layer 0's communication was on the *input* side: gather tokens, then compute. Layer 1 is
 the mirror image — compute first, then a chain of reductions and a scatter of ownership —
