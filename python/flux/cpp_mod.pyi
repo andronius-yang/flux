@@ -740,6 +740,7 @@ class GemmGroupedV2AGScatterOp:
         moe_args: MoeArguments,
         a2av_dispatch: bool = False,
         a2av_ring: bool = False,
+        a2av_hier: bool = False,
     ): ...
     def forward(
         self,

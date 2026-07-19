@@ -57,7 +57,8 @@ class GemmGroupedV2AGScatterOp {
       at::ScalarType input_dtype,
       at::ScalarType output_dtype,
       bool a2av_dispatch = false,
-      bool a2av_ring = false);
+      bool a2av_ring = false,
+      bool a2av_hier = false);
   ~GemmGroupedV2AGScatterOp();
   void clear_buffers();
   torch::Tensor forward(

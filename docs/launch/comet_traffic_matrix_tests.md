@@ -77,3 +77,50 @@ never reset.
 - Validated 2026-07-17 on 1 node (4r, synthetic + skewed matrices) and 4 nodes
   (`4n_16r/{16mib,64mib}/dist_001`), 16/16 ranks allclose vs torch in every
   configuration.
+
+## Layer0 hierarchical a2av (`--comm_pattern a2av_hier`, sm80/V2 only)
+
+Design: `comet_traffic_matrix_a2av.md` §10. Same wire semantics as a2av
+(`M[s][d]` bytes end to end), but inter-node data travels as ONE aggregated
+`putmem_signal` per remote node, addressed to the same-local-rank "gateway"
+rank there, which forwards each destination's sub-chunk intra-node (paced per
+round by a front-end `cuStreamWaitValue64` on the arrival signal). Consumer
+uses the static ring schedule; per-tile signal spin is unchanged.
+
+```bash
+# single node (degenerates to intra-node direct puts, validates the branch)
+srun --nodes=1 --ntasks-per-node=1 ./launch.sh \
+  test/python/moe_ag_scatter/test_moe_ag_traffic.py <matrix> --comm_pattern a2av_hier
+
+# 4 nodes x 4 GPUs
+NVSHMEM_SYMMETRIC_SIZE=4G srun --nodes=4 --ntasks-per-node=1 ./launch.sh \
+  test/python/moe_ag_scatter/test_moe_ag_traffic.py \
+  <matrices>/4n_16r/16mib/..._dist_001.txt --comm_pattern a2av_hier
+```
+
+- Same constraints/knobs as a2av (`ep_size == world_size`, one weight group,
+  no `--gather_input`, `FLUX_A2AV_MAX_RECV_NTOKENS` for skewed matrices).
+- Additionally `FLUX_A2AV_MAX_STAGE_NTOKENS` sizes the gateway staging buffer
+  (rows; default = the recv-buffer formula). Overflow aborts collectively
+  before any communication; raise the knob for matrices whose inbound node
+  traffic concentrates on one source local rank.
+- The harness prints per-rank aggregated inter-node send bytes
+  (`a2av_hier inter-node wire bytes`) next to the dense a2av wire bytes.
+- Validated 2026-07-19: 1 node (4r uniform/skewed x metadata/derive + 50-iter
+  epoch stress) and 4 nodes (`4n_16r/{2,16,64}mib/dist_001`, metadata + derive),
+  16/16 ranks allclose in every cell. Same-allocation sweep (mean ms over 16
+  ranks): 2mib AG 1.19 / a2av 1.30 / ring 1.07 / hier 0.93; 16mib AG 2.73 /
+  a2av 2.36 / ring 2.42 / hier 2.20; 64mib AG 8.44 / a2av 8.07 / ring 8.66 /
+  hier 6.70 — a2av_hier is the fastest pattern at every budget, including the
+  previously AG-favored hot-rank-bound 64mib (~20% under AG).
+- topk sweep 2026-07-19 (`dist_001`, topk in {1,2,4}, same allocation, mean ms
+  over 16 ranks, AG / a2av / ring / hier): 2mib tk1 1.47/1.08/1.07/0.91,
+  tk2 1.27/1.08/1.08/0.92, tk4 1.15/1.07/1.06/0.92; 16mib tk1
+  5.27/2.43/2.38/2.30, tk2 3.64/2.39/3.34/2.29, tk4 2.71/2.47/2.35/2.25;
+  64mib tk1 20.28/8.52/8.34/7.89, tk2 12.66/8.43/8.30/7.85, tk4
+  8.52/8.46/8.57/7.94. For a fixed matrix the a2av-family wire is the budget
+  (constant in topk) while allgather's is budget/topk, so allgather degrades
+  ~linearly as topk shrinks and the a2av modes stay flat: the a2av advantage
+  is largest at topk=1 (hier 2.6x under AG at 64mib) and nearly vanishes at
+  topk=4 (7%). a2av_hier is fastest in all 9 cells. (16mib tk2 ring 3.34 is
+  an off-trend outlier vs tk1/tk4 ~2.35 — likely a contention blip.)

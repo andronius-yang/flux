@@ -314,3 +314,75 @@ from a host sum, removing its only per-iteration device sync. Its kernels and
 schedule are untouched, and omitting the kwarg keeps every path bit-identical
 to before. The test passes the matrix for all `--comm_pattern` values;
 `--no_metadata_cnt` restores the derive-everything behavior for A/B runs.
+
+## 10. Hierarchical a2av (`a2av_hier`): node-aggregated inter-node messages
+
+`a2av_hier=True` (ctor kwarg, requires `a2av_dispatch`, mutually exclusive with
+`a2av_ring`; `--comm_pattern a2av_hier`) mirrors the multi-node dense
+allgather's `all_gather_all2all` communication structure, with a2av semantics.
+From source rank `s = (node_s, lr_s)`:
+
+- **Intra-node (round 0)**: `s` delivers each local peer's chunk directly —
+  exactly the ring mode's `dn == 0` slots (mirror local order, `cp_stream`),
+  plus the usual self memcpy + signal.
+- **Inter-node**: `s` talks only to its `nnodes - 1` same-local-rank peers.
+  To the peer on node `t` (the **gateway** `g = (t, lr_s)`) it sends ONE
+  aggregated `putmem_signal` containing everything it has for ALL `L` ranks on
+  node `t` — not its whole shard as in allgather, only the node's traffic.
+  Because the send buffer is destination-major in *global* rank order and a
+  node's ranks are globally contiguous, this aggregate is a contiguous slice of
+  the existing send buffer: no repacking. Sends go out in mirror node order
+  (`tn = node_s - dn`) on `cp_stream_inter_node`, landing in the gateway's
+  symmetric staging buffer with an arrival signal (slot = source node, value =
+  epoch `run_id_`, never reset).
+- **Gateway forwarding**: for each round `dn = 1..nnodes-1` the gateway's
+  `cp_stream` executes a `cuStreamWaitValue64(GEQ, run_id)` on the round's
+  arrival signal, then forwards each destination's sub-chunk to its `L - 1`
+  local peers via `putmem_signal` into their recv buffers at `RO[s][d]`
+  (its own sub-chunk is a local memcpy + signal). This wait is the a2av
+  analogue of the allgather's inter-node-getmem -> intra-node-redistribute
+  dependency (`fetch_remote_event`), realized per round.
+
+Every row still crosses the network exactly once (inter-node wire bytes equal
+the per-node column sums of `M`), but in `nnodes - 1` large messages per source
+instead of `W - L` small ones; the extra forwarding hop rides NVLink. Forwarded
+sub-chunks are internally (expert, copy)-ordered and land bit-identically to
+direct puts, so the recv layout, stage-2 index build, and per-tile signal gate
+are untouched, and rounds arrive in receiver stage order — the consumer reuses
+the ring mode's static dense schedule (`a2av_ring_schedule` = true). Zero
+kernel changes.
+
+Transport is deliberately **push** end-to-end. A pull design (gateway
+`getmem_on_stream` per round, the literal allgather structure) would need a
+pack-completion handshake (e.g. a `NVSHMEMX_TEAM_SAME_MYPE_NODE` barrier)
+before the first get and pays get round-trips on libfabric, for no buffer
+savings. The gateway wait uses the raw driver memop rather than
+`nvshmemx_signal_wait_until_on_stream`: the NVSHMEM wrapper falls back to an
+SM spin kernel when 64-bit stream memops are unavailable, which could deadlock
+behind a full-occupancy GEMM; `cuStreamWaitValue64` runs on the GPU front end
+with zero SMs (precedent: the layer1 op paces its inter-node puts with
+`CUStreamWaitValue` GEQ). The GEMM is gated only on round-0 puts + inter-node
+sends being *issued* (`hier_dispatch_event_` + `fetch_remote_event`);
+forwarding overlaps the GEMM, whose per-tile signal spin remains the
+correctness gate.
+
+Signal ownership per epoch: same-node `(s, d)` slots are set by the source
+(round 0 / self path); cross-node slots are set by the gateway `(node_d, lr_s)`
+— put-fused, or a bare `signal_op` for empty sub-chunks. Empty node aggregates
+still set the arrival signal, so gateways wait uniformly. Single writer per
+slot per epoch.
+
+New state (allocated only when `a2av_hier && nnodes > 1`): the symmetric
+staging buffer (`FLUX_A2AV_MAX_STAGE_NTOKENS` rows, default = the recv-buffer
+formula; expected load ~ one rank's recv since a node's inbound traffic splits
+across `L` gateways by source local rank) and the `uint64[nnodes]` arrival
+signal array. Staging overflow is FLUX_CHECKed on the host before any wire,
+with the max taken over ALL gateways so every rank fails the same iteration
+(no one-rank-throws hang). Epoch safety across iterations needs nothing new:
+forwarding reads are enqueued before `all_gather_event`, which the main stream
+waits before the tail `barrier_all`, and iteration n+1 sends wait on
+`ready_event` recorded after that barrier.
+
+`nnodes == 1` degenerates to round-0 only — behaviorally the ring mode's
+intra-node slots with the same static schedule (cheap single-node validation
+of the branch).

@@ -31,7 +31,11 @@ putmem_signal, so the wire bytes s->d equal exactly M[s][d], and the grouped
 GEMM claims tiles dynamically in signal-arrival order. --comm_pattern a2av_ring
 moves the same M[s][d] wire bytes, but sends follow the reverse hierarchical
 ring (the mirror of the allgather stage order), so the grouped GEMM keeps the
-dense path's static ring-order tile schedule.
+dense path's static ring-order tile schedule. --comm_pattern a2av_hier is the
+hierarchical alltoallv: intra-node traffic goes direct, while all data for a
+remote node travels as ONE aggregated message to the same-local-rank "gateway"
+rank there, which then forwards each destination's sub-chunk intra-node
+(inter-node wire = per-node column sums of M; static ring schedule).
 """
 
 import argparse
@@ -188,7 +192,7 @@ def perf_flux(
         output_dtype=ctx.outputs[0].dtype,
     )
 
-    use_a2av = comm_pattern in ("a2av", "a2av_ring")
+    use_a2av = comm_pattern in ("a2av", "a2av_ring", "a2av_hier")
     extra_args = {}
     if flux.util.get_arch() >= 90:
         assert not use_a2av, "--comm_pattern a2av is only implemented for the sm80/V2 op"
@@ -199,6 +203,7 @@ def perf_flux(
             moe_args=moe_args,
             a2av_dispatch=use_a2av,
             a2av_ring=(comm_pattern == "a2av_ring"),
+            a2av_hier=(comm_pattern == "a2av_hier"),
         )
         extra_args = {
             "ag_option": ag_option,
@@ -339,10 +344,13 @@ def parse_args():
     parser.add_argument(
         "--comm_pattern",
         default="allgather",
-        choices=["allgather", "a2av", "a2av_ring"],
+        choices=["allgather", "a2av", "a2av_ring", "a2av_hier"],
         help="layer0 comm pattern: dense allgather (default), raw alltoallv"
         " dispatch whose wire bytes equal the traffic matrix (dynamic tile"
-        " schedule), or a2av_ring (same wire bytes, static ring schedule)",
+        " schedule), a2av_ring (same wire bytes, static ring schedule), or"
+        " a2av_hier (hierarchical: one aggregated inter-node message per peer"
+        " node to the same-local-rank gateway, which forwards intra-node;"
+        " static ring schedule)",
     )
     parser.add_argument(
         "--no_metadata_cnt",
@@ -429,11 +437,24 @@ if __name__ == "__main__":
         print(f"Splits: {moe_ctx.splits_cpu.tolist()}, Sum: {sum(moe_ctx.splits_cpu.tolist())}")
         print(f"Per-rank gemm rows: {rows_per_rank.tolist()}")
         print(f"comm_pattern: {args.comm_pattern}")
-        if args.comm_pattern in ("a2av", "a2av_ring"):
+        if args.comm_pattern in ("a2av", "a2av_ring", "a2av_hier"):
             send_bytes = (matrix.sum(dim=1) - matrix.diag()).tolist()
             recv_bytes = (matrix.sum(dim=0) - matrix.diag()).tolist()
             print(f"a2av wire bytes per rank (send): {send_bytes}")
             print(f"a2av wire bytes per rank (recv): {recv_bytes}")
+        if args.comm_pattern == "a2av_hier":
+            # actual inter-node wire in hier mode: per source rank, bytes summed
+            # over destination-node columns, own node excluded (they travel as
+            # one aggregated message per remote node); intra-node forwarding is
+            # extra NVLink traffic on top
+            L = DIST_ENV.LOCAL_WORLD_SIZE
+            nn = DIST_ENV.WORLD_SIZE // L
+            per_node = matrix.view(DIST_ENV.WORLD_SIZE, nn, L).sum(dim=2)
+            src_node = torch.arange(DIST_ENV.WORLD_SIZE) // L
+            inter_bytes = per_node.sum(dim=1) - per_node.gather(
+                1, src_node.view(-1, 1)
+            ).squeeze(1)
+            print(f"a2av_hier inter-node wire bytes per rank (send): {inter_bytes.tolist()}")
 
     if args.tune:
         prof_ctx = tune_flux(moe_ctx)

@@ -135,5 +135,9 @@ CUresult
 CUStreamWriteValue(CUstream stream, CUdeviceptr addr, cuuint32_t value, unsigned int flags) {
   return cuda_stub().cuStreamWriteValue32_v2(stream, addr, value, flags);
 }
+CUresult
+CUStreamWaitValue64(CUstream stream, CUdeviceptr addr, cuuint64_t value, unsigned int flags) {
+  return cuda_stub().cuStreamWaitValue64_v2(stream, addr, value, flags);
+}
 
 }  // namespace bytedance::flux

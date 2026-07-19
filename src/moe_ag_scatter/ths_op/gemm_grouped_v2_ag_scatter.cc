@@ -260,11 +260,23 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // a2av_ring: puts follow the reverse hierarchical ring (mirror of the dense
   // stage order), and the GEMM keeps the dense static problem schedule.
   const bool a2av_ring_;
+  // a2av_hier: hierarchical dispatch mirroring all_gather_all2all — intra-node
+  // traffic goes direct (ring dn==0 slots); inter-node traffic travels as ONE
+  // aggregated message per peer node to the same-local-rank "gateway", which
+  // then forwards each destination's sub-chunk intra-node. The GEMM keeps the
+  // dense static problem schedule (rounds land in receiver stage order).
+  const bool a2av_hier_;
   uint64_t run_id_ = 0;             // epoch value carried by the NVSHMEM signals
   int64_t max_recv_ntokens_ = 0;    // rows of the symmetric recv buffer
+  int64_t max_stage_ntokens_ = 0;   // rows of the symmetric gateway staging buffer
   torch::Tensor a2av_send_buffer;   // symmetric [tokens_per_rank_max * topk, hidden]
   torch::Tensor a2av_recv_buffer;   // symmetric [max_recv_ntokens_, hidden]
   torch::Tensor a2av_signal_buffer; // symmetric uint64[world_size], never memset
+  // a2av_hier only (nnodes > 1): staging area for inbound node-aggregated
+  // payloads, plus per-source-node arrival signals (epoch discipline, never memset)
+  torch::Tensor a2av_stage_buffer_;       // symmetric [max_stage_ntokens_, hidden]
+  torch::Tensor a2av_node_signal_buffer_; // symmetric uint64[nnodes]
+  cudaEvent_t hier_dispatch_event_ = nullptr;  // round-0 intra puts issued (GEMM gate)
   // one-shot dispatch scratch: allocated once (setup), contents rebuilt every
   // iteration — routing is never cached across forwards
   torch::Tensor a2av_arange_i64_;   // [n_copies_max] iota, routing-independent
@@ -329,7 +341,8 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       at::ScalarType input_dtype,
       at::ScalarType output_dtype,
       bool a2av_dispatch = false,
-      bool a2av_ring = false)
+      bool a2av_ring = false,
+      bool a2av_hier = false)
       : tp_group(tp_group),
         world_size(tp_group->get_size()),
         ep_size(ep_size),
@@ -352,6 +365,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         cp_stream_inter_node(create_cp_stream()),
         a2av_dispatch_(a2av_dispatch),
         a2av_ring_(a2av_ring),
+        a2av_hier_(a2av_hier),
         // ring_mode barriers are CUDA-IPC based and intra-node only; multi-node
         // must take the NVSHMEM barrier (ring_mode = false)
         group_barrier(this->tp_group, nnodes == 1 && this->tp_group->get_size() > 8) {
@@ -361,6 +375,8 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     FLUX_CHECK_GE(nnodes, 1);
     CHECK_DIV(world_size, nnodes);
     FLUX_CHECK(!a2av_ring || a2av_dispatch) << "a2av_ring requires a2av_dispatch";
+    FLUX_CHECK(!a2av_hier || a2av_dispatch) << "a2av_hier requires a2av_dispatch";
+    FLUX_CHECK(!(a2av_hier && a2av_ring)) << "a2av_hier and a2av_ring are mutually exclusive";
     if (a2av_dispatch) {
       FLUX_CHECK_EQ(this->ffn_tp_size, 1) << "a2av dispatch requires ep_size == world_size";
       FLUX_CHECK(nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE) == dist_env.local_rank);
@@ -376,6 +392,19 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           nvshmem_create_tensor({this->max_recv_ntokens_, hidden}, input_dtype);
       this->a2av_signal_buffer =
           nvshmem_create_tensor({world_size}, at::ScalarType::Long, /*init_zero=*/true);
+      if (a2av_hier && nnodes > 1) {
+        // gateway staging: holds the node-aggregated inbound payloads from the
+        // nnodes-1 same-local-rank peers; expected load ~= one rank's recv (the
+        // node's inbound traffic splits across L gateways by source local rank)
+        this->max_stage_ntokens_ = get_int_from_env(
+            "FLUX_A2AV_MAX_STAGE_NTOKENS",
+            (int)std::min<int64_t>(
+                (int64_t)max_ntokens * topk, tokens_per_rank_max * topk * 2));
+        this->a2av_stage_buffer_ =
+            nvshmem_create_tensor({this->max_stage_ntokens_, hidden}, input_dtype);
+        this->a2av_node_signal_buffer_ =
+            nvshmem_create_tensor({nnodes}, at::ScalarType::Long, /*init_zero=*/true);
+      }
       const int64_t n_copies_max = tokens_per_rank_max * (int64_t)topk * world_size;
       auto opt_cuda_i64 = torch::TensorOptions(torch::kCUDA).dtype(torch::kLong);
       this->a2av_arange_i64_ = torch::arange(n_copies_max, opt_cuda_i64);
@@ -405,6 +434,11 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         double sym_mb = (this->a2av_send_buffer.nbytes() + this->a2av_recv_buffer.nbytes() +
                          this->a2av_signal_buffer.nbytes()) /
                         1024.0 / 1024.0;
+        if (this->a2av_stage_buffer_.defined()) {
+          sym_mb += (this->a2av_stage_buffer_.nbytes() +
+                     this->a2av_node_signal_buffer_.nbytes()) /
+                    1024.0 / 1024.0;
+        }
         fprintf(
             stderr,
             "[flux a2av] recv rows %ld send rows %ld -> %.0f MiB symmetric heap per rank\n",
@@ -423,6 +457,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     CUDA_CHECK(cudaEventCreateWithFlags(&this->fetch_remote_event, cudaEventDisableTiming));
     CUDA_CHECK(cudaEventCreateWithFlags(&this->all_gather_event, cudaEventDisableTiming));
     CUDA_CHECK(cudaEventCreateWithFlags(&this->counts_event_, cudaEventDisableTiming));
+    CUDA_CHECK(cudaEventCreateWithFlags(&this->hier_dispatch_event_, cudaEventDisableTiming));
     for (int i = 0; i < kNumTimingEvents; i++) {
       CUDA_CHECK(cudaEventCreate(&this->timing_events_[i]));  // timing-capable
     }
@@ -439,6 +474,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       CUDA_CHECK(cudaEventDestroy(this->stage2_events_[i]));
     }
     CUDA_CHECK(cudaEventDestroy(this->counts_event_));
+    CUDA_CHECK(cudaEventDestroy(this->hier_dispatch_event_));
     CUDA_CHECK(cudaEventDestroy(this->all_gather_event));
     CUDA_CHECK(cudaEventDestroy(this->fetch_remote_event));
     CUDA_CHECK(cudaEventDestroy(this->ready_event));
@@ -922,7 +958,158 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             signal_base + rank, this->run_id_, NVSHMEM_SIGNAL_SET, d, put_stream);
       }
     };
-    if (!a2av_ring_) {
+    if (a2av_hier_) {
+      // hierarchical dispatch, mirroring all_gather_all2all: intra-node traffic
+      // is delivered directly (the ring dn==0 slots below); inter-node traffic
+      // travels as ONE aggregated putmem_signal per peer node, addressed to the
+      // same-local-rank "gateway" there, which forwards each destination's
+      // sub-chunk intra-node once the round's arrival signal shows up. The send
+      // buffer is destination-major in GLOBAL rank order and a node's ranks are
+      // globally contiguous, so a node's aggregate is a contiguous slice; the
+      // forwarded sub-chunks are internally (expert, copy)-ordered and land
+      // bit-identically to direct puts — recv layout, stage-2 index math and
+      // the dense static problem schedule are all unchanged.
+      const int L = dist_env.local_world_size;
+      const int NN = dist_env.nnodes;
+      const int my_node = dist_env.node_idx;
+      const int my_lr = dist_env.local_rank;
+      auto node_chunk = [&](int s, int n) -> int64_t {
+        int64_t acc = 0;
+        for (int d = n * L; d < (n + 1) * L; d++) {
+          acc += chunk_at(s, d);
+        }
+        return acc;
+      };
+      // staging offset of source node ns's segment at gateway (gnode, glr):
+      // segments exact-packed ascending by source node, gateway's own node skipped
+      auto seg_off = [&](int gnode, int glr, int ns) -> int64_t {
+        int64_t acc = 0;
+        for (int n = 0; n < ns; n++) {
+          if (n == gnode) {
+            continue;
+          }
+          acc += node_chunk(dist_env.local_rank_to_global_rank(glr, n), gnode);
+        }
+        return acc;
+      };
+      // generalizes recv_off[] (the s == rank column) to any source
+      auto recv_off_of = [&](int s, int d) -> int64_t {
+        int64_t acc = 0;
+        for (int s2 = 0; s2 < s; s2++) {
+          acc += chunk_at(s2, d);
+        }
+        return acc;
+      };
+      if (NN > 1) {
+        // staging overflow check before any inter-node wire; every rank
+        // evaluates the same expression, so failure is collective (no
+        // one-rank-throws-while-others-wait-in-the-barrier hang)
+        int64_t max_stage_rows = 0;
+        for (int gn = 0; gn < NN; gn++) {
+          for (int gl = 0; gl < L; gl++) {
+            int64_t rows = 0;
+            for (int ns = 0; ns < NN; ns++) {
+              if (ns == gn) {
+                continue;
+              }
+              rows += node_chunk(dist_env.local_rank_to_global_rank(gl, ns), gn);
+            }
+            max_stage_rows = std::max(max_stage_rows, rows);
+          }
+        }
+        FLUX_CHECK_LE(max_stage_rows, this->max_stage_ntokens_)
+            << "a2av_hier staging overflow; raise FLUX_A2AV_MAX_STAGE_NTOKENS";
+      }
+      // round 0: intra-node direct puts, mirror local order (== ring dn==0 slots)
+      for (int dl = 1; dl < L; dl++) {
+        int d = dist_env.local_rank_to_global_rank((my_lr - dl + L) % L, my_node);
+        issue_put(d, this->cp_stream);
+      }
+      CUDA_CHECK(cudaEventRecord(this->hier_dispatch_event_, this->cp_stream));
+      if (NN > 1) {
+        uint64_t *node_sig =
+            reinterpret_cast<uint64_t *>(this->a2av_node_signal_buffer_.data_ptr());
+        char *stage_base = reinterpret_cast<char *>(this->a2av_stage_buffer_.data_ptr());
+        // inter-node aggregated sends, mirror node order (receivers see node
+        // my_node at stage block (my_node - node_d) mod NN, as the dense
+        // schedule expects); arrival signal slot = source node, value = epoch.
+        // Empty aggregates still signal — gateways wait on every round.
+        for (int dn = 1; dn < NN; dn++) {
+          int tn = (my_node - dn + NN) % NN;
+          int g = dist_env.local_rank_to_global_rank(my_lr, tn);
+          int64_t rows = node_chunk(rank, tn);
+          if (rows > 0) {
+            nvshmemx_putmem_signal_nbi_on_stream(
+                stage_base + seg_off(tn, my_lr, my_node) * row_bytes,
+                send_base + send_off[tn * L] * row_bytes,
+                rows * row_bytes,
+                node_sig + my_node,
+                this->run_id_,
+                NVSHMEM_SIGNAL_SET,
+                g,
+                this->cp_stream_inter_node);
+          } else {
+            nvshmemx_signal_op_on_stream(
+                node_sig + my_node,
+                this->run_id_,
+                NVSHMEM_SIGNAL_SET,
+                g,
+                this->cp_stream_inter_node);
+          }
+        }
+        // gateway forwarding, rounds ascending; the front-end stream wait
+        // (cuStreamWaitValue64, zero SMs — cannot deadlock against the
+        // spinning GEMM) is the inter-node-arrival -> intra-node-forward
+        // dependency, the a2av analogue of the allgather's fetch_remote_event
+        for (int dn = 1; dn < NN; dn++) {
+          int ns = (my_node + dn) % NN;
+          int s = dist_env.local_rank_to_global_rank(my_lr, ns);
+          CU_CHECK(CUStreamWaitValue64(
+              this->cp_stream,
+              reinterpret_cast<CUdeviceptr>(node_sig + ns),
+              this->run_id_,
+              CU_STREAM_WAIT_VALUE_GEQ));
+          char *seg = stage_base + seg_off(my_node, my_lr, ns) * row_bytes;
+          // forward in mirror local order so receiver d sees source s at stage
+          // L*dn + ((lr_s - lr_d) mod L); the segment interior is ascending
+          // global d, hence the within-segment prefix sum
+          for (int dl = 0; dl < L; dl++) {
+            int d = dist_env.local_rank_to_global_rank((my_lr - dl + L) % L, my_node);
+            int64_t sub_rows = chunk_at(s, d);
+            int64_t within = 0;
+            for (int d2 = my_node * L; d2 < d; d2++) {
+              within += chunk_at(s, d2);
+            }
+            if (d == rank) {
+              // gateway's own sub-chunk: local copy + local signal
+              if (sub_rows > 0) {
+                CUDA_CHECK(cudaMemcpyAsync(
+                    recv_base + recv_off_of(s, rank) * row_bytes,
+                    seg + within * row_bytes,
+                    sub_rows * row_bytes,
+                    cudaMemcpyDeviceToDevice,
+                    this->cp_stream));
+              }
+              nvshmemx_signal_op_on_stream(
+                  signal_base + s, this->run_id_, NVSHMEM_SIGNAL_SET, rank, this->cp_stream);
+            } else if (sub_rows > 0) {
+              nvshmemx_putmem_signal_nbi_on_stream(
+                  recv_base + recv_off_of(s, d) * row_bytes,
+                  seg + within * row_bytes,
+                  sub_rows * row_bytes,
+                  signal_base + s,
+                  this->run_id_,
+                  NVSHMEM_SIGNAL_SET,
+                  d,
+                  this->cp_stream);
+            } else {
+              nvshmemx_signal_op_on_stream(
+                  signal_base + s, this->run_id_, NVSHMEM_SIGNAL_SET, d, this->cp_stream);
+            }
+          }
+        }
+      }
+    } else if (!a2av_ring_) {
       // remote puts, ring order starting at rank+1 to avoid incast
       for (int i = 1; i < W; i++) {
         issue_put((rank + i) % W, this->cp_stream_inter_node);
@@ -1063,7 +1250,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       sorted_scatter_index = a2av_state.sorted_scatter_index;
       sorted_splits_cumsum = a2av_state.sorted_splits_cumsum;
       M_this_ep = a2av_state.M_this_ep;
-      if (a2av_ring_) {
+      if (a2av_ring_ || a2av_hier_) {
         // static ring schedule: the prepare kernel takes the dense branch and
         // writes ProblemSchedV2 into this buffer (bucket workspace is skipped)
         num_problem_schedules = ep_nexperts * world_size * num_weights_group;
@@ -1217,7 +1404,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     if (a2av_dispatch_) {
       args.signal_ptr = reinterpret_cast<uint64_t *>(this->a2av_signal_buffer.data_ptr());
       args.signal_expected = this->run_id_;
-      args.a2av_ring_schedule = a2av_ring_;
+      args.a2av_ring_schedule = a2av_ring_ || a2av_hier_;
     }
     for (int gid = 0; gid < num_weights_group; gid++) {
       args.weight[gid] = weights[gid].data_ptr();
@@ -1228,11 +1415,19 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
 
     static const bool kA2avTiming = get_int_from_env("FLUX_A2AV_TIMING", 0) != 0;
     if (a2av_dispatch_) {
-      // do not start the (SM-occupying) GEMM before all puts/signals are issued;
-      // in ring mode the intra-node puts live on cp_stream, which all_gather_event
-      // covers (it is recorded after cp_stream waits on fetch_remote_event)
-      CUDA_CHECK(
-          cudaStreamWaitEvent(stream, a2av_ring_ ? this->all_gather_event : this->fetch_remote_event));
+      if (a2av_hier_) {
+        // gate only on round-0 intra puts + inter-node sends being ISSUED; the
+        // gateway forwarding (front-end waits + CE puts, zero SMs) proceeds
+        // concurrently with the GEMM, whose tiles spin on the per-source signals
+        CUDA_CHECK(cudaStreamWaitEvent(stream, this->hier_dispatch_event_));
+        CUDA_CHECK(cudaStreamWaitEvent(stream, this->fetch_remote_event));
+      } else {
+        // do not start the (SM-occupying) GEMM before all puts/signals are issued;
+        // in ring mode the intra-node puts live on cp_stream, which all_gather_event
+        // covers (it is recorded after cp_stream waits on fetch_remote_event)
+        CUDA_CHECK(cudaStreamWaitEvent(
+            stream, a2av_ring_ ? this->all_gather_event : this->fetch_remote_event));
+      }
       if (kA2avTiming) {
         CUDA_CHECK(cudaEventRecord(this->timing_events_[3], stream));
       }
@@ -1258,7 +1453,10 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       // input_buffer, all ranks have already finished allgather so that we can
       // safely modify input_buffer. In a2av mode this barrier additionally quiets
       // our outstanding nbi puts and keeps iteration n+1 puts from racing
-      // iteration n's GEMM reads of the recv buffer.
+      // iteration n's GEMM reads of the recv buffer. In hier mode the same
+      // argument covers the staging buffer and node arrival signals: all
+      // forwarding reads are enqueued before all_gather_event (waited above),
+      // and iteration n+1 sends wait on ready_event, recorded after this barrier.
       nvshmemx_barrier_all_on_stream(stream);
     }
     if (a2av_dispatch_ && kA2avTiming) {
@@ -1618,9 +1816,10 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     if (nnodes > 1 && this->input_buffer.defined()) {
       this->input_buffer.zero_();
     }
-    // a2av signal buffer is deliberately NOT cleared: the epoch scheme relies on
-    // monotonically increasing signal values and clearing would corrupt in-flight
-    // iterations. Data buffers need no clearing (rows fully overwritten per use).
+    // a2av signal buffer (and the hier node arrival signals) are deliberately
+    // NOT cleared: the epoch scheme relies on monotonically increasing signal
+    // values and clearing would corrupt in-flight iterations. Data buffers need
+    // no clearing (rows fully overwritten per use).
   }
 
   torch::Tensor
@@ -1811,7 +2010,8 @@ GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOp(
     at::ScalarType input_dtype,
     at::ScalarType output_dtype,
     bool a2av_dispatch,
-    bool a2av_ring)
+    bool a2av_ring,
+    bool a2av_hier)
     : impl_(new GemmGroupedV2AGScatterOpImpl(
           tp_group,
           ep_size,
@@ -1824,7 +2024,8 @@ GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOp(
           input_dtype,
           output_dtype,
           a2av_dispatch,
-          a2av_ring)) {}
+          a2av_ring,
+          a2av_hier)) {}
 GemmGroupedV2AGScatterOp::~GemmGroupedV2AGScatterOp() { delete impl_; }
 
 void

@@ -69,5 +69,7 @@ CUresult CUStreamWaitValue(
     CUstream stream, CUdeviceptr addr, cuuint32_t value, unsigned int flags);
 CUresult CUStreamWriteValue(
     CUstream stream, CUdeviceptr addr, cuuint32_t value, unsigned int flags);
+CUresult CUStreamWaitValue64(
+    CUstream stream, CUdeviceptr addr, cuuint64_t value, unsigned int flags);
 
 }  // namespace bytedance::flux
