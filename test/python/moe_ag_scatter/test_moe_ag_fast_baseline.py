@@ -138,6 +138,7 @@ class FastPerfResult:
 def perf_fast(
     ctx: MoeMlp1Ctx,
     comm,
+    gemm_op,
     matrix_cpu: torch.Tensor,
     pack_index_gpu: torch.Tensor,
     unpack_index_gpu: torch.Tensor,
@@ -146,8 +147,6 @@ def perf_fast(
     iters: int,
     sm_margin: int = 0,
 ):
-    epr = ctx.nexperts_ep
-    gemm_op = flux.GemmGroupedV2(ctx.weights[0], epr, ctx.inputs_shard.dtype, ctx.outputs[0].dtype)
     input_dtype = ctx.inputs_shard.dtype
     H = ctx.h
 
@@ -344,9 +343,13 @@ if __name__ == "__main__":
     torch.cuda.synchronize()
 
     # ---- timed FAST baseline ----
+    gemm_op = flux.GemmGroupedV2(
+        moe_ctx.weights[0], epr, moe_ctx.inputs_shard.dtype, moe_ctx.outputs[0].dtype
+    )
     perf_result, fast_out, fast_gemm_input = perf_fast(
         moe_ctx,
         comm,
+        gemm_op,
         matrix,
         pack_index_gpu,
         unpack_index_gpu,
@@ -374,8 +377,23 @@ if __name__ == "__main__":
             print("✅ FAST wire + unpack bitwise-match the reference scatter block")
         else:
             raise AssertionError("❌ FAST gemm input does not match the reference scatter block")
-        # numerics: grouped GEMM vs the per-expert torch loop
-        flux.torch_allclose(fast_out, torch_outputs[0], atol=atol, rtol=rtol)
+        # same-op check: GemmGroupedV2 on the reference block must reproduce the
+        # FAST-path output bit-for-bit (pure data-movement equivalence)
+        ref_gg_out = gemm_op.forward(ref_block, split_cpu, sm_margin=args.sm_margin)
+        if flux.testing.bitwise_eq(fast_out, ref_gg_out):
+            print("✅ GemmGroupedV2(FAST input) bitwise-matches GemmGroupedV2(reference block)")
+        else:
+            raise AssertionError("❌ same-op outputs differ: data movement is broken")
+        # numerics vs the per-expert torch.matmul loop: standard elementwise
+        # allclose (|x-y| <= atol + rtol*|y|) — CUTLASS vs cuBLAS bf16 outputs
+        # legitimately differ by ~1 ulp (0.8% relative), which flux.torch_allclose's
+        # rtol*min(|y|) formulation would misreport as a failure
+        if not torch.allclose(fast_out, torch_outputs[0], atol=atol, rtol=rtol):
+            bad = (fast_out - torch_outputs[0]).abs() > atol + rtol * torch_outputs[0].abs()
+            raise AssertionError(
+                f"❌ allclose vs torch reference failed: {int(bad.sum())} elements"
+                f" (max diff {(fast_out - torch_outputs[0]).abs().max().item():.6f})"
+            )
         print("✅ FAST baseline output allclose vs torch reference")
 
     flux.exec_in_rank_order(TP_GROUP, check_result)
