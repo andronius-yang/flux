@@ -124,3 +124,50 @@ NVSHMEM_SYMMETRIC_SIZE=4G srun --nodes=4 --ntasks-per-node=1 ./launch.sh \
   is largest at topk=1 (hier 2.6x under AG at 64mib) and nearly vanishes at
   topk=4 (7%). a2av_hier is fastest in all 9 cells. (16mib tk2 ring 3.34 is
   an off-trend outlier vs tk1/tk4 ~2.35 — likely a contention blip.)
+
+## Layer0 FAST baseline (un-overlapped: FAST alltoallv + separate grouped GEMM)
+
+`test/python/moe_ag_scatter/test_moe_ag_fast_baseline.py` measures the
+un-overlapped counterpart of the fused patterns above: the load-balancing
+alltoallv from the FAST submodule (`3rdparty/FAST`; BvN decomposition into
+balanced inter-node permutation steps, intra-node load-balance/redistribute
+over NVLink/IPC, inter-node NVSHMEM) moves exactly `M[s][d]` wire bytes, then a
+comm-free `flux.GemmGroupedV2` consumes the landed tokens.
+
+Build the submodule extension once (login node OK):
+
+```bash
+source ./module.sh
+git submodule update --init 3rdparty/FAST
+./scripts/build_fast.sh          # -> 3rdparty/FAST/nvidia/libflash.so
+```
+
+Run (multi-node ONLY — FAST asserts `server_n > 1`; use `launch_fast.sh`, NOT
+`launch.sh`: FAST performs the only NVSHMEM init in this process and needs its
+own validated env, host lib preloaded ahead of torch's bundled NVSHMEM):
+
+```bash
+salloc -A m4243_g -q interactive -C gpu -N 4 --gpus-per-node=4 -t 30
+srun --nodes=4 --ntasks-per-node=1 ./launch_fast.sh \
+  test/python/moe_ag_scatter/test_moe_ag_fast_baseline.py \
+  --traffic_matrix <matrices>/4n_16r/16mib/a2av_4n_16r_dist_001.txt
+```
+
+- PRIMARY METRIC: `e2e` = one window from communication start (BvN schedule +
+  send staging + wire) to computation finish (unpack + grouped GEMM), CUDA
+  events, directly comparable to the fused `op.forward` numbers of
+  `test_moe_ag_traffic.py`. The BvN schedule is recomputed inside the window
+  every iteration (one-shot methodology — never amortized); the send-side pack
+  `index_select` is reported separately outside the window. The printed
+  `schedule/fill/wire/unpack/gemm` split is diagnostic.
+- Correctness: the unpacked receive buffer must be **bitwise** equal to the
+  reference `scatter_inputs` block (send-side stable argsort by expert id is
+  simultaneously destination-major and expert-grouped; FAST's receive layout is
+  deterministically source-major with within-flow order preserved), plus
+  allclose of the GEMM output vs the torch per-expert loop.
+- `--capacity_mib` sizes FAST's persistent buffers (default 4x the max
+  row/column sum of the matrix); undersized capacity fails loudly pre-wire.
+- Index-math unit test (no GPU/dist; login node):
+  `python3 test/python/moe_ag_scatter/test_fast_index_math.py`.
+- The test never calls `flux.init_flux_shm` — do not add fused-op timing to
+  this harness; run `test_moe_ag_traffic.py` separately for those numbers.

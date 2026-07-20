@@ -4,3 +4,6 @@
 [submodule "3rdparty/cutlass"]
 	path = 3rdparty/cutlass
 	url = https://github.com/NVIDIA/cutlass
+[submodule "3rdparty/FAST"]
+	path = 3rdparty/FAST
+	url = git@github.com:andronius-yang/FAST.git
