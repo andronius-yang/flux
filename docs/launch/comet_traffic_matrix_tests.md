@@ -171,3 +171,11 @@ srun --nodes=4 --ntasks-per-node=1 ./launch_fast.sh \
   `python3 test/python/moe_ag_scatter/test_fast_index_math.py`.
 - The test never calls `flux.init_flux_shm` — do not add fused-op timing to
   this harness; run `test_moe_ag_traffic.py` separately for those numbers.
+- Validated 2026-07-20 (4 nodes, `4n_16r/{2,16,64}mib/dist_001`, 10+10 iters):
+  48/48 rank-checks pass (wire+unpack bitwise vs the reference scatter block,
+  same-op GEMM bitwise, allclose vs the torch loop). e2e mean over 16 ranks
+  (ms): 2mib 4.06, 16mib 5.85, 64mib 13.24 — vs the fused patterns' recorded
+  AG 1.19/2.73/8.44 and a2av_hier 0.93/2.20/6.70. The un-overlapped baseline
+  is dominated by the per-iteration BvN schedule (~1.3 ms) and FAST's per-call
+  signal/credit reset incl. two nvshmem_barrier_all (1.5/2.2/4.7 ms); wire
+  0.84/1.76/5.15, grouped GEMM 0.15/0.33/1.16.
