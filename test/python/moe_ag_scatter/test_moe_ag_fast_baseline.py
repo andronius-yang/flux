@@ -112,12 +112,17 @@ def broadcast_uid(flash_utils) -> torch.Tensor:
 
 
 class FastPerfResult:
-    def __init__(self, name, e2e_ms, pack_ms, schedule_ms, fill_ms, wire_ms, unpack_ms, gemm_ms, host_e2e_ms):
+    def __init__(
+        self, name, e2e_ms, pack_ms, schedule_ms, fill_ms, reset_ms, wire_ms, unpack_ms, gemm_ms, host_e2e_ms
+    ):
         self.name = name
         self.e2e_ms = e2e_ms  # PRIMARY: comm start -> gemm finish (CUDA events)
         self.pack_ms = pack_ms  # outside the window
         self.schedule_ms = schedule_ms
         self.fill_ms = fill_ms
+        # per-call signal/credit reset incl. 2x nvshmem_barrier_all (FAST has no
+        # epoch protocol); also absorbs inter-rank skew
+        self.reset_ms = reset_ms
         self.wire_ms = wire_ms
         self.unpack_ms = unpack_ms
         self.gemm_ms = gemm_ms
@@ -129,8 +134,8 @@ class FastPerfResult:
             f" host {self.host_e2e_ms:.3f})"
             f" | pack {self.pack_ms:.3f} (outside window)"
             f" | schedule {self.schedule_ms:.3f} + fill {self.fill_ms:.3f}"
-            f" + wire {self.wire_ms:.3f} + unpack {self.unpack_ms:.3f}"
-            f" + gemm {self.gemm_ms:.3f}"
+            f" + reset {self.reset_ms:.3f} + wire {self.wire_ms:.3f}"
+            f" + unpack {self.unpack_ms:.3f} + gemm {self.gemm_ms:.3f}"
         )
 
 
@@ -157,6 +162,7 @@ def perf_fast(
     host_e2e = [0.0] * total_iters
     schedule_us = [0.0] * total_iters
     fill_us = [0.0] * total_iters
+    reset_us = [0.0] * total_iters
     wire_us = [0.0] * total_iters
 
     out = None
@@ -181,7 +187,7 @@ def perf_fast(
         e2e_end[i].record()
         e2e_end[i].synchronize()
         host_e2e[i] = (time.perf_counter() - t0) * 1e3
-        schedule_us[i], fill_us[i], wire_us[i] = timings.tolist()
+        schedule_us[i], fill_us[i], reset_us[i], wire_us[i] = timings.tolist()
 
     def mean_ms(starts, ends):
         return sum(starts[i].elapsed_time(ends[i]) for i in range(warmup_iters, total_iters)) / iters
@@ -196,6 +202,7 @@ def perf_fast(
             pack_ms=mean_ms(pack_start, pack_end),
             schedule_ms=mean_host_ms(schedule_us),
             fill_ms=mean_host_ms(fill_us),
+            reset_ms=mean_host_ms(reset_us),
             wire_ms=mean_host_ms(wire_us),
             unpack_ms=mean_ms(comm_end, unpack_end),
             gemm_ms=mean_ms(unpack_end, e2e_end),
