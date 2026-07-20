@@ -328,6 +328,13 @@ if __name__ == "__main__":
         print(f"FAST wire bytes per rank (recv): {matrix.sum(dim=0).tolist()}")
         print(f"FAST buffer capacity: {capacity_bytes >> 20} MiB per buffer")
 
+    # The torch reference's gemm_impl ends with out.mul_(output_scale[exp_id]),
+    # a synthetic per-expert factor drawn uniform [-1, 1] that the FUSED ops
+    # apply in their epilogue but the standalone GemmGroupedV2 does not (for
+    # bf16). It has no timing relevance — pin it to 1 so both sides compute the
+    # pure GEMM and stay comparable.
+    moe_ctx.output_scale[0].fill_(1.0)
+
     # ---- torch reference (untimed): populates ctx.inputs / scatter_inputs / outputs ----
     gemm_only_op = flux.GemmOnly(
         moe_ctx.inputs.dtype,
@@ -363,16 +370,14 @@ if __name__ == "__main__":
 
     # ---- correctness ----
     # Numerics tolerance for GemmGroupedV2 (CUTLASS) vs the per-expert
-    # torch.matmul loop (cuBLAS): both round fp32 accumulators to bf16 once, but
-    # with different accumulation orders results can differ by ~2 bf16 ulps
-    # (1.6% relative) on a small fraction of elements (the op's own test,
-    # test_grouped_gemm_v2_only.py, uses atol=2e-2 for bf16). Real configuration
-    # errors produce O(|y|) divergence and still fail loudly. Exact data
-    # movement is covered by the two bitwise checks below, not this tolerance.
+    # torch.matmul loop (cuBLAS): different accumulation orders, one bf16
+    # rounding each — the op's own test (test_grouped_gemm_v2_only.py) uses
+    # atol=2e-2 for bf16. Exact data movement is covered by the two bitwise
+    # checks below, not this tolerance.
     if input_dtype == torch.float16:
-        atol, rtol = 1e-2, 1e-2
+        atol, rtol = 1e-2, 1e-3
     else:
-        atol, rtol = 1e-2, 3e-2
+        atol, rtol = 2e-2, 1.5e-2
 
     def check_result():
         print(f"Checking RANK #{rank}...")
