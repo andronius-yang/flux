@@ -31,6 +31,9 @@ export NVSHMEM_DISABLE_CUDA_VMM=${NVSHMEM_DISABLE_CUDA_VMM:-1}
 export NVSHMEM_DISABLE_GDRCOPY=${NVSHMEM_DISABLE_GDRCOPY:-1}
 export SLURM_MPI_TYPE=${SLURM_MPI_TYPE:-cray_shasta}
 export MPICH_GPU_SUPPORT_ENABLED=${MPICH_GPU_SUPPORT_ENABLED:-0}
+# three capacity-sized nvshmem buffers (send + 2x pingpong) live on the
+# symmetric heap; the ~1G default is too small for 64mib-budget matrices
+export NVSHMEM_SYMMETRIC_SIZE=${NVSHMEM_SYMMETRIC_SIZE:-4G}
 export LD_LIBRARY_PATH="$NVSHMEM_HOME/lib:$NVSHMEM_HOME/lib64:$LD_LIBRARY_PATH"
 # NERSC NVSHMEM host runtime must win over PyTorch-bundled copies
 nvshmem_host_lib="$NVSHMEM_HOME/lib/libnvshmem_host.so.3"
