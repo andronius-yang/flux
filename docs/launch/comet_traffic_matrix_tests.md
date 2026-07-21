@@ -153,13 +153,19 @@ srun --nodes=4 --ntasks-per-node=1 ./launch_fast.sh \
   --traffic_matrix <matrices>/4n_16r/16mib/a2av_4n_16r_dist_001.txt
 ```
 
-- PRIMARY METRIC: `e2e` = one window from communication start (BvN schedule +
-  send staging + wire) to computation finish (unpack + grouped GEMM), CUDA
-  events, directly comparable to the fused `op.forward` numbers of
-  `test_moe_ag_traffic.py`. The BvN schedule is recomputed inside the window
-  every iteration (one-shot methodology — never amortized); the send-side pack
-  `index_select` is reported separately outside the window. The printed
-  `schedule/fill/wire/unpack/gemm` split is diagnostic.
+- PRIMARY METRIC: `e2e` = one window from communication start to computation
+  finish — pack + BvN schedule + send staging + wire + unpack + grouped GEMM —
+  CUDA events, directly comparable to the fused `op.forward` numbers of
+  `test_moe_ag_traffic.py` (fused forward includes its pack-equivalent, so ours
+  is inside the window too). The BvN schedule is recomputed inside the window
+  every iteration (one-shot methodology — never amortized). FAST's
+  inter-iteration signal/credit reset (`alltoallv_reset`, two
+  `nvshmem_barrier_all` + KB-scale memsets) runs OUTSIDE the window and is
+  reported separately: it has no analogue in the other baselines (flux's
+  `perf_flux` runs `clear_buffers` before its start event; FAST's own
+  `perf_flash` host-timed mode resets before `host_start`; an epoch protocol
+  like the a2av modes' `run_id` makes it free), and its tail barrier doubles as
+  the per-iteration rank aligner. The printed phase split is diagnostic.
 - Correctness: the unpacked receive buffer must be **bitwise** equal to the
   reference `scatter_inputs` block (send-side stable argsort by expert id is
   simultaneously destination-major and expert-grouped; FAST's receive layout is
@@ -171,11 +177,24 @@ srun --nodes=4 --ntasks-per-node=1 ./launch_fast.sh \
   `python3 test/python/moe_ag_scatter/test_fast_index_math.py`.
 - The test never calls `flux.init_flux_shm` — do not add fused-op timing to
   this harness; run `test_moe_ag_traffic.py` separately for those numbers.
-- Validated 2026-07-20 (4 nodes, `4n_16r/{2,16,64}mib/dist_001`, 10+10 iters):
-  48/48 rank-checks pass (wire+unpack bitwise vs the reference scatter block,
-  same-op GEMM bitwise, allclose vs the torch loop). e2e mean over 16 ranks
-  (ms): 2mib 4.06, 16mib 5.85, 64mib 13.24 — vs the fused patterns' recorded
-  AG 1.19/2.73/8.44 and a2av_hier 0.93/2.20/6.70. The un-overlapped baseline
-  is dominated by the per-iteration BvN schedule (~1.3 ms) and FAST's per-call
-  signal/credit reset incl. two nvshmem_barrier_all (1.5/2.2/4.7 ms); wire
-  0.84/1.76/5.15, grouped GEMM 0.15/0.33/1.16.
+- Validated 2026-07-20 (4 nodes, `4n_16r/{2,16,64}mib/dist_001`, 10+10 iters,
+  pack-in/reset-out window): 48/48 FAST rank-checks (wire+unpack bitwise vs the
+  reference scatter block, same-op GEMM bitwise, allclose) and 96/96 fused-run
+  checks, all four variants measured in ONE allocation. Layer0 latency (mean ms
+  over 16 ranks; "torch" = dense NCCL allgather + index_select + per-expert
+  GemmOnly loop, timed by `perf_torch` in the same allgather invocation):
+
+  | budget | torch (unoverlapped AG) | FAST (unoverlapped a2av) | fused AG | fused a2av_hier |
+  |--------|------------------------|--------------------------|----------|-----------------|
+  | 2mib   | 0.73                   | 2.30                     | 1.18     | 0.93            |
+  | 16mib  | 3.94                   | 3.50                     | 2.73     | 2.19            |
+  | 64mib  | 15.61                  | 9.53                     | 8.54     | 6.73            |
+
+  FAST phase means (pack/sched/fill/wire/unpack/gemm, ms): 2mib
+  0.06/0.94/0.06/0.96/0.07/0.15; 16mib 0.13/0.94/0.08/1.85/0.16/0.33; 64mib
+  0.48/1.30/0.23/6.20/0.51/1.16; excluded reset 0.83/1.57/4.63. Takeaways: the
+  torch dense-AG baseline wins only at 2mib (its wire is budget/topk and FAST
+  pays a ~1 ms schedule constant); FAST overtakes it by 16mib and is 1.6x
+  faster at 64mib (matrix-sized wire + load balancing + single grouped GEMM);
+  the fused overlapped patterns beat both un-overlapped baselines at every
+  budget, a2av_hier fastest everywhere.
