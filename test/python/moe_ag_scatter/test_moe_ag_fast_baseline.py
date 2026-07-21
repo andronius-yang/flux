@@ -209,10 +209,10 @@ def perf_fast(
         FastPerfResult(
             name=f"fast #{TP_GROUP.rank()}",
             e2e_ms=mean_ms(e2e_start, e2e_end),
-            pack_ms=mean_ms(pack_start, pack_end),
+            pack_ms=mean_ms(e2e_start, pack_end),
             schedule_ms=mean_host_ms(schedule_us),
             fill_ms=mean_host_ms(fill_us),
-            reset_ms=mean_host_ms(reset_us),
+            reset_ms=sum(reset_ms[warmup_iters:]) / iters,
             wire_ms=mean_host_ms(wire_us),
             unpack_ms=mean_ms(comm_end, unpack_end),
             gemm_ms=mean_ms(unpack_end, e2e_end),
