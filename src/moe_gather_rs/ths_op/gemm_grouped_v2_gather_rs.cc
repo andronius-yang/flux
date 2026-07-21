@@ -598,10 +598,73 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       return recv_base + ((int64_t)sid * this->a2av_recv_rows_ + row) * row_bytes;
     };
 
-    // intra-node ladder: per split, behind the own-node chunk flag; self chunk is
-    // a local CE copy, peers get one contiguous putmem_signal each (CE over
-    // NVLink for same-node PEs). Every pair signals every split, payload or not.
+    char *stage_base = NN > 1 ? (char *)this->a2av_stage_panel_.data_ptr() : nullptr;
+    uint64_t *arrival_sig =
+        NN > 1 ? (uint64_t *)this->a2av_arrival_signals_.data_ptr() : nullptr;
+    auto stage_ptr = [&](int sid, int64_t row) -> char * {
+      return stage_base + ((int64_t)sid * this->a2av_stage_rows_ + row) * row_bytes;
+    };
+    cudaStream_t gateway_stream = NN > 1 ? (cudaStream_t)this->a2av_gateway_stream_.value()
+                                         : (cudaStream_t) nullptr;
+    A2AVCombineReduceArguments reduce_args{
+        .recv_panel = this->a2av_recv_panel_.data_ptr(),
+        .reduce_index = reduce_index.data_ptr<int32_t>(),
+        .output = output.data_ptr(),
+        .panel_rows = this->a2av_recv_rows_,
+        .ntokens_local = cpr / this->topk,
+        .n = this->n_dim,
+        .n_per = (int)n_per,
+        .topk = this->topk,
+        .sid = 0,
+        .threadblock_count = get_a2av_reduce_blocks()};
+
+    // The ladders are enqueued INTERLEAVED PER SPLIT, in dependency order
+    // (inter -> intra -> gateway -> reduce): under CUDA_DEVICE_MAX_CONNECTIONS=1
+    // all streams multiplex one front-end channel and a pending wait can block
+    // later-enqueued ops, so the enqueue order must itself be an executable
+    // pipelined schedule. Within a split the pack kernel flips remote-node flags
+    // first (production order) and the own-node flag last, so the inter waits
+    // sit ahead of the intra wait; the reduce waits depend on this rank's own
+    // gateway forwards, which are enqueued just before them.
     for (int sid = 0; sid < this->n_split; sid++) {
+      if (NN > 1) {
+        // inter-node: ONE aggregated put per (remote node, split) to the
+        // same-local-rank gateway there, consumed in the pack kernel's chunk
+        // production order (node_idx+1 ascending -- no consumer schedule exists
+        // in the combine, and matching production order avoids head-of-line
+        // blocking; the rotation staggers sources across gateways, no incast).
+        for (int gi = 0; gi < NN - 1; gi++) {
+          int tn = (my_node + 1 + gi) % NN;
+          int g = dist_env.local_rank_to_global_rank(my_lr, tn);
+          CU_CHECK(CUStreamWaitValue(
+              this->internode_stream,
+              (CUdeviceptr)(this->group_flags.get() + tn * this->n_split + sid),
+              1,
+              CU_STREAM_WAIT_VALUE_GEQ));
+          int64_t rows = node_chunk(this->rank, tn);
+          if (rows > 0) {
+            nvshmemx_putmem_signal_nbi_on_stream(
+                stage_ptr(sid, seg_off(tn, my_lr, my_node)),
+                send_ptr(sid, send_off[tn * L]),
+                rows * row_bytes,
+                arrival_sig + my_node * this->n_split + sid,
+                this->run_id_,
+                NVSHMEM_SIGNAL_SET,
+                g,
+                this->internode_stream);
+          } else {
+            nvshmemx_signal_op_on_stream(
+                arrival_sig + my_node * this->n_split + sid,
+                this->run_id_,
+                NVSHMEM_SIGNAL_SET,
+                g,
+                this->internode_stream);
+          }
+        }
+      }
+      // intra-node: behind the own-node chunk flag; self chunk is a local CE
+      // copy, peers get one contiguous putmem_signal each (CE over NVLink for
+      // same-node PEs). Every pair signals every split, payload or not.
       CU_CHECK(CUStreamWaitValue(
           intra_stream,
           (CUdeviceptr)(this->group_flags.get() + my_node * this->n_split + sid),
@@ -643,62 +706,11 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
               intra_stream);
         }
       }
-    }
-    CUDA_CHECK(cudaEventRecord(this->a2av_intra_done_, intra_stream));
-    CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_intra_done_));
-
-    if (NN > 1) {
-      char *stage_base = (char *)this->a2av_stage_panel_.data_ptr();
-      uint64_t *arrival_sig = (uint64_t *)this->a2av_arrival_signals_.data_ptr();
-      auto stage_ptr = [&](int sid, int64_t row) -> char * {
-        return stage_base + ((int64_t)sid * this->a2av_stage_rows_ + row) * row_bytes;
-      };
-      // inter-node ladder: ONE aggregated put per (remote node, split) to the
-      // same-local-rank gateway there. Consumed in the pack kernel's chunk
-      // production order (node_idx+1 ascending) -- unlike layer0's mirror node
-      // order there is no consumer schedule to satisfy, and matching production
-      // order avoids head-of-line blocking on the last-produced flag. The
-      // node_idx+1 rotation staggers sources across gateways (no incast).
-      for (int sid = 0; sid < this->n_split; sid++) {
-        for (int gi = 0; gi < NN - 1; gi++) {
-          int tn = (my_node + 1 + gi) % NN;
-          int g = dist_env.local_rank_to_global_rank(my_lr, tn);
-          CU_CHECK(CUStreamWaitValue(
-              this->internode_stream,
-              (CUdeviceptr)(this->group_flags.get() + tn * this->n_split + sid),
-              1,
-              CU_STREAM_WAIT_VALUE_GEQ));
-          int64_t rows = node_chunk(this->rank, tn);
-          if (rows > 0) {
-            nvshmemx_putmem_signal_nbi_on_stream(
-                stage_ptr(sid, seg_off(tn, my_lr, my_node)),
-                send_ptr(sid, send_off[tn * L]),
-                rows * row_bytes,
-                arrival_sig + my_node * this->n_split + sid,
-                this->run_id_,
-                NVSHMEM_SIGNAL_SET,
-                g,
-                this->internode_stream);
-          } else {
-            nvshmemx_signal_op_on_stream(
-                arrival_sig + my_node * this->n_split + sid,
-                this->run_id_,
-                NVSHMEM_SIGNAL_SET,
-                g,
-                this->internode_stream);
-          }
-        }
-      }
-      CUDA_CHECK(cudaEventRecord(this->a2av_inter_done_, this->internode_stream));
-      CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_inter_done_));
-
-      // gateway forward ladder: per (split, source node) behind the arrival
-      // signal (zero-SM front-end wait, cannot deadlock against the spinning
-      // GEMM); forwards each local destination's sub-chunk with the per-source
-      // recv signal -- forwarded sub-chunks are indistinguishable from direct
-      // puts at the destination. Own sub-chunk is a local CE copy + self signal.
-      cudaStream_t gateway_stream = this->a2av_gateway_stream_.value();
-      for (int sid = 0; sid < this->n_split; sid++) {
+      if (NN > 1) {
+        // gateway forwards: per source node behind the arrival signal (zero-SM
+        // front-end wait, cannot deadlock against the spinning GEMM); forwarded
+        // sub-chunks are indistinguishable from direct puts at the destination.
+        // Own sub-chunk is a local CE copy + self signal.
         for (int dn = 1; dn < NN; dn++) {
           int ns = (my_node + dn) % NN;
           int s = dist_env.local_rank_to_global_rank(my_lr, ns);
@@ -751,26 +763,9 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           }
         }
       }
-      CUDA_CHECK(cudaEventRecord(this->a2av_gateway_done_, gateway_stream));
-      CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_gateway_done_));
-    }
-
-    // per-split reduce: gate on all W per-source recv signals of the split (a
-    // token's topk copies come from up to topk different owners), then one
-    // memory-bound kernel folds them into the output column window. Enqueued
-    // last: its waits depend on the gateway ladder above in the shared channel.
-    A2AVCombineReduceArguments reduce_args{
-        .recv_panel = this->a2av_recv_panel_.data_ptr(),
-        .reduce_index = reduce_index.data_ptr<int32_t>(),
-        .output = output.data_ptr(),
-        .panel_rows = this->a2av_recv_rows_,
-        .ntokens_local = cpr / this->topk,
-        .n = this->n_dim,
-        .n_per = (int)n_per,
-        .topk = this->topk,
-        .sid = 0,
-        .threadblock_count = get_a2av_reduce_blocks()};
-    for (int sid = 0; sid < this->n_split; sid++) {
+      // per-split reduce: gate on all W per-source recv signals of the split (a
+      // token's topk copies come from up to topk different owners), then one
+      // memory-bound kernel folds them into the output column window
       for (int s = 0; s < W; s++) {
         CU_CHECK(CUStreamWaitValue64(
             reduce_stream,
@@ -780,6 +775,18 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       }
       reduce_args.sid = sid;
       a2av_combine_reduce(reduce_args, flux_dtype, reduce_stream);
+    }
+
+    // tail joins: everything the epoch produced must reach the gather-rs stream
+    // before the caller's gather_rs_done_event / closing barrier, covering
+    // panel + staging reuse in the next iteration
+    CUDA_CHECK(cudaEventRecord(this->a2av_intra_done_, intra_stream));
+    CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_intra_done_));
+    if (NN > 1) {
+      CUDA_CHECK(cudaEventRecord(this->a2av_inter_done_, this->internode_stream));
+      CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_inter_done_));
+      CUDA_CHECK(cudaEventRecord(this->a2av_gateway_done_, gateway_stream));
+      CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_gateway_done_));
     }
     CUDA_CHECK(cudaEventRecord(this->a2av_reduce_done_, reduce_stream));
     CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_reduce_done_));
