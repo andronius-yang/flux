@@ -198,3 +198,49 @@ srun --nodes=4 --ntasks-per-node=1 ./launch_fast.sh \
   faster at 64mib (matrix-sized wire + load balancing + single grouped GEMM);
   the fused overlapped patterns beat both un-overlapped baselines at every
   budget, a2av_hier fastest everywhere.
+
+## Layer1 hierarchical a2av combine (`--comm_pattern a2av_hier`, sm80/V2 only)
+
+Design: `comet_traffic_matrix_a2av.md` §11. The combine mirror of the layer0
+dispatch: after the split-major grouped GEMM, each `(token, topk-slot)` copy
+travels ONCE from its expert-owner rank back to its token-home rank (wire bytes
+= the transpose of the traffic matrix), inter-node as one aggregated
+`putmem_signal` per remote node via the same-local-rank gateway, and the topk
+reduction runs per split at the destination once that split's `W` per-source
+signals have fired. All transport is host-issued on copy engines / NIC (zero
+SMs); the pipeline depth is `n_split`.
+
+```bash
+# single node (intra ladder + per-split reduce; validates everything but the gateway)
+srun --nodes=1 --ntasks-per-node=1 ./launch.sh \
+  test/python/moe_gather_rs/test_moe_gather_rs_traffic.py \
+  --traffic_matrix <matrix> --comm_pattern a2av_hier
+
+# 4 nodes x 4 GPUs
+NVSHMEM_SYMMETRIC_SIZE=4G srun --nodes=4 --ntasks-per-node=1 ./launch.sh \
+  test/python/moe_gather_rs/test_moe_gather_rs_traffic.py \
+  --traffic_matrix <matrices>/4n_16r/16mib/..._dist_001.txt --comm_pattern a2av_hier
+```
+
+- v1 scope (FLUX_CHECK-guarded): `T=1, E=world_size` (complete GEMM rows — no
+  K-partials), single weight group, bf16/fp16, no `--all_reduce` /
+  `--use_read_mode`; `splits_per_source` is REQUIRED (the harness builds it in
+  untimed setup, exactly like the layer0 harness).
+- Knobs: `FLUX_A2AV_RS_MAX_SEND_ROWS` (send panel rows per split; the hot
+  expert-owner rank's outbound load, default `2 * max_m / W`),
+  `FLUX_A2AV_RS_MAX_STAGE_ROWS` (gateway staging rows per split, same default).
+  Both overflow checks are collective (computed identically on all ranks from
+  `splits_per_source` before any wire). The recv panel needs no knob — every
+  home rank receives exactly `ntokens_local * topk` copies.
+  `FLUX_A2AV_RS_PACK_BLOCKS` / `FLUX_A2AV_RS_REDUCE_BLOCKS` (default 3 each)
+  set the pack/reduce SM budget; both are added to the GEMM's `sm_margin`.
+- `FLUX_A2AV_RS_CHECK_IDENTITY=1` rebuilds the pack index by brute-force sort
+  and asserts it equals the arithmetic-identity path (bring-up guard).
+- `--precomputed_indices` passes the pack/reduce routing plan from the harness
+  (the count-the-index-latency-once mode a fused layer0+layer1 pipeline gets by
+  handing over layer0's index tensors); `--n_split` sweeps the pipeline depth
+  (`N / n_split` must be a multiple of 1024).
+- `test/python/moe_gather_rs/test_a2av_combine_sim.py` (CPU-only, no GPU/flux)
+  validates the full layout contract — pack -> direct/hier transport (must be
+  bit-identical) -> reduce — for random routings incl. zero chunks and
+  zero-row owner ranks.

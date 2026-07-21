@@ -43,6 +43,7 @@
 #include <cutlass/util/device_memory.h>
 #include <cutlass/util/packed_stride.hpp>
 #include <iostream>
+#include <optional>
 #include <nvshmemx.h>
 #include <torch/csrc/distributed/c10d/ProcessGroup.hpp>
 #include <utility>
@@ -101,6 +102,19 @@ get_rs_threadblock_count() {
   static int rs_num_blocks = bytedance::flux::get_int_from_env("FLUX_RS_BLOCKS", 3);
   return rs_num_blocks;
 }
+// a2av_hier combine: SM budget of the pack / reduce kernels. Both are reserved
+// out of the GEMM via sm_margin (the pack kernel is persistent and the per-split
+// reduce must find free SMs while the GEMM still spins on later splits).
+int
+get_a2av_pack_blocks() {
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_PACK_BLOCKS", 3);
+  return v;
+}
+int
+get_a2av_reduce_blocks() {
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_REDUCE_BLOCKS", 3);
+  return v;
+}
 }  // namespace
 
 namespace bytedance::flux::ths_op {
@@ -152,6 +166,28 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   cudaEvent_t staging_reset_event;
   uint64_t run_id_ = 0;
 
+  // a2av_hier combine state. Layouts mirror layer0's a2av dispatch exactly:
+  // the send panel is (home_rank, expert, copy)-ordered (== layer0's recv
+  // layout), the recv panel is (owner_rank, expert, copy)-ordered (== layer0's
+  // send layout), so every copy lands back at its layer0 pack position and the
+  // pack/reduce gather indices are the inverses of layer0's index math.
+  const bool a2av_hier;
+  int64_t a2av_send_rows_ = 0;   // send panel row capacity per split (routing-dependent load)
+  int64_t a2av_recv_rows_ = 0;   // recv panel rows per split: exactly max_m / world_size
+  int64_t a2av_stage_rows_ = 0;  // gateway staging row capacity per split
+  torch::Tensor a2av_send_panel_;       // [n_split, a2av_send_rows_, n_per] symmetric
+  torch::Tensor a2av_recv_panel_;       // [n_split, a2av_recv_rows_, n_per] symmetric
+  torch::Tensor a2av_stage_panel_;      // [n_split, a2av_stage_rows_, n_per] symmetric (nnodes>1)
+  torch::Tensor a2av_recv_signals_;     // uint64 [world_size * n_split], epoch, never reset
+  torch::Tensor a2av_arrival_signals_;  // uint64 [nnodes * n_split], epoch, never reset
+  std::optional<c10::cuda::CUDAStream> a2av_intra_stream_;    // intra-node put ladder (CEs)
+  std::optional<c10::cuda::CUDAStream> a2av_gateway_stream_;  // gateway forward ladder
+  std::optional<c10::cuda::CUDAStream> a2av_reduce_stream_;   // signal waits + per-split reduce
+  cudaEvent_t a2av_intra_done_ = nullptr;
+  cudaEvent_t a2av_inter_done_ = nullptr;
+  cudaEvent_t a2av_gateway_done_ = nullptr;
+  cudaEvent_t a2av_reduce_done_ = nullptr;
+
   bool buffer_initialized = false;
 
  private:
@@ -159,6 +195,43 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   init_buffer_once(at::ScalarType dtype) {
     if (this->buffer_initialized)
       return;
+    if (this->a2av_hier) {
+      // a2av mode skips every dense-only buffer (ring reduce buffers, tile
+      // barriers, dense staging, internode signals): peers never write partials,
+      // only whole copies into the recv panel. The ctor flag is uniform across
+      // ranks, so skipping the collective allocations is collectively consistent.
+      const int64_t n_per = this->n_dim / this->n_split;
+      this->a2av_recv_rows_ = this->max_m / this->world_size;  // exact: topk copies per token
+      this->a2av_send_rows_ = get_int_from_env(
+          "FLUX_A2AV_RS_MAX_SEND_ROWS",
+          std::min<int64_t>((int64_t)this->max_m, 2 * this->a2av_recv_rows_));
+      this->a2av_send_panel_ =
+          nvshmem_create_tensor({this->n_split, this->a2av_send_rows_, n_per}, dtype);
+      this->a2av_recv_panel_ =
+          nvshmem_create_tensor({this->n_split, this->a2av_recv_rows_, n_per}, dtype);
+      this->a2av_recv_signals_ = nvshmem_create_tensor(
+          {(int64_t)this->world_size * this->n_split}, at::ScalarType::Long, true);
+      if (this->nnodes > 1) {
+        this->a2av_stage_rows_ = get_int_from_env(
+            "FLUX_A2AV_RS_MAX_STAGE_ROWS",
+            std::min<int64_t>((int64_t)this->max_m, 2 * this->a2av_recv_rows_));
+        this->a2av_stage_panel_ =
+            nvshmem_create_tensor({this->n_split, this->a2av_stage_rows_, n_per}, dtype);
+        this->a2av_arrival_signals_ = nvshmem_create_tensor(
+            {(int64_t)this->nnodes * this->n_split}, at::ScalarType::Long, true);
+      }
+      // chunk-ready flags per (dest_node, sid) -- allocated for nnodes == 1 too:
+      // the intra-node ladder gates on the own-node flag
+      this->group_flags.reset(this->nnodes * this->n_split);
+      this->group_counters.reset(this->nnodes * this->n_split);
+      CUDA_CHECK(
+          cudaMemset(this->group_flags.get(), 0, sizeof(int) * this->nnodes * this->n_split));
+      CUDA_CHECK(
+          cudaMemset(this->group_counters.get(), 0, sizeof(int) * this->nnodes * this->n_split));
+      torch::cuda::synchronize();
+      this->buffer_initialized = true;
+      return;
+    }
     std::vector<void *> hptrs(this->local_world_size, nullptr);
     const int ptr_bytes = sizeof(void *) * this->local_world_size;
     // initialize the output buffer
@@ -244,7 +317,8 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       int n_split_,
       bool do_all_reduce_ = false,
       bool use_read_mode_ = false,
-      int nnodes_ = 1)
+      int nnodes_ = 1,
+      bool a2av_hier_ = false)
       : tp_group(tp_group_),
         rank(tp_group_->get_rank()),
         world_size(tp_group_->get_size()),
@@ -262,6 +336,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         use_read_mode(use_read_mode_),
         n_split(n_split_),
         internode_stream(create_internode_stream()),
+        a2av_hier(a2av_hier_),
         barriers(barriers) {
     FLUX_CHECK_GE(nnodes, 1);
     FLUX_CHECK_DIV(world_size, nnodes);
@@ -273,8 +348,31 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           << "rank layout must be node-contiguous (rank = node_idx * local_world_size + "
              "local_rank)";
     }
+    if (this->a2av_hier) {
+      FLUX_CHECK(!do_all_reduce) << "do_all_reduce not supported with a2av_hier";
+      FLUX_CHECK(!use_read_mode) << "use_read_mode not supported with a2av_hier";
+      FLUX_CHECK_EQ(ep_world_size, world_size) << "a2av_hier requires EP == world (tp == 1)";
+      FLUX_CHECK_DIV(max_m, world_size);
+      FLUX_CHECK(
+          output_dtype == at::ScalarType::Half || output_dtype == at::ScalarType::BFloat16)
+          << "a2av_hier supports fp16/bf16 only";
+      FLUX_CHECK(nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE) == local_rank)
+          << "rank layout must be node-contiguous (rank = node_idx * local_world_size + "
+             "local_rank)";
+      this->a2av_intra_stream_ = create_internode_stream();
+      this->a2av_reduce_stream_ = create_internode_stream();
+      if (nnodes > 1) {
+        this->a2av_gateway_stream_ = create_internode_stream();
+      }
+      CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_intra_done_, cudaEventDisableTiming));
+      CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_inter_done_, cudaEventDisableTiming));
+      CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_gateway_done_, cudaEventDisableTiming));
+      CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_reduce_done_, cudaEventDisableTiming));
+    }
     this->init_buffer_once(output_dtype);
-    this->create_rs_barrier();
+    if (!this->a2av_hier) {
+      this->create_rs_barrier();
+    }
 
     std::vector<void *> barrier_ptrs(this->local_world_size, nullptr);
     FLUX_CHECK_EQ((int)this->barriers.size(), this->local_world_size);
@@ -295,9 +393,397 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   ~TopkReduceScatterOpImpl() {
     CUDA_CHECK(cudaEventDestroy(this->staging_reset_event));
     CUDA_CHECK(cudaStreamDestroy(this->internode_stream));
+    for (auto &s : {this->a2av_intra_stream_, this->a2av_gateway_stream_, this->a2av_reduce_stream_}) {
+      if (s.has_value()) {
+        CUDA_CHECK(cudaStreamDestroy(s.value()));
+      }
+    }
+    for (auto e : {this->a2av_intra_done_, this->a2av_inter_done_, this->a2av_gateway_done_,
+                   this->a2av_reduce_done_}) {
+      if (e != nullptr) {
+        CUDA_CHECK(cudaEventDestroy(e));
+      }
+    }
     if (this->barrier_dev_ptrs != nullptr) {
       CUDA_CHECK(cudaFree(this->barrier_dev_ptrs));
     }
+  }
+
+  // a2av_hier combine: pack (persistent kernel, split-major, behind the GEMM
+  // cascade flags) -> host put ladders on copy engines / NIC (intra direct,
+  // inter-node aggregated via same-local-rank gateways, gateway forwards paced
+  // by zero-SM cuStreamWaitValue64) -> per-split destination topk reduce once
+  // that split's W per-source recv signals have fired. All host waits are
+  // enqueued AFTER the pack kernel launch and in dependency order (intra/inter
+  // ladders, then gateway, then reduce): under CUDA_DEVICE_MAX_CONNECTIONS=1
+  // every enqueued front-end wait can block later ops in the shared channel, so
+  // enqueue order must be an executable schedule.
+  torch::Tensor
+  run_a2av_hier(
+      torch::Tensor gemm_out,
+      torch::Tensor output,
+      torch::Tensor const &splits_per_source,
+      torch::Tensor const &pack_index,
+      torch::Tensor const &reduce_index,
+      c10::optional<std::vector<torch::Tensor>> const &output_vec_scales,
+      int m_full,
+      int num_thread_blocks,
+      cudaStream_t stream_raw) {
+    const int W = this->world_size;
+    const int L = this->local_world_size;
+    const int NN = this->nnodes;
+    const int my_node = this->node_idx;
+    const int my_lr = this->local_rank;
+    DistEnv dist_env(this->rank, W, NN);
+    const int nex_total = this->ep_nexperts * this->ep_world_size;
+    const int E_loc = nex_total / W;  // experts per owner rank (EP == world)
+    const int64_t cpr = (int64_t)m_full / W;  // copies homed on each rank
+    const int64_t M_this_ep = gemm_out.size(0);
+    const int64_t n_per = this->n_dim / this->n_split;
+    auto dtype = gemm_out.scalar_type();
+    const int64_t row_bytes = n_per * c10::elementSize(dtype);
+
+    FLUX_CHECK(splits_per_source.device().is_cpu()) << "splits_per_source must be a CPU tensor";
+    CHECK_2D(splits_per_source, W, nex_total);
+    FLUX_CHECK(splits_per_source.is_contiguous());
+    FLUX_CHECK(splits_per_source.scalar_type() == at::ScalarType::Int);
+    CHECK_INPUT(pack_index, at::ScalarType::Int);
+    CHECK_INPUT(reduce_index, at::ScalarType::Int);
+    CHECK_1D(pack_index, M_this_ep);
+    CHECK_1D(reduce_index, cpr);
+    FLUX_CHECK_LE(cpr, this->a2av_recv_rows_);
+
+    // combine chunk matrix: C[s][d] = copies expert-owner s returns to home d
+    // = sum over s's experts of cnt[d][e] -- the transpose-aggregate of the
+    // dispatch chunk matrix, from the same metadata-exchange input.
+    const int32_t *cnt = splits_per_source.data_ptr<int32_t>();
+    std::vector<int64_t> chunks64((size_t)W * W, 0);
+    for (int s = 0; s < W; s++) {
+      for (int d = 0; d < W; d++) {
+        int64_t acc = 0;
+        for (int e = s * E_loc; e < (s + 1) * E_loc; e++) {
+          acc += cnt[d * nex_total + e];
+        }
+        chunks64[s * W + d] = acc;
+      }
+    }
+    auto chunk_at = [&](int s, int d) -> int64_t { return chunks64[s * W + d]; };
+    // sanity: my outbound rows == gemm rows; every home receives exactly cpr copies
+    {
+      int64_t my_rows = 0;
+      for (int d = 0; d < W; d++) {
+        my_rows += chunk_at(this->rank, d);
+      }
+      FLUX_CHECK_EQ(my_rows, M_this_ep) << "splits_per_source disagrees with gemm rows";
+      for (int d = 0; d < W; d++) {
+        int64_t col = 0;
+        for (int s = 0; s < W; s++) {
+          col += chunk_at(s, d);
+        }
+        FLUX_CHECK_EQ(col, cpr) << "chunk matrix column " << d << " != ntokens_local * topk";
+      }
+    }
+    // send-panel overflow check, evaluated identically on ALL ranks (max over
+    // every rank's outbound rows) so failure is collective, never a hang
+    {
+      int64_t max_send_rows = 0;
+      for (int s = 0; s < W; s++) {
+        int64_t rows = 0;
+        for (int d = 0; d < W; d++) {
+          rows += chunk_at(s, d);
+        }
+        max_send_rows = std::max(max_send_rows, rows);
+      }
+      FLUX_CHECK_LE(max_send_rows, this->a2av_send_rows_)
+          << "a2av_hier send panel overflow; raise FLUX_A2AV_RS_MAX_SEND_ROWS";
+    }
+    auto node_chunk = [&](int s, int n) -> int64_t {
+      int64_t acc = 0;
+      for (int d = n * L; d < (n + 1) * L; d++) {
+        acc += chunk_at(s, d);
+      }
+      return acc;
+    };
+    // staging offset of source node ns's segment at gateway (gnode, glr):
+    // segments exact-packed ascending by source node, gateway's own node skipped
+    auto seg_off = [&](int gnode, int glr, int ns) -> int64_t {
+      int64_t acc = 0;
+      for (int n = 0; n < ns; n++) {
+        if (n == gnode) {
+          continue;
+        }
+        acc += node_chunk(dist_env.local_rank_to_global_rank(glr, n), gnode);
+      }
+      return acc;
+    };
+    auto recv_off_of = [&](int s, int d) -> int64_t {
+      int64_t acc = 0;
+      for (int s2 = 0; s2 < s; s2++) {
+        acc += chunk_at(s2, d);
+      }
+      return acc;
+    };
+    if (NN > 1) {
+      // gateway staging overflow, same collective-evaluation discipline
+      int64_t max_stage_rows = 0;
+      for (int gn = 0; gn < NN; gn++) {
+        for (int gl = 0; gl < L; gl++) {
+          int64_t rows = 0;
+          for (int ns = 0; ns < NN; ns++) {
+            if (ns == gn) {
+              continue;
+            }
+            rows += node_chunk(dist_env.local_rank_to_global_rank(gl, ns), gn);
+          }
+          max_stage_rows = std::max(max_stage_rows, rows);
+        }
+      }
+      FLUX_CHECK_LE(max_stage_rows, this->a2av_stage_rows_)
+          << "a2av_hier staging overflow; raise FLUX_A2AV_RS_MAX_STAGE_ROWS";
+    }
+    std::vector<int64_t> send_off(W, 0);
+    for (int d = 0, acc = 0; d < W; d++) {
+      send_off[d] = acc;
+      acc += chunk_at(this->rank, d);
+    }
+
+    // per-run epoch + chunk-flag reset, published to the ladder streams before
+    // their first CUStreamWaitValue can observe them
+    this->run_id_ += 1;
+    const size_t flag_bytes = sizeof(int) * NN * this->n_split;
+    CUDA_CHECK(cudaMemsetAsync(this->group_flags.get(), 0, flag_bytes, stream_raw));
+    CUDA_CHECK(cudaMemsetAsync(this->group_counters.get(), 0, flag_bytes, stream_raw));
+    CUDA_CHECK(cudaEventRecord(this->staging_reset_event, stream_raw));
+    cudaStream_t intra_stream = this->a2av_intra_stream_.value();
+    cudaStream_t reduce_stream = this->a2av_reduce_stream_.value();
+    CUDA_CHECK(cudaStreamWaitEvent(intra_stream, this->staging_reset_event));
+    if (NN > 1) {
+      CUDA_CHECK(cudaStreamWaitEvent(this->internode_stream, this->staging_reset_event));
+    }
+
+    // pack kernel FIRST -- every host wait below is enqueued after it, so the
+    // shared front-end channel always has the flag producer ahead of its consumers
+    A2AVCombinePackArguments pack_args{
+        .gemm_out = gemm_out.data_ptr(),
+        .vec_scale = output_vec_scales.has_value()
+                         ? (float const *)output_vec_scales->at(0).data_ptr()
+                         : nullptr,
+        .pack_index = pack_index.data_ptr<int32_t>(),
+        .send_panel = this->a2av_send_panel_.data_ptr(),
+        .barrier = this->barrier.data_ptr<int>(),
+        .group_flags = this->group_flags.get(),
+        .group_counters = this->group_counters.get(),
+        .node_row_start = {},
+        .panel_rows = this->a2av_send_rows_,
+        .n = this->n_dim,
+        .n_per = (int)n_per,
+        .n_split = this->n_split,
+        .nnodes = NN,
+        .node_idx = my_node,
+        .threadblock_count = num_thread_blocks};
+    for (int n = 0; n < NN; n++) {
+      pack_args.node_row_start[n] = send_off[n * L];
+    }
+    pack_args.node_row_start[NN] = M_this_ep;
+    auto flux_dtype = from_torch_dtype(dtype);
+    a2av_combine_pack(pack_args, flux_dtype, stream_raw);
+
+    char *send_base = (char *)this->a2av_send_panel_.data_ptr();
+    char *recv_base = (char *)this->a2av_recv_panel_.data_ptr();
+    uint64_t *recv_sig = (uint64_t *)this->a2av_recv_signals_.data_ptr();
+    auto send_ptr = [&](int sid, int64_t row) -> char * {
+      return send_base + ((int64_t)sid * this->a2av_send_rows_ + row) * row_bytes;
+    };
+    auto recv_ptr = [&](int sid, int64_t row) -> char * {
+      return recv_base + ((int64_t)sid * this->a2av_recv_rows_ + row) * row_bytes;
+    };
+
+    // intra-node ladder: per split, behind the own-node chunk flag; self chunk is
+    // a local CE copy, peers get one contiguous putmem_signal each (CE over
+    // NVLink for same-node PEs). Every pair signals every split, payload or not.
+    for (int sid = 0; sid < this->n_split; sid++) {
+      CU_CHECK(CUStreamWaitValue(
+          intra_stream,
+          (CUdeviceptr)(this->group_flags.get() + my_node * this->n_split + sid),
+          1,
+          CU_STREAM_WAIT_VALUE_GEQ));
+      if (chunk_at(this->rank, this->rank) > 0) {
+        CUDA_CHECK(cudaMemcpyAsync(
+            recv_ptr(sid, recv_off_of(this->rank, this->rank)),
+            send_ptr(sid, send_off[this->rank]),
+            chunk_at(this->rank, this->rank) * row_bytes,
+            cudaMemcpyDeviceToDevice,
+            intra_stream));
+      }
+      nvshmemx_signal_op_on_stream(
+          recv_sig + this->rank * this->n_split + sid,
+          this->run_id_,
+          NVSHMEM_SIGNAL_SET,
+          this->rank,
+          intra_stream);
+      for (int dl = 1; dl < L; dl++) {
+        int d = dist_env.local_rank_to_global_rank((my_lr - dl + L) % L, my_node);
+        int64_t rows = chunk_at(this->rank, d);
+        if (rows > 0) {
+          nvshmemx_putmem_signal_nbi_on_stream(
+              recv_ptr(sid, recv_off_of(this->rank, d)),
+              send_ptr(sid, send_off[d]),
+              rows * row_bytes,
+              recv_sig + this->rank * this->n_split + sid,
+              this->run_id_,
+              NVSHMEM_SIGNAL_SET,
+              d,
+              intra_stream);
+        } else {
+          nvshmemx_signal_op_on_stream(
+              recv_sig + this->rank * this->n_split + sid,
+              this->run_id_,
+              NVSHMEM_SIGNAL_SET,
+              d,
+              intra_stream);
+        }
+      }
+    }
+    CUDA_CHECK(cudaEventRecord(this->a2av_intra_done_, intra_stream));
+    CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_intra_done_));
+
+    if (NN > 1) {
+      char *stage_base = (char *)this->a2av_stage_panel_.data_ptr();
+      uint64_t *arrival_sig = (uint64_t *)this->a2av_arrival_signals_.data_ptr();
+      auto stage_ptr = [&](int sid, int64_t row) -> char * {
+        return stage_base + ((int64_t)sid * this->a2av_stage_rows_ + row) * row_bytes;
+      };
+      // inter-node ladder: ONE aggregated put per (remote node, split) to the
+      // same-local-rank gateway there. Consumed in the pack kernel's chunk
+      // production order (node_idx+1 ascending) -- unlike layer0's mirror node
+      // order there is no consumer schedule to satisfy, and matching production
+      // order avoids head-of-line blocking on the last-produced flag. The
+      // node_idx+1 rotation staggers sources across gateways (no incast).
+      for (int sid = 0; sid < this->n_split; sid++) {
+        for (int gi = 0; gi < NN - 1; gi++) {
+          int tn = (my_node + 1 + gi) % NN;
+          int g = dist_env.local_rank_to_global_rank(my_lr, tn);
+          CU_CHECK(CUStreamWaitValue(
+              this->internode_stream,
+              (CUdeviceptr)(this->group_flags.get() + tn * this->n_split + sid),
+              1,
+              CU_STREAM_WAIT_VALUE_GEQ));
+          int64_t rows = node_chunk(this->rank, tn);
+          if (rows > 0) {
+            nvshmemx_putmem_signal_nbi_on_stream(
+                stage_ptr(sid, seg_off(tn, my_lr, my_node)),
+                send_ptr(sid, send_off[tn * L]),
+                rows * row_bytes,
+                arrival_sig + my_node * this->n_split + sid,
+                this->run_id_,
+                NVSHMEM_SIGNAL_SET,
+                g,
+                this->internode_stream);
+          } else {
+            nvshmemx_signal_op_on_stream(
+                arrival_sig + my_node * this->n_split + sid,
+                this->run_id_,
+                NVSHMEM_SIGNAL_SET,
+                g,
+                this->internode_stream);
+          }
+        }
+      }
+      CUDA_CHECK(cudaEventRecord(this->a2av_inter_done_, this->internode_stream));
+      CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_inter_done_));
+
+      // gateway forward ladder: per (split, source node) behind the arrival
+      // signal (zero-SM front-end wait, cannot deadlock against the spinning
+      // GEMM); forwards each local destination's sub-chunk with the per-source
+      // recv signal -- forwarded sub-chunks are indistinguishable from direct
+      // puts at the destination. Own sub-chunk is a local CE copy + self signal.
+      cudaStream_t gateway_stream = this->a2av_gateway_stream_.value();
+      for (int sid = 0; sid < this->n_split; sid++) {
+        for (int dn = 1; dn < NN; dn++) {
+          int ns = (my_node + dn) % NN;
+          int s = dist_env.local_rank_to_global_rank(my_lr, ns);
+          CU_CHECK(CUStreamWaitValue64(
+              gateway_stream,
+              (CUdeviceptr)(arrival_sig + ns * this->n_split + sid),
+              this->run_id_,
+              CU_STREAM_WAIT_VALUE_GEQ));
+          const int64_t seg = seg_off(my_node, my_lr, ns);
+          for (int dl = 0; dl < L; dl++) {
+            int d = dist_env.local_rank_to_global_rank((my_lr - dl + L) % L, my_node);
+            int64_t sub_rows = chunk_at(s, d);
+            int64_t within = 0;
+            for (int d2 = my_node * L; d2 < d; d2++) {
+              within += chunk_at(s, d2);
+            }
+            if (d == this->rank) {
+              if (sub_rows > 0) {
+                CUDA_CHECK(cudaMemcpyAsync(
+                    recv_ptr(sid, recv_off_of(s, this->rank)),
+                    stage_ptr(sid, seg + within),
+                    sub_rows * row_bytes,
+                    cudaMemcpyDeviceToDevice,
+                    gateway_stream));
+              }
+              nvshmemx_signal_op_on_stream(
+                  recv_sig + s * this->n_split + sid,
+                  this->run_id_,
+                  NVSHMEM_SIGNAL_SET,
+                  this->rank,
+                  gateway_stream);
+            } else if (sub_rows > 0) {
+              nvshmemx_putmem_signal_nbi_on_stream(
+                  recv_ptr(sid, recv_off_of(s, d)),
+                  stage_ptr(sid, seg + within),
+                  sub_rows * row_bytes,
+                  recv_sig + s * this->n_split + sid,
+                  this->run_id_,
+                  NVSHMEM_SIGNAL_SET,
+                  d,
+                  gateway_stream);
+            } else {
+              nvshmemx_signal_op_on_stream(
+                  recv_sig + s * this->n_split + sid,
+                  this->run_id_,
+                  NVSHMEM_SIGNAL_SET,
+                  d,
+                  gateway_stream);
+            }
+          }
+        }
+      }
+      CUDA_CHECK(cudaEventRecord(this->a2av_gateway_done_, gateway_stream));
+      CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_gateway_done_));
+    }
+
+    // per-split reduce: gate on all W per-source recv signals of the split (a
+    // token's topk copies come from up to topk different owners), then one
+    // memory-bound kernel folds them into the output column window. Enqueued
+    // last: its waits depend on the gateway ladder above in the shared channel.
+    A2AVCombineReduceArguments reduce_args{
+        .recv_panel = this->a2av_recv_panel_.data_ptr(),
+        .reduce_index = reduce_index.data_ptr<int32_t>(),
+        .output = output.data_ptr(),
+        .panel_rows = this->a2av_recv_rows_,
+        .ntokens_local = cpr / this->topk,
+        .n = this->n_dim,
+        .n_per = (int)n_per,
+        .topk = this->topk,
+        .sid = 0,
+        .threadblock_count = get_a2av_reduce_blocks()};
+    for (int sid = 0; sid < this->n_split; sid++) {
+      for (int s = 0; s < W; s++) {
+        CU_CHECK(CUStreamWaitValue64(
+            reduce_stream,
+            (CUdeviceptr)(recv_sig + s * this->n_split + sid),
+            this->run_id_,
+            CU_STREAM_WAIT_VALUE_GEQ));
+      }
+      reduce_args.sid = sid;
+      a2av_combine_reduce(reduce_args, flux_dtype, reduce_stream);
+    }
+    CUDA_CHECK(cudaEventRecord(this->a2av_reduce_done_, reduce_stream));
+    CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_reduce_done_));
+    return output;
   }
 
   torch::Tensor
@@ -309,7 +795,10 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       torch::Tensor routing_idx,
       c10::optional<std::vector<torch::Tensor>> output_vec_scales,
       int num_thread_blocks,
-      intptr_t cp_stream) {
+      intptr_t cp_stream,
+      c10::optional<torch::Tensor> splits_per_source = c10::nullopt,
+      c10::optional<torch::Tensor> pack_index = c10::nullopt,
+      c10::optional<torch::Tensor> reduce_index = c10::nullopt) {
     at::cuda::CUDAStream stream =
         at::cuda::getStreamFromExternal((cudaStream_t)cp_stream, at::cuda::current_device());
     at::cuda::CUDAStreamGuard _(stream);
@@ -328,6 +817,25 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         std::vector<int64_t>{ntokens_out, N}, gemm_outs[0].options()));
     CHECK_TYPE(output, dtype);
     CHECK_2D(output, ntokens_out, N);
+
+    if (this->a2av_hier) {
+      FLUX_CHECK_EQ((int)gemm_outs.size(), 1) << "a2av_hier supports a single weight group";
+      FLUX_CHECK(splits_per_source.has_value())
+          << "a2av_hier requires splits_per_source ([W, nexperts] int32 CPU)";
+      FLUX_CHECK(pack_index.has_value() && reduce_index.has_value())
+          << "a2av_hier requires pack_index / reduce_index (built by the gather-rs op or "
+             "passed as precomputed routing-plan inputs)";
+      return run_a2av_hier(
+          gemm_outs[0],
+          output,
+          splits_per_source.value(),
+          pack_index.value(),
+          reduce_index.value(),
+          output_vec_scales,
+          m_full,
+          num_thread_blocks,
+          (cudaStream_t)cp_stream);
+    }
 
     TopKReduceGatherRSV2Arguments args{
         .output_ptr = (void *)output.data_ptr(),
@@ -476,6 +984,7 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
   int32_t local_world_size;  // == world_size when nnodes == 1
   int n_split;
   bool do_all_reduce;
+  bool a2av_hier;
   torch::Tensor barrier;
   std::vector<torch::Tensor> barriers;  // [local_world_size], indexed by local rank
   std::unique_ptr<TopkReduceScatterOp> topk_reduce_scatter_op = nullptr;
@@ -547,7 +1056,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       int64_t n_split_,
       bool do_all_reduce_ = false,
       bool use_read_mode = false,
-      int64_t nnodes_ = 1)
+      int64_t nnodes_ = 1,
+      bool a2av_hier_ = false)
       : tp_group(tp_group_),
         total_num_experts(total_num_experts),
         max_m(max_m),
@@ -564,6 +1074,7 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         local_world_size(tp_group_->get_size() / nnodes_),
         n_split(n_split_fixed(n_split_, n_dim)),
         do_all_reduce(do_all_reduce_),
+        a2av_hier(a2av_hier_),
         group_barrier(tp_group_, false) {
     if (this->n_split != n_split_) {
       FLUX_LOG_FIRST_N(WARN, 1) << "warning: (n / split_n) % " << kTileSizeN
@@ -574,6 +1085,15 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     FLUX_CHECK_LE(max_input_groups, kMaxNumGroups);
     FLUX_CHECK_GE(this->nnodes, 1);
     FLUX_CHECK_DIV(this->world_size, this->nnodes);
+    if (this->a2av_hier) {
+      // v1 scope: complete [1, hidden] GEMM rows (with tp > 1 each copy would be
+      // a K-partial and a2av-of-copies would not apply), single weight group
+      FLUX_CHECK_EQ(this->tp_world_size, 1) << "a2av_hier requires tp_world_size == 1";
+      FLUX_CHECK_EQ(this->max_input_groups, 1) << "a2av_hier requires max_input_groups == 1";
+      FLUX_CHECK(!do_all_reduce_) << "a2av_hier does not support do_all_reduce";
+      FLUX_CHECK(!use_read_mode) << "a2av_hier does not support use_read_mode";
+      FLUX_CHECK_DIV(this->max_m, this->world_size);
+    }
     this->ep_nexperts = this->total_num_experts / this->ep_world_size;
     int ep_rank = this->rank / this->tp_world_size;
     this->ep_start = this->ep_nexperts * ep_rank;
@@ -593,7 +1113,118 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         this->n_split,
         do_all_reduce_,
         use_read_mode,
-        nnodes_);
+        nnodes_,
+        a2av_hier_);
+  }
+
+  // Builds the mirror-layout gather indices for the a2av_hier combine, sharing
+  // layer0 a2av's exact ordering contract (same (.., expert, dst_row) keys, same
+  // copy-index tie-break):
+  // - pack_index [M_this_ep]: send-panel row -> gemm row. The send panel is
+  //   (home_rank, expert, copy)-ordered == layer0's recv layout on this rank, so
+  //   this is the inverse of layer0's sorted_gather_index arithmetic identity --
+  //   derived from the same offA/cumA/offR_of_A host tables, NO sort.
+  // - reduce_index [cpr]: local copy (t_local * topk + j) -> recv-panel row. The
+  //   recv panel is (owner_rank, expert, copy)-ordered == layer0's send-buffer
+  //   layout on this rank, i.e. globally (expert, copy)-sorted -- the inverse of
+  //   layer0's pack permutation: ONE argsort of the layer0 pack key + a scatter.
+  // A fused layer0+layer1 pipeline can pass layer0's tensors instead and pay the
+  // index math once (see the forward kwargs).
+  std::pair<torch::Tensor, torch::Tensor>
+  build_a2av_combine_indices(
+      torch::Tensor const &routing_idx,
+      torch::Tensor const &splits_gpu,
+      torch::Tensor const &splits_per_source,
+      int64_t M_this_ep,
+      int64_t m_full) {
+    const int W = this->world_size;
+    const int64_t nex = this->total_num_experts;
+    const int64_t E_loc = this->ep_nexperts;  // experts per owner rank (tp == 1)
+    const int64_t nexG = E_loc * W;
+    const int64_t cpr = m_full / W;
+    const int32_t *cnt = splits_per_source.data_ptr<int32_t>();
+    auto cnt_at = [&](int h, int64_t e) -> int64_t { return cnt[h * nex + e]; };
+    auto opt_i64 = torch::TensorOptions(torch::kCUDA).dtype(torch::kLong);
+
+    // host tables -- formulas identical to layer0's metadata collapse (dispatch
+    // source == combine home, both index cnt rows). A-order groups g = e_loc*W+h.
+    torch::Tensor tables = torch::empty({3, nexG}, torch::TensorOptions().dtype(torch::kLong));
+    int64_t *cumA_h = tables[0].data_ptr<int64_t>();
+    int64_t *offA_h = tables[1].data_ptr<int64_t>();
+    int64_t *offR_of_A_h = tables[2].data_ptr<int64_t>();
+    int64_t acc = 0;
+    for (int64_t e_loc = 0; e_loc < E_loc; e_loc++) {
+      for (int h = 0; h < W; h++) {
+        int64_t g = e_loc * W + h;
+        offA_h[g] = acc;
+        acc += cnt_at(h, this->ep_start + e_loc);
+        cumA_h[g] = acc;
+      }
+    }
+    FLUX_CHECK_EQ(acc, M_this_ep) << "splits_per_source disagrees with gemm rows";
+    std::vector<int64_t> offR((size_t)nexG, 0);
+    acc = 0;
+    for (int h = 0; h < W; h++) {
+      for (int64_t e_loc = 0; e_loc < E_loc; e_loc++) {
+        offR[h * E_loc + e_loc] = acc;
+        acc += cnt_at(h, this->ep_start + e_loc);
+      }
+    }
+    for (int64_t e_loc = 0; e_loc < E_loc; e_loc++) {
+      for (int h = 0; h < W; h++) {
+        offR_of_A_h[e_loc * W + h] = offR[h * E_loc + e_loc];
+      }
+    }
+    auto tables_dev = tables.to(torch::kCUDA);
+    auto cumA = tables_dev[0];
+    auto offA = tables_dev[1];
+    auto offR_of_A = tables_dev[2];
+
+    torch::Tensor pack_index;
+    auto iota = torch::arange(M_this_ep, opt_i64);
+    if (M_this_ep > 0) {
+      auto g = torch::searchsorted(cumA, iota, /*out_int32=*/false, /*right=*/true)
+                   .clamp_max_(nexG - 1);
+      auto sgi = offR_of_A.index_select(0, g) + iota - offA.index_select(0, g);
+      pack_index =
+          torch::empty({M_this_ep}, opt_i64).scatter_(0, sgi, iota).to(torch::kInt);
+    } else {
+      pack_index = torch::empty({0}, torch::TensorOptions(torch::kCUDA).dtype(torch::kInt));
+    }
+
+    // reduce index: my copies sorted by (expert, copy index) == recv-panel order
+    // (owner-major falls out because experts are owner-contiguous). Keys are
+    // unique (one entry per copy), so no tie-break is needed.
+    auto iota_c = torch::arange(cpr, opt_i64);
+    auto routing_slice =
+        routing_idx.narrow(0, (int64_t)this->rank * cpr, cpr).to(torch::kLong);
+    auto splits_cum = splits_gpu.to(torch::kLong).cumsum(0);
+    auto e_of = torch::searchsorted(splits_cum, routing_slice, /*out_int32=*/false, /*right=*/true)
+                    .clamp_max_(nex - 1);
+    auto perm = (e_of * cpr + iota_c).argsort();
+    auto reduce_index = torch::empty({cpr}, opt_i64).scatter_(0, perm, iota_c).to(torch::kInt);
+
+    static const bool kCheckIdentity =
+        get_int_from_env("FLUX_A2AV_RS_CHECK_IDENTITY", 0) != 0;
+    if (kCheckIdentity && M_this_ep > 0) {
+      // brute-force reference for the arithmetic pack identity: recover each gemm
+      // row's global copy index from routing_idx, sort rows by (home, row)
+      int64_t ep_m_start = 0;
+      for (int64_t e = 0; e < this->ep_start; e++) {
+        for (int h = 0; h < W; h++) {
+          ep_m_start += cnt_at(h, e);
+        }
+      }
+      auto iota_m = torch::arange((int64_t)m_full, opt_i64);
+      auto copy_of_row = torch::empty({(int64_t)m_full}, opt_i64)
+                             .scatter_(0, routing_idx.to(torch::kLong), iota_m)
+                             .narrow(0, ep_m_start, M_this_ep);
+      auto h_of = copy_of_row.div(cpr, "floor");
+      auto perm_ref = (h_of * M_this_ep + iota).argsort();
+      FLUX_CHECK(torch::equal(pack_index, perm_ref.to(torch::kInt)))
+          << "a2av_hier pack-index identity mismatch";
+    }
+    return {pack_index, reduce_index};
   }
 
   torch::Tensor
@@ -609,7 +1240,10 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       bool fast_accum,
       int sm_margin,
       bool with_stream_sync,
-      c10::optional<UnifiedGemmHParams> const &hparams) {
+      c10::optional<UnifiedGemmHParams> const &hparams,
+      c10::optional<torch::Tensor> splits_per_source = c10::nullopt,
+      c10::optional<torch::Tensor> a2av_pack_index = c10::nullopt,
+      c10::optional<torch::Tensor> a2av_reduce_index = c10::nullopt) {
     /*
       Note: When expert parallel is enabled, the inputs/weights tensor should be
       the partial the current expert parallel rank. But the splits_cpu and routing
@@ -689,6 +1323,31 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     }
     CHECK_INPUT(splits_gpu, at::ScalarType::Int);
     CHECK_1D(splits_gpu, this->total_num_experts);
+
+    torch::Tensor a2av_pack_idx_t, a2av_reduce_idx_t;
+    if (this->a2av_hier) {
+      FLUX_CHECK_EQ(num_groups, 1) << "a2av_hier supports a single weight group";
+      FLUX_CHECK(!is_fp8) << "a2av_hier supports fp16/bf16 only";
+      FLUX_CHECK(splits_per_source.has_value())
+          << "a2av_hier requires splits_per_source ([W, nexperts] int32 CPU)";
+      auto const &cnt_t = splits_per_source.value();
+      FLUX_CHECK(cnt_t.device().is_cpu()) << "splits_per_source must be a CPU tensor";
+      CHECK_2D(cnt_t, this->world_size, this->total_num_experts);
+      FLUX_CHECK(cnt_t.scalar_type() == at::ScalarType::Int);
+      FLUX_CHECK(cnt_t.is_contiguous());
+      if (a2av_pack_index.has_value() || a2av_reduce_index.has_value()) {
+        FLUX_CHECK(a2av_pack_index.has_value() && a2av_reduce_index.has_value())
+            << "pass both a2av_pack_index and a2av_reduce_index or neither";
+        a2av_pack_idx_t = a2av_pack_index.value();
+        a2av_reduce_idx_t = a2av_reduce_index.value();
+      } else {
+        // v1 placement: index math on the main stream before the GEMM launch --
+        // ordering to the pack kernel comes free via gemm_start_event. A fused
+        // layer0+layer1 pipeline passes layer0's tensors and skips this entirely.
+        std::tie(a2av_pack_idx_t, a2av_reduce_idx_t) =
+            build_a2av_combine_indices(routing_idx, splits_gpu, cnt_t, M_this_ep, m_full);
+      }
+    }
 
     auto stream = c10::cuda::getCurrentCUDAStream();
 
@@ -808,7 +1467,9 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         .barrier = this->barrier.data_ptr<int>(),
         .routing_idx = routing_idx.data_ptr<int32_t>(),
         .n_split = n_split,
-        .sm_margin = sm_margin + get_rs_threadblock_count()};
+        .sm_margin = sm_margin + (this->a2av_hier
+                                      ? get_a2av_pack_blocks() + get_a2av_reduce_blocks()
+                                      : get_rs_threadblock_count())};
 
     int64_t workspace_size = gemm_op->get_workspace_size(args);
     this->create_workspace_or_expand(workspace_size);
@@ -832,8 +1493,11 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         splits_gpu,
         routing_idx,
         output_vec_scales,
-        get_rs_threadblock_count(),
-        (intptr_t)gather_rs_stream);
+        this->a2av_hier ? get_a2av_pack_blocks() : get_rs_threadblock_count(),
+        (intptr_t)gather_rs_stream,
+        splits_per_source,
+        this->a2av_hier ? c10::optional<torch::Tensor>(a2av_pack_idx_t) : c10::nullopt,
+        this->a2av_hier ? c10::optional<torch::Tensor>(a2av_reduce_idx_t) : c10::nullopt);
     CUDA_CHECK(cudaEventRecord(this->gather_rs_done_event, gather_rs_stream));
     CUDA_CHECK(cudaStreamWaitEvent(stream, this->gather_rs_done_event));
 
@@ -855,8 +1519,12 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       c10::optional<torch::Tensor> output_vec_scale,
       bool fast_accum,
       int sm_margin,
-      bool with_stream_sync) {
+      bool with_stream_sync,
+      c10::optional<torch::Tensor> splits_per_source = c10::nullopt,
+      c10::optional<torch::Tensor> a2av_pack_index = c10::nullopt,
+      c10::optional<torch::Tensor> a2av_reduce_index = c10::nullopt) {
     if (input.scalar_type() == torch::kInt8) {
+      FLUX_CHECK(!this->a2av_hier) << "a2av_hier does not support the int8/triton path";
       return forward_gather_rs_triton_aot(
           input,
           weight,
@@ -882,7 +1550,10 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         fast_accum,
         sm_margin,
         with_stream_sync,
-        c10::nullopt);
+        c10::nullopt,
+        std::move(splits_per_source),
+        std::move(a2av_pack_index),
+        std::move(a2av_reduce_index));
   }
 
   torch::Tensor
@@ -1224,7 +1895,8 @@ TopkReduceScatterOp::TopkReduceScatterOp(
     int n_split,
     bool do_all_reduce,
     bool use_read_mode,
-    int nnodes)
+    int nnodes,
+    bool a2av_hier)
     : impl_(new TopkReduceScatterOpImpl(
           tp_group,
           max_m,
@@ -1237,7 +1909,8 @@ TopkReduceScatterOp::TopkReduceScatterOp(
           n_split,
           do_all_reduce,
           use_read_mode,
-          nnodes)) {}
+          nnodes,
+          a2av_hier)) {}
 TopkReduceScatterOp::~TopkReduceScatterOp() { delete impl_; }
 void
 TopkReduceScatterOp::reset_buffer() {
@@ -1254,7 +1927,10 @@ TopkReduceScatterOp::run(
     torch::Tensor routing_idx,
     c10::optional<std::vector<torch::Tensor>> output_vec_scales,
     int num_thread_blocks,
-    intptr_t cp_stream) {
+    intptr_t cp_stream,
+    c10::optional<torch::Tensor> splits_per_source,
+    c10::optional<torch::Tensor> pack_index,
+    c10::optional<torch::Tensor> reduce_index) {
   FLUX_CHECK(impl_ != nullptr) << "TopkReduceScatterOp not initialized";
   return impl_->run(
       std::move(gemm_outs),
@@ -1265,7 +1941,10 @@ TopkReduceScatterOp::run(
       std::move(routing_idx),
       std::move(output_vec_scales),
       num_thread_blocks,
-      cp_stream);
+      cp_stream,
+      std::move(splits_per_source),
+      std::move(pack_index),
+      std::move(reduce_index));
 }
 
 GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOp(
@@ -1281,7 +1960,8 @@ GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOp(
     int64_t n_split_,
     bool do_all_reduce,
     bool use_read_mode,
-    int64_t nnodes)
+    int64_t nnodes,
+    bool a2av_hier)
     : impl_(new GemmGroupedV2GatherRSOpImpl(
           tp_group_,
           total_num_experts,
@@ -1295,7 +1975,8 @@ GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOp(
           n_split_,
           do_all_reduce,
           use_read_mode,
-          nnodes)) {}
+          nnodes,
+          a2av_hier)) {}
 
 GemmGroupedV2GatherRSOp::~GemmGroupedV2GatherRSOp() { delete impl_; }
 torch::Tensor
@@ -1310,7 +1991,10 @@ GemmGroupedV2GatherRSOp::forward_gather_rs(
     c10::optional<torch::Tensor> output_vec_scale,
     bool fast_accum,
     int sm_margin,
-    bool with_stream_sync) {
+    bool with_stream_sync,
+    c10::optional<torch::Tensor> splits_per_source,
+    c10::optional<torch::Tensor> a2av_pack_index,
+    c10::optional<torch::Tensor> a2av_reduce_index) {
   FLUX_CHECK(impl_ != nullptr) << "GemmGroupedV2GatherRSOp not initialized";
   return impl_->forward_gather_rs(
       std::move(input),
@@ -1323,7 +2007,10 @@ GemmGroupedV2GatherRSOp::forward_gather_rs(
       std::move(output_vec_scale),
       fast_accum,
       sm_margin,
-      with_stream_sync);
+      with_stream_sync,
+      std::move(splits_per_source),
+      std::move(a2av_pack_index),
+      std::move(a2av_reduce_index));
 }
 torch::Tensor
 GemmGroupedV2GatherRSOp::forward_gather_rs_triton_aot(

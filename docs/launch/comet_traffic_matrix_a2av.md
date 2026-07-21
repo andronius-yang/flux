@@ -386,3 +386,77 @@ waits before the tail `barrier_all`, and iteration n+1 sends wait on
 `nnodes == 1` degenerates to round-0 only — behaviorally the ring mode's
 intra-node slots with the same static schedule (cheap single-node validation
 of the branch).
+
+## 11. Layer1 hierarchical a2av combine (`GemmGroupedV2GatherRSOp`, `a2av_hier`)
+
+The combine direction is the transpose of §1-§10: each `(t, j)` copy was
+computed on expert-owner rank `s = owner(e(t,j))` and must reach token-home
+rank `d = t / tokens_per_rank`, where the only remaining reduction (in the
+`T=1, E=W` regime the GEMM rows are complete — no K-partials) is the per-token
+topk sum. `a2av_hier=True` on `GemmGroupedV2GatherRSOp` replaces the dense
+ring reduce-scatter with a split-pipelined a2av built almost entirely from
+machinery this file already had.
+
+**Pipeline per split `sid`** (`n_split` column windows; the split-major GEMM +
+tile→problem→split counter cascade are reused byte-for-byte, zero changes to
+`cutlass_impls`):
+
+1. **Pack** (`a2av_combine.cu`, persistent kernel on the margin blocks,
+   `FLUX_A2AV_RS_PACK_BLOCKS`): waits the split flag — the minimal correct gate,
+   since any destination's rows interleave across every local expert — then
+   gathers each outgoing copy's `n_per` column window from `gemm_outs` into the
+   symmetric send panel, destination-major in global rank order, applying
+   `output_vec_scale` per source row during the copy (one extra bf16 rounding vs
+   the dense path's fused fp32 accumulation; the destination reduce still
+   accumulates fp32). Chunk completion per `(dest_node, sid)` uses the existing
+   `group_counters`/`group_flags` handshake — including the OWN node's chunk,
+   which the dense ring kernel never flags. Remote-node chunks are packed first
+   so NIC-bound flags flip earliest.
+2. **Transport** (host-pre-enqueued ladders, zero SMs, all epoch `run_id_`
+   signals, never reset, every pair signals every split): intra-node direct
+   `putmem_signal` per local peer (CE over NVLink) + self memcpy; inter-node ONE
+   aggregated put per `(remote node, sid)` into the same-local-rank gateway's
+   staging panel (the send panel's node slice is contiguous — no repacking);
+   the gateway ladder paces per `(sid, source node)` on a zero-SM
+   `cuStreamWaitValue64(GEQ, run_id)` over the arrival signal and forwards each
+   local destination's sub-chunk with the per-source recv signal — forwarded
+   sub-chunks land bit-identically to direct puts. Unlike §10's mirror node
+   order, the inter-node ladder consumes flags in the pack kernel's production
+   order (`node_idx+1` ascending): there is no consumer schedule to satisfy in
+   the combine, and matching production order avoids head-of-line blocking under
+   `CUDA_DEVICE_MAX_CONNECTIONS=1` (enqueue order across the shared front-end
+   channel must be an executable schedule; the pack kernel is always launched
+   before any ladder wait, and the reduce waits are enqueued after the gateway
+   ladder they depend on).
+3. **Reduce** (per split, on its own stream, `FLUX_A2AV_RS_REDUCE_BLOCKS`):
+   `W` front-end `cuStreamWaitValue64` waits on the split's per-source recv
+   signals (a token's topk copies come from up to topk owners), then one
+   memory-bound kernel folds each local token's topk recv rows (fp32) into
+   `output[:, sid*n_per : (sid+1)*n_per]`. Deterministic j-order summation —
+   bit-stable across runs, unlike the dense ring's arrival-order sums.
+
+**The mirror-layout contract** is what makes the index math nearly free: the
+send panel on owner `r` is `(home_rank, expert, dst_row)`-ordered — exactly
+§4's recv layout on `r` — so the pack index is the inverse of
+`sorted_gather_index`'s arithmetic identity, derived from the SAME
+`offA/cumA/offR_of_A` host tables (§9) with no sort; and the recv panel on home
+`d` is `(owner_rank, expert, dst_row)`-ordered — exactly §3's send-buffer
+layout on `d` — so every copy lands back at its layer0 pack position and the
+reduce index is the inverse of the ONE pack-key sort rank `d` already runs as a
+layer0 sender. Standalone layer1 therefore pays layer0's index cost (one sort +
+identities); a fused layer0+layer1 pipeline passes layer0's tensors via the
+`a2av_pack_index`/`a2av_reduce_index` forward kwargs and pays it once.
+`FLUX_A2AV_RS_CHECK_IDENTITY=1` asserts identity-path == brute-force-sort;
+`test_a2av_combine_sim.py` validates the whole contract on CPU.
+
+**Buffers** (symmetric heap; dense-only buffers — ring reduce buffers, tile
+barriers, dense staging, internode signals — are skipped in this mode): send
+panel `[n_split, FLUX_A2AV_RS_MAX_SEND_ROWS, n_per]` (routing-dependent hot
+owner, collective overflow check), recv panel `[n_split, max_m/W, n_per]`
+(EXACT — every token comes home with topk copies, no knob), gateway staging
+`[n_split, FLUX_A2AV_RS_MAX_STAGE_ROWS, n_per]` (collective check), recv
+signals `uint64[W * n_split]`, arrival signals `uint64[nnodes * n_split]`.
+Epoch safety needs nothing new: all four ladder/reduce streams are
+event-joined onto the gather-rs stream before `gather_rs_done_event`, so the
+existing `barrier_all` close covers panel and staging reuse, and `nnodes == 1`
+degenerates to the intra ladder + reduce (cheap single-node validation).

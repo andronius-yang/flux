@@ -79,7 +79,8 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
                         int64_t nnodes,
                         int64_t n_split,
                         bool do_all_reduce,
-                        bool use_read_mode) {
+                        bool use_read_mode,
+                        bool a2av_hier) {
               return new GemmGroupedV2GatherRSOpCls(
                   std::make_shared<C10dProcessGroup>("", tp_group),
                   total_num_experts,
@@ -93,7 +94,8 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
                   n_split,
                   do_all_reduce,
                   use_read_mode,
-                  nnodes);
+                  nnodes,
+                  a2av_hier);
             }),
             py::arg("tp_group"),
             py::arg("total_num_experts"),
@@ -107,7 +109,8 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("nnodes") = 1,
             py::arg("n_split") = 4,
             py::arg("do_all_reduce") = false,
-            py::arg("use_read_mode") = false)
+            py::arg("use_read_mode") = false,
+            py::arg("a2av_hier") = false)
         .def(
             "forward_gather_rs",
             &GemmGroupedV2GatherRSOpCls::forward_gather_rs,
@@ -121,7 +124,10 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("output_vec_scale") = py::none(),
             py::arg("fast_accum") = false,
             py::arg("sm_margin") = 0,
-            py::arg("with_stream_sync") = false)
+            py::arg("with_stream_sync") = false,
+            py::arg("splits_per_source") = py::none(),
+            py::arg("a2av_pack_index") = py::none(),
+            py::arg("a2av_reduce_index") = py::none())
         .def(
             "forward_gather_rs_triton_aot",
             &GemmGroupedV2GatherRSOpCls::forward_gather_rs_triton_aot,
@@ -179,7 +185,8 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
                         int n_split,
                         bool do_all_reduce,
                         bool use_read_mode,
-                        int nnodes) {
+                        int nnodes,
+                        bool a2av_hier) {
               return new TopkReduceScatterOpCls(
                   std::make_shared<C10dProcessGroup>("", tp_group),
                   max_m,
@@ -192,7 +199,8 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
                   n_split,
                   do_all_reduce,
                   use_read_mode,
-                  nnodes);
+                  nnodes,
+                  a2av_hier);
             }),
             py::arg("tp_group"),
             py::arg("max_m"),
@@ -205,7 +213,8 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("n_split") = 4,
             py::arg("do_all_reduce") = false,
             py::arg("use_read_mode") = false,
-            py::arg("nnodes") = 1)
+            py::arg("nnodes") = 1,
+            py::arg("a2av_hier") = false)
         .def(
             "run",
             &TopkReduceScatterOpCls::run,
@@ -217,7 +226,10 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("routing_idx"),
             py::arg("output_vec_scales"),
             py::arg("num_thread_blocks"),
-            py::arg("cp_stream"))
+            py::arg("cp_stream"),
+            py::arg("splits_per_source") = py::none(),
+            py::arg("pack_index") = py::none(),
+            py::arg("reduce_index") = py::none())
         .def("reset_buffer", &TopkReduceScatterOpCls::reset_buffer);
   });
   return 0;

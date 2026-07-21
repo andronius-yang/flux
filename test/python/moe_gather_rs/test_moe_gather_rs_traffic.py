@@ -28,6 +28,13 @@ The gather-RS payload delivered from expert-owner rank d to token-home rank s is
 therefore exactly M[s][d] bytes (the transpose of the matrix); the hierarchical
 multi-node implementation may combine partial sums en route, so inter-node wire
 bytes can fall below that logical payload.
+
+--comm_pattern a2av_hier runs the hierarchical a2av combine instead of the dense
+ring reduce-scatter: each generated [1, hidden] copy travels once from its
+expert-owner rank back to its token-home rank (wire bytes = the matrix
+transpose), with at most one inter-node relay via the same-local-rank gateway,
+and the topk reduction happens per split at the destination. Requires
+splits_per_source (built here in untimed setup, mirroring the layer0 harness).
 """
 
 import argparse
@@ -117,6 +124,39 @@ def perf_torch(
     )
 
 
+def build_a2av_combine_indices(routing_idx, split_cpu, rank, world_size, topk):
+    """Mirror-layout routing plan for the a2av_hier combine, on CPU. Same ordering
+    contract as layer0 a2av (copy-index tie-break); the op builds the identical
+    tensors internally when these are not passed (FLUX_A2AV_RS_CHECK_IDENTITY=1
+    cross-checks the op's arithmetic-identity path against this sort-based math).
+
+    - pack_index[p]: gemm row at send-panel position p == this rank's gemm rows
+      stably ordered by (token-home rank, row) -- within a home that is
+      (expert, copy) order, matching layer0's recv layout.
+    - reduce_index[t*topk+j]: recv-panel row of local copy (t, j) == inverse of
+      the (expert, copy-index) sort of this rank's own copies (layer0's pack key).
+    """
+    routing_idx = routing_idx.long().cpu()
+    m_full = routing_idx.numel()
+    cpr = m_full // world_size
+    splits = split_cpu.long().cpu()
+    n_experts_per_rank = splits.numel() // world_size
+    ep_m_start = int(splits[: rank * n_experts_per_rank].sum())
+    m_this_ep = int(splits[rank * n_experts_per_rank : (rank + 1) * n_experts_per_rank].sum())
+    iota_m = torch.arange(m_full, dtype=torch.long)
+    copy_of_row = torch.empty(m_full, dtype=torch.long).scatter_(0, routing_idx, iota_m)
+    copy_of_row = copy_of_row[ep_m_start : ep_m_start + m_this_ep]
+    home = copy_of_row // cpr
+    pack_index = (home * m_this_ep + torch.arange(m_this_ep, dtype=torch.long)).argsort()
+    splits_cum = splits.cumsum(0)
+    my_copies = routing_idx[rank * cpr : (rank + 1) * cpr]
+    e_of = torch.searchsorted(splits_cum, my_copies, right=True)
+    iota_c = torch.arange(cpr, dtype=torch.long)
+    perm = (e_of * cpr + iota_c).argsort()
+    reduce_index = torch.empty(cpr, dtype=torch.long).scatter_(0, perm, iota_c)
+    return pack_index.int().cuda(), reduce_index.int().cuda()
+
+
 def perf_flux(
     input: torch.Tensor,
     weight: torch.Tensor,
@@ -131,13 +171,16 @@ def perf_flux(
     output_vec_scale: Union[torch.Tensor, None],
     do_all_reduce: bool = False,
     use_read_mode: bool = False,
+    splits_per_source: Union[torch.Tensor, None] = None,
 ):
     n_dim = args.N
     assert weight.size(1) == n_dim
+    use_a2av = args.comm_pattern == "a2av_hier"
 
     input_dtype = input.dtype
     output_dtype = input_dtype
     if flux.util.get_arch() >= 90:
+        assert not use_a2av, "a2av_hier is a V2/sm80 mode"
         op = flux.GemmGroupedV3GatherRS(
             args.G,
             max_m,
@@ -162,9 +205,24 @@ def perf_flux(
             args.E,
             1,
             nnodes=NNODES,
+            n_split=args.n_split,
             do_all_reduce=do_all_reduce,
             use_read_mode=use_read_mode,
+            a2av_hier=use_a2av,
         )
+
+    a2av_kwargs = {}
+    if use_a2av:
+        assert splits_per_source is not None
+        a2av_kwargs["splits_per_source"] = splits_per_source
+        if args.precomputed_indices:
+            # count-the-index-latency-once mode: hand the routing plan in, as a
+            # fused layer0+layer1 pipeline would hand over layer0's tensors
+            pack_index, reduce_index = build_a2av_combine_indices(
+                routing_idx, split_cpu, RANK, WORLD_SIZE, topk
+            )
+            a2av_kwargs["a2av_pack_index"] = pack_index
+            a2av_kwargs["a2av_reduce_index"] = reduce_index
 
     def fn():
         is_v2 = get_arch() < 90
@@ -180,6 +238,7 @@ def perf_flux(
             fast_accum=args.fastacc,
             sm_margin=args.sm_margin,
             **extra_args,
+            **a2av_kwargs,
         )
 
     return perf_gemm(iters, warmup_iters, f"flux #{TP_GROUP.rank()}", fn)
@@ -215,6 +274,29 @@ def parse_args():
         help="whether to use all_reduce (single-node only)",
     )
     parser.add_argument("--use_read_mode", default=False, action="store_true")
+    parser.add_argument(
+        "--comm_pattern",
+        default="dense",
+        choices=["dense", "a2av_hier"],
+        help="dense: ring reduce-scatter (default). a2av_hier: hierarchical alltoallv"
+        " combine -- every copy travels owner->home once (wire bytes = matrix transpose),"
+        " one inter-node relay via same-local-rank gateways, per-split topk reduce at the"
+        " destination",
+    )
+    parser.add_argument(
+        "--n_split",
+        type=int,
+        default=4,
+        help="split-N pipeline depth (N/n_split must be a multiple of 1024)",
+    )
+    parser.add_argument(
+        "--precomputed_indices",
+        default=False,
+        action="store_true",
+        help="a2av_hier: pass the pack/reduce routing plan from the harness instead of"
+        " letting the op derive it per forward (models a fused layer0+layer1 pipeline"
+        " that pays the index math once)",
+    )
     return parser.parse_args()
 
 
@@ -283,6 +365,31 @@ if __name__ == "__main__":
     M_cur_ep_rank = torch.sum(split_cpu[eid_start:eid_end]).item()
     ep_rank_m_end = ep_rank_m_start + M_cur_ep_rank
 
+    use_a2av = args.comm_pattern == "a2av_hier"
+    if use_a2av:
+        assert not args.all_reduce, "a2av_hier does not support all_reduce"
+        assert not args.use_read_mode, "a2av_hier does not support use_read_mode"
+    assert args.N % args.n_split == 0 and (args.N // args.n_split) % 1024 == 0, (
+        f"N ({args.N}) / n_split ({args.n_split}) must be a multiple of 1024"
+    )
+
+    # metadata-exchange result (untimed setup), mirroring the layer0 harness:
+    # cnt[s][e] = copies token-home rank s routed to expert e. The combine op
+    # derives its chunk matrix as the transpose-aggregate of the same input.
+    tokens_per_rank = total_token_num // WORLD_SIZE
+    src_of_copy = (
+        torch.arange(total_token_num, dtype=torch.long) // tokens_per_rank
+    ).repeat_interleave(args.topk)
+    e_of_copy = choosed_experts.reshape(-1).long().cpu()
+    splits_per_source_cpu = (
+        torch.bincount(src_of_copy * args.G + e_of_copy, minlength=WORLD_SIZE * args.G)
+        .view(WORLD_SIZE, args.G)
+        .int()
+    )
+    assert torch.equal(
+        splits_per_source_cpu.sum(0), split_cpu[: args.G].int()
+    ), "splits_per_source column sums must equal splits"
+
     if RANK == 0:
         rows_per_rank = split_cpu.view(WORLD_SIZE, n_experts_per_rank).sum(dim=1)
         print(
@@ -291,6 +398,27 @@ if __name__ == "__main__":
         )
         print(f"split_cpu: {split_cpu.tolist()}")
         print(f"Per-rank gemm rows: {rows_per_rank.tolist()}")
+        print(f"comm_pattern: {args.comm_pattern}, n_split: {args.n_split}")
+        if use_a2av:
+            # combine direction: the wire sender is the expert owner, so per-rank
+            # wire bytes are the TRANSPOSE of the dispatch matrix (owner r sends
+            # column r of M, receives row r)
+            send_bytes = (matrix.sum(dim=0) - matrix.diag()).tolist()
+            recv_bytes = (matrix.sum(dim=1) - matrix.diag()).tolist()
+            print(f"a2av combine wire bytes per rank (send): {send_bytes}")
+            print(f"a2av combine wire bytes per rank (recv): {recv_bytes}")
+            # inter-node wire in hier mode: per owner rank, bytes for remote home
+            # NODES travel as one aggregated message per node (matrix.T viewed by
+            # destination-node blocks, own node excluded); gateway forwarding is
+            # extra NVLink traffic on top
+            L = WORLD_SIZE // NNODES
+            mt = matrix.t().contiguous()
+            per_node = mt.view(WORLD_SIZE, NNODES, L).sum(dim=2)
+            src_node = torch.arange(WORLD_SIZE) // L
+            inter_bytes = per_node.sum(dim=1) - per_node.gather(
+                1, src_node.view(-1, 1)
+            ).squeeze(1)
+            print(f"a2av_hier inter-node wire bytes per rank (send): {inter_bytes.tolist()}")
 
     data_config = [
         ((M_cur_ep_rank, local_K), input_dtype, (0.1, 0.0)),  # input
@@ -324,6 +452,7 @@ if __name__ == "__main__":
             output_vec_scales,
             args.all_reduce,
             args.use_read_mode,
+            splits_per_source_cpu if use_a2av else None,
         )
         perf_result_torch = perf_torch(
             inputs,

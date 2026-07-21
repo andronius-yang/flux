@@ -37,7 +37,8 @@ class TopkReduceScatterOp {
       int n_split,
       bool do_all_reduce = false,
       bool use_read_mode = false,
-      int nnodes = 1);
+      int nnodes = 1,
+      bool a2av_hier = false);
   ~TopkReduceScatterOp();
   void reset_buffer();
   torch::Tensor run(
@@ -49,7 +50,12 @@ class TopkReduceScatterOp {
       torch::Tensor routing_idx,
       c10::optional<std::vector<torch::Tensor>> output_vec_scales,
       int num_thread_blocks,
-      intptr_t cp_stream);
+      intptr_t cp_stream,
+      // a2av_hier mode only: the [W, nexperts] splits_per_source metadata (int32
+      // CPU) and the mirror-layout pack/reduce gather indices (int32 CUDA)
+      c10::optional<torch::Tensor> splits_per_source = c10::nullopt,
+      c10::optional<torch::Tensor> pack_index = c10::nullopt,
+      c10::optional<torch::Tensor> reduce_index = c10::nullopt);
 
  private:
   class TopkReduceScatterOpImpl;
@@ -71,7 +77,8 @@ class GemmGroupedV2GatherRSOp {
       int64_t n_split,
       bool do_all_reduce = false,
       bool use_read_mode = false,
-      int64_t nnodes = 1);
+      int64_t nnodes = 1,
+      bool a2av_hier = false);
   ~GemmGroupedV2GatherRSOp();
   torch::Tensor forward_gather_rs(
       torch::Tensor input,
@@ -84,7 +91,13 @@ class GemmGroupedV2GatherRSOp {
       c10::optional<torch::Tensor> output_vec_scale,
       bool fast_accum,
       int sm_margin,
-      bool with_stream_sync);
+      bool with_stream_sync,
+      // a2av_hier mode only: splits_per_source is REQUIRED ([W, nexperts] int32
+      // CPU); the index tensors are optional precomputed routing-plan inputs (a
+      // fused layer0+layer1 pipeline passes layer0's, paying the index math once)
+      c10::optional<torch::Tensor> splits_per_source = c10::nullopt,
+      c10::optional<torch::Tensor> a2av_pack_index = c10::nullopt,
+      c10::optional<torch::Tensor> a2av_reduce_index = c10::nullopt);
   torch::Tensor forward_gather_rs_triton_aot(
       torch::Tensor input,
       torch::Tensor weight,

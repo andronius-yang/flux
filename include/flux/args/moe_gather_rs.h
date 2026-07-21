@@ -210,4 +210,50 @@ struct TopKReduceGatherRSV2Arguments {
   int *group_counters = nullptr;  // [nnodes * n_split] per-block completion counters
 };
 
+// ---- a2av_hier combine (layer1 alltoallv): pack + reduce kernel arguments ----
+
+constexpr int kA2AVMaxNodes = 16;
+
+// Persistent pack kernel: split-major outer loop gated on the GEMM's per-split
+// ready flag; per split it gathers each outgoing copy's n_per column window from
+// gemm_out into the symmetric send panel in (home_rank, expert, copy) order
+// (== layer0 a2av's recv layout), applying output_vec_scale per source row.
+// Chunk completion per (dest_node, sid) is published to the host put ladders via
+// the group_counters/group_flags handshake -- including the OWN node's chunk
+// (the intra-node ladder gates on it), unlike the dense ring kernel.
+struct A2AVCombinePackArguments {
+  void const *gemm_out;         // [m_this_ep, n] of dtype, expert-major rows
+  float const *vec_scale;       // [m_this_ep] per-row topk weight, nullptr if absent
+  int32_t const *pack_index;    // [m_this_ep]: send-panel row -> gemm_out row
+  void *send_panel;             // [n_split, panel_rows, n_per] symmetric
+  int *barrier;                 // local per-split GEMM ready flags (cascade output)
+  int *group_flags;             // [nnodes * n_split] kernel -> host chunk-ready flags
+  int *group_counters;          // [nnodes * n_split] per-block completion counters
+  int64_t node_row_start[kA2AVMaxNodes + 1];  // dest-node row ranges in the send panel
+  int64_t panel_rows;           // send panel row capacity per split
+  int n;
+  int n_per;                    // n / n_split
+  int n_split;
+  int nnodes;
+  int node_idx;
+  int threadblock_count;
+};
+
+// Per-split topk reduce at the destination: launched once per split after all W
+// per-source recv signals for that split have fired; sums each local token's topk
+// recv-panel rows in fp32 and writes the [:, sid*n_per : (sid+1)*n_per] window of
+// the output shard.
+struct A2AVCombineReduceArguments {
+  void const *recv_panel;       // [n_split, panel_rows, n_per] symmetric
+  int32_t const *reduce_index;  // [ntokens_local * topk]: local copy -> recv-panel row
+  void *output;                 // [ntokens_local, n]
+  int64_t panel_rows;           // recv panel row capacity per split
+  int64_t ntokens_local;
+  int n;
+  int n_per;
+  int topk;
+  int sid;
+  int threadblock_count;
+};
+
 }  // namespace bytedance::flux
