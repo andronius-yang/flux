@@ -259,3 +259,28 @@ NVSHMEM_SYMMETRIC_SIZE=4G srun --nodes=4 --ntasks-per-node=1 ./launch.sh \
   --precomputed_indices (dense 0.784 on uniform) — the routing-plan handoff is
   the standing next optimization, exactly as layer0 §6 predicted. 4-node
   (`4n_16r` suite) and large-M sweeps not yet run.
+- 4-node / 16-rank budget sweep 2026-07-21 (`4n_16r/*_dist_001` staged with W
+  header at `$PSCRATCH/a2av_test_matrices/4n_16r/`, chunk 8192B, N=K=4096, G=32,
+  topk=4, bf16, n_split=4, iters=10, send/stage caps = 4x average rows;
+  288/288 rank-checks allclose). Mean ms over 16 ranks; "torch" = unoverlapped
+  per-expert GEMM loop + NCCL reduce-scatter, "dense" = flux multi-node ring,
+  "hier" = a2av_hier with per-forward index build, "hier-pre" =
+  `--precomputed_indices` (the production shape: the routing plan comes from
+  layer0); sched = hier - hier-pre, the index-math component:
+
+  | budget | torch | dense flux | hier | hier-pre | sched | hier-pre/dense | hier-pre/torch |
+  |--------|-------|-----------|------|----------|-------|----------------|----------------|
+  | 2mib   | 0.98  | 2.12      | 1.82 | 1.56     | 0.26  | 0.73x          | 1.59x          |
+  | 4mib   | 1.38  | 3.83      | 1.93 | 1.65     | 0.28  | 0.43x          | 1.20x          |
+  | 8mib   | 2.10  | 4.36      | 2.18 | 1.87     | 0.32  | 0.43x          | 0.89x          |
+  | 16mib  | 3.81  | 7.71      | 3.00 | 2.71     | 0.29  | 0.35x          | 0.71x          |
+  | 32mib  | 7.35  | 12.06     | 5.10 | 4.82     | 0.28  | 0.40x          | 0.65x          |
+  | 64mib  | 14.17 | 22.94     | 9.80 | 9.29     | 0.51  | 0.41x          | 0.66x          |
+
+  Takeaways: a2av_hier beats the dense flux ring at EVERY budget (2.3-2.9x from
+  4mib up -- the ring moves (L-1)-hop partial-sum traffic while a2av moves each
+  copy once); the unoverlapped torch baseline wins below ~8mib (pure NCCL RS,
+  no handshake constants), crossover at 8mib, then hier-pre is 1.4-1.5x faster
+  than torch at 16-64mib. The sched (index) component is a near-constant
+  ~0.3 ms (0.5 at 64mib): 17% of the pipeline at 2mib but only 5% at 64mib --
+  handing the routing plan over from layer0 matters most at small budgets.
