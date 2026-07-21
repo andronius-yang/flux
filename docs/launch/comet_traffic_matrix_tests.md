@@ -244,3 +244,18 @@ NVSHMEM_SYMMETRIC_SIZE=4G srun --nodes=4 --ntasks-per-node=1 ./launch.sh \
   validates the full layout contract — pack -> direct/hier transport (must be
   bit-identical) -> reduce — for random routings incl. zero chunks and
   zero-row owner ranks.
+- Validated 2026-07-21 (chunk 8192B, N=K=4096, G=32, topk=4, bf16 unless noted):
+  1 node / 4 ranks (`matrix_4r_{uniform,skewed}`): dense + a2av_hier x
+  {identity-check on, n_split in {1,4}, fp16, --precomputed_indices}, 24/24
+  rank-checks allclose; the skewed matrix intentionally trips the send-panel
+  overflow first (hot owner 270 rows vs default cap 192) and aborts collectively
+  on all ranks — rerun with FLUX_A2AV_RS_MAX_SEND_ROWS=384. 2 nodes / 8 ranks
+  (`l1_2n_8r_{uniform,skewed}`, incl. diagonal/self traffic and a hot-owner
+  column): dense + a2av_hier x {identity-check, skew, --precomputed_indices
+  20-iter, n_split=2 fp16}, 40/40 rank-checks allclose — first exercise of the
+  inter-node ladder, gateway forwarding and arrival signals. Timing snapshot
+  (rank-0 mean ms, tiny M=512 so index math dominates): 2n skewed a2av_hier
+  1.72 with per-forward index build + identity check vs 0.868 with
+  --precomputed_indices (dense 0.784 on uniform) — the routing-plan handoff is
+  the standing next optimization, exactly as layer0 §6 predicted. 4-node
+  (`4n_16r` suite) and large-M sweeps not yet run.
