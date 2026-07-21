@@ -25,11 +25,18 @@ all-gather + scatter of the torch baseline and is the un-overlapped counterpart
 of the fused --comm_pattern a2av* modes in test_moe_ag_traffic.py.
 
 PRIMARY METRIC: one end-to-end window per iteration, communication start ->
-computation finish (schedule + fill + wire + unpack + gemm), directly comparable
-to the fused op.forward numbers of test_moe_ag_traffic.py. The BvN schedule is
-recomputed inside the window every iteration (one-shot methodology; never
-amortized). The send-side pack (send-row index_select) is reported separately,
-outside the window. Phase breakdown is diagnostic only.
+computation finish (pack + schedule + fill + wire + unpack + gemm), directly
+comparable to the fused op.forward numbers of test_moe_ag_traffic.py — fused
+forward includes its pack-equivalent (AG local shard copy; a2av stage1/stage2
+prep), so ours is inside the window too. The BvN schedule is recomputed inside
+the window every iteration (one-shot methodology; never amortized). FAST's
+inter-iteration signal/credit reset runs OUTSIDE the window (reported
+separately): it is benchmark-iteration hygiene with no analogue in the other
+baselines — flux's perf_flux runs op.clear_buffers() before its start event,
+FAST's own perf_flash host-timed mode resets before host_start, and a
+production one-shot pass sees zeroed signals / would use an epoch protocol
+like the a2av modes' run_id. Its tail barrier doubles as the per-iteration
+rank aligner. Phase breakdown is diagnostic only.
 
 NVSHMEM: this test never calls flux.init_flux_shm. FAST performs the only
 NVSHMEM initialization in the process (uid broadcast over torch.distributed);
@@ -116,12 +123,12 @@ class FastPerfResult:
         self, name, e2e_ms, pack_ms, schedule_ms, fill_ms, reset_ms, wire_ms, unpack_ms, gemm_ms, host_e2e_ms
     ):
         self.name = name
-        self.e2e_ms = e2e_ms  # PRIMARY: comm start -> gemm finish (CUDA events)
-        self.pack_ms = pack_ms  # outside the window
+        self.e2e_ms = e2e_ms  # PRIMARY: comm start (pack) -> gemm finish (CUDA events)
+        self.pack_ms = pack_ms
         self.schedule_ms = schedule_ms
         self.fill_ms = fill_ms
-        # per-call signal/credit reset incl. 2x nvshmem_barrier_all (FAST has no
-        # epoch protocol); also absorbs inter-rank skew
+        # inter-iteration signal/credit reset incl. 2x nvshmem_barrier_all —
+        # OUTSIDE the window (benchmark hygiene / rank aligner; see docstring)
         self.reset_ms = reset_ms
         self.wire_ms = wire_ms
         self.unpack_ms = unpack_ms
@@ -132,10 +139,10 @@ class FastPerfResult:
         return (
             f"{self.name}: e2e {self.e2e_ms:.3f} ms (comm start -> gemm finish;"
             f" host {self.host_e2e_ms:.3f})"
-            f" | pack {self.pack_ms:.3f} (outside window)"
-            f" | schedule {self.schedule_ms:.3f} + fill {self.fill_ms:.3f}"
-            f" + reset {self.reset_ms:.3f} + wire {self.wire_ms:.3f}"
+            f" | pack {self.pack_ms:.3f} + schedule {self.schedule_ms:.3f}"
+            f" + fill {self.fill_ms:.3f} + wire {self.wire_ms:.3f}"
             f" + unpack {self.unpack_ms:.3f} + gemm {self.gemm_ms:.3f}"
+            f" | reset {self.reset_ms:.3f} (outside window, inter-iteration)"
         )
 
 
@@ -157,25 +164,28 @@ def perf_fast(
 
     total_iters = warmup_iters + iters
     ev = lambda: [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
-    pack_start, pack_end = ev(), ev()
-    e2e_start, comm_end, unpack_end, e2e_end = ev(), ev(), ev(), ev()
+    e2e_start, pack_end, comm_end, unpack_end, e2e_end = ev(), ev(), ev(), ev(), ev()
     host_e2e = [0.0] * total_iters
+    reset_ms = [0.0] * total_iters
     schedule_us = [0.0] * total_iters
     fill_us = [0.0] * total_iters
-    reset_us = [0.0] * total_iters
     wire_us = [0.0] * total_iters
 
     out = None
     torch.distributed.barrier()
     torch.cuda.synchronize()
     for i in range(total_iters):
-        pack_start[i].record()
-        send_rows = torch.index_select(ctx.inputs_shard, dim=0, index=pack_index_gpu)
-        pack_end[i].record()
-        torch.cuda.synchronize()  # pack complete before the e2e window opens
+        # inter-iteration hygiene, OUTSIDE the window; not needed before the
+        # first call but harmless — its tail barrier aligns the ranks
+        t_r0 = time.perf_counter()
+        comm.alltoallv_reset()
+        reset_ms[i] = (time.perf_counter() - t_r0) * 1e3
+        torch.cuda.synchronize()
 
         t0 = time.perf_counter()
         e2e_start[i].record()
+        send_rows = torch.index_select(ctx.inputs_shard, dim=0, index=pack_index_gpu)
+        pack_end[i].record()
         # host-synchronous: schedule (BvN recompute) + fill + wire to completion
         recv_u8, out_sz, timings = comm.alltoallv(send_rows.view(torch.uint8), matrix_cpu)
         comm_end[i].record()
@@ -187,7 +197,7 @@ def perf_fast(
         e2e_end[i].record()
         e2e_end[i].synchronize()
         host_e2e[i] = (time.perf_counter() - t0) * 1e3
-        schedule_us[i], fill_us[i], reset_us[i], wire_us[i] = timings.tolist()
+        schedule_us[i], fill_us[i], wire_us[i] = timings.tolist()
 
     def mean_ms(starts, ends):
         return sum(starts[i].elapsed_time(ends[i]) for i in range(warmup_iters, total_iters)) / iters
