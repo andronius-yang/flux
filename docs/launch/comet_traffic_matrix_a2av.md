@@ -409,9 +409,14 @@ makes a binary send-once decision instead:
 ### Metadata input: `a2av_unique_counts`
 
 Dedup counts are NOT derivable from `cnt[s][e]` (§9) — they depend on which
-tokens overlap across experts/ranks. The harness passes a second untimed host
-metadata tensor (`forward(..., a2av_unique_counts=...)`, same contract as
-`splits_per_source`; a real system adds one more tiny allgather): int32 CPU
+tokens overlap across experts/ranks. They ARE derivable locally, though: every
+rank already holds the global `choosed_experts`/`scatter_index` (the gateway
+forward-index build decodes remote sources' routing from it), so unlike
+`splits_per_source` a real system needs no extra exchange — just a local host
+computation (or a device kernel + ~1 KB D2H like the no-metadata counts path).
+The harness passes it as a second untimed host metadata tensor
+(`forward(..., a2av_unique_counts=...)`, same contract as
+`splits_per_source`): int32 CPU
 contiguous `[W, W + nnodes]`, identical on all ranks. Cols `[0, W)` hold
 `u[s][d]` (unique tokens source `s` must deliver to rank `d`), cols
 `[W, W + nnodes)` hold `U[s][n]` (unique tokens `s` must deliver to the node-`n`
@@ -437,7 +442,9 @@ All orders derive from the same global `scatter_index` every rank holds:
   `key_a` argsort; `sorted_scatter_index` and `sorted_splits_cumsum` keep their
   logical semantics, and the per-tile signal waits and epilogue are untouched.
   `FLUX_A2AV_CHECK_COMPRESS=1` (debug, may sync) inverts `C` and asserts every
-  A row maps to its own token.
+  A row maps to its own token, and additionally asserts the on-device pack /
+  gateway flag counts reproduce the `u`/`U` metadata (catching harness counts
+  that pass the host sanity bounds but disagree with the actual routing).
 
 All index builds (producer pack, consumer, gateway forward indices) are
 sync-free ATen: scatter-with-garbage-slot + cumsum + index_select, no
@@ -469,3 +476,29 @@ only the byte counts and offsets change (`u`/`U` instead of chunk sums), so the
 recv/staging overflow checks switch to the dedup sums — still evaluated
 identically on every rank. Existing `a2av_hier` remains byte-identical for A/B
 comparison.
+
+### Deferred alternatives to the SM gather (decision: strict wire bytes first)
+
+The exact-subset gather is the sole reason compress needs SMs on the forward
+path (the `sm_margin >= 1` rule, the scratch, the non-`nbi` puts). Two designs
+would remove some or all of that machinery, **deliberately deferred** until the
+current strict-wire-bytes design is validated and measured on Perlmutter — the
+A/B against `a2av_hier` should isolate the dedup win before any NVLink-byte
+trade-off muddies it:
+
+- **Union broadcast** (`a2av_hier_bcast` candidate): the gateway forwards the
+  WHOLE staged union contiguously to each local peer — pure CE, no gather, no
+  scratch, no `sm_margin` requirement. Receivers alias their subset out of the
+  union region via the same one-cumsum consumer identity (flag = "needed by my
+  node" for remote-node sources, "needed by me" for same-node ones). Cost:
+  intra-node forward bytes rise from `Σ_dl u[s][dl]` to `(L-1)·U[s][n]` and the
+  recv regions for remote sources grow to `U` rows; inter-node bytes (the
+  compression target) are identical. Mostly a *deletion* of the gateway
+  machinery.
+- **Receiver pull**: each local peer `index_select`s its own subset directly
+  out of the gateway's staging via `nvshmem_ptr` (NVLink read → local write).
+  Exact bytes, one hop instead of two (no scratch round-trip through gateway
+  HBM), parallel across L receivers instead of serialized on the gateway.
+  Needs the gateway to republish arrival to local peers (cheap `signal_op`
+  fan-out) and per-receiver subset indices (same one-cumsum machinery); still
+  needs `sm_margin` on every rank.

@@ -441,10 +441,11 @@ if __name__ == "__main__":
     ), "splits_per_source column sums must equal splits"
 
     # compress dedup counts (untimed setup, same contract as splits_per_source;
-    # real system = one extra tiny allgather): u[s][d] = UNIQUE tokens source s
-    # must deliver to rank d (any of d's experts), U[s][n] = unique tokens s must
-    # deliver to the node-n union. NOT derivable from cnt[s][e] — depends on
-    # which tokens overlap across experts/ranks.
+    # a real system needs NO extra exchange — every rank already holds the
+    # global choosed_experts, so this is a local computation): u[s][d] = UNIQUE
+    # tokens source s must deliver to rank d (any of d's experts), U[s][n] =
+    # unique tokens s must deliver to the node-n union. NOT derivable from
+    # cnt[s][e] — depends on which tokens overlap across experts/ranks.
     a2av_unique_counts_cpu = None
     if args.comm_pattern == "a2av_hier_compress":
         assert (

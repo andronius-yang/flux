@@ -157,7 +157,8 @@ NVSHMEM_SYMMETRIC_SIZE=4G srun --nodes=4 --ntasks-per-node=1 ./launch.sh \
   `FLUX_A2AV_MAX_STAGE_NTOKENS`) — capacities now checked against the dedup
   sums, so the same settings are always sufficient.
 - Debug: `FLUX_A2AV_CHECK_COMPRESS=1` asserts the dedup consumer-index
-  identity on-device (may sync; keep off when timing).
+  identity on-device, plus that the pack / gateway flag counts match the
+  `a2av_unique_counts` metadata (may sync; keep off when timing).
 - The harness prints the compressed per-rank send bytes, compressed inter-node
   bytes, and the dedup wire/logical ratio next to the logical matrix numbers.
   A/B against `--comm_pattern a2av_hier` (byte-identical to before) isolates
