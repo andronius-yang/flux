@@ -180,6 +180,7 @@ def perf_flux(
     ag_option: flux.AllGatherOption = flux.AllGatherOption(),
     comm_pattern: str = "allgather",
     splits_per_source: torch.Tensor = None,
+    a2av_unique_counts: torch.Tensor = None,
 ):
     tp_env = flux.DistEnvTPWithEP(tp_group=TP_GROUP, nnodes=DIST_ENV.NNODES, ep_group=EP_GROUP)
     moe_args = flux.MoeArguments(
@@ -192,7 +193,7 @@ def perf_flux(
         output_dtype=ctx.outputs[0].dtype,
     )
 
-    use_a2av = comm_pattern in ("a2av", "a2av_ring", "a2av_hier")
+    use_a2av = comm_pattern in ("a2av", "a2av_ring", "a2av_hier", "a2av_hier_compress")
     extra_args = {}
     if flux.util.get_arch() >= 90:
         assert not use_a2av, "--comm_pattern a2av is only implemented for the sm80/V2 op"
@@ -204,6 +205,7 @@ def perf_flux(
             a2av_dispatch=use_a2av,
             a2av_ring=(comm_pattern == "a2av_ring"),
             a2av_hier=(comm_pattern == "a2av_hier"),
+            a2av_hier_compress=(comm_pattern == "a2av_hier_compress"),
         )
         extra_args = {
             "ag_option": ag_option,
@@ -216,6 +218,11 @@ def perf_flux(
             # int32 CPU [W, nexperts]; the real exchange is a ~W*nexperts-int
             # allgather (~10-20 us), declared out of scope by the harness contract
             extra_args["splits_per_source"] = splits_per_source
+        if a2av_unique_counts is not None:
+            # compress dedup counts (same untimed-metadata contract): int32 CPU
+            # [W, W + nnodes], cols [0, W) = unique tokens s -> rank d, cols
+            # [W, W + nnodes) = unique tokens s -> node union
+            extra_args["a2av_unique_counts"] = a2av_unique_counts
     if use_a2av:
         assert not gather_input, "--gather_input has no dense gathered buffer in a2av mode"
 
@@ -344,13 +351,16 @@ def parse_args():
     parser.add_argument(
         "--comm_pattern",
         default="allgather",
-        choices=["allgather", "a2av", "a2av_ring", "a2av_hier"],
+        choices=["allgather", "a2av", "a2av_ring", "a2av_hier", "a2av_hier_compress"],
         help="layer0 comm pattern: dense allgather (default), raw alltoallv"
         " dispatch whose wire bytes equal the traffic matrix (dynamic tile"
-        " schedule), a2av_ring (same wire bytes, static ring schedule), or"
+        " schedule), a2av_ring (same wire bytes, static ring schedule),"
         " a2av_hier (hierarchical: one aggregated inter-node message per peer"
         " node to the same-local-rank gateway, which forwards intra-node;"
-        " static ring schedule)",
+        " static ring schedule), or a2av_hier_compress (hierarchical with"
+        " token-dedup wire semantics: each token crosses the wire at most once"
+        " per destination rank / node; requires metadata inputs and, multi-node,"
+        " --sm_margin >= 1)",
     )
     parser.add_argument(
         "--no_metadata_cnt",
@@ -430,6 +440,26 @@ if __name__ == "__main__":
         splits_per_source_cpu.sum(0), moe_ctx.splits_cpu[: args.G].cpu().int()
     ), "splits_per_source column sums must equal splits"
 
+    # compress dedup counts (untimed setup, same contract as splits_per_source;
+    # real system = one extra tiny allgather): u[s][d] = UNIQUE tokens source s
+    # must deliver to rank d (any of d's experts), U[s][n] = unique tokens s must
+    # deliver to the node-n union. NOT derivable from cnt[s][e] — depends on
+    # which tokens overlap across experts/ranks.
+    a2av_unique_counts_cpu = None
+    if args.comm_pattern == "a2av_hier_compress":
+        assert (
+            not args.no_metadata_cnt
+        ), "a2av_hier_compress requires the metadata inputs (drop --no_metadata_cnt)"
+        experts_per_rank = args.G // W
+        L = DIST_ENV.LOCAL_WORLD_SIZE
+        nn = W // L
+        owner = choosed_experts.long().cpu() // experts_per_rank  # [ntokens, topk] dest rank
+        flags = torch.zeros(ntokens, W, dtype=torch.bool)
+        flags.scatter_(1, owner, True)  # token t needed by rank d (any expert)
+        u_mat = flags.view(W, tokens_per_rank, W).sum(1)  # [W, W]
+        U_mat = flags.view(ntokens, nn, L).any(dim=2).view(W, tokens_per_rank, nn).sum(1)  # [W, nn]
+        a2av_unique_counts_cpu = torch.cat([u_mat, U_mat], dim=1).int().contiguous()
+
     if TP_GROUP.rank() == 0:
         experts_per_rank = args.G // DIST_ENV.WORLD_SIZE
         rows_per_rank = moe_ctx.splits_cpu.view(DIST_ENV.WORLD_SIZE, experts_per_rank).sum(dim=1)
@@ -437,7 +467,7 @@ if __name__ == "__main__":
         print(f"Splits: {moe_ctx.splits_cpu.tolist()}, Sum: {sum(moe_ctx.splits_cpu.tolist())}")
         print(f"Per-rank gemm rows: {rows_per_rank.tolist()}")
         print(f"comm_pattern: {args.comm_pattern}")
-        if args.comm_pattern in ("a2av", "a2av_ring", "a2av_hier"):
+        if args.comm_pattern in ("a2av", "a2av_ring", "a2av_hier", "a2av_hier_compress"):
             send_bytes = (matrix.sum(dim=1) - matrix.diag()).tolist()
             recv_bytes = (matrix.sum(dim=0) - matrix.diag()).tolist()
             print(f"a2av wire bytes per rank (send): {send_bytes}")
@@ -455,6 +485,28 @@ if __name__ == "__main__":
                 1, src_node.view(-1, 1)
             ).squeeze(1)
             print(f"a2av_hier inter-node wire bytes per rank (send): {inter_bytes.tolist()}")
+        if args.comm_pattern == "a2av_hier_compress":
+            # actual wire in compress mode: intra-node dedup puts (own rank
+            # excluded) + one union aggregate per remote node; the matrix above
+            # stays the LOGICAL traffic. Gateway forwarding is extra NVLink
+            # traffic on top, exactly u[s][d] rows per (source, local dest).
+            L = DIST_ENV.LOCAL_WORLD_SIZE
+            nn = DIST_ENV.WORLD_SIZE // L
+            src_node = torch.arange(W) // L
+            intra_rows = (
+                u_mat.view(W, nn, L)[torch.arange(W), src_node].sum(1) - u_mat.diag()
+            )
+            inter_rows = U_mat.sum(1) - U_mat[torch.arange(W), src_node]
+            comp_bytes = (intra_rows + inter_rows) * args.chunk_bytes
+            inter_bytes_c = inter_rows * args.chunk_bytes
+            logical_bytes = matrix.sum(dim=1) - matrix.diag()
+            ratio = comp_bytes.sum().item() / max(logical_bytes.sum().item(), 1)
+            print(f"a2av_hier_compress wire bytes per rank (send): {comp_bytes.tolist()}")
+            print(
+                "a2av_hier_compress inter-node wire bytes per rank (send):"
+                f" {inter_bytes_c.tolist()}"
+            )
+            print(f"a2av_hier_compress dedup wire/logical send-byte ratio: {ratio:.3f}")
 
     if args.tune:
         prof_ctx = tune_flux(moe_ctx)
@@ -487,6 +539,7 @@ if __name__ == "__main__":
             ag_option,
             args.comm_pattern,
             splits_per_source=None if args.no_metadata_cnt else splits_per_source_cpu,
+            a2av_unique_counts=a2av_unique_counts_cpu,
         )
         perf_result_torch = perf_torch(moe_ctx, args.warmup_iters, args.iters, args.gather_input)
 

@@ -386,3 +386,86 @@ waits before the tail `barrier_all`, and iteration n+1 sends wait on
 `nnodes == 1` degenerates to round-0 only — behaviorally the ring mode's
 intra-node slots with the same static schedule (cheap single-node validation
 of the branch).
+
+## 11. Token-dedup hierarchical a2av (`a2av_hier_compress`)
+
+`a2av_hier_compress=True` (ctor kwarg, requires `a2av_dispatch`, mutually
+exclusive with both `a2av_ring` and `a2av_hier`; `--comm_pattern
+a2av_hier_compress`) changes the WIRE contract of §10 while keeping everything
+logical untouched. The traffic matrix now represents **logical** bytes: the
+matrix → `choosed_experts` derivation, `splits`, `scatter_index`, the GEMM
+problem sizes and the static dense schedule are all exactly as before. The wire
+makes a binary send-once decision instead:
+
+- **Intra-node**: a token goes to a destination *rank* at most once, even when
+  that rank hosts several of the token's experts.
+- **Inter-node**: a token crosses a link at most once — each remote node
+  receives ONE union aggregate (tokens needed by *any* rank on that node) at
+  the same-local-rank gateway.
+- **Receivers handle duplication**, and it is free: the GEMM reads A rows
+  through `sorted_gather_index` and `gather_A` is read-only in the kernel
+  (it only feeds `IteratorA`), so multiple A rows simply alias one recv row.
+
+### Metadata input: `a2av_unique_counts`
+
+Dedup counts are NOT derivable from `cnt[s][e]` (§9) — they depend on which
+tokens overlap across experts/ranks. The harness passes a second untimed host
+metadata tensor (`forward(..., a2av_unique_counts=...)`, same contract as
+`splits_per_source`; a real system adds one more tiny allgather): int32 CPU
+contiguous `[W, W + nnodes]`, identical on all ranks. Cols `[0, W)` hold
+`u[s][d]` (unique tokens source `s` must deliver to rank `d`), cols
+`[W, W + nnodes)` hold `U[s][n]` (unique tokens `s` must deliver to the node-`n`
+union). Compress mode FLUX_CHECKs both metadata tensors present; host sanity
+checks pin `u ≤ chunks`, `(u > 0) ⟺ (chunks > 0)`, `u[s][d] ≤ U[s][node(d)]`,
+and `U[s][n] ≤ Σ_d∈n u[s][d]`.
+
+### Layouts and the one-cumsum consumer identity
+
+All orders derive from the same global `scatter_index` every rank holds:
+
+- **Send buffer**: nodes ascending; my node expanded into `L` per-destination-
+  rank segments (ascending global rank), each remote node ONE union segment;
+  every segment interior is ascending token index. Intra-node put per rank and
+  inter-node aggregate per node each stay ONE contiguous put.
+- **Recv buffer**: source-major regions of `u[s][me]` rows, interior ascending
+  token index.
+- **Consumer index**: with `mine_token[t] ∈ {0,1}` (any copy of global token
+  `t` routes to my experts) and `C[t]` its exclusive prefix sum, every copy of
+  `t` reads recv row `C[t]` — tokens are source-contiguous, so
+  `recv_off_dedup[s] + rank-of-t-within-s == C[t]` exactly. Hence
+  `sorted_gather_index = C[copy // topk][perm_a]` with the existing single
+  `key_a` argsort; `sorted_scatter_index` and `sorted_splits_cumsum` keep their
+  logical semantics, and the per-tile signal waits and epilogue are untouched.
+  `FLUX_A2AV_CHECK_COMPRESS=1` (debug, may sync) inverts `C` and asserts every
+  A row maps to its own token.
+
+All index builds (producer pack, consumer, gateway forward indices) are
+sync-free ATen: scatter-with-garbage-slot + cumsum + index_select, no
+`nonzero`/`masked_select`.
+
+### Gateway: exact per-rank subsets
+
+The gateway gathers each local destination's exact subset out of the staged
+union (`index_select` with a precomputed per-round index built on the main
+stream, gated by `fwd_index_event_`), then forwards `u[s][d]` rows per local
+peer — its own subset is gathered straight into the recv region. Two hazards
+and their resolutions:
+
+- **Scratch reuse under `nbi`**: forwarded subsets are staged in a local
+  scratch refilled every round, and `nbi` puts give no local-completion
+  guarantee — round `r+1`'s gather could overwrite scratch mid-put. Fix: the
+  scratch-sourced forwards use **non-`nbi`** `nvshmemx_putmem_signal_on_stream`
+  (rounds are serialized on `cp_stream` anyway). Double-buffered scratch is a
+  perf follow-up.
+- **SM-occupancy deadlock**: unlike §10's SM-free forwarding, the gather needs
+  SMs while GEMM tiles spin on signals only that gather can produce. Fix:
+  compress with `nnodes > 1` FLUX_CHECKs `sm_margin >= 1` (pass e.g.
+  `--sm_margin 8`); the ATen gathers run inside a `CUDAStreamGuard` on
+  `cp_stream`.
+
+Signal discipline is identical to §10 (per-source epoch signals, per-source-
+node arrival signals, empties still signal, single writer per slot per epoch);
+only the byte counts and offsets change (`u`/`U` instead of chunk sums), so the
+recv/staging overflow checks switch to the dedup sums — still evaluated
+identically on every rank. Existing `a2av_hier` remains byte-identical for A/B
+comparison.

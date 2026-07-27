@@ -125,6 +125,47 @@ NVSHMEM_SYMMETRIC_SIZE=4G srun --nodes=4 --ntasks-per-node=1 ./launch.sh \
   topk=4 (7%). a2av_hier is fastest in all 9 cells. (16mib tk2 ring 3.34 is
   an off-trend outlier vs tk1/tk4 ~2.35 — likely a contention blip.)
 
+## Layer0 dedup hierarchical a2av (`--comm_pattern a2av_hier_compress`, sm80/V2 only)
+
+Design: `comet_traffic_matrix_a2av.md` §11. Same hierarchical structure as
+a2av_hier, but the matrix is treated as LOGICAL bytes: the wire sends each
+token at most once per destination rank (intra-node) and at most once per
+destination node (one union aggregate to the gateway, which gathers each local
+rank's exact subset out of the union and forwards it). splits / scatter_index /
+GEMM problem sizes and the static ring schedule are unchanged; receivers alias
+duplicate GEMM A rows onto one received row via `sorted_gather_index`.
+
+```bash
+# single node (NN=1 degenerates to intra-node dedup puts; sm_margin optional)
+srun --nodes=1 --ntasks-per-node=1 ./launch.sh \
+  test/python/moe_ag_scatter/test_moe_ag_traffic.py <matrix> \
+  --comm_pattern a2av_hier_compress
+
+# 4 nodes x 4 GPUs — sm_margin is REQUIRED multi-node (gateway gathers need SMs)
+NVSHMEM_SYMMETRIC_SIZE=4G srun --nodes=4 --ntasks-per-node=1 ./launch.sh \
+  test/python/moe_ag_scatter/test_moe_ag_traffic.py \
+  <matrices>/4n_16r/16mib/..._dist_001.txt \
+  --comm_pattern a2av_hier_compress --sm_margin 8
+```
+
+- Requires the metadata inputs (`splits_per_source` + the new
+  `a2av_unique_counts`, both computed untimed by the harness) —
+  `--no_metadata_cnt` is rejected. Multi-node additionally requires
+  `--sm_margin >= 1` (FLUX_CHECKed): the gateway `index_select` gathers need
+  SMs while GEMM tiles spin on signals only those gathers can produce.
+- Same knobs as a2av_hier (`FLUX_A2AV_MAX_RECV_NTOKENS`,
+  `FLUX_A2AV_MAX_STAGE_NTOKENS`) — capacities now checked against the dedup
+  sums, so the same settings are always sufficient.
+- Debug: `FLUX_A2AV_CHECK_COMPRESS=1` asserts the dedup consumer-index
+  identity on-device (may sync; keep off when timing).
+- The harness prints the compressed per-rank send bytes, compressed inter-node
+  bytes, and the dedup wire/logical ratio next to the logical matrix numbers.
+  A/B against `--comm_pattern a2av_hier` (byte-identical to before) isolates
+  the dedup win.
+- NOT yet validated on hardware (implemented on a non-Perlmutter box):
+  run the single-node degenerate first (+ `FLUX_A2AV_CHECK_COMPRESS=1`,
+  allclose vs torch), then the 4n_16r sweeps above.
+
 ## Layer0 FAST baseline (un-overlapped: FAST alltoallv + separate grouped GEMM)
 
 `test/python/moe_ag_scatter/test_moe_ag_fast_baseline.py` measures the

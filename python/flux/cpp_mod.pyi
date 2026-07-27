@@ -741,6 +741,7 @@ class GemmGroupedV2AGScatterOp:
         a2av_dispatch: bool = False,
         a2av_ring: bool = False,
         a2av_hier: bool = False,
+        a2av_hier_compress: bool = False,
     ): ...
     def forward(
         self,
@@ -757,6 +758,7 @@ class GemmGroupedV2AGScatterOp:
         sm_margin: int = 0,
         ag_option: AllGatherOption = AllGatherOption(),
         splits_per_source: Optional[torch.Tensor] = None,
+        a2av_unique_counts: Optional[torch.Tensor] = None,
     ) -> torch.Tensor: ...
     """
     2 modes supported: FP16/BF16, or FP8 mode.  INT8 is not supported yet.
