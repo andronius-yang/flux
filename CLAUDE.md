@@ -108,3 +108,13 @@ Layering, bottom to top:
 Key design points (details in `docs/design.md`): on Ampere (this deployment), communication is fused into the GEMM epilogue and the threadblock scheduler hides remote-I/O latency by switching among oversubscribed threadblocks; kernels reschedule tile computation along the independent dimension (Dim-M for MoE layer0, Dim-N for layer1) to start overlap early. Hopper uses a different warp-specialization design that does not apply on A100.
 
 Inter-GPU data movement for the MoE kernels goes through **NVSHMEM** (hence the hard requirement on `--nvshmem` and a correct `NVSHMEM_HOME`).
+
+## Explanations
+
+When asked for an explanation (rather than a code change), explain in a clear,
+easy-to-understand tone: lead with the concrete mechanism, use small worked
+examples, and only then generalize. Most importantly, end every explanation
+with one or two **non-trivial comprehension questions** — questions that test
+whether the key implication or design choice actually landed, and that require
+transferring the idea to a new situation (never answerable by restating the
+explanation). Wait for the answer and correct any misunderstanding.
