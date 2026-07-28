@@ -502,3 +502,102 @@ trade-off muddies it:
   Needs the gateway to republish arrival to local peers (cheap `signal_op`
   fan-out) and per-receiver subset indices (same one-cumsum machinery); still
   needs `sm_margin` on every rank.
+
+## 12. Balanced inter-node relay (compress default; `FLUX_A2AV_RELAY_IDENTITY=1` restores §11)
+
+§10/§11 fix the inter-node schedule to "relay = self": in round `dn` every rank
+sends its own `U[rank][tn]` union rows to the same-local-rank gateway. Rounds
+are serialized (sender `cp_stream_inter_node`, gateway `CUStreamWaitValue64`),
+so **each round advances at the pace of the largest `U[s][tn]` on the node** —
+skewed routings idle the other NICs and concentrate gateway staging on hot
+source local ranks. The balanced relay generalizes the fixed assignment into
+
+```
+src rank -> local relay rank (NVLink) -> wire -> same-lr cross-node relay -> dst rank(s)
+```
+
+with §11's scheme as the degenerate `relay = self` case.
+
+### Partition: canonical stream + contiguous chunks
+
+Per round (source node `n` -> target node `tn`), the L union segments form ONE
+canonical stream: ascending source local rank, token-ascending interiors —
+exactly the §11 pack order, so no producer change. `chunk_bound()` cuts it into
+L near-equal contiguous chunks (`a_k = k*(total/L) + min(k, total mod L)`);
+relay local rank `k` owns chunk `[a_k, a_{k+1})` and wire-puts it to gateway
+`(tn, k)`. Everything derives from the **replicated** `U` matrix, so sender,
+relay, gateway and destination agree with zero new metadata; the helper is the
+single source of truth for every offset and capacity check. When the `U`
+values are equal, chunk `k == source k`'s segment (zero relocation); in
+general at most `2L-1` intra-node pieces move per node per round, and gateway
+staging becomes balanced as a side effect (the `FLUX_A2AV_MAX_STAGE_NTOKENS`
+hot-lr concentration of §11 disappears).
+
+### Send side: pieces first, then the wire
+
+Phase 1 pushes ALL rounds' pieces (send-buffer sub-ranges cut at chunk
+boundaries) into the relays' symmetric `a2av_relay_stage_` via intra-node
+`putmem_signal_nbi`, per-(round, src_lr) `a2av_relay_sig_` slots; the
+own-relay piece is a local `cudaMemcpyAsync`. **Deadlock rule**: every rank
+issues every piece put before its first wire wait — pieces depend only on the
+local pack, so the cross-rank wait graph stays acyclic (interleaving pieces
+with wire rounds would cycle). Phase 2 then walks the rounds in mirror node
+order: front-end waits on the actual contributors (host-known from `U`,
+zero-row pairs skip both signal and wait), then ONE contiguous
+`putmem_signal_nbi` of `~total/L` rows to the gateway; `node_sig` keeps its
+single-writer-per-slot discipline. A chunk fully inside the relay's own
+segment wire-puts straight from the send buffer (no staging hop) — the §11
+behavior falls out automatically for balanced routings and `L == 1`.
+
+### Receive side: window-generalized forward build + a tiny D2H
+
+Gateway `k` now stages an arbitrary window `[a_k, b_k)` of the canonical
+stream, spanning several source local ranks. The forward-index build drops its
+`.select(1, local_rank)` and flags `(round, src_lr, token, dst_lr)`; union
+positions plus host canonical starts give canonical positions, the window mask
+selects my slice, and the stored value is the window-relative staging row.
+
+A window cut inside a source's segment splits its `(s, d)` recv region across
+gateways. Each gateway's slice is contiguous (a window cut of token-sorted
+rows), but its offset — `cnt_before`, the count of `(s, d)` rows in earlier
+windows — is **token-level** information no aggregate metadata can provide.
+The build therefore D2Hs `cnt_in`/`cnt_before` (`2·(NN-1)·L²` int32, one
+pinned copy) and the host `cudaEventSynchronize`s on it **after** the wire
+issue, immediately before the gateway loop (its only consumer); the GEMM
+launch gates on `relay_send_event_` (pieces issued) instead of
+`fetch_remote_event`, which now contains cross-rank waits. Delivery reuses the
+§11 scratch + non-`nbi` machinery, packing scratch exact-sized from the D2H'd
+counts and fusing the per-round gateway signal onto the LAST piece per
+destination (intra-node on-stream puts to the same peer land in stream order).
+
+### Signal aggregation: per-source epoch signals keep one writer
+
+With slices arriving from several gateways, the per-source signals the GEMM
+spins on would have multiple writers. Fix on the destination, on a third
+stream `cp_stream_signal` (pure front-end memops, zero SMs): per round, wait
+on the L per-(round, gateway) `a2av_gw_round_sig_` slots, then
+`CUStreamWriteValue64 signal[s] = run_id` for every source of that node —
+zero-traffic sources included, exactly §11's empties-still-signal rule.
+`putmem_signal` orders payload before signal, so gateway-slot arrival implies
+full delivery. The GEMM kernel is untouched; rounds still complete in mirror
+order, so the dense schedule's readiness order is preserved. The stream is
+folded into the epoch via `signal_done_event_` before the closing barrier.
+
+### Knobs, capacity, validation
+
+New: `FLUX_A2AV_MAX_RELAY_NTOKENS` (relay staging holds ALL rounds at once,
+`~` the node's outbound/L; default mirrors the stage default) and
+`FLUX_A2AV_RELAY_IDENTITY=1` (compile the §11 branch verbatim — byte-identical
+wire, for A/B; it changes the wire layout, so set it on EVERY rank). Capacity
+checks switch to chunk sums, still evaluated identically on every rank
+(collective failure). All new signal slots follow the epoch discipline:
+init-zero, single writer per iteration, GEQ waits, never memset.
+
+`test/python/moe_ag_scatter/test_relay_balance_math.py` (CPU-only, no GPU/flux
+needed) simulates the exact host offset math and ATen index sequences of both
+wire modes across 6 topologies × seeds × skews (156 cases): recv buffers
+byte-identical to §11 and to a direct dedup reference, every recv row written
+exactly once, indices window-bounded, chunks balanced to ≤ 1 row, uniform-`U`
+routings relocate zero rows, and the three-stream schedule is deadlock-free
+over two epochs under an event-driven executor. Hardware validation on
+Perlmutter is still pending, as with §11.

@@ -508,6 +508,24 @@ if __name__ == "__main__":
                 f" {inter_bytes_c.tolist()}"
             )
             print(f"a2av_hier_compress dedup wire/logical send-byte ratio: {ratio:.3f}")
+            # balanced-relay effect (FLUX_A2AV_RELAY_IDENTITY=0, the default):
+            # per (node, round) the wire pace is ceil(total / L) instead of the
+            # hottest rank's U — report the per-round worst sender both ways
+            rounds = []
+            for n in range(nn):
+                for dn in range(1, nn):
+                    tn = (n - dn + nn) % nn
+                    seg = [int(U_mat[n * L + sl, tn]) for sl in range(L)]
+                    total = sum(seg)
+                    rounds.append((max(seg), (total + L - 1) // L))
+            if rounds:
+                ident = sum(m for m, _ in rounds) * args.chunk_bytes
+                balanced = sum(b for _, b in rounds) * args.chunk_bytes
+                print(
+                    "a2av relay balance: sum of per-round max sender bytes"
+                    f" identity {ident} -> balanced {balanced}"
+                    f" ({balanced / max(ident, 1):.3f}x)"
+                )
 
     if args.tune:
         prof_ctx = tune_flux(moe_ctx)

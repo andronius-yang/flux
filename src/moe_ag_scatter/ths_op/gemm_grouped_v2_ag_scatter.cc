@@ -240,6 +240,12 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
 
   c10::cuda::CUDAStream cp_stream;             // intra-node copies (V3: cp_stream_intra_node)
   c10::cuda::CUDAStream cp_stream_inter_node;  // remote-node fetches, used iff nnodes > 1
+  // balanced-relay signal aggregation only (compress, nnodes > 1): pure
+  // front-end memops (CUStreamWaitValue64/CUStreamWriteValue64, zero SMs).
+  // Must not ride cp_stream (would couple gateway rounds across local ranks)
+  // nor cp_stream_inter_node (would poison fetch_remote_event, which gates the
+  // GEMM launch).
+  c10::cuda::CUDAStream cp_stream_signal;
   cudaEvent_t ready_event;
   cudaEvent_t fetch_remote_event;
   cudaEvent_t all_gather_event;
@@ -276,6 +282,11 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // Receiver-side duplication is free: multiple GEMM A rows alias one recv row
   // through sorted_gather_index (gather_A is read-only in the kernel).
   const bool a2av_hier_compress_;
+  // FLUX_A2AV_RELAY_IDENTITY=1 (compress, nnodes > 1): disable the balanced
+  // inter-node relay and keep the fixed relay = self assignment (the original
+  // a2av_hier_compress wire, byte-identical) for A/B. The flag changes the
+  // WIRE layout, so it must be set identically on every rank.
+  const bool relay_identity_;
   uint64_t run_id_ = 0;             // epoch value carried by the NVSHMEM signals
   int64_t max_recv_ntokens_ = 0;    // rows of the symmetric recv buffer
   int64_t max_stage_ntokens_ = 0;   // rows of the symmetric gateway staging buffer
@@ -318,6 +329,20 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   torch::Tensor a2av_fwd_idx_;      // i64 [(NN-1) * tokens_per_rank_max * topk + 1]
   int64_t compress_meta_off_ = 0;   // 8-aligned offset of the compress fields in the meta arena
   cudaEvent_t fwd_index_event_ = nullptr;  // forward-index build done (gateway gathers gate)
+  // balanced inter-node relay (compress, nnodes > 1, !relay_identity_): each
+  // round's canonical stream (the node's L union segments, ascending source
+  // local rank) is cut into L near-equal chunks; local relay rank k stages and
+  // wire-puts chunk k to the same-local-rank gateway on the target node. All
+  // chunk boundaries derive from the replicated U matrix, so sender / relay /
+  // gateway / destination agree with zero extra metadata.
+  torch::Tensor a2av_relay_stage_;    // symmetric [max_relay_ntokens_, hidden]
+  torch::Tensor a2av_relay_sig_;      // symmetric u64[(NN-1)*L], slot (dn-1)*L + src_lr
+  torch::Tensor a2av_gw_round_sig_;   // symmetric u64[(NN-1)*L], slot (dn-1)*L + gw_lr
+  torch::Tensor a2av_fwd_cnt_pinned_; // pinned i32 [2, NN-1, L, L]: cnt_in / cnt_before
+  int64_t max_relay_ntokens_ = 0;     // rows of the symmetric relay staging buffer
+  cudaEvent_t fwd_cnt_event_ = nullptr;     // cnt_in/cnt_before D2H done (host reads)
+  cudaEvent_t relay_send_event_ = nullptr;  // relay piece puts issued (GEMM gate)
+  cudaEvent_t signal_done_event_ = nullptr; // dest-side signal aggregation issued
   // FLUX_A2AV_TIMING=1 diagnostics: per-forward segment boundaries on the main stream
   static constexpr int kNumTimingEvents = 6;
   cudaEvent_t timing_events_[kNumTimingEvents] = {};
@@ -387,10 +412,12 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         ep_start(this->ep_nexperts * ep_rank),
         cp_stream(create_cp_stream()),
         cp_stream_inter_node(create_cp_stream()),
+        cp_stream_signal(create_cp_stream()),
         a2av_dispatch_(a2av_dispatch),
         a2av_ring_(a2av_ring),
         a2av_hier_(a2av_hier),
         a2av_hier_compress_(a2av_hier_compress),
+        relay_identity_(get_int_from_env("FLUX_A2AV_RELAY_IDENTITY", 0) != 0),
         // ring_mode barriers are CUDA-IPC based and intra-node only; multi-node
         // must take the NVSHMEM barrier (ring_mode = false)
         group_barrier(this->tp_group, nnodes == 1 && this->tp_group->get_size() > 8) {
@@ -435,6 +462,26 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             nvshmem_create_tensor({this->max_stage_ntokens_, hidden}, input_dtype);
         this->a2av_node_signal_buffer_ =
             nvshmem_create_tensor({nnodes}, at::ScalarType::Long, /*init_zero=*/true);
+        if (a2av_hier_compress && !this->relay_identity_) {
+          // balanced-relay staging: holds MY wire chunks for all NN-1 rounds at
+          // once (piece puts for every round are issued before the first wire
+          // wait — see the deadlock note in a2av_dispatch). Expected load
+          // ~= the node's total outbound / L, i.e. one balanced rank's share.
+          const int64_t L = world_size / nnodes;
+          this->max_relay_ntokens_ = get_int_from_env(
+              "FLUX_A2AV_MAX_RELAY_NTOKENS",
+              (int)std::min<int64_t>(
+                  (int64_t)max_ntokens * topk, tokens_per_rank_max * topk * 2));
+          this->a2av_relay_stage_ =
+              nvshmem_create_tensor({this->max_relay_ntokens_, hidden}, input_dtype);
+          this->a2av_relay_sig_ = nvshmem_create_tensor(
+              {(int64_t)(nnodes - 1) * L}, at::ScalarType::Long, /*init_zero=*/true);
+          this->a2av_gw_round_sig_ = nvshmem_create_tensor(
+              {(int64_t)(nnodes - 1) * L}, at::ScalarType::Long, /*init_zero=*/true);
+          this->a2av_fwd_cnt_pinned_ = torch::empty(
+              {2, (int64_t)nnodes - 1, L, L},
+              torch::TensorOptions(torch::kCPU).dtype(torch::kInt).pinned_memory(true));
+        }
       }
       const int64_t n_copies_max = tokens_per_rank_max * (int64_t)topk * world_size;
       auto opt_cuda_i64 = torch::TensorOptions(torch::kCUDA).dtype(torch::kLong);
@@ -456,16 +503,22 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       const int64_t meta_bytes =
           3 * meta_groups * sizeof(int64_t) + nexperts * sizeof(int64_t) +
           meta_groups * sizeof(int32_t);
-      // compress appends (8-aligned): send-segment offsets i64[nseg] with
-      // nseg = L + NN - 1, plus per-round gateway scratch column offsets
-      // i64[(NN-1) * L]; covered by the same single H2D upload
+      // compress appends (8-aligned): send-segment offsets i64[nseg + 1] with
+      // nseg = L + NN - 1, plus the gateway forward-index column offsets and,
+      // in balanced-relay mode, the canonical source starts and my per-round
+      // window bounds; covered by the same single H2D upload.
+      //   identity: fwd_col_off i64[(NN-1) * L]         (per (round, dst_lr))
+      //   relay:    fwd_col_off i64[(NN-1) * L * L]     (per (round, src_lr, dst_lr))
+      //             + recv_start i64[(NN-1) * L] + win_a i64[NN-1] + win_b i64[NN-1]
       int64_t total_meta_bytes = meta_bytes;
       if (a2av_hier_compress) {
         const int64_t L = world_size / nnodes;
         const int64_t nseg = L + nnodes - 1;
+        const int64_t R = nnodes - 1;
+        const int64_t extra = this->relay_identity_ ? R * L : R * L * L + R * L + 2 * R;
         this->compress_meta_off_ = pad_to(meta_bytes, (int64_t)8);
         total_meta_bytes =
-            this->compress_meta_off_ + (nseg + 1 + (nnodes - 1) * L) * (int64_t)sizeof(int64_t);
+            this->compress_meta_off_ + (nseg + 1 + extra) * (int64_t)sizeof(int64_t);
       }
       this->a2av_meta_pinned_ = torch::empty(
           {total_meta_bytes},
@@ -481,13 +534,22 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         this->a2av_pack_gather_ =
             torch::empty({tokens_per_rank_max * (int64_t)topk + 1}, opt_cuda_i64);
         if (nnodes > 1) {
+          // relay mode grows the index scratch by the extra source-lr axis:
+          //   flag: (round, src_lr, token, dst_lr); idx columns capacity
+          //   Sum_{round, src_lr, dst_lr} u <= (NN-1) * L * T * min(topk, L)
+          // (per-round scratch capacity is unchanged: in-window forwarded rows
+          //  <= window_rows * min(topk, L) <= T * topk)
+          const int64_t src_lrs = this->relay_identity_ ? 1 : L;
+          const int64_t idx_cap = this->relay_identity_
+                                      ? (nnodes - 1) * tokens_per_rank_max * (int64_t)topk
+                                      : (nnodes - 1) * tokens_per_rank_max * L *
+                                            std::min<int64_t>(topk, L);
           this->a2av_fwd_scratch_ = torch::empty(
               {tokens_per_rank_max * (int64_t)topk, hidden},
               torch::TensorOptions(torch::kCUDA).dtype(input_dtype));
           this->a2av_fwd_flag_ = torch::empty(
-              {(nnodes - 1) * tokens_per_rank_max * L + 1}, opt_cuda_i32);
-          this->a2av_fwd_idx_ = torch::empty(
-              {(int64_t)(nnodes - 1) * tokens_per_rank_max * topk + 1}, opt_cuda_i64);
+              {(nnodes - 1) * tokens_per_rank_max * src_lrs * L + 1}, opt_cuda_i32);
+          this->a2av_fwd_idx_ = torch::empty({idx_cap + 1}, opt_cuda_i64);
         }
       }
       if (rank == 0) {
@@ -497,6 +559,11 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         if (this->a2av_stage_buffer_.defined()) {
           sym_mb += (this->a2av_stage_buffer_.nbytes() +
                      this->a2av_node_signal_buffer_.nbytes()) /
+                    1024.0 / 1024.0;
+        }
+        if (this->a2av_relay_stage_.defined()) {
+          sym_mb += (this->a2av_relay_stage_.nbytes() + this->a2av_relay_sig_.nbytes() +
+                     this->a2av_gw_round_sig_.nbytes()) /
                     1024.0 / 1024.0;
         }
         fprintf(
@@ -519,6 +586,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     CUDA_CHECK(cudaEventCreateWithFlags(&this->counts_event_, cudaEventDisableTiming));
     CUDA_CHECK(cudaEventCreateWithFlags(&this->hier_dispatch_event_, cudaEventDisableTiming));
     CUDA_CHECK(cudaEventCreateWithFlags(&this->fwd_index_event_, cudaEventDisableTiming));
+    CUDA_CHECK(cudaEventCreateWithFlags(&this->fwd_cnt_event_, cudaEventDisableTiming));
+    CUDA_CHECK(cudaEventCreateWithFlags(&this->relay_send_event_, cudaEventDisableTiming));
+    CUDA_CHECK(cudaEventCreateWithFlags(&this->signal_done_event_, cudaEventDisableTiming));
     for (int i = 0; i < kNumTimingEvents; i++) {
       CUDA_CHECK(cudaEventCreate(&this->timing_events_[i]));  // timing-capable
     }
@@ -537,11 +607,15 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     CUDA_CHECK(cudaEventDestroy(this->counts_event_));
     CUDA_CHECK(cudaEventDestroy(this->hier_dispatch_event_));
     CUDA_CHECK(cudaEventDestroy(this->fwd_index_event_));
+    CUDA_CHECK(cudaEventDestroy(this->fwd_cnt_event_));
+    CUDA_CHECK(cudaEventDestroy(this->relay_send_event_));
+    CUDA_CHECK(cudaEventDestroy(this->signal_done_event_));
     CUDA_CHECK(cudaEventDestroy(this->all_gather_event));
     CUDA_CHECK(cudaEventDestroy(this->fetch_remote_event));
     CUDA_CHECK(cudaEventDestroy(this->ready_event));
     CUDA_CHECK(cudaStreamDestroy(this->cp_stream));
     CUDA_CHECK(cudaStreamDestroy(this->cp_stream_inter_node));
+    CUDA_CHECK(cudaStreamDestroy(this->cp_stream_signal));
   }
 
  protected:
@@ -676,8 +750,42 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     FLUX_CHECK(!compress || (use_meta && uc_host != nullptr))
         << "a2av_hier_compress requires splits_per_source AND a2av_unique_counts";
     std::vector<int64_t> u_mat, U_mat, recv_off_u, seg_off_h, fwd_col_off_h;
+    // balanced-relay only: canonical starts of the inbound sources per round,
+    // and my per-round staging window [win_a, win_b)
+    std::vector<int64_t> recv_start_h, win_a_h, win_b_h;
     int64_t total_send_rows = 0;
-    torch::Tensor seg_off_dev, fwd_col_off_dev;
+    torch::Tensor seg_off_dev, fwd_col_off_dev, recv_start_dev, win_a_dev, win_b_dev;
+    // ---- balanced-relay partition (compress && !relay_identity_): per round,
+    // the L union segments of a (source node n -> target node m) transfer form
+    // ONE canonical stream (ascending source local rank, token-ascending
+    // interiors — exactly the pack order); it is cut into L near-equal
+    // contiguous chunks and local relay rank k carries chunk k. These lambdas
+    // are the SINGLE source of truth for the partition: sender pieces, relay
+    // wire puts, gateway windows and every capacity check must all derive from
+    // them (any divergent re-derivation silently corrupts wire offsets).
+    // All lazy over U_mat (filled in the compress metadata block below).
+    auto U_of = [&](int n, int sl, int m) -> int64_t {
+      return U_mat[(int64_t)dist_env.local_rank_to_global_rank(sl, n) * dist_env.nnodes + m];
+    };
+    // canonical start of source (n, sl)'s segment in the n -> m stream;
+    // sl == L yields the stream total
+    auto canon_start = [&](int n, int sl, int m) -> int64_t {
+      int64_t acc = 0;
+      for (int s2 = 0; s2 < sl; s2++) {
+        acc += U_of(n, s2, m);
+      }
+      return acc;
+    };
+    // balanced chunk boundary k (k in [0, L]) of the n -> m stream: the first
+    // (total mod L) chunks get one extra row
+    auto chunk_bound = [&](int n, int m, int k) -> int64_t {
+      const int64_t Lb = dist_env.local_world_size;
+      const int64_t total = canon_start(n, (int)Lb, m);
+      return (total / Lb) * k + std::min<int64_t>((int64_t)k, total % Lb);
+    };
+    auto chunk_rows_of = [&](int n, int m, int k) -> int64_t {
+      return chunk_bound(n, m, k + 1) - chunk_bound(n, m, k);
+    };
     this->run_id_ += 1;
     static const bool kTiming = get_int_from_env("FLUX_A2AV_TIMING", 0) != 0;
     if (kTiming) {
@@ -841,28 +949,73 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         }
         total_send_rows = seg_off_h[nseg];
         FLUX_CHECK_LE(total_send_rows, copies_per_rank);
-        // gateway forward-index columns: exact-packed per (round dn, local
-        // dest dl), absolute offsets into a2av_fwd_idx_; the scratch buffer
-        // reuses the per-round-relative offsets each round
-        fwd_col_off_h.assign((size_t)std::max(NN - 1, 0) * L, 0);
-        int64_t facc = 0;
-        for (int dn = 1; dn < NN; dn++) {
-          int s = dist_env.local_rank_to_global_rank(my_lr, (my_node + dn) % NN);
-          for (int dl = 0; dl < L; dl++) {
-            fwd_col_off_h[(dn - 1) * L + dl] = facc;
-            facc += u_mat[(int64_t)s * W + my_node * L + dl];
+        // gateway forward-index columns: exact-packed, absolute offsets into
+        // a2av_fwd_idx_; the scratch buffer reuses per-round-relative (identity)
+        // or host-running-packed (relay) offsets each round.
+        //   identity: one column per (round dn, local dest dl) — the round's
+        //             source is the single same-local-rank rank
+        //   relay:    one column per (round dn, source lr sl, local dest dl) —
+        //             my staging window spans every source lr of the round
+        if (this->relay_identity_ || NN == 1) {
+          fwd_col_off_h.assign((size_t)std::max(NN - 1, 0) * L, 0);
+          int64_t facc = 0;
+          for (int dn = 1; dn < NN; dn++) {
+            int s = dist_env.local_rank_to_global_rank(my_lr, (my_node + dn) % NN);
+            for (int dl = 0; dl < L; dl++) {
+              fwd_col_off_h[(dn - 1) * L + dl] = facc;
+              facc += u_mat[(int64_t)s * W + my_node * L + dl];
+            }
+          }
+          if (NN > 1) {
+            FLUX_CHECK_LT(facc, this->a2av_fwd_idx_.numel());  // last slot = garbage
+          }
+        } else {
+          const int R = NN - 1;
+          fwd_col_off_h.assign((size_t)R * L * L, 0);
+          int64_t facc = 0;
+          for (int dn = 1; dn < NN; dn++) {
+            int ns = (my_node + dn) % NN;
+            for (int sl = 0; sl < L; sl++) {
+              int s = dist_env.local_rank_to_global_rank(sl, ns);
+              for (int dl = 0; dl < L; dl++) {
+                fwd_col_off_h[((size_t)(dn - 1) * L + sl) * L + dl] = facc;
+                facc += u_mat[(int64_t)s * W + my_node * L + dl];
+              }
+            }
+          }
+          FLUX_CHECK_LT(facc, this->a2av_fwd_idx_.numel());  // last slot = garbage
+          // canonical source starts + my staging window per round, for the
+          // window mask of the generalized forward-index build
+          recv_start_h.assign((size_t)R * L, 0);
+          win_a_h.assign(R, 0);
+          win_b_h.assign(R, 0);
+          for (int dn = 1; dn < NN; dn++) {
+            int ns = (my_node + dn) % NN;
+            for (int sl = 0; sl < L; sl++) {
+              recv_start_h[(size_t)(dn - 1) * L + sl] = canon_start(ns, sl, my_node);
+            }
+            win_a_h[dn - 1] = chunk_bound(ns, my_node, my_lr);
+            win_b_h[dn - 1] = chunk_bound(ns, my_node, my_lr + 1);
           }
         }
-        if (NN > 1) {
-          FLUX_CHECK_LT(facc, this->a2av_fwd_idx_.numel());  // last slot = garbage
-        }
-        // stage seg_off + fwd_col_off into the pinned arena (same H2D below)
+        // stage seg_off + the forward tables into the pinned arena (same H2D
+        // below); the relay-only vectors are empty in identity mode
         int64_t *cmp_h = reinterpret_cast<int64_t *>(stage + this->compress_meta_off_);
         for (int64_t i = 0; i <= nseg; i++) {
           cmp_h[i] = seg_off_h[i];
         }
+        size_t coff = (size_t)nseg + 1;
         for (size_t i = 0; i < fwd_col_off_h.size(); i++) {
-          cmp_h[nseg + 1 + i] = fwd_col_off_h[i];
+          cmp_h[coff++] = fwd_col_off_h[i];
+        }
+        for (size_t i = 0; i < recv_start_h.size(); i++) {
+          cmp_h[coff++] = recv_start_h[i];
+        }
+        for (size_t i = 0; i < win_a_h.size(); i++) {
+          cmp_h[coff++] = win_a_h[i];
+        }
+        for (size_t i = 0; i < win_b_h.size(); i++) {
+          cmp_h[coff++] = win_b_h[i];
         }
       }
       CUDA_CHECK(cudaMemcpyAsync(
@@ -887,8 +1040,18 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         seg_off_dev =
             torch::from_blob(dev + this->compress_meta_off_, {nseg}, opt_dev_i64);
         if (NN > 1) {
-          fwd_col_off_dev = torch::from_blob(
-              dev + this->compress_meta_off_ + (nseg + 1) * 8, {(NN - 1) * L}, opt_dev_i64);
+          char *cbase = dev + this->compress_meta_off_ + (nseg + 1) * 8;
+          if (this->relay_identity_) {
+            fwd_col_off_dev = torch::from_blob(cbase, {(NN - 1) * L}, opt_dev_i64);
+          } else {
+            const int64_t R = NN - 1;
+            fwd_col_off_dev = torch::from_blob(cbase, {R * L * L}, opt_dev_i64);
+            recv_start_dev = torch::from_blob(cbase + R * L * L * 8, {R * L}, opt_dev_i64);
+            win_a_dev =
+                torch::from_blob(cbase + (R * L * L + R * L) * 8, {R}, opt_dev_i64);
+            win_b_dev =
+                torch::from_blob(cbase + (R * L * L + R * L + R) * 8, {R}, opt_dev_i64);
+          }
         }
       }
     }
@@ -1002,7 +1165,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     // exclusive rank within the union (ascending token index) == its row in the
     // staged segment; column interiors are ascending token, matching the
     // producer's segment order.
-    if (compress && dist_env.nnodes > 1) {
+    if (compress && dist_env.nnodes > 1 && this->relay_identity_) {
       const int64_t Lc = dist_env.local_world_size;
       const int64_t NNc = dist_env.nnodes;
       const int64_t R = NNc - 1;
@@ -1049,6 +1212,85 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           }
           FLUX_CHECK_EQ(ucnt[r].item<int64_t>(), U_mat[(int64_t)s * NNc + my_node])
               << "a2av compress fwd-union/U mismatch at source " << s;
+        }
+      }
+      CUDA_CHECK(cudaEventRecord(this->fwd_index_event_, stream));
+    } else if (compress && dist_env.nnodes > 1) {
+      // ---- balanced relay: generalized forward-index build. My staging
+      // window [win_a, win_b) of round dn holds a contiguous slice of the
+      // canonical ns -> my_node stream, spanning MULTIPLE source local ranks.
+      // Flags live on (round, src_lr, token, dst_lr); the union position plus
+      // the host canonical start yields each row's canonical position, the
+      // window mask selects my slice, and the stored value is the row's
+      // window-relative staging position. cnt_in / cnt_before (the in-window
+      // and before-window row counts per (round, src_lr, dst_lr)) ride a tiny
+      // async D2H — the host needs them to address the forward puts, since a
+      // window cut inside a source's segment is token-level information.
+      const int64_t Lc = dist_env.local_world_size;
+      const int64_t NNc = dist_env.nnodes;
+      const int64_t R = NNc - 1;
+      const int64_t T = tokens_per_rank;
+      const int64_t my_node = dist_env.node_idx;
+      const int64_t fwd_garbage = this->a2av_fwd_idx_.numel() - 1;
+      auto tl = iota.narrow(0, 0, copies_per_rank).div((int64_t)topk, "floor");
+      // [R, L, cpr]: ALL source local ranks, rounds in gateway arrival order
+      // ns = (my_node + dn) % NN (roll materializes the strided view)
+      auto e_rounds = e_all.view({NNc, Lc, copies_per_rank})
+                          .roll(-(my_node + 1), 0)
+                          .narrow(0, 0, R);
+      auto dl = e_rounds.div(E, "floor").sub_(my_node * Lc);  // local dest, or off-node
+      auto off_node = dl.lt(0).logical_or_(dl.ge(Lc));
+      // flat flag position ((r * L + sl) * T + t) * L + dl
+      auto rsl_base =
+          this->a2av_arange_i64_.narrow(0, 0, R * Lc).view({R, Lc, 1}) * (T * Lc);
+      auto fp = (rsl_base + tl.view({1, 1, copies_per_rank}) * Lc + dl)
+                    .masked_fill_(off_node, R * Lc * T * Lc);
+      auto ff = this->a2av_fwd_flag_.narrow(0, 0, R * Lc * T * Lc + 1);
+      ff.zero_();
+      ff.scatter_(0, fp.reshape(-1), 1);  // garbage slot at R * L * T * L
+      auto flag4d = ff.narrow(0, 0, R * Lc * T * Lc).view({R, Lc, T, Lc});
+      auto uni = std::get<0>(flag4d.max(3));  // union flag per (round, src_lr, token)
+      auto posU = uni.cumsum(2) - uni;        // row within (r, sl)'s union segment
+      auto canon = posU + recv_start_dev.view({R, Lc, 1});  // canonical position
+      auto in_w = canon.ge(win_a_dev.view({R, 1, 1}))
+                      .logical_and_(canon.lt(win_b_dev.view({R, 1, 1})));
+      auto below = canon.lt(win_a_dev.view({R, 1, 1}));
+      auto valid = flag4d * in_w.unsqueeze(3);  // needed by dl AND inside my window
+      auto pos = valid.cumsum(2) - valid;       // in-window rank within (r, sl, dl)
+      auto tgt = (pos + fwd_col_off_dev.view({R, Lc, 1, Lc}))
+                     .masked_fill_(valid.eq(0), fwd_garbage);
+      // stored value = window-relative staging row
+      auto vals = (canon - win_a_dev.view({R, 1, 1})).unsqueeze(3).expand({R, Lc, T, Lc});
+      this->a2av_fwd_idx_.scatter_(0, tgt.reshape(-1), vals.reshape(-1));
+      auto cnt_in = valid.sum(2);                          // [R, L, L]
+      auto cnt_before = (flag4d * below.unsqueeze(3)).sum(2);  // [R, L, L]
+      this->a2av_fwd_cnt_pinned_.select(0, 0).copy_(cnt_in.to(torch::kInt), true);
+      this->a2av_fwd_cnt_pinned_.select(0, 1).copy_(cnt_before.to(torch::kInt), true);
+      CUDA_CHECK(cudaEventRecord(this->fwd_cnt_event_, stream));
+      static const bool kCheckCompressFwd =
+          get_int_from_env("FLUX_A2AV_CHECK_COMPRESS", 0) != 0;
+      if (kCheckCompressFwd) {
+        // debug only (may sync): flag counts must reproduce the host metadata,
+        // and the window split must tile each u column exactly
+        auto cnt = flag4d.sum(2).cpu();  // [R, L, L] == u[(ns, sl)][my node dests]
+        auto ucnt = uni.sum(2).cpu();    // [R, L]    == U[(ns, sl)][my_node]
+        auto cin = cnt_in.cpu();
+        auto cbef = cnt_before.cpu();
+        for (int64_t r = 0; r < R; r++) {
+          int ns = (int)((my_node + r + 1) % NNc);
+          for (int64_t sl = 0; sl < Lc; sl++) {
+            int s = dist_env.local_rank_to_global_rank((int)sl, ns);
+            for (int64_t dlv = 0; dlv < Lc; dlv++) {
+              int64_t uv = u_mat[(int64_t)s * W + my_node * Lc + dlv];
+              FLUX_CHECK_EQ(cnt[r][sl][dlv].item<int64_t>(), uv)
+                  << "a2av relay fwd-flag/u mismatch at (" << s << ", " << dlv << ")";
+              FLUX_CHECK_LE(
+                  cbef[r][sl][dlv].item<int64_t>() + cin[r][sl][dlv].item<int64_t>(), uv)
+                  << "a2av relay window split out of range at (" << s << ", " << dlv << ")";
+            }
+            FLUX_CHECK_EQ(ucnt[r][sl].item<int64_t>(), U_mat[(int64_t)s * NNc + my_node])
+                << "a2av relay fwd-union/U mismatch at source " << s;
+          }
         }
       }
       CUDA_CHECK(cudaEventRecord(this->fwd_index_event_, stream));
@@ -1341,7 +1583,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       };
       // my-node send segment for local destination dlg (see the pack)
       auto send_seg_off = [&](int dlg) -> int64_t { return seg_off_h[my_node + dlg]; };
-      if (NN > 1) {
+      if (NN > 1 && this->relay_identity_) {
         // staging overflow check before any inter-node wire; same expression on
         // every rank -> collective failure (no one-rank hang)
         int64_t max_stage_rows = 0;
@@ -1359,6 +1601,32 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         }
         FLUX_CHECK_LE(max_stage_rows, this->max_stage_ntokens_)
             << "a2av_hier_compress staging overflow; raise FLUX_A2AV_MAX_STAGE_NTOKENS";
+      } else if (NN > 1) {
+        // balanced relay: gateway staging holds balanced chunks and the relay
+        // staging holds my chunks of every outbound round; both bounds are
+        // pure functions of the replicated U matrix -> collective failure
+        int64_t max_stage_rows = 0, max_relay_rows = 0;
+        for (int n = 0; n < NN; n++) {
+          for (int k = 0; k < L; k++) {
+            int64_t srows = 0;
+            for (int ns = 0; ns < NN; ns++) {
+              if (ns == n) {
+                continue;
+              }
+              srows += chunk_rows_of(ns, n, k);
+            }
+            max_stage_rows = std::max(max_stage_rows, srows);
+            int64_t rrows = 0;
+            for (int dn = 1; dn < NN; dn++) {
+              rrows += chunk_rows_of(n, (n - dn + NN) % NN, k);
+            }
+            max_relay_rows = std::max(max_relay_rows, rrows);
+          }
+        }
+        FLUX_CHECK_LE(max_stage_rows, this->max_stage_ntokens_)
+            << "a2av_hier_compress staging overflow; raise FLUX_A2AV_MAX_STAGE_NTOKENS";
+        FLUX_CHECK_LE(max_relay_rows, this->max_relay_ntokens_)
+            << "a2av relay staging overflow; raise FLUX_A2AV_MAX_RELAY_NTOKENS";
       }
       // round 0: intra-node direct puts of the dedup segments, mirror local order
       for (int dl = 1; dl < L; dl++) {
@@ -1386,97 +1654,377 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             reinterpret_cast<uint64_t *>(this->a2av_node_signal_buffer_.data_ptr());
         char *stage_base = reinterpret_cast<char *>(this->a2av_stage_buffer_.data_ptr());
         char *scratch_base = reinterpret_cast<char *>(this->a2av_fwd_scratch_.data_ptr());
-        // inter-node union aggregates, mirror node order; arrival signal slot =
-        // source node, value = epoch. Empty aggregates still signal.
-        for (int dn = 1; dn < NN; dn++) {
-          int tn = (my_node - dn + NN) % NN;
-          int g = dist_env.local_rank_to_global_rank(my_lr, tn);
-          int64_t rows = U_at(rank, tn);
-          int seg = tn < my_node ? tn : tn + L - 1;
-          if (rows > 0) {
+        if (this->relay_identity_) {
+          // inter-node union aggregates, mirror node order; arrival signal slot =
+          // source node, value = epoch. Empty aggregates still signal.
+          for (int dn = 1; dn < NN; dn++) {
+            int tn = (my_node - dn + NN) % NN;
+            int g = dist_env.local_rank_to_global_rank(my_lr, tn);
+            int64_t rows = U_at(rank, tn);
+            int seg = tn < my_node ? tn : tn + L - 1;
+            if (rows > 0) {
+              nvshmemx_putmem_signal_nbi_on_stream(
+                  stage_base + stage_off_u(tn, my_lr, my_node) * row_bytes,
+                  send_base + seg_off_h[seg] * row_bytes,
+                  rows * row_bytes,
+                  node_sig + my_node,
+                  this->run_id_,
+                  NVSHMEM_SIGNAL_SET,
+                  g,
+                  this->cp_stream_inter_node);
+            } else {
+              nvshmemx_signal_op_on_stream(
+                  node_sig + my_node,
+                  this->run_id_,
+                  NVSHMEM_SIGNAL_SET,
+                  g,
+                  this->cp_stream_inter_node);
+            }
+          }
+          // gateway rounds: per-round front-end wait (cuStreamWaitValue64, zero
+          // SMs), then gather each local destination's exact subset out of the
+          // staged union. The index_selects run on cp_stream (stream guard); they
+          // wait on fwd_index_event_ so the index build (main stream) is done.
+          CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream, this->fwd_index_event_));
+          {
+            c10::cuda::CUDAStreamGuard guard(this->cp_stream);
+            auto opt_in = torch::TensorOptions(torch::kCUDA).dtype(this->input_dtype);
+            for (int dn = 1; dn < NN; dn++) {
+              int ns = (my_node + dn) % NN;
+              int s = dist_env.local_rank_to_global_rank(my_lr, ns);
+              CU_CHECK(CUStreamWaitValue64(
+                  this->cp_stream,
+                  reinterpret_cast<CUdeviceptr>(node_sig + ns),
+                  this->run_id_,
+                  CU_STREAM_WAIT_VALUE_GEQ));
+              int64_t union_rows = U_at(s, my_node);
+              auto stage_seg = torch::from_blob(
+                  stage_base + stage_off_u(my_node, my_lr, ns) * row_bytes,
+                  {std::max<int64_t>(union_rows, 1), (int64_t)hidden},
+                  opt_in);
+              const int64_t round_base = fwd_col_off_h[(dn - 1) * L];
+              // forward in mirror local order (same stage slots as a2av_hier)
+              for (int dl = 0; dl < L; dl++) {
+                int dlg = (my_lr - dl + L) % L;
+                int d = dist_env.local_rank_to_global_rank(dlg, my_node);
+                int64_t rows = u_at(s, d);
+                if (rows == 0) {
+                  nvshmemx_signal_op_on_stream(
+                      signal_base + s, this->run_id_, NVSHMEM_SIGNAL_SET, d, this->cp_stream);
+                  continue;
+                }
+                auto idx = this->a2av_fwd_idx_.narrow(0, fwd_col_off_h[(dn - 1) * L + dlg], rows);
+                if (d == rank) {
+                  // gateway's own subset: gather straight into the recv region
+                  auto dst = torch::from_blob(
+                      recv_base + recv_off_of_u(s, rank) * row_bytes,
+                      {rows, (int64_t)hidden},
+                      opt_in);
+                  at::index_select_out(dst, stage_seg, 0, idx);
+                  nvshmemx_signal_op_on_stream(
+                      signal_base + s, this->run_id_, NVSHMEM_SIGNAL_SET, rank, this->cp_stream);
+                } else {
+                  // round-relative offsets: the gateway's own (d == rank) column
+                  // leaves a hole in the scratch — harmless capacity slack, the
+                  // per-round total is still <= copies_per_rank
+                  const int64_t scratch_off = fwd_col_off_h[(dn - 1) * L + dlg] - round_base;
+                  auto dst = torch::from_blob(
+                      scratch_base + scratch_off * row_bytes, {rows, (int64_t)hidden}, opt_in);
+                  at::index_select_out(dst, stage_seg, 0, idx);
+                  // NON-nbi on purpose: the scratch is refilled next round, and
+                  // nbi gives no local-completion guarantee
+                  nvshmemx_putmem_signal_on_stream(
+                      recv_base + recv_off_of_u(s, d) * row_bytes,
+                      scratch_base + scratch_off * row_bytes,
+                      rows * row_bytes,
+                      signal_base + s,
+                      this->run_id_,
+                      NVSHMEM_SIGNAL_SET,
+                      d,
+                      this->cp_stream);
+                }
+              }
+            }
+          }
+        } else {
+          // ==== balanced inter-node relay ====
+          // Per round, the node's L union segments form one canonical stream
+          // (ascending source local rank; token-ascending interiors) cut into
+          // L near-equal chunks by chunk_bound(). Relay rank k stages chunk k
+          // (intra-node pieces pushed by the owning sources) and wire-puts it
+          // to the same-local-rank gateway on the target node, so every rank's
+          // per-round wire bytes are ceil(total / L) instead of U[rank][tn].
+          char *relay_base = reinterpret_cast<char *>(this->a2av_relay_stage_.data_ptr());
+          uint64_t *relay_sig = reinterpret_cast<uint64_t *>(this->a2av_relay_sig_.data_ptr());
+          uint64_t *gw_sig = reinterpret_cast<uint64_t *>(this->a2av_gw_round_sig_.data_ptr());
+          // staging offset of the round chunk from source node ns at gateway
+          // (gnode, glr): chunks exact-packed ascending by source node,
+          // gateway's own node skipped (chunk analogue of stage_off_u)
+          auto stage_off_chunk = [&](int gnode, int glr, int ns) -> int64_t {
+            int64_t acc = 0;
+            for (int n = 0; n < ns; n++) {
+              if (n == gnode) {
+                continue;
+              }
+              acc += chunk_rows_of(n, gnode, glr);
+            }
+            return acc;
+          };
+          // relay rank k's staging base for round dn: my chunks packed
+          // ascending by round (ALL rounds staged at once, see below)
+          auto relay_round_base = [&](int k, int dn) -> int64_t {
+            int64_t acc = 0;
+            for (int d2 = 1; d2 < dn; d2++) {
+              acc += chunk_rows_of(my_node, (my_node - d2 + NN) % NN, k);
+            }
+            return acc;
+          };
+          // my segment's canonical range and send-buffer base in round dn
+          auto my_seg_base = [&](int tn) -> int64_t {
+            int seg = tn < my_node ? tn : tn + L - 1;
+            return seg_off_h[seg];
+          };
+
+          // ---- phase 1: ALL piece transfers for ALL rounds, before any wire
+          // wait. DEADLOCK RULE: piece puts depend only on the local pack
+          // (ready_event), never on a wait — interleaving them with the wire
+          // rounds would create a cross-rank wait cycle. Zero-overlap pairs
+          // are skipped entirely on both sides (no signal, no wait).
+          for (int dn = 1; dn < NN; dn++) {
+            int tn = (my_node - dn + NN) % NN;
+            const int64_t sstart = canon_start(my_node, my_lr, tn);
+            const int64_t send = sstart + U_at(rank, tn);
+            for (int k = 0; k < L; k++) {
+              const int64_t a_k = chunk_bound(my_node, tn, k);
+              const int64_t b_k = chunk_bound(my_node, tn, k + 1);
+              const int64_t lo = std::max(a_k, sstart);
+              const int64_t hi = std::min(b_k, send);
+              if (hi <= lo) {
+                continue;
+              }
+              if (k == my_lr && a_k >= sstart && b_k <= send) {
+                // single-source fast path: my chunk lives entirely in my own
+                // segment — the wire loop puts it straight from the send
+                // buffer, no staging hop (must mirror own_only below)
+                continue;
+              }
+              char *src = send_base + (my_seg_base(tn) + (lo - sstart)) * row_bytes;
+              if (k == my_lr) {
+                CUDA_CHECK(cudaMemcpyAsync(
+                    relay_base + (relay_round_base(k, dn) + (lo - a_k)) * row_bytes,
+                    src,
+                    (hi - lo) * row_bytes,
+                    cudaMemcpyDeviceToDevice,
+                    this->cp_stream_inter_node));
+              } else {
+                int rk = dist_env.local_rank_to_global_rank(k, my_node);
+                nvshmemx_putmem_signal_nbi_on_stream(
+                    relay_base + (relay_round_base(k, dn) + (lo - a_k)) * row_bytes,
+                    src,
+                    (hi - lo) * row_bytes,
+                    relay_sig + (dn - 1) * L + my_lr,
+                    this->run_id_,
+                    NVSHMEM_SIGNAL_SET,
+                    rk,
+                    this->cp_stream_inter_node);
+              }
+            }
+          }
+          // GEMM gate: piece puts are issued (pure local nbi work); the wire
+          // loop below contains cross-rank front-end waits and must NOT gate
+          // the GEMM launch (forward_impl waits on this instead of
+          // fetch_remote_event in relay mode)
+          CUDA_CHECK(cudaEventRecord(this->relay_send_event_, this->cp_stream_inter_node));
+
+          // ---- phase 2: wire loop, mirror node order. One contiguous put of
+          // my chunk per round; node_sig keeps its single-writer-per-slot
+          // semantics (the round's chunk k comes only from relay (ns, k)).
+          for (int dn = 1; dn < NN; dn++) {
+            int tn = (my_node - dn + NN) % NN;
+            int g = dist_env.local_rank_to_global_rank(my_lr, tn);
+            const int64_t a_me = chunk_bound(my_node, tn, my_lr);
+            const int64_t b_me = chunk_bound(my_node, tn, my_lr + 1);
+            const int64_t rows = b_me - a_me;
+            if (rows == 0) {
+              nvshmemx_signal_op_on_stream(
+                  node_sig + my_node,
+                  this->run_id_,
+                  NVSHMEM_SIGNAL_SET,
+                  g,
+                  this->cp_stream_inter_node);
+              continue;
+            }
+            const int64_t sstart = canon_start(my_node, my_lr, tn);
+            const int64_t send = sstart + U_at(rank, tn);
+            const bool own_only = a_me >= sstart && b_me <= send;
+            char *wire_src;
+            if (own_only) {
+              wire_src = send_base + (my_seg_base(tn) + (a_me - sstart)) * row_bytes;
+            } else {
+              // front-end waits (zero SMs) for every remote contributor of my
+              // chunk; the host knows the contributor set from U
+              for (int sl = 0; sl < L; sl++) {
+                if (sl == my_lr) {
+                  continue;
+                }
+                const int64_t c0 = canon_start(my_node, sl, tn);
+                const int64_t c1 = c0 + U_of(my_node, sl, tn);
+                if (std::min(b_me, c1) > std::max(a_me, c0)) {
+                  CU_CHECK(CUStreamWaitValue64(
+                      this->cp_stream_inter_node,
+                      reinterpret_cast<CUdeviceptr>(relay_sig + (dn - 1) * L + sl),
+                      this->run_id_,
+                      CU_STREAM_WAIT_VALUE_GEQ));
+                }
+              }
+              wire_src = relay_base + relay_round_base(my_lr, dn) * row_bytes;
+            }
             nvshmemx_putmem_signal_nbi_on_stream(
-                stage_base + stage_off_u(tn, my_lr, my_node) * row_bytes,
-                send_base + seg_off_h[seg] * row_bytes,
+                stage_base + stage_off_chunk(tn, my_lr, my_node) * row_bytes,
+                wire_src,
                 rows * row_bytes,
                 node_sig + my_node,
                 this->run_id_,
                 NVSHMEM_SIGNAL_SET,
                 g,
                 this->cp_stream_inter_node);
-          } else {
-            nvshmemx_signal_op_on_stream(
-                node_sig + my_node,
-                this->run_id_,
-                NVSHMEM_SIGNAL_SET,
-                g,
-                this->cp_stream_inter_node);
           }
-        }
-        // gateway rounds: per-round front-end wait (cuStreamWaitValue64, zero
-        // SMs), then gather each local destination's exact subset out of the
-        // staged union. The index_selects run on cp_stream (stream guard); they
-        // wait on fwd_index_event_ so the index build (main stream) is done.
-        CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream, this->fwd_index_event_));
-        {
-          c10::cuda::CUDAStreamGuard guard(this->cp_stream);
-          auto opt_in = torch::TensorOptions(torch::kCUDA).dtype(this->input_dtype);
-          for (int dn = 1; dn < NN; dn++) {
-            int ns = (my_node + dn) % NN;
-            int s = dist_env.local_rank_to_global_rank(my_lr, ns);
-            CU_CHECK(CUStreamWaitValue64(
-                this->cp_stream,
-                reinterpret_cast<CUdeviceptr>(node_sig + ns),
-                this->run_id_,
-                CU_STREAM_WAIT_VALUE_GEQ));
-            int64_t union_rows = U_at(s, my_node);
-            auto stage_seg = torch::from_blob(
-                stage_base + stage_off_u(my_node, my_lr, ns) * row_bytes,
-                {std::max<int64_t>(union_rows, 1), (int64_t)hidden},
-                opt_in);
-            const int64_t round_base = fwd_col_off_h[(dn - 1) * L];
-            // forward in mirror local order (same stage slots as a2av_hier)
-            for (int dl = 0; dl < L; dl++) {
-              int dlg = (my_lr - dl + L) % L;
-              int d = dist_env.local_rank_to_global_rank(dlg, my_node);
-              int64_t rows = u_at(s, d);
-              if (rows == 0) {
-                nvshmemx_signal_op_on_stream(
-                    signal_base + s, this->run_id_, NVSHMEM_SIGNAL_SET, d, this->cp_stream);
-                continue;
-              }
-              auto idx =
-                  this->a2av_fwd_idx_.narrow(0, fwd_col_off_h[(dn - 1) * L + dlg], rows);
-              if (d == rank) {
-                // gateway's own subset: gather straight into the recv region
-                auto dst = torch::from_blob(
-                    recv_base + recv_off_of_u(s, rank) * row_bytes,
-                    {rows, (int64_t)hidden},
-                    opt_in);
-                at::index_select_out(dst, stage_seg, 0, idx);
-                nvshmemx_signal_op_on_stream(
-                    signal_base + s, this->run_id_, NVSHMEM_SIGNAL_SET, rank, this->cp_stream);
-              } else {
-                // round-relative offsets: the gateway's own (d == rank) column
-                // leaves a hole in the scratch — harmless capacity slack, the
-                // per-round total is still <= copies_per_rank
-                const int64_t scratch_off = fwd_col_off_h[(dn - 1) * L + dlg] - round_base;
-                auto dst = torch::from_blob(
-                    scratch_base + scratch_off * row_bytes, {rows, (int64_t)hidden}, opt_in);
-                at::index_select_out(dst, stage_seg, 0, idx);
-                // NON-nbi on purpose: the scratch is refilled next round, and
-                // nbi gives no local-completion guarantee
-                nvshmemx_putmem_signal_on_stream(
-                    recv_base + recv_off_of_u(s, d) * row_bytes,
-                    scratch_base + scratch_off * row_bytes,
-                    rows * row_bytes,
-                    signal_base + s,
-                    this->run_id_,
-                    NVSHMEM_SIGNAL_SET,
-                    d,
-                    this->cp_stream);
+
+          // ---- host sync on the tiny cnt_in/cnt_before D2H: placed AFTER the
+          // wire issue and immediately before its only consumer (the gateway
+          // loop). The fwd build precedes stage 2 on the main stream, so in
+          // steady state this returns almost immediately (precedent: the
+          // no-metadata counts sync above).
+          CUDA_CHECK(cudaEventSynchronize(this->fwd_cnt_event_));
+          const int32_t *cnt_in_h = this->a2av_fwd_cnt_pinned_.data_ptr<int32_t>();
+          const int32_t *cnt_bef_h = cnt_in_h + (int64_t)(NN - 1) * L * L;
+
+          // ---- gateway rounds: per-round front-end wait, then gather each
+          // (source lr, local dest) piece of my staging window. A window cut
+          // inside a source's segment splits its (s, d) recv region across
+          // gateways: my slice is contiguous and lands at
+          // recv_off_of_u(s, d) + cnt_before (both host-known after the sync).
+          CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream, this->fwd_index_event_));
+          {
+            c10::cuda::CUDAStreamGuard guard(this->cp_stream);
+            auto opt_in = torch::TensorOptions(torch::kCUDA).dtype(this->input_dtype);
+            for (int dn = 1; dn < NN; dn++) {
+              int ns = (my_node + dn) % NN;
+              CU_CHECK(CUStreamWaitValue64(
+                  this->cp_stream,
+                  reinterpret_cast<CUdeviceptr>(node_sig + ns),
+                  this->run_id_,
+                  CU_STREAM_WAIT_VALUE_GEQ));
+              const int64_t win_rows = chunk_rows_of(ns, my_node, my_lr);
+              auto stage_seg = torch::from_blob(
+                  stage_base + stage_off_chunk(my_node, my_lr, ns) * row_bytes,
+                  {std::max<int64_t>(win_rows, 1), (int64_t)hidden},
+                  opt_in);
+              int64_t sc = 0;  // per-round scratch rows, host running-packed
+              for (int dl = 0; dl < L; dl++) {
+                int dlg = (my_lr - dl + L) % L;
+                int d = dist_env.local_rank_to_global_rank(dlg, my_node);
+                int last_sl = -1;
+                for (int sl = 0; sl < L; sl++) {
+                  if (cnt_in_h[((int64_t)(dn - 1) * L + sl) * L + dlg] > 0) {
+                    last_sl = sl;
+                  }
+                }
+                if (last_sl < 0) {
+                  // nothing of my window goes to d this round; still signal
+                  // (the destination aggregation waits on every gateway slot)
+                  nvshmemx_signal_op_on_stream(
+                      gw_sig + (dn - 1) * L + my_lr,
+                      this->run_id_,
+                      NVSHMEM_SIGNAL_SET,
+                      d,
+                      this->cp_stream);
+                  continue;
+                }
+                for (int sl = 0; sl < L; sl++) {
+                  const int64_t cnt = cnt_in_h[((int64_t)(dn - 1) * L + sl) * L + dlg];
+                  if (cnt == 0) {
+                    continue;
+                  }
+                  int s = dist_env.local_rank_to_global_rank(sl, ns);
+                  auto idx = this->a2av_fwd_idx_.narrow(
+                      0, fwd_col_off_h[((size_t)(dn - 1) * L + sl) * L + dlg], cnt);
+                  const int64_t dst_off = recv_off_of_u(s, d) +
+                                          cnt_bef_h[((int64_t)(dn - 1) * L + sl) * L + dlg];
+                  if (d == rank) {
+                    auto dst = torch::from_blob(
+                        recv_base + dst_off * row_bytes, {cnt, (int64_t)hidden}, opt_in);
+                    at::index_select_out(dst, stage_seg, 0, idx);
+                  } else {
+                    FLUX_CHECK_LE(sc + cnt, copies_per_rank)
+                        << "a2av relay forward scratch overflow";
+                    auto dst = torch::from_blob(
+                        scratch_base + sc * row_bytes, {cnt, (int64_t)hidden}, opt_in);
+                    at::index_select_out(dst, stage_seg, 0, idx);
+                    if (sl == last_sl) {
+                      // NON-nbi (the scratch is refilled next round) with the
+                      // per-round gateway signal fused on the LAST piece:
+                      // intra-node on-stream puts to the same peer land in
+                      // stream order (P2P copies), so the signal covers the
+                      // earlier pieces too
+                      nvshmemx_putmem_signal_on_stream(
+                          recv_base + dst_off * row_bytes,
+                          scratch_base + sc * row_bytes,
+                          cnt * row_bytes,
+                          gw_sig + (dn - 1) * L + my_lr,
+                          this->run_id_,
+                          NVSHMEM_SIGNAL_SET,
+                          d,
+                          this->cp_stream);
+                    } else {
+                      nvshmemx_putmem_on_stream(
+                          recv_base + dst_off * row_bytes,
+                          scratch_base + sc * row_bytes,
+                          cnt * row_bytes,
+                          d,
+                          this->cp_stream);
+                    }
+                    sc += cnt;
+                  }
+                }
+                if (d == rank) {
+                  nvshmemx_signal_op_on_stream(
+                      gw_sig + (dn - 1) * L + my_lr,
+                      this->run_id_,
+                      NVSHMEM_SIGNAL_SET,
+                      rank,
+                      this->cp_stream);
+                }
               }
             }
           }
+
+          // ---- destination-side signal aggregation (cp_stream_signal, pure
+          // front-end memops): a source's (s, d) rows may now arrive via
+          // several gateways, so the per-source epoch signals the GEMM spins
+          // on get ONE writer again — me. Once all L gateway slots of a round
+          // reach the epoch, every source of that node is fully delivered
+          // (putmem_signal orders payload before signal), so write signal[s]
+          // for ALL its sources, zero-traffic ones included.
+          for (int dn = 1; dn < NN; dn++) {
+            int ns = (my_node + dn) % NN;
+            for (int gl = 0; gl < L; gl++) {
+              CU_CHECK(CUStreamWaitValue64(
+                  this->cp_stream_signal,
+                  reinterpret_cast<CUdeviceptr>(gw_sig + (dn - 1) * L + gl),
+                  this->run_id_,
+                  CU_STREAM_WAIT_VALUE_GEQ));
+            }
+            for (int sl = 0; sl < L; sl++) {
+              int s = dist_env.local_rank_to_global_rank(sl, ns);
+              CU_CHECK(CUStreamWriteValue64(
+                  this->cp_stream_signal,
+                  reinterpret_cast<CUdeviceptr>(signal_base + s),
+                  this->run_id_,
+                  CU_STREAM_WRITE_VALUE_DEFAULT));
+            }
+          }
+          CUDA_CHECK(cudaEventRecord(this->signal_done_event_, this->cp_stream_signal));
         }
       }
     } else if (a2av_hier_) {
@@ -1967,7 +2515,14 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         // CE puts (zero SMs); compress additionally runs index_select gathers,
         // which need the SMs kept free by the enforced sm_margin >= 1
         CUDA_CHECK(cudaStreamWaitEvent(stream, this->hier_dispatch_event_));
-        CUDA_CHECK(cudaStreamWaitEvent(stream, this->fetch_remote_event));
+        if (a2av_hier_compress_ && nnodes > 1 && !relay_identity_) {
+          // balanced relay: the wire loop carries cross-rank front-end waits,
+          // so fetch_remote_event would gate the GEMM on peers' packs; gate on
+          // the relay piece puts instead (pure local nbi work)
+          CUDA_CHECK(cudaStreamWaitEvent(stream, this->relay_send_event_));
+        } else {
+          CUDA_CHECK(cudaStreamWaitEvent(stream, this->fetch_remote_event));
+        }
       } else {
         // do not start the (SM-occupying) GEMM before all puts/signals are issued;
         // in ring mode the intra-node puts live on cp_stream, which all_gather_event
@@ -1995,6 +2550,12 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       CUDA_CHECK(cudaEventRecord(this->timing_events_[4], stream));
     }
     CUDA_CHECK(cudaStreamWaitEvent(stream, this->all_gather_event));
+    if (a2av_hier_compress_ && nnodes > 1 && !relay_identity_) {
+      // fold the signal-aggregation stream into the epoch: its front-end ops
+      // must complete before the barrier closes this iteration (the GEMM
+      // transitively drains it, but keep the ordering explicit)
+      CUDA_CHECK(cudaStreamWaitEvent(stream, this->signal_done_event_));
+    }
     if (nnodes > 1 || a2av_dispatch_) {
       // ensure that when the next time each rank copy data to itself's shard in the
       // input_buffer, all ranks have already finished allgather so that we can
@@ -2365,10 +2926,11 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     if (nnodes > 1 && this->input_buffer.defined()) {
       this->input_buffer.zero_();
     }
-    // a2av signal buffer (and the hier node arrival signals) are deliberately
-    // NOT cleared: the epoch scheme relies on monotonically increasing signal
-    // values and clearing would corrupt in-flight iterations. Data buffers need
-    // no clearing (rows fully overwritten per use).
+    // a2av signal buffer (and the hier node arrival signals, the relay-in
+    // signals and the per-round gateway signals) are deliberately NOT cleared:
+    // the epoch scheme relies on monotonically increasing signal values and
+    // clearing would corrupt in-flight iterations. Data buffers need no
+    // clearing (rows fully overwritten per use).
   }
 
   torch::Tensor

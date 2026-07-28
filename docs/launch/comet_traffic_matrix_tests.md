@@ -167,6 +167,37 @@ NVSHMEM_SYMMETRIC_SIZE=4G srun --nodes=4 --ntasks-per-node=1 ./launch.sh \
   run the single-node degenerate first (+ `FLUX_A2AV_CHECK_COMPRESS=1`,
   allclose vs torch), then the 4n_16r sweeps above.
 
+### Balanced inter-node relay (default in compress mode; design §12)
+
+Multi-node compress now balances each node's per-round outgoing wire bytes
+across its L ranks at token-row granularity (src -> local relay -> wire ->
+same-lr cross-node relay -> dst); the §11 fixed relay = self scheme remains
+available as `FLUX_A2AV_RELAY_IDENTITY=1`.
+
+- `FLUX_A2AV_RELAY_IDENTITY=1` — byte-identical §11 wire for A/B. Changes the
+  wire layout: set it identically on EVERY rank (it is read at op-construction
+  time).
+- `FLUX_A2AV_MAX_RELAY_NTOKENS` — rows of the new symmetric relay staging
+  buffer (holds all rounds at once, ~ the node's outbound / L; default
+  mirrors the stage default). Checked collectively like the other capacities.
+- Gateway staging demand becomes balanced, so the "inbound node traffic
+  concentrates on one source local rank" case that needed a raised
+  `FLUX_A2AV_MAX_STAGE_NTOKENS` under a2av_hier/identity no longer inflates
+  the requirement in relay mode.
+- The harness prints `a2av relay balance: ... identity X -> balanced Y`: the
+  sum over (node, round) of the worst sender's bytes, i.e. the wire-pace bound
+  the relay removes (`max_lr U` vs `ceil(total/L)` per round).
+- CPU-only validation (no GPU/flux build needed, runs anywhere):
+  `python3 test/python/moe_ag_scatter/test_relay_balance_math.py`
+  — 156 cases: recv identity vs §11 and vs a direct dedup reference, write
+  coverage, window-bounded indices, ≤ 1-row chunk imbalance, zero relocation
+  for uniform U, and deadlock-freedom of the three-stream schedule over two
+  epochs. Run it after any change to the partition or forward-index math.
+- Hardware bring-up order: single-node degenerate (relay inactive, must be
+  unchanged) -> 2n identity vs relay allclose A/B (+
+  `FLUX_A2AV_CHECK_COMPRESS=1`) -> 4n_16r skewed sweeps, timing identity vs
+  relay with the same matrices.
+
 ## Layer0 FAST baseline (un-overlapped: FAST alltoallv + separate grouped GEMM)
 
 `test/python/moe_ag_scatter/test_moe_ag_fast_baseline.py` measures the
