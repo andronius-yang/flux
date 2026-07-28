@@ -287,6 +287,14 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // a2av_hier_compress wire, byte-identical) for A/B. The flag changes the
   // WIRE layout, so it must be set identically on every rank.
   const bool relay_identity_;
+  // FLUX_A2AV_UNION_BCAST=1 (compress, nnodes > 1): the gateway forwards the
+  // WHOLE staged union to every local rank (contiguous nbi puts straight from
+  // the symmetric staging buffer — no gather, no scratch, no sm_margin
+  // requirement) and each receiver aliases its subset out of the U-sized
+  // region through the consumer index. Implies the identity wire (ORs into
+  // relay_identity_). Changes the RECV layout (remote-source regions hold
+  // U[s][n] rows, not u[s][d]), so it must be set identically on every rank.
+  const bool union_bcast_;
   uint64_t run_id_ = 0;             // epoch value carried by the NVSHMEM signals
   int64_t max_recv_ntokens_ = 0;    // rows of the symmetric recv buffer
   int64_t max_stage_ntokens_ = 0;   // rows of the symmetric gateway staging buffer
@@ -417,7 +425,10 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         a2av_ring_(a2av_ring),
         a2av_hier_(a2av_hier),
         a2av_hier_compress_(a2av_hier_compress),
-        relay_identity_(get_int_from_env("FLUX_A2AV_RELAY_IDENTITY", 0) != 0),
+        relay_identity_(
+            get_int_from_env("FLUX_A2AV_RELAY_IDENTITY", 0) != 0 ||
+            get_int_from_env("FLUX_A2AV_UNION_BCAST", 0) != 0),
+        union_bcast_(get_int_from_env("FLUX_A2AV_UNION_BCAST", 0) != 0),
         // ring_mode barriers are CUDA-IPC based and intra-node only; multi-node
         // must take the NVSHMEM barrier (ring_mode = false)
         group_barrier(this->tp_group, nnodes == 1 && this->tp_group->get_size() > 8) {
@@ -515,7 +526,10 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         const int64_t L = world_size / nnodes;
         const int64_t nseg = L + nnodes - 1;
         const int64_t R = nnodes - 1;
-        const int64_t extra = this->relay_identity_ ? R * L : R * L * L + R * L + 2 * R;
+        // union bcast forwards whole unions: no forward-index tables at all
+        const int64_t extra = this->union_bcast_
+                                  ? 0
+                                  : (this->relay_identity_ ? R * L : R * L * L + R * L + 2 * R);
         this->compress_meta_off_ = pad_to(meta_bytes, (int64_t)8);
         total_meta_bytes =
             this->compress_meta_off_ + (nseg + 1 + extra) * (int64_t)sizeof(int64_t);
@@ -533,12 +547,14 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         this->a2av_pack_flag_ = torch::empty({tokens_per_rank_max * nseg}, opt_cuda_i32);
         this->a2av_pack_gather_ =
             torch::empty({tokens_per_rank_max * (int64_t)topk + 1}, opt_cuda_i64);
-        if (nnodes > 1) {
+        if (nnodes > 1 && !this->union_bcast_) {
           // relay mode grows the index scratch by the extra source-lr axis:
           //   flag: (round, src_lr, token, dst_lr); idx columns capacity
           //   Sum_{round, src_lr, dst_lr} u <= (NN-1) * L * T * min(topk, L)
           // (per-round scratch capacity is unchanged: in-window forwarded rows
           //  <= window_rows * min(topk, L) <= T * topk)
+          // (union bcast skips all of this: whole-union forwards need no
+          //  gather scratch, flags, or index columns)
           const int64_t src_lrs = this->relay_identity_ ? 1 : L;
           const int64_t idx_cap = this->relay_identity_
                                       ? (nnodes - 1) * tokens_per_rank_max * (int64_t)topk
@@ -916,14 +932,21 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                 << "a2av_unique_counts node union out of range at (" << s << ", " << n << ")";
           }
         }
-        // dedup recv layout: source-major regions of u[s][d] rows. Overflow
-        // check takes the max over ALL destinations — the same expression on
-        // every rank, so a failure is collective (no one-rank-throws hang).
+        // dedup recv layout: source-major regions of u[s][d] rows — except in
+        // union-bcast mode, where a REMOTE-node source's region holds the whole
+        // U[s][node(d)]-row union (the gateway forwards it verbatim; consumers
+        // alias their subset). Overflow check takes the max over ALL
+        // destinations — the same expression on every rank, so a failure is
+        // collective (no one-rank-throws hang).
+        auto region_rows = [&](int s, int d) -> int64_t {
+          return (this->union_bcast_ && s / L != d / L) ? U_mat[(int64_t)s * NN + d / L]
+                                                        : u_mat[(int64_t)s * W + d];
+        };
         int64_t max_col = 0;
         for (int d = 0; d < W; d++) {
           int64_t col = 0;
           for (int s = 0; s < W; s++) {
-            col += u_mat[s * W + d];
+            col += region_rows(s, d);
           }
           max_col = std::max(max_col, col);
         }
@@ -931,7 +954,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             << "a2av compress recv overflow; raise FLUX_A2AV_MAX_RECV_NTOKENS";
         recv_off_u.assign(W, 0);
         for (int s = 1; s < W; s++) {
-          recv_off_u[s] = recv_off_u[s - 1] + u_mat[(int64_t)(s - 1) * W + rank];
+          recv_off_u[s] = recv_off_u[s - 1] + region_rows(s - 1, rank);
         }
         // compressed send segments: nodes ascending; my node expanded into L
         // per-destination-rank segments (ascending global rank); each remote
@@ -956,7 +979,10 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         //             source is the single same-local-rank rank
         //   relay:    one column per (round dn, source lr sl, local dest dl) —
         //             my staging window spans every source lr of the round
-        if (this->relay_identity_ || NN == 1) {
+        if (this->union_bcast_) {
+          // union bcast: whole-union forwards need no per-destination columns
+          fwd_col_off_h.clear();
+        } else if (this->relay_identity_ || NN == 1) {
           fwd_col_off_h.assign((size_t)std::max(NN - 1, 0) * L, 0);
           int64_t facc = 0;
           for (int dn = 1; dn < NN; dn++) {
@@ -1039,7 +1065,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         const int64_t nseg = L + NN - 1;
         seg_off_dev =
             torch::from_blob(dev + this->compress_meta_off_, {nseg}, opt_dev_i64);
-        if (NN > 1) {
+        if (NN > 1 && !this->union_bcast_) {
           char *cbase = dev + this->compress_meta_off_ + (nseg + 1) * 8;
           if (this->relay_identity_) {
             fwd_col_off_dev = torch::from_blob(cbase, {(NN - 1) * L}, opt_dev_i64);
@@ -1165,7 +1191,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     // exclusive rank within the union (ascending token index) == its row in the
     // staged segment; column interiors are ascending token, matching the
     // producer's segment order.
-    if (compress && dist_env.nnodes > 1 && this->relay_identity_) {
+    if (compress && dist_env.nnodes > 1 && this->relay_identity_ && !this->union_bcast_) {
       const int64_t Lc = dist_env.local_world_size;
       const int64_t NNc = dist_env.nnodes;
       const int64_t R = NNc - 1;
@@ -1215,7 +1241,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         }
       }
       CUDA_CHECK(cudaEventRecord(this->fwd_index_event_, stream));
-    } else if (compress && dist_env.nnodes > 1) {
+    } else if (compress && dist_env.nnodes > 1 && !this->union_bcast_) {
       // ---- balanced relay: generalized forward-index build. My staging
       // window [win_a, win_b) of round dn holds a contiguous slice of the
       // canonical ns -> my_node stream, spanning MULTIPLE source local ranks.
@@ -1330,7 +1356,21 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         auto flat_token = iota.div((int64_t)topk, "floor");  // global token of copy p
         auto mine_n = this->a2av_mine_token_.narrow(0, 0, ntokens + 1);
         mine_n.zero_();
-        mine_n.scatter_(0, flat_token.masked_fill(not_mine, ntokens), 1);
+        // union-bcast recv regions for REMOTE-node sources hold the whole node
+        // union, so their keep-flag is "needed by my node"; same-node sources
+        // keep the exact "needed by me" flag. Tokens stay source-contiguous, so
+        // the one-cumsum identity below holds verbatim over the mixed regions.
+        if (this->union_bcast_ && dist_env.nnodes > 1) {
+          const int64_t Lb = dist_env.local_world_size;
+          const int64_t my_node_b = dist_env.node_idx;
+          auto src_node = s_all.div(Lb, "floor");
+          auto dst_node = e_all.div((int64_t)E * Lb, "floor");
+          auto drop = torch::where(
+              src_node.eq(my_node_b), not_mine, dst_node.ne(my_node_b));
+          mine_n.scatter_(0, flat_token.masked_fill(drop, ntokens), 1);
+        } else {
+          mine_n.scatter_(0, flat_token.masked_fill(not_mine, ntokens), 1);
+        }
         auto c_excl = mine_n.cumsum(0) - mine_n;  // C[t], i64 [ntokens + 1]
         mark(4);
         auto gidx = c_excl.index_select(0, flat_token);
@@ -1361,6 +1401,19 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           auto got = tok_of_row.index_select(
               0, sorted_gather_index.narrow(0, 0, M_this_ep).to(torch::kLong));
           FLUX_CHECK(torch::equal(got, a_tok)) << "a2av compress consumer identity mismatch";
+          if (this->union_bcast_ && dist_env.nnodes > 1 && !u_mat.empty()) {
+            // the inversion above can't see flag <-> wire-offset divergence
+            // (both sides use the same C); assert the flag total against the
+            // host recv layout the gateway puts are addressed with
+            const int64_t Lb = dist_env.local_world_size;
+            const int64_t last = W - 1;
+            const int64_t last_rows = (last / Lb != rank / Lb)
+                                          ? U_mat[last * dist_env.nnodes + rank / Lb]
+                                          : u_mat[last * W + rank];
+            FLUX_CHECK_EQ(
+                c_excl.index({ntokens}).item<int64_t>(), recv_off_u[last] + last_rows)
+                << "a2av bcast consumer flag total != host recv layout";
+          }
         }
         return;
       }
@@ -1573,11 +1626,12 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         }
         return acc;
       };
-      // dedup recv offset of source s's region at destination d
+      // dedup recv offset of source s's region at destination d (bcast mode:
+      // remote-node source regions are U-sized unions, mirroring recv_off_u)
       auto recv_off_of_u = [&](int s, int d) -> int64_t {
         int64_t acc = 0;
         for (int s2 = 0; s2 < s; s2++) {
-          acc += u_at(s2, d);
+          acc += (this->union_bcast_ && s2 / L != d / L) ? U_at(s2, d / L) : u_at(s2, d);
         }
         return acc;
       };
@@ -1653,7 +1707,11 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         uint64_t *node_sig =
             reinterpret_cast<uint64_t *>(this->a2av_node_signal_buffer_.data_ptr());
         char *stage_base = reinterpret_cast<char *>(this->a2av_stage_buffer_.data_ptr());
-        char *scratch_base = reinterpret_cast<char *>(this->a2av_fwd_scratch_.data_ptr());
+        // undefined in union-bcast mode (whole-union forwards need no scratch)
+        char *scratch_base =
+            this->a2av_fwd_scratch_.defined()
+                ? reinterpret_cast<char *>(this->a2av_fwd_scratch_.data_ptr())
+                : nullptr;
         if (this->relay_identity_) {
           // inter-node union aggregates, mirror node order; arrival signal slot =
           // source node, value = epoch. Empty aggregates still signal.
@@ -1681,6 +1739,46 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                   this->cp_stream_inter_node);
             }
           }
+          if (this->union_bcast_) {
+            // union broadcast: per-round front-end wait, then forward the WHOLE
+            // staged union to every local rank (mirror order, self included via
+            // loopback put) as ONE contiguous put per destination — the exact
+            // forward a2av_hier does, just with the union payload. Pure copy
+            // engine: no index build, no gather, no scratch, no SMs. nbi is
+            // safe here because the put source is the symmetric staging buffer,
+            // untouched until the end-of-iteration barrier quiets these puts
+            // (the gather arm's non-nbi constraint is a property of its reused
+            // scratch, which this arm does not have).
+            for (int dn = 1; dn < NN; dn++) {
+              int ns = (my_node + dn) % NN;
+              int s = dist_env.local_rank_to_global_rank(my_lr, ns);
+              CU_CHECK(CUStreamWaitValue64(
+                  this->cp_stream,
+                  reinterpret_cast<CUdeviceptr>(node_sig + ns),
+                  this->run_id_,
+                  CU_STREAM_WAIT_VALUE_GEQ));
+              const int64_t union_rows = U_at(s, my_node);
+              const char *ustage = stage_base + stage_off_u(my_node, my_lr, ns) * row_bytes;
+              for (int dl = 0; dl < L; dl++) {
+                int dlg = (my_lr - dl + L) % L;
+                int d = dist_env.local_rank_to_global_rank(dlg, my_node);
+                if (union_rows > 0) {
+                  nvshmemx_putmem_signal_nbi_on_stream(
+                      recv_base + recv_off_of_u(s, d) * row_bytes,
+                      ustage,
+                      union_rows * row_bytes,
+                      signal_base + s,
+                      this->run_id_,
+                      NVSHMEM_SIGNAL_SET,
+                      d,
+                      this->cp_stream);
+                } else {
+                  nvshmemx_signal_op_on_stream(
+                      signal_base + s, this->run_id_, NVSHMEM_SIGNAL_SET, d, this->cp_stream);
+                }
+              }
+            }
+          } else {
           // gateway rounds: per-round front-end wait (cuStreamWaitValue64, zero
           // SMs), then gather each local destination's exact subset out of the
           // staged union. The index_selects run on cp_stream (stream guard); they
@@ -1745,6 +1843,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                 }
               }
             }
+          }
           }
         } else {
           // ==== balanced inter-node relay ====
@@ -2291,8 +2390,10 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       // the gateway gathers (index_select) need SMs while the GEMM tiles spin
       // on signals only those gathers can produce — a full-occupancy GEMM
       // would deadlock. Reserve at least one SM for the copy engine work.
-      FLUX_CHECK(sm_margin >= 1 || nnodes == 1)
-          << "a2av_hier_compress with nnodes > 1 requires sm_margin >= 1";
+      // Union bcast is exempt: its forwards are pure copy-engine puts.
+      FLUX_CHECK(sm_margin >= 1 || nnodes == 1 || union_bcast_)
+          << "a2av_hier_compress with nnodes > 1 requires sm_margin >= 1 "
+             "(unless FLUX_A2AV_UNION_BCAST=1)";
     }
 
     FLUX_CHECK(!input_scales.has_value());
