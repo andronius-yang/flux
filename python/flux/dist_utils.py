@@ -40,7 +40,10 @@ class DistEnv:
     def setup_deterministic(self, init_seed: int) -> None:
         os.environ["NCCL_DEBUG"] = "ERROR"
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
-        torch.use_deterministic_algorithms(True, warn_only=True)
+        # FLUX_TEST_DETERMINISTIC=0: see flux/testing/utils.py — deterministic
+        # scatter_ serializes (~500x) and dominates the a2av compress paths
+        if os.getenv("FLUX_TEST_DETERMINISTIC", "1") != "0":
+            torch.use_deterministic_algorithms(True, warn_only=True)
         torch.set_printoptions(precision=8)
         seed = init_seed + self.RANK
         torch.manual_seed(seed)
