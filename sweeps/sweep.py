@@ -23,6 +23,7 @@ import json
 import math
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -60,9 +61,13 @@ SPEC_DEFAULTS = {
     "matrix_instance": "001",
     "skip_correctness": False,
     "timeout_s": 900,
+    "idle_timeout_s": 180,  # kill a cell whose logs stop growing for this long
+    "retries": 1,  # re-run stuck/timeout/failed cells this many times at the end
     "extra_env": {},
     "notes": "",
 }
+
+RETRY_STATUSES = ("stuck", "timeout", "failed")
 
 # stderr phase-mark formats from src/moe_ag_scatter/ths_op/gemm_grouped_v2_ag_scatter.cc
 PHASE_PATTERNS = [
@@ -371,22 +376,25 @@ def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
     env = dict(os.environ)
     env.update(env_delta)
     start = time.time()
-    status, exit_code = "ok", 0
+    print(f"[{cell['cell_id']}] start", flush=True)
     with open(os.path.join(staging, "srun.log"), "w") as logf:
         logf.write("+ " + " ".join(cmd) + "\n")
         logf.write("+ env " + json.dumps(env_delta, sort_keys=True) + "\n")
         logf.flush()
-        try:
-            r = subprocess.run(
-                cmd, cwd=REPO_ROOT, env=env, stdout=logf, stderr=subprocess.STDOUT,
-                timeout=spec["timeout_s"],
-            )
-            exit_code = r.returncode
-            if exit_code != 0:
-                status = "failed"
-        except subprocess.TimeoutExpired:
-            status, exit_code = "timeout", None
-            logf.write(f"\n+ TIMEOUT after {spec['timeout_s']}s\n")
+        proc = subprocess.Popen(
+            cmd, cwd=REPO_ROOT, env=env, stdout=logf, stderr=subprocess.STDOUT,
+            start_new_session=True,  # own process group so a kill reaps srun + children
+        )
+        status = _wait_with_watchdog(
+            proc, staging, start, spec["timeout_s"], spec.get("idle_timeout_s")
+        )
+        exit_code = proc.returncode
+        if status == "ok" and exit_code != 0:
+            status = "failed"
+        if status in ("timeout", "stuck"):
+            exit_code = None
+            with open(os.path.join(staging, "srun.log"), "a") as f:
+                f.write(f"\n+ killed by runner: {status}\n")
     if cell["mode"] == "torchprof":
         # flux.group_profile writes chrome traces under cwd prof/
         for d in glob.glob(os.path.join(REPO_ROOT, "prof", "moe_ag_scatter_traffic_*")):
@@ -397,6 +405,49 @@ def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
     return dict(cell, status=status, sm_margin=sm_margin, iters=iters, warmup=warmup,
                 env_delta=env_delta, staging=staging, exit_code=exit_code,
                 start_ts=start, end_ts=time.time())
+
+
+def _latest_mtime(root, floor):
+    latest = floor
+    for dirpath, _, files in os.walk(root):
+        for fn in files:
+            try:
+                latest = max(latest, os.stat(os.path.join(dirpath, fn)).st_mtime)
+            except OSError:
+                pass
+    return latest
+
+
+def _kill_group(proc):
+    for sig, grace in ((signal.SIGTERM, 15), (signal.SIGKILL, 10)):
+        try:
+            os.killpg(os.getpgid(proc.pid), sig)
+        except (ProcessLookupError, PermissionError):
+            return
+        try:
+            proc.wait(timeout=grace)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def _wait_with_watchdog(proc, staging, start, timeout_s, idle_timeout_s):
+    """Wait for the cell; kill it on absolute timeout or when its logs stop
+    growing for idle_timeout_s (hung ranks — e.g. the per-rank recv-overflow
+    FLUX_CHECK leaves the other ranks spinning at 100% GPU forever)."""
+    while True:
+        try:
+            proc.wait(timeout=5)
+            return "ok"
+        except subprocess.TimeoutExpired:
+            pass
+        now = time.time()
+        if timeout_s and now - start > timeout_s:
+            _kill_group(proc)
+            return "timeout"
+        if idle_timeout_s and now - _latest_mtime(staging, start) > idle_timeout_s:
+            _kill_group(proc)
+            return "stuck"
 
 
 def read_records(staging):
@@ -483,7 +534,8 @@ def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, s
                 if cell.get("end_ts")
                 else ""
             ),
-            log_dir=cell.get("staging", ""), notes=spec["notes"],
+            log_dir=cell.get("staging", ""),
+            notes="; ".join(x for x in (spec["notes"], cell.get("cell_note")) if x),
         )
         if cell["status"] in ("ok", "failed", "timeout"):
             metas, iters_rows, info, correctness = read_records(cell["staging"])
@@ -633,6 +685,31 @@ def cmd_run(spec, jobid_arg, dry):
         done.append(
             run_cell(spec, plat, cell, jobid, matrices[cell["cell_id"]], run_dir_staging, dry)
         )
+    # one-shot (spec-configurable) retry of stuck/timeout/failed cells: the old
+    # staging is preserved as <cell>.attemptN for forensics, the retry runs fresh
+    if not dry:
+        for attempt in range(1, int(spec.get("retries") or 0) + 1):
+            bad_idx = [i for i, c in enumerate(done) if c["status"] in RETRY_STATUSES]
+            if not bad_idx:
+                break
+            print(f"\nretry pass {attempt}: {len(bad_idx)} cells", flush=True)
+            for i in bad_idx:
+                old = done[i]
+                if old.get("staging") and os.path.isdir(old["staging"]):
+                    os.rename(old["staging"], f"{old['staging']}.attempt{attempt - 1}")
+                fresh = {
+                    k: old[k]
+                    for k in ("cell_id", "variant", "mode", "family", "family_params",
+                              "budget_mib", "world_size")
+                }
+                redo = run_cell(
+                    spec, plat, fresh, jobid, matrices[old["cell_id"]], run_dir_staging, dry
+                )
+                if redo["status"] == "ok":
+                    redo["cell_note"] = f"recovered on retry {attempt} (was {old['status']})"
+                else:
+                    redo["cell_note"] = f"{old['status']}, retry {attempt}: {redo['status']}"
+                done[i] = redo
     if dry:
         print("\n--dry-run: nothing executed, no capsule written")
         return
@@ -642,6 +719,11 @@ def cmd_run(spec, jobid_arg, dry):
     n_ok = sum(1 for r in cells_rows if r["status"] == "ok")
     print(f"\ncapsule: {capsule}")
     print(f"cells: {n_ok}/{len(cells_rows)} ok, metrics rows: {len(metrics_rows)}")
+    bad = [r for r in cells_rows if r["status"] != "ok"]
+    if bad:
+        print("NON-OK CELLS:")
+        for r in bad:
+            print(f"  {r['cell_id']}: {r['status']}  {r['notes']}")
     print("\nto persist:")
     rel = os.path.relpath(capsule, REPO_ROOT)
     print(f"  git add {rel} && git commit -m 'sweep: {run_id} {spec['notes']}'".rstrip())
