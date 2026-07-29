@@ -119,9 +119,13 @@ def _fmt(v):
     if v is None:
         return "null"
     if isinstance(v, str):
-        if v == "" or v != v.strip() or any(c in v for c in ":#{}[]'\","):
-            return f'"{v}"'
-        return v
+        needs_quote = (
+            v == ""
+            or v != v.strip()
+            or any(c in v for c in ":#{}[]'\",")
+            or _scalar(v) != v  # would re-parse as int/float/bool/null ("001", "yes")
+        )
+        return f'"{v}"' if needs_quote else v
     return str(v)
 
 

@@ -120,6 +120,8 @@ def _row_weights(family, params, s, W, L, rng_derived):
         remote_share = 1.0 - intra_share
         hot_node = rng_derived["hot_node"][node]
         other_remote = W - 2 * L  # remote ranks outside the hot node
+        if other_remote == 0:
+            frac = 1.0  # 2 nodes: the hot node is the only remote node
         for d in range(W):
             if d == s:
                 continue
@@ -152,11 +154,8 @@ def generate(family, params, W, L, budget_mib, topk, chunk_bytes, matrix_instanc
     nn = W // L
     if family in ("nodeskew", "remotefrac"):
         assert nn >= 2, f"family {family} needs >= 2 nodes (W={W}, L={L})"
-    if family == "nodeskew":
-        assert nn >= 3 or W - 2 * L > 0 or float(params["frac"]) == 1.0, (
-            f"nodeskew with {nn} nodes leaves no non-hot remote ranks; use frac=1.0"
-            " or remotefrac instead"
-        )
+        # note: nodeskew with exactly 2 nodes degrades to frac=1.0 (the hot
+        # node is the only remote node) — see _row_weights
 
     budget_bytes = budget_mib * (1 << 20)
     assert budget_bytes % chunk_bytes == 0, (
