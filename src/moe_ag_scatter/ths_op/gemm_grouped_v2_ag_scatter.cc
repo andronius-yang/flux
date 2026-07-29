@@ -348,6 +348,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   cudaEvent_t timing_events_[kNumTimingEvents] = {};
   static constexpr int kNumStage2Events = 11;
   cudaEvent_t stage2_events_[kNumStage2Events] = {};
+  // FLUX_A2AV_TIMING=1, balanced-relay fwd-index build only: op-group boundaries
+  static constexpr int kNumRelayFwdEvents = 12;
+  cudaEvent_t relay_fwd_events_[kNumRelayFwdEvents] = {};
 
  private:
   c10::cuda::CUDAStream
@@ -595,6 +598,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     for (int i = 0; i < kNumStage2Events; i++) {
       CUDA_CHECK(cudaEventCreate(&this->stage2_events_[i]));
     }
+    for (int i = 0; i < kNumRelayFwdEvents; i++) {
+      CUDA_CHECK(cudaEventCreate(&this->relay_fwd_events_[i]));  // timing-capable
+    }
   }
 
   ~GemmGroupedV2AGScatterOpImpl() {
@@ -603,6 +609,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     }
     for (int i = 0; i < kNumStage2Events; i++) {
       CUDA_CHECK(cudaEventDestroy(this->stage2_events_[i]));
+    }
+    for (int i = 0; i < kNumRelayFwdEvents; i++) {
+      CUDA_CHECK(cudaEventDestroy(this->relay_fwd_events_[i]));
     }
     CUDA_CHECK(cudaEventDestroy(this->counts_event_));
     CUDA_CHECK(cudaEventDestroy(this->hier_dispatch_event_));
@@ -1232,6 +1241,12 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       const int64_t T = tokens_per_rank;
       const int64_t my_node = dist_env.node_idx;
       const int64_t fwd_garbage = this->a2av_fwd_idx_.numel() - 1;
+      auto rmark = [&](int i) {
+        if (kTiming) {
+          CUDA_CHECK(cudaEventRecord(this->relay_fwd_events_[i], stream));
+        }
+      };
+      rmark(0);
       auto tl = iota.narrow(0, 0, copies_per_rank).div((int64_t)topk, "floor");
       // [R, L, cpr]: ALL source local ranks, rounds in gateway arrival order
       // ns = (my_node + dn) % NN (roll materializes the strided view)
@@ -1240,6 +1255,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                           .narrow(0, 0, R);
       auto dl = e_rounds.div(E, "floor").sub_(my_node * Lc);  // local dest, or off-node
       auto off_node = dl.lt(0).logical_or_(dl.ge(Lc));
+      rmark(1);
       // flat flag position ((r * L + sl) * T + t) * L + dl
       auto rsl_base =
           this->a2av_arange_i64_.narrow(0, 0, R * Lc).view({R, Lc, 1}) * (T * Lc);
@@ -1249,23 +1265,35 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       ff.zero_();
       ff.scatter_(0, fp.reshape(-1), 1);  // garbage slot at R * L * T * L
       auto flag4d = ff.narrow(0, 0, R * Lc * T * Lc).view({R, Lc, T, Lc});
+      rmark(2);
       auto uni = std::get<0>(flag4d.max(3));  // union flag per (round, src_lr, token)
       auto posU = uni.cumsum(2) - uni;        // row within (r, sl)'s union segment
       auto canon = posU + recv_start_dev.view({R, Lc, 1});  // canonical position
+      rmark(3);
       auto in_w = canon.ge(win_a_dev.view({R, 1, 1}))
                       .logical_and_(canon.lt(win_b_dev.view({R, 1, 1})));
       auto below = canon.lt(win_a_dev.view({R, 1, 1}));
+      rmark(4);
       auto valid = flag4d * in_w.unsqueeze(3);  // needed by dl AND inside my window
+      rmark(5);
       auto pos = valid.cumsum(2) - valid;       // in-window rank within (r, sl, dl)
+      rmark(6);
       auto tgt = (pos + fwd_col_off_dev.view({R, Lc, 1, Lc}))
                      .masked_fill_(valid.eq(0), fwd_garbage);
+      rmark(7);
       // stored value = window-relative staging row
       auto vals = (canon - win_a_dev.view({R, 1, 1})).unsqueeze(3).expand({R, Lc, T, Lc});
-      this->a2av_fwd_idx_.scatter_(0, tgt.reshape(-1), vals.reshape(-1));
+      auto tgt_flat = tgt.reshape(-1);
+      auto vals_flat = vals.reshape(-1);
+      rmark(8);
+      this->a2av_fwd_idx_.scatter_(0, tgt_flat, vals_flat);
+      rmark(9);
       auto cnt_in = valid.sum(2);                          // [R, L, L]
       auto cnt_before = (flag4d * below.unsqueeze(3)).sum(2);  // [R, L, L]
+      rmark(10);
       this->a2av_fwd_cnt_pinned_.select(0, 0).copy_(cnt_in.to(torch::kInt), true);
       this->a2av_fwd_cnt_pinned_.select(0, 1).copy_(cnt_before.to(torch::kInt), true);
+      rmark(11);
       CUDA_CHECK(cudaEventRecord(this->fwd_cnt_event_, stream));
       static const bool kCheckCompressFwd =
           get_int_from_env("FLUX_A2AV_CHECK_COMPRESS", 0) != 0;
@@ -2604,6 +2632,29 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           s2[7],
           s2[8],
           s2[9]);
+      if (a2av_hier_compress_ && nnodes > 1 && !relay_identity_) {
+        float rf[kNumRelayFwdEvents - 1];
+        for (int i = 0; i < kNumRelayFwdEvents - 1; i++) {
+          CUDA_CHECK(cudaEventElapsedTime(
+              &rf[i], this->relay_fwd_events_[i], this->relay_fwd_events_[i + 1]));
+        }
+        fprintf(
+            stderr,
+            "[a2av-relayfwd] rank %d dl %.3f flag %.3f canon %.3f mask %.3f valid %.3f "
+            "cumsum %.3f tgt %.3f flatten %.3f scatter %.3f cnts %.3f d2h %.3f ms\n",
+            rank,
+            rf[0],
+            rf[1],
+            rf[2],
+            rf[3],
+            rf[4],
+            rf[5],
+            rf[6],
+            rf[7],
+            rf[8],
+            rf[9],
+            rf[10]);
+      }
     }
 
     if (allgather_output.has_value()) {

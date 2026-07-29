@@ -49,7 +49,11 @@ RING_MODE_MAP = {
 def init_seed(seed=0):
     os.environ["NCCL_DEBUG"] = os.getenv("NCCL_DEBUG", "ERROR")
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
-    torch.use_deterministic_algorithms(True, warn_only=True)
+    # FLUX_TEST_DETERMINISTIC=0 disables the global deterministic mode for perf
+    # runs: deterministic scatter_ takes a serial fallback (~500x slower), which
+    # lands squarely on the a2av compress/relay index-build and pack paths.
+    if os.getenv("FLUX_TEST_DETERMINISTIC", "1") != "0":
+        torch.use_deterministic_algorithms(True, warn_only=True)
     torch.set_printoptions(precision=2)
     torch.manual_seed(3 + seed)
     torch.cuda.manual_seed_all(3 + seed)
