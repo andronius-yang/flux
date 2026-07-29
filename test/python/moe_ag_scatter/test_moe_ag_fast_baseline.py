@@ -266,7 +266,7 @@ if __name__ == "__main__":
 
     W = DIST_ENV.WORLD_SIZE
     L = DIST_ENV.LOCAL_WORLD_SIZE
-    assert L == 4, f"FAST Perlmutter baseline expects 4 GPUs/node; got {L}"
+    assert L in (4, 8), f"FAST baseline expects 4 (Perlmutter) or 8 (p4d) GPUs/node; got {L}"
     assert W > L, "FAST requires at least 2 nodes (server_n > 1)"
 
     input_dtype = DTYPE_MAP[args.dtype]

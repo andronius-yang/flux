@@ -271,3 +271,45 @@ srun --nodes=4 --ntasks-per-node=1 ./launch_fast.sh \
   faster at 64mib (matrix-sized wire + load balancing + single grouped GEMM);
   the fused overlapped patterns beat both un-overlapped baselines at every
   budget, a2av_hier fastest everywhere.
+
+### AWS p4d (2 nodes x 8x A100, EFA)
+
+The baseline also runs on the AWS ParallelCluster (`source ./env_aws.sh`
+instead of `module.sh`; see the FAST submodule branch `aws-8gpu` for the
+8-GPUs/node + torch-ABI relaxations). The pip-wheel NVSHMEM ships no cmake
+package, so `build_fast.sh` falls back to the self-built install (override
+with `FAST_NVSHMEM_ROOT`); `launch_fast.sh` preloads the host lib from that
+same tree so the statically linked device lib and the transport plugins come
+from one build. Build on a compute node:
+
+```bash
+salloc --partition=a100 --nodes=2 --exclusive --no-shell   # note jobid
+srun --jobid=<id> -N1 -n1 bash -lc 'source ./env_aws.sh && JOBS=32 ./scripts/build_fast.sh'
+srun --jobid=<id> --nodes=2 --ntasks-per-node=1 bash -lc 'source ./env_aws.sh && \
+  ./launch_fast.sh scripts/run_nondeterministic.py \
+  test/python/moe_ag_scatter/test_moe_ag_fast_baseline.py \
+  --traffic_matrix /home/ubuntu/sw/a2av_test_matrices/2n_16r_skew/16mib/skew_2n_16r_dist_001.txt \
+  --topk 8 --G 128 --iters 10 --warmup_iters 5'
+```
+
+Perf runs go through `scripts/run_nondeterministic.py`: the harness's forced
+`torch.use_deterministic_algorithms(True)` serializes `scatter_` ~500x and
+the fused-variant sweeps are measured with it off (correctness checks still
+run and are unaffected).
+
+Validated 2026-07-29 (2n x 8g/16 ranks, `2n_16r_skew/{2..64}mib/`
+`skew_2n_16r_dist_001.txt`, topk=8 G=128, iters 10 + warmup 5, deterministic
+off, 48/48 rank-checks per budget). Max-rank e2e ms, with the sweep-6 fused
+numbers at 64mib for reference (a2av_hier ~9.9, dedup bcast+overlap 8.69):
+
+  | budget | 2mib | 4mib | 8mib | 16mib | 32mib | 64mib |
+  |--------|------|------|------|-------|-------|-------|
+  | FAST   | 5.68 | 5.92 | 6.85 | 9.07  | 11.28 | 20.14 |
+
+  Phase means at 64mib (pack/sched/fill/wire/unpack/gemm, ms):
+  0.40/4.62/0.18/8.10/0.48/1.35. The BvN schedule recompute costs a flat
+  ~4.4 ms per iteration on the p4d head CPUs (vs ~0.9 ms on Perlmutter) and
+  sets the small-budget floor; at 64mib FAST is ~2x the fused a2av_hier.
+  Occasional EFA wire transients inflate a whole run (one 8mib run measured
+  4.25 ms mean wire vs 1.22 on rerun) — rerun before reading too much into a
+  single point.
