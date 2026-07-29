@@ -92,6 +92,18 @@ def recv_off_of_u(u_mat, s, d):
     return int(u_mat[:s, d].sum())
 
 
+def region_rows(u_mat, U_mat, L, s, d, bcast):
+    """Recv region rows of source s at dest d: u[s][d], except union-bcast
+    remote-node sources occupy the whole U[s][node(d)]-row union."""
+    if bcast and s // L != d // L:
+        return int(U_mat[s, d // L])
+    return int(u_mat[s, d])
+
+
+def recv_off_bcast(u_mat, U_mat, L, s, d, bcast):
+    return sum(region_rows(u_mat, U_mat, L, s2, d, bcast) for s2 in range(s))
+
+
 # ---------------------------------------------------------------- producer pack
 
 
@@ -245,8 +257,11 @@ def fwd_build_relay(choosed_experts, rank, W, NN, L, T, E, topk, u_mat, U_mat):
 class Recv:
     """Dedup recv buffer of one destination, with a write-occupancy counter."""
 
-    def __init__(self, u_mat, W, d):
-        self.total = int(u_mat[:, d].sum())
+    def __init__(self, u_mat, W, d, U_mat=None, L=None, bcast=False):
+        if bcast:
+            self.total = sum(region_rows(u_mat, U_mat, L, s, d, True) for s in range(W))
+        else:
+            self.total = int(u_mat[:, d].sum())
         self.buf = torch.full((max(self.total, 1),), -1, dtype=torch.long)
         self.hits = torch.zeros(max(self.total, 1), dtype=torch.int32)
 
@@ -257,8 +272,9 @@ class Recv:
         self.hits[off : off + n] += 1
 
 
-def deliver_intra_and_self(recvs, sends, seg_offs, u_mat, W, NN, L):
-    """Round 0 + self-copy: identical in both wire modes."""
+def deliver_intra_and_self(recvs, sends, seg_offs, u_mat, W, NN, L, U_mat=None, bcast=False):
+    """Round 0 + self-copy: same payload in every wire mode; bcast shifts the
+    recv offsets (remote-source regions ahead of mine are U-sized)."""
     for r in range(W):
         my_node, my_lr = r // L, r % L
         for dl in range(L):
@@ -268,7 +284,12 @@ def deliver_intra_and_self(recvs, sends, seg_offs, u_mat, W, NN, L):
                 continue
             seg = my_node + dl  # send_seg_off(dlg) == seg_off_h[my_node + dlg]
             src = sends[r][seg_offs[r][seg] : seg_offs[r][seg] + rows]
-            recvs[d].write(recv_off_of_u(u_mat, r, d), src)
+            off = (
+                recv_off_bcast(u_mat, U_mat, L, r, d, True)
+                if bcast
+                else recv_off_of_u(u_mat, r, d)
+            )
+            recvs[d].write(off, src)
 
 
 def wire_identity(recvs, sends, seg_offs, choosed, W, NN, L, T, E, topk, u_mat, U_mat):
@@ -391,6 +412,67 @@ def wire_relay(recvs, sends, seg_offs, choosed, W, NN, L, T, E, topk, u_mat, U_m
                     dst_off = recv_off_of_u(u_mat, s, d) + int(cnt_before[dn - 1, sl, dlg])
                     recvs[d].write(dst_off, win.index_select(0, idx))
     return moved, wire
+
+
+def wire_bcast(recvs, sends, seg_offs, W, NN, L, u_mat, U_mat):
+    """Union broadcast: the gateway forwards the WHOLE staged union verbatim to
+    every local rank (self included) — no forward index, no per-dest subsets.
+    The staged union segment == source s's send segment for my node."""
+    for g in range(W):  # g = gateway rank on the receiving side
+        my_node, my_lr = g // L, g % L
+        for dn in range(1, NN):
+            ns = (my_node + dn) % NN
+            s = ns * L + my_lr
+            seg = my_node if my_node < ns else my_node + L - 1
+            union_rows = int(U_mat[s, my_node])
+            if union_rows == 0:
+                continue
+            stage_seg = sends[s][seg_offs[s][seg] : seg_offs[s][seg] + union_rows]
+            for dl in range(L):
+                d = my_node * L + ((my_lr - dl + L) % L)
+                recvs[d].write(recv_off_bcast(u_mat, U_mat, L, s, d, True), stage_seg)
+
+
+def reference_recv_bcast(choosed, W, NN, L, T, E, topk, u_mat, U_mat):
+    """Bcast layout: same-node source regions = ascending tokens needed by d;
+    remote-node source regions = ascending tokens needed by node(d) (union)."""
+    ntokens = W * T
+    owner = choosed.long() // E
+    flags = torch.zeros(ntokens, W, dtype=torch.bool)
+    flags.scatter_(1, owner, True)
+    nflags = flags.view(ntokens, NN, L).any(dim=2)  # token t needed by node n
+    out = {}
+    for d in range(W):
+        parts = []
+        for s in range(W):
+            if s // L != d // L:
+                keep = nflags[s * T : (s + 1) * T, d // L]
+            else:
+                keep = flags[s * T : (s + 1) * T, d]
+            toks = torch.nonzero(keep, as_tuple=False).view(-1)
+            parts.append(toks + s * T)
+        out[d] = torch.cat(parts)
+        assert out[d].numel() == sum(
+            region_rows(u_mat, U_mat, L, s, d, True) for s in range(W)
+        )
+    return out
+
+
+def consumer_identity_bcast(recvs, choosed, W, NN, L, T, E):
+    """The C++ consumer flag for bcast: keep = needed-by-me for same-node
+    sources, needed-by-my-node for remote sources; C = exclusive cumsum. Every
+    copy routed to d must find its own token at recv row C[t]."""
+    ntokens = W * T
+    owner = choosed.long() // E
+    flags = torch.zeros(ntokens, W, dtype=torch.bool)
+    flags.scatter_(1, owner, True)
+    nflags = flags.view(ntokens, NN, L).any(dim=2)
+    src_node = torch.arange(ntokens) // T // L  # token t's source node
+    for d in range(W):
+        keep = torch.where(src_node.eq(d // L), flags[:, d], nflags[:, d // L]).long()
+        c_excl = keep.cumsum(0) - keep
+        for t in torch.nonzero(flags[:, d], as_tuple=False).view(-1).tolist():
+            assert int(recvs[d].buf[int(c_excl[t])]) == t, "bcast consumer identity"
 
 
 # ------------------------------------------------------------ deadlock model
@@ -537,26 +619,38 @@ def run_case(NN, L, T, E, topk, seed, skew):
         producer_pack(choosed, r, W, NN, L, T, E, topk, seg_offs[r]) for r in range(W)
     ]
     ref = reference_recv(choosed, W, NN, L, T, E, topk, u_mat)
+    ref_b = reference_recv_bcast(choosed, W, NN, L, T, E, topk, u_mat, U_mat)
+    if NN == 1:  # degeneracy: no remote sources -> bcast layout == dedup layout
+        for d in range(W):
+            assert torch.equal(ref[d], ref_b[d]), "NN==1 bcast != identity layout"
 
     results = {}
-    for mode in ("identity", "relay"):
-        recvs = [Recv(u_mat, W, d) for d in range(W)]
-        deliver_intra_and_self(recvs, sends, seg_offs, u_mat, W, NN, L)
+    moved = wire = None
+    for mode in ("identity", "relay", "bcast"):
+        bcast = mode == "bcast"
+        recvs = [Recv(u_mat, W, d, U_mat=U_mat, L=L, bcast=bcast) for d in range(W)]
+        deliver_intra_and_self(
+            recvs, sends, seg_offs, u_mat, W, NN, L, U_mat=U_mat, bcast=bcast
+        )
         if mode == "identity":
             wire_identity(recvs, sends, seg_offs, choosed, W, NN, L, T, E, topk, u_mat, U_mat)
-            moved = wire = None
-        else:
+        elif mode == "relay":
             moved, wire = wire_relay(
                 recvs, sends, seg_offs, choosed, W, NN, L, T, E, topk, u_mat, U_mat
             )
+        else:
+            wire_bcast(recvs, sends, seg_offs, W, NN, L, u_mat, U_mat)
+        expect = ref_b if bcast else ref
         for d in range(W):
             total = recvs[d].total
             assert bool(
                 (recvs[d].hits[:total] == 1).all()
             ), f"{mode}: recv row written != once at dest {d}"
             assert torch.equal(
-                recvs[d].buf[:total], ref[d]
+                recvs[d].buf[:total], expect[d]
             ), f"{mode}: recv mismatch at dest {d}"
+        if bcast:
+            consumer_identity_bcast(recvs, choosed, W, NN, L, T, E)
         results[mode] = recvs
 
     # balance: within each (node, round), chunks differ by <= 1 row
@@ -579,7 +673,7 @@ def run_case(NN, L, T, E, topk, seed, skew):
 
 
 def main():
-    topos = [(2, 2), (2, 4), (2, 8), (4, 2), (4, 4), (3, 4)]
+    topos = [(1, 4), (2, 2), (2, 4), (2, 8), (4, 2), (4, 4), (3, 4)]
     skews = ["rand", "hot", "uniform_u", "zero_source", "tiny"]
     seeds = [0, 1, 2, 3, 4]
     # T divisible by every W in the sweep so the uniform_u construction is

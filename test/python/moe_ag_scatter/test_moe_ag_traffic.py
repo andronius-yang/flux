@@ -508,6 +508,31 @@ if __name__ == "__main__":
                 f" {inter_bytes_c.tolist()}"
             )
             print(f"a2av_hier_compress dedup wire/logical send-byte ratio: {ratio:.3f}")
+            # gateway forward cost on NVLink, exact-subset gathers vs the
+            # FLUX_A2AV_UNION_BCAST=1 whole-union broadcast ((L-1) * U rows;
+            # the gateway's own copy is a local D2D either way)
+            if nn > 1:
+                gw_gather = torch.zeros(W, dtype=torch.long)
+                gw_bcast = torch.zeros(W, dtype=torch.long)
+                for n in range(nn):
+                    for lr in range(L):
+                        g = n * L + lr
+                        for m in range(nn):
+                            if m == n:
+                                continue
+                            s = m * L + lr
+                            gw_gather[g] += int(u_mat[s, n * L : (n + 1) * L].sum()) - int(
+                                u_mat[s, g]
+                            )
+                            gw_bcast[g] += (L - 1) * int(U_mat[s, n])
+                print(
+                    "a2av gateway intra-node forward bytes per gateway"
+                    f" (gather): {(gw_gather * args.chunk_bytes).tolist()}"
+                )
+                print(
+                    "a2av gateway intra-node forward bytes per gateway"
+                    f" (bcast):  {(gw_bcast * args.chunk_bytes).tolist()}"
+                )
             # balanced-relay effect (FLUX_A2AV_RELAY_IDENTITY=0, the default):
             # per (node, round) the wire pace is ceil(total / L) instead of the
             # hottest rank's U — report the per-round worst sender both ways

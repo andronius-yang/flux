@@ -114,8 +114,30 @@ struct A2AVStage1Arguments {
   int32_t *chunks;       // [world_size * world_size], pre-zeroed; nullptr = skip
                          // counting (metadata path derives it host-side)
   int64_t *pack_key;     // [copies_per_rank]
+  // compress pack fusion: per-(segment, local token) flags, SEG-MAJOR
+  // [nseg, tokens_per_rank] (contiguous per segment for the pack scan),
+  // pre-zeroed; nullptr = skip. topk/local_world_size/node_idx only read
+  // when pack_flag != nullptr.
+  int32_t *pack_flag;
+  int topk;
+  int local_world_size;
+  int node_idx;
 };
 void a2av_stage1_impl(A2AVStage1Arguments const &args, cudaStream_t stream);
+
+// compress pack fusion stage 2: one block per send segment; a multi-tile
+// block-wide exclusive scan over the segment's flag row assigns each flagged
+// token its exclusive rank, writing pack_gather[seg_off[seg] + rank] = token.
+// Replaces the ATen scatter/cumsum/scatter chain (launch-count, not
+// bandwidth: total work is nseg * tokens_per_rank int32).
+struct A2AVPackScanArguments {
+  int32_t const *pack_flag;  // [nseg, tokens] seg-major (from a2av_stage1)
+  int64_t const *seg_off;    // [nseg] exclusive send-segment row offsets
+  int64_t *pack_gather;      // [copies_per_rank + 1] send row -> local token
+  int64_t tokens;            // tokens_per_rank
+  int nseg;
+};
+void a2av_pack_scan_impl(A2AVPackScanArguments const &args, cudaStream_t stream);
 
 void sort_scatter_index_to_per_expert(
     int *sorted_scatter_index,

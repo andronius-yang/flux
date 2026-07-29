@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <cub/cub.cuh>
 #include <cuda_fp16.h>
 #include <cutlass/device_kernel.h>
 
@@ -573,6 +574,19 @@ a2av_stage1_kernel(A2AVStage1Arguments args) {
     int64_t lp = p - my_start;
     if (lp >= 0 && lp < args.copies_per_rank) {
       args.pack_key[lp] = (int64_t)e * args.copies_per_rank + lp;
+      if (args.pack_flag != nullptr) {
+        // compress send segment of this copy's destination: my node expanded
+        // into L per-rank segments, each remote node one union segment
+        // (mirrors the host seg_off_h layout). Seg-major flag write is
+        // idempotent — duplicate (token, seg) copies write 1 again.
+        const int L = args.local_world_size;
+        int nd = owner / L;
+        int seg = nd == args.node_idx
+                      ? owner - args.node_idx * (L - 1)
+                      : (nd < args.node_idx ? nd : nd + L - 1);
+        const int64_t tokens = args.copies_per_rank / args.topk;
+        args.pack_flag[(int64_t)seg * tokens + lp / args.topk] = 1;
+      }
     }
   }
   if (count_chunks) {
@@ -592,6 +606,47 @@ a2av_stage1_impl(A2AVStage1Arguments const &args, cudaStream_t stream) {
   blocks = std::max(blocks, 1);
   size_t smem = (args.nexperts + args.world_size * args.world_size) * sizeof(int);
   a2av_stage1_kernel<<<blocks, kThreads, smem, stream>>>(args);
+  CUDA_CHECK(cudaGetLastError());
+}
+
+// one block per segment; multi-tile exclusive scan with a running carry.
+// nseg is tiny (L + NN - 1) and tokens_per_rank is a few thousand, so a
+// single 256-thread block per segment is plenty.
+__global__ void
+a2av_pack_scan_kernel(A2AVPackScanArguments args) {
+  constexpr int kThreads = 256;
+  using BlockScan = cub::BlockScan<int, kThreads>;
+  __shared__ typename BlockScan::TempStorage temp;
+  __shared__ int carry;
+  if (threadIdx.x == 0) {
+    carry = 0;
+  }
+  __syncthreads();
+  const int seg = blockIdx.x;
+  int32_t const *flags = args.pack_flag + (int64_t)seg * args.tokens;
+  const int64_t base = args.seg_off[seg];
+  for (int64_t t0 = 0; t0 < args.tokens; t0 += kThreads) {
+    const int64_t t = t0 + threadIdx.x;
+    const int f = (t < args.tokens) ? flags[t] : 0;
+    int pos, tile_total;
+    BlockScan(temp).ExclusiveSum(f, pos, tile_total);
+    if (f) {
+      args.pack_gather[base + carry + pos] = t;  // carry still pre-tile here
+    }
+    __syncthreads();  // temp reuse + everyone read carry before the bump
+    if (threadIdx.x == 0) {
+      carry += tile_total;
+    }
+    __syncthreads();
+  }
+}
+
+void
+a2av_pack_scan_impl(A2AVPackScanArguments const &args, cudaStream_t stream) {
+  if (args.nseg <= 0) {
+    return;
+  }
+  a2av_pack_scan_kernel<<<args.nseg, 256, 0, stream>>>(args);
   CUDA_CHECK(cudaGetLastError());
 }
 
