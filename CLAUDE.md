@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Deployment context: NERSC Perlmutter
+## Deployment context: NERSC Perlmutter (+ AWS ParallelCluster)
 
-This is ByteDance's Flux/Comet repository (fine-grained computation-communication overlapping GPU kernels), **deployed on the NERSC Perlmutter platform**. Compute nodes have **4x A100 GPUs each** (sm80, 108 SM cores — hence `--arch 80 --sm-cores 108`). The working tree contains **local edits made specifically to get Flux/Comet to compile on Perlmutter** — do not blindly revert them to match upstream:
+This is ByteDance's Flux/Comet repository (fine-grained computation-communication overlapping GPU kernels), deployed on **two platforms**: NERSC Perlmutter (4x A100/node, Slingshot/CXI — `source ./module.sh`) and an AWS ParallelCluster (p4d, **8x A100/node**, EFA — `source ./env_aws.sh`, tracked in-repo; see `docs/launch/aws_efa_environment.md`). Both are sm80, 108 SM cores — hence `--arch 80 --sm-cores 108`. Platform specifics live in opt-in env files and overridable `${VAR:-default}` launcher defaults — there is no platform branch. The working tree contains **local edits made specifically to compile on these platforms** — do not blindly revert them to match upstream:
 
 - `module.sh` (untracked, Perlmutter-specific): restores Cray lmod defaults, loads `PrgEnv-gnu`, `gcc/12.2.0`, `cray-mpich`, `cudatoolkit/12.4`, `nvshmem/3.2.5-1`, `nccl/2.24.3`, and activates the conda env at `$PSCRATCH/conda_envs/andrewy-comet`. Sets `CC/CXX/CUDAHOSTCXX`, `CUDA_HOME`, `TORCH_CUDA_ARCH_LIST=8.0`, `FLUX_ROOT`, and puts the bundled NCCL headers on `CPATH`.
 - `build.sh`: python bindings installed via `pip install --no-build-isolation --editable .` instead of upstream's `python3 setup.py develop --user`.
@@ -84,6 +84,22 @@ srun --nodes=2 --ntasks-per-node=1 ./launch.sh test/python/moe_gather_rs/test_mo
 ```
 
 Multi-node constraints: token counts divisible by `world_size * topk`; `max_m/topk` divisible by `world_size`; for large configs export `NVSHMEM_SYMMETRIC_SIZE=4G` (all reduce/staging buffers live on the symmetric heap). `do_all_reduce`, `use_read_mode`, and the triton/int8 paths are single-node only (FLUX_CHECK-guarded).
+
+## Perf sweeps (`sweeps/`)
+
+All perf sweeps of the layer0 a2av variants go through the sweep runner — never hand-rolled loops. **`sweeps/SCHEMA.md` is the authority** on what results mean; the `/sweep` skill has the operating procedure. Example:
+
+```bash
+python sweeps/sweep.py run --platform aws --variants hier,hier_compress_union \
+    --families remotefrac --budgets-mib 2,8,64 --topk 8 --G 128 --modes e2e,phases
+```
+
+Each invocation writes one immutable capsule under `sweeps/results/runs/<run_id>/` (manifest + resolved spec + per-iteration `metrics.csv` + `cells.csv`) — the runner prints the `git add && git commit` command, a human commits. Raw rank logs stay at the platform data root (`sweeps/platforms/*.yaml`), never in the repo.
+
+Three invariants, never violate:
+1. **Budget is strictly the pre-topk send budget** (matrix row sums = `budget_mib * 2^20 * topk`).
+2. **Perf runs need `FLUX_TEST_DETERMINISTIC=0`** — the runner enforces it and the capsule's `deterministic` column records it; a perf number is only valid if that column says 0 (deterministic `scatter_` serializes ~500x and lands on the compress/relay paths).
+3. **Instrumented modes never compare against clean ones** — `phases` (FLUX_A2AV_TIMING) forces a per-iteration device sync; only `e2e`-mode cells may be quoted as latency.
 
 ## Formatting
 
