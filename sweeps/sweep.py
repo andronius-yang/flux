@@ -473,8 +473,16 @@ def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, s
             env_json=json.dumps(cell["env_delta"], sort_keys=True),
             git_sha=git_sha, git_dirty=int(git_dirty),
             exit_code="" if cell.get("exit_code") is None else cell["exit_code"],
-            start_ts=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(cell.get("start_ts", 0))),
-            end_ts=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(cell.get("end_ts", 0))),
+            start_ts=(
+                time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(cell["start_ts"]))
+                if cell.get("start_ts")
+                else ""
+            ),
+            end_ts=(
+                time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(cell["end_ts"]))
+                if cell.get("end_ts")
+                else ""
+            ),
             log_dir=cell.get("staging", ""), notes=spec["notes"],
         )
         if cell["status"] in ("ok", "failed", "timeout"):

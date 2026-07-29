@@ -34,10 +34,15 @@ VARIANTS = {
         requires=["FLUX_A2AV_UNION_BCAST"],
     ),
     # union broadcast + source-side pack overlap (dedicated stream,
-    # double-buffered send)
+    # double-buffered send); MAX_CONNECTIONS=2 lets the pack stream actually
+    # run concurrently with compute (the validated best config)
     "hier_compress_pack": dict(
         comm_pattern="a2av_hier_compress",
-        env={"FLUX_A2AV_UNION_BCAST": "1", "FLUX_A2AV_PACK_OVERLAP": "1"},
+        env={
+            "FLUX_A2AV_UNION_BCAST": "1",
+            "FLUX_A2AV_PACK_OVERLAP": "1",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "2",
+        },
         requires=["FLUX_A2AV_UNION_BCAST", "FLUX_A2AV_PACK_OVERLAP"],
     ),
 }
