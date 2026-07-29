@@ -189,7 +189,7 @@ available as `FLUX_A2AV_RELAY_IDENTITY=1`.
   the relay removes (`max_lr U` vs `ceil(total/L)` per round).
 - CPU-only validation (no GPU/flux build needed, runs anywhere):
   `python3 test/python/moe_ag_scatter/test_relay_balance_math.py`
-  — 156 cases: recv identity vs §11 and vs a direct dedup reference, write
+  — 182 cases (identity / relay / bcast): recv identity vs §11 and vs a direct dedup reference, write
   coverage, window-bounded indices, ≤ 1-row chunk imbalance, zero relocation
   for uniform U, and deadlock-freedom of the three-stream schedule over two
   epochs. Run it after any change to the partition or forward-index math.
@@ -197,6 +197,59 @@ available as `FLUX_A2AV_RELAY_IDENTITY=1`.
   unchanged) -> 2n identity vs relay allclose A/B (+
   `FLUX_A2AV_CHECK_COMPRESS=1`) -> 4n_16r skewed sweeps, timing identity vs
   relay with the same matrices.
+
+### Union broadcast at the gateway (`FLUX_A2AV_UNION_BCAST=1`; design §11's a2av_hier_bcast)
+
+Replaces the gateway's exact-subset gather-forward with broadcasting the WHOLE
+staged union to every local rank as contiguous fire-and-forget nbi puts straight
+from the symmetric staging buffer — no token-level forward-index build, no
+gather scratch, no non-nbi completion wait — restoring a2av_hier's forward
+structure with the dedup'd inter-node wire. Receivers alias their subset out of
+the U-sized region through the same one-cumsum consumer identity (keep-flag =
+needed-by-my-node for remote-node sources).
+
+- Implies the identity wire (relay disabled); selects a third gateway arm.
+- Changes the RECV layout (remote-source regions hold `U[s][n]` rows, not
+  `u[s][d]`): set identically on EVERY rank (read at op construction).
+- No `--sm_margin` requirement (the forward is pure copy engine); keep the
+  margin equal across variants when A/B timing for fairness.
+- Costs: intra-node forward inflates to `(L-1)·U[s][n]` per gateway round
+  (harness prints gather-vs-bcast forward bytes) and recv regions grow u -> U —
+  raise `FLUX_A2AV_MAX_RECV_NTOKENS` accordingly (still collectively checked).
+- Validated: `test_relay_balance_math.py` (182 cases incl. bcast wire sim +
+  NN==1 degeneracy); 2n x 8 A100 16/16 allclose with
+  `FLUX_A2AV_CHECK_COMPRESS=1` (adds a bcast-only flag-total vs host-layout
+  assert).
+
+### Fused pack + pack/GEMM overlap
+
+The compress producer pack is fused into two custom kernels (stage1 writes
+seg-major `[nseg, tokens]` flags; a per-segment CUB block-scan builds
+pack_gather) + the one index_select — 4 launches total, replacing the previous
+~12-launch ATen chain whose cost was launch/issue overhead on the single
+hardware queue (`CUDA_DEVICE_MAX_CONNECTIONS=1`), not bandwidth. Unconditional
+in compress mode.
+
+`FLUX_A2AV_PACK_OVERLAP=1` (compress only, default off) additionally moves the
+pack (meta H2D + stage1 + scan + send gather) to a dedicated stream so
+iteration n+1's pack overlaps iteration n's GEMM:
+
+- Parity (`run_id & 1`) double-buffers the send buffer (2x symmetric — the
+  allocation is collective, so set the env identically on EVERY rank) and the
+  meta arena (the GEMM reads its slice for its whole runtime).
+- Cross-iteration put ordering moves from main-stream program order to an
+  explicit end-of-epoch event waited by both cp streams; the pack itself
+  deliberately does not wait it.
+- Contract: forward() inputs must be device-ready when called (the pack stream
+  does not join the caller stream's tail), and the caller must keep
+  inputs/scatter_index/splits alive and unmutated until the next forward() or
+  a device sync (no allocator record_stream is done — repo convention). True
+  for the perf harness.
+- Wall-clock no-ops (correctness unaffected): `CUDA_DEVICE_MAX_CONNECTIONS=1`
+  (launch.sh default — export >= 2 to observe the overlap, after validating
+  allclose at that setting) and `FLUX_A2AV_TIMING=1` (host-syncs every
+  iteration; use external wall-clock timing instead).
+- Incompatible with `FLUX_A2AV_STAGE2_AFTER_PUTS` (FLUX_CHECKed).
 
 ## Layer0 FAST baseline (un-overlapped: FAST alltoallv + separate grouped GEMM)
 
