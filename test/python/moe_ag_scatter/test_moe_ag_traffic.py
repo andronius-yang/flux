@@ -58,6 +58,7 @@ from flux.testing import (
     traffic_matrix_to_choosed_experts,
 )
 from flux.testing.perf_db_helper import log_perf, set_global_args, should_log_to_rds
+from flux.testing.recorder import RECORDER
 
 DIST_ENV = flux.get_dist_env()
 TP_GROUP = DIST_ENV.get_world()
@@ -161,7 +162,7 @@ def perf_torch(ctx: MoeMlp1Ctx, warmup_iters: int, iters: int, gather_input: boo
     scatter_time = sum(scatter_times) / iters
     gemm_time = sum(gemm_times) / iters
 
-    return PerfResult(
+    result = PerfResult(
         name=f"torch #{TP_GROUP.rank()}",
         outputs=ctx.get_outputs_clone(),
         gathered_input=flux.testing.clone_with_fp8(ctx.inputs),
@@ -169,6 +170,12 @@ def perf_torch(ctx: MoeMlp1Ctx, warmup_iters: int, iters: int, gather_input: boo
         scatter_time_ms=scatter_time,
         comm_time_ms=comm_time,
     )
+    result.iter_times = {
+        "comm_ms": comm_times,
+        "scatter_ms": scatter_times,
+        "gemm_ms": gemm_times,
+    }
+    return result
 
 
 @torch.no_grad()
@@ -259,7 +266,7 @@ def perf_flux(
 
     gemm_time_ms = sum(gemm_times) / iters
 
-    return PerfResult(
+    result = PerfResult(
         name=f"flux #{TP_GROUP.rank()}",
         outputs=ctx.get_outputs_clone(),
         gathered_input=gathered_input,
@@ -267,6 +274,8 @@ def perf_flux(
         scatter_time_ms=0.0,
         comm_time_ms=0.0,
     )
+    result.iter_times = {"e2e_ms": gemm_times}
+    return result
 
 
 @torch.no_grad()
@@ -363,6 +372,15 @@ def parse_args():
         " --sm_margin >= 1)",
     )
     parser.add_argument(
+        "--skip_correctness",
+        default=False,
+        action="store_true",
+        help="skip the torch reference (perf_torch + result checks) and shrink"
+        " its (ntokens * topk, H) scatter staging buffer to one row — for"
+        " large-budget perf sweeps where the reference dominates wall time or"
+        " OOMs; correctness is then NOT verified",
+    )
+    parser.add_argument(
         "--no_metadata_cnt",
         default=False,
         action="store_true",
@@ -420,6 +438,7 @@ if __name__ == "__main__":
         weight_groups=1,
         drop_token=False,
         gating_args=gating_args,
+        skip_reference=args.skip_correctness,
     )
 
     # metadata-exchange result (untimed setup): cnt[s][e] = copies source rank s
@@ -468,6 +487,11 @@ if __name__ == "__main__":
         print(f"Splits: {moe_ctx.splits_cpu.tolist()}, Sum: {sum(moe_ctx.splits_cpu.tolist())}")
         print(f"Per-rank gemm rows: {rows_per_rank.tolist()}")
         print(f"comm_pattern: {args.comm_pattern}")
+        RECORDER.emit_info(
+            ntokens=ntokens,
+            tokens_per_rank=ntokens // DIST_ENV.WORLD_SIZE,
+            gemm_rows_per_rank=rows_per_rank.tolist(),
+        )
         if args.comm_pattern in ("a2av", "a2av_ring", "a2av_hier", "a2av_hier_compress"):
             send_bytes = (matrix.sum(dim=1) - matrix.diag()).tolist()
             recv_bytes = (matrix.sum(dim=0) - matrix.diag()).tolist()
@@ -508,6 +532,7 @@ if __name__ == "__main__":
                 f" {inter_bytes_c.tolist()}"
             )
             print(f"a2av_hier_compress dedup wire/logical send-byte ratio: {ratio:.3f}")
+            RECORDER.emit_info(wire_ratio=ratio)
             # gateway forward cost on NVLink, exact-subset gathers vs the
             # FLUX_A2AV_UNION_BCAST=1 whole-union broadcast ((L-1) * U rows;
             # the gateway's own copy is a local D2D either way)
@@ -551,6 +576,7 @@ if __name__ == "__main__":
                     f" identity {ident} -> balanced {balanced}"
                     f" ({balanced / max(ident, 1):.3f}x)"
                 )
+                RECORDER.emit_info(relay_ident_bytes=ident, relay_balanced_bytes=balanced)
 
     if args.tune:
         prof_ctx = tune_flux(moe_ctx)
@@ -585,7 +611,11 @@ if __name__ == "__main__":
             splits_per_source=None if args.no_metadata_cnt else splits_per_source_cpu,
             a2av_unique_counts=a2av_unique_counts_cpu,
         )
-        perf_result_torch = perf_torch(moe_ctx, args.warmup_iters, args.iters, args.gather_input)
+        perf_result_torch = (
+            None
+            if args.skip_correctness
+            else perf_torch(moe_ctx, args.warmup_iters, args.iters, args.gather_input)
+        )
 
     if TP_GROUP.rank() == 0:
         flux.testing.print_grouped_gemm_sol_time_ms(
@@ -597,8 +627,11 @@ if __name__ == "__main__":
         )
     if should_log_to_rds():
         set_global_args("moe_ag_scatter_traffic", args)
-    flux.exec_in_rank_order(TP_GROUP, lambda: log_perf(perf_result_torch))
+    if perf_result_torch is not None:
+        flux.exec_in_rank_order(TP_GROUP, lambda: log_perf(perf_result_torch))
+        RECORDER.emit_iters("torch", perf_result_torch.iter_times)
     flux.exec_in_rank_order(TP_GROUP, lambda: log_perf(perf_result_flux))
+    RECORDER.emit_iters("flux", perf_result_flux.iter_times)
 
     if input_dtype == torch.float16:
         atol, rtol = 1e-2, 1e-3
@@ -611,11 +644,13 @@ if __name__ == "__main__":
         print(f"Checking RANK #{TP_GROUP.rank()}...")
         if args.gather_input:
             assert flux.testing.bitwise_eq(perf_out_x.gathered_input, perf_out_y.gathered_input)
+        bitwise_all = True
         for x, y in zip(perf_out_x.outputs, perf_out_y.outputs):
             print("output shape", x.size())
             if flux.testing.bitwise_eq(x, y):
                 print(f"✅ {name_x} and torch bitwise match")
             else:
+                bitwise_all = False
                 print(f"❌ {name_x} and torch not bitwise match")
             try:
                 flux.torch_allclose(x, y, atol=atol, rtol=rtol)
@@ -624,13 +659,17 @@ if __name__ == "__main__":
                 torch.save(y, f"{name_y}_{TP_GROUP.rank()}.pt")
                 torch.save(moe_ctx, f"moe_ctx_{TP_GROUP.rank()}.pt")
                 print(f"❌ {name_x} check failed")
+                RECORDER.emit_correctness(bitwise=bitwise_all, allclose=False)
                 raise e
             else:
                 print(f"✅ {name_x} check passed")
+        RECORDER.emit_correctness(bitwise=bitwise_all, allclose=True)
 
-    flux.exec_in_rank_order(
-        TP_GROUP, lambda: check_result(perf_result_flux, perf_result_torch, "flux", "torch")
-    )
+    if perf_result_torch is not None:
+        flux.exec_in_rank_order(
+            TP_GROUP, lambda: check_result(perf_result_flux, perf_result_torch, "flux", "torch")
+        )
 
     TP_GROUP.barrier()
     torch.cuda.synchronize()
+    RECORDER.flush()
