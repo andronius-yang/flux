@@ -1,0 +1,31 @@
+# Example sweep spec — every field the runner resolves, with its default.
+# Invoke:  python sweeps/sweep.py run --spec sweeps/specs/example.yaml [--dry-run]
+# Flags override spec fields; the fully-resolved spec is always written into
+# the run capsule as spec.yaml, so any run can be repeated with `rerun`.
+platform: aws            # aws | perlmutter (sweeps/platforms/*.yaml)
+nodes: 2
+variants:                # canonical names from sweeps/variants.py
+  - hier
+  - hier_compress
+  - hier_compress_union
+families:                # matrix family, optionally with params: hotcol:frac=0.7
+  - remotefrac
+budgets_mib: [2, 8, 64]  # STRICTLY pre-topk send budget per source rank;
+                         # matrix row sums = budget_mib * 2^20 * topk bytes
+topk: 8
+G: 128                   # total experts; must be a multiple of world size
+H: 4096                  # constants — change only via a spec, deliberately
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3         # iters and warmup for torchprof/nsys cells
+sm_margin: 8
+modes: [e2e, phases]     # e2e (clean) | phases (FLUX_A2AV_TIMING, perturbs)
+                         # | torchprof (--profile chrome traces) | nsys
+matrix_instance: "001"   # instance id mixed into the matrix seed
+skip_correctness: false  # true: skip torch reference + checks (large budgets)
+timeout_s: 900
+extra_env: {}
+notes: "example"

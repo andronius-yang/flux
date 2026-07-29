@@ -1,0 +1,12 @@
+# NERSC Perlmutter: GPU nodes with 4x A100 40GB, Slingshot 11 (libfabric/CXI).
+# Source ./module.sh before running (sets NVSHMEM_HOME + Cray env).
+# Allocation: salloc --qos interactive -C gpu --account m4243_g -N N --no-shell
+name: perlmutter
+ranks_per_node: 4
+fabric: cxi
+# job inputs/outputs must live on a shared filesystem visible to compute nodes
+data_root: ${PSCRATCH}/sweep_data
+matrices_root: ${PSCRATCH}/a2av_test_matrices/generated
+srun_extra: []
+env: {}
+sym_size_max_g: 16

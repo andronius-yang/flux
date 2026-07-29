@@ -1,0 +1,693 @@
+#!/usr/bin/env python3
+"""Sweep runner: reproducible perf sweeps of the layer0 dispatch variants.
+
+    python sweeps/sweep.py run --platform aws --variants hier,hier_compress \
+        --families remotefrac --budgets-mib 2,8 --topk 8 --G 128 --modes e2e,phases
+    python sweeps/sweep.py rerun sweeps/results/runs/<run_id>
+    python sweeps/sweep.py run ... --dry-run     # print cells + srun lines, exit
+
+Contract: sweeps/SCHEMA.md. Every invocation produces one immutable run
+capsule under sweeps/results/runs/<run_id>/ (manifest.json, spec.yaml,
+metrics.csv, cells.csv — small, committed to git) plus a staging directory at
+the platform data_root (rank JSONLs, torchrun logs, nsys/prof artifacts —
+platform-local, referenced by path+hash from the manifest). The runner never
+allocates (use `salloc ... --no-shell` first), never commits (it prints the
+commit command), and always exports FLUX_TEST_DETERMINISTIC=0 for perf cells.
+"""
+
+import argparse
+import csv
+import glob
+import hashlib
+import json
+import math
+import os
+import re
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import gen_matrix  # noqa: E402
+from variants import VARIANTS  # noqa: E402
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RESULTS_ROOT = os.path.join(REPO_ROOT, "sweeps", "results", "runs")
+TEST = "test/python/moe_ag_scatter/test_moe_ag_traffic.py"
+
+MODES = ("e2e", "phases", "torchprof", "nsys")
+MODE_ORDER = {m: i for i, m in enumerate(MODES)}  # clean numbers before perturbed
+
+# defaults for the fully-resolved spec; anything not overridden by --spec or
+# flags is pinned here (constants like H/chunk_bytes change only via a spec)
+SPEC_DEFAULTS = {
+    "platform": None,
+    "nodes": 2,
+    "variants": ["hier", "hier_compress"],
+    "families": ["remotefrac"],
+    "budgets_mib": [2, 8],
+    "topk": 8,
+    "G": 128,
+    "H": 4096,
+    "chunk_bytes": 8192,
+    "ffn_hidden": 4096,
+    "dtype": "bfloat16",
+    "iters": 10,
+    "warmup_iters": 5,
+    "profile_iters": 3,  # iters and warmup for torchprof/nsys cells
+    "sm_margin": 8,
+    "modes": ["e2e"],
+    "matrix_instance": "001",
+    "skip_correctness": False,
+    "timeout_s": 900,
+    "extra_env": {},
+    "notes": "",
+}
+
+# stderr phase-mark formats from src/moe_ag_scatter/ths_op/gemm_grouped_v2_ag_scatter.cc
+PHASE_PATTERNS = [
+    (
+        re.compile(
+            r"\[a2av-timing\] rank (\d+) stage1 ([\d.]+) stage2 ([\d.]+)"
+            r" gemmgate ([\d.]+) gemm ([\d.]+) barrier ([\d.]+) ms"
+        ),
+        ["stage1_ms", "stage2_ms", "gemmgate_ms", "a2av_gemm_ms", "barrier_ms"],
+        1.0,
+    ),
+    (
+        re.compile(
+            r"\[a2av-stage2\] rank (\d+) mask ([\d.]+) keyA ([\d.]+) sortA ([\d.]+)"
+            r" keyR ([\d.]+) sortR ([\d.]+) inv ([\d.]+) gather ([\d.]+)"
+            r" scatter ([\d.]+) cnt ([\d.]+) cumsum ([\d.]+) ms"
+        ),
+        [
+            "stage2_mask_ms", "stage2_keyA_ms", "stage2_sortA_ms", "stage2_keyR_ms",
+            "stage2_sortR_ms", "stage2_inv_ms", "stage2_gather_ms", "stage2_scatter_ms",
+            "stage2_cnt_ms", "stage2_cumsum_ms",
+        ],
+        1.0,
+    ),
+    (
+        re.compile(
+            r"\[a2av-host\] rank (\d+) enq_stage1 (\d+) us enq_stage2 (\d+) us"
+            r" counts_wait (\d+) us"
+        ),
+        ["host_enq_stage1_ms", "host_enq_stage2_ms", "host_counts_wait_ms"],
+        1e-3,
+    ),
+    (
+        re.compile(
+            r"\[a2av-relayfwd\] rank (\d+) dl ([\d.]+) flag ([\d.]+) canon ([\d.]+)"
+            r" mask ([\d.]+) valid ([\d.]+) cumsum ([\d.]+) tgt ([\d.]+)"
+            r" flatten ([\d.]+) scatter ([\d.]+) cnts ([\d.]+) d2h ([\d.]+) ms"
+        ),
+        [
+            "relayfwd_dl_ms", "relayfwd_flag_ms", "relayfwd_canon_ms", "relayfwd_mask_ms",
+            "relayfwd_valid_ms", "relayfwd_cumsum_ms", "relayfwd_tgt_ms",
+            "relayfwd_flatten_ms", "relayfwd_scatter_ms", "relayfwd_cnts_ms",
+            "relayfwd_d2h_ms",
+        ],
+        1.0,
+    ),
+]
+
+CELLS_COLUMNS = [
+    "run_id", "cell_id", "status", "platform", "variant", "comm_pattern", "mode",
+    "matrix_id", "matrix_path", "matrix_sha256", "family", "family_params",
+    "budget_mib", "topk", "G", "H", "chunk_bytes", "dtype",
+    "world_size", "nnodes", "ranks_per_node", "fabric",
+    "ntokens", "tokens_per_rank", "iters", "warmup_iters", "sm_margin",
+    "deterministic", "env_json", "git_sha", "git_dirty",
+    "wire_ratio", "relay_ident_bytes", "relay_balanced_bytes",
+    "correct_bitwise", "correct_allclose", "exit_code",
+    "start_ts", "end_ts", "log_dir", "nsys_path", "prof_path", "notes",
+]
+METRICS_COLUMNS = [
+    "run_id", "cell_id", "mode", "impl", "rank", "iter", "metric", "value_ms", "source",
+]
+
+
+def sh(cmd, **kw):
+    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+
+
+def load_yaml(path):
+    with open(path) as f:
+        text = f.read()
+    try:
+        import yaml
+
+        return yaml.safe_load(text)
+    except ImportError:
+        import miniyaml
+
+        return miniyaml.loads(text)
+
+
+def dump_yaml(obj, path):
+    try:
+        import yaml
+
+        with open(path, "w") as f:
+            yaml.safe_dump(obj, f, sort_keys=True, default_flow_style=False)
+    except ImportError:
+        import miniyaml
+
+        with open(path, "w") as f:
+            f.write(miniyaml.dumps(obj) + "\n")
+
+
+def load_platform(name, dry=False):
+    plat = load_yaml(os.path.join(REPO_ROOT, "sweeps", "platforms", f"{name}.yaml"))
+    for key in ("data_root", "matrices_root"):
+        plat[key] = os.path.expandvars(plat[key])
+        if "$" in plat[key]:
+            if not dry:
+                raise SystemExit(
+                    f"platform {name}: {key} has unresolved env vars: {plat[key]}"
+                )
+            print(f"WARNING (dry-run): {key} unresolved on this host: {plat[key]}")
+    return plat
+
+
+def detect_jobid(explicit):
+    if explicit:
+        return str(explicit)
+    r = sh(["squeue", "-u", os.environ.get("USER", ""), "-h", "-t", "RUNNING", "-o", "%i"])
+    ids = [x for x in r.stdout.split() if x]
+    if len(ids) != 1:
+        raise SystemExit(
+            f"need exactly one RUNNING allocation to autodetect --jobid, found {ids};"
+            " run salloc --no-shell first or pass --jobid"
+        )
+    return ids[0]
+
+
+def scale_knobs(budget_mib, topk, chunk_bytes):
+    """MAX_RECV/STAGE/RELAY + NVSHMEM_SYMMETRIC_SIZE from the validated anchor
+    points (topk16 sweeps: post-topk 2..256 MiB -> 163840/6G, 512 -> 262144/10G,
+    1024 -> 524288/16G). See SCHEMA.md §knobs; platform yaml may override."""
+    row_chunks = budget_mib * (1 << 20) * topk // chunk_bytes
+    cap = max(163840, math.ceil(4 * row_chunks / 8192) * 8192)
+    post_mib = budget_mib * topk
+    if post_mib <= 256:
+        sym_g = 6
+    else:
+        sym_g = min(16, math.ceil(6 + (post_mib - 256) * 10 / 768))
+    return {
+        "FLUX_A2AV_MAX_RECV_NTOKENS": str(cap),
+        "FLUX_A2AV_MAX_STAGE_NTOKENS": str(cap),
+        "FLUX_A2AV_MAX_RELAY_NTOKENS": str(cap),
+        "NVSHMEM_SYMMETRIC_SIZE": f"{sym_g}G",
+    }
+
+
+def parse_family(spec_str):
+    """'hotcol:frac=0.7' -> ('hotcol', {'frac': 0.7}); 'uniform' -> ('uniform', {})."""
+    name, _, rest = spec_str.partition(":")
+    params = gen_matrix.parse_params(rest.split(";")) if rest else {}
+    return name, params
+
+
+def family_slug(name, params):
+    defaults = gen_matrix.FAMILY_DEFAULT_PARAMS[name]
+    merged = dict(defaults, **params)
+    if merged == defaults:
+        return name
+    return f"{name}-{gen_matrix.fnv1a(json.dumps(merged, sort_keys=True)) & 0xFFFFFF:06x}"
+
+
+def expand_cells(spec, plat):
+    world = spec["nodes"] * plat["ranks_per_node"]
+    cells = []
+    for mode in sorted(spec["modes"], key=lambda m: MODE_ORDER[m]):
+        for fam_str in spec["families"]:
+            fam, fparams = parse_family(fam_str)
+            for budget in spec["budgets_mib"]:
+                for vname in spec["variants"]:
+                    if vname not in VARIANTS:
+                        raise SystemExit(f"unknown variant {vname}; see sweeps/variants.py")
+                    fslug = family_slug(fam, fparams)
+                    cells.append(
+                        {
+                            "cell_id": f"{vname}_{fslug}_b{budget}_k{spec['topk']}_{mode}",
+                            "variant": vname,
+                            "mode": mode,
+                            "family": fam,
+                            "family_params": fparams,
+                            "budget_mib": budget,
+                            "world_size": world,
+                        }
+                    )
+    return cells
+
+
+def probe_capabilities(needed):
+    """Search the built flux shared libraries for env-knob strings. Detects a
+    stale build (source has the knob, binary doesn't) — cells requiring an
+    absent knob are skipped instead of silently measuring the wrong thing."""
+    # find_spec locates the installed flux package WITHOUT executing it
+    # (importing flux needs a GPU; the runner lives on the login/head node)
+    r = sh([
+        sys.executable, "-c",
+        "import importlib.util, os;"
+        " s = importlib.util.find_spec('flux');"
+        " print(os.path.dirname(s.origin) if s else '')",
+    ])
+    libdir = r.stdout.strip()
+    if r.returncode != 0 or not libdir:
+        libdir = os.path.join(REPO_ROOT, "python", "flux")  # editable-install layout
+    if not os.path.isdir(libdir):
+        raise SystemExit(f"cannot locate the flux package (tried find_spec and {libdir})")
+    sos = sorted(
+        glob.glob(os.path.join(libdir, "lib", "*.so*"))
+        + glob.glob(os.path.join(libdir, "*.so"))
+    )
+    if not sos:
+        raise SystemExit(f"no shared libraries under {libdir}")
+    found = {k: False for k in needed}
+    for so in sos:
+        with open(so, "rb") as f:
+            blob = f.read()
+        for k in needed:
+            if not found[k] and k.encode() in blob:
+                found[k] = True
+    return found, sos
+
+
+def git_info():
+    sha = sh(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT).stdout.strip()
+    dirty = bool(sh(["git", "status", "--porcelain"], cwd=REPO_ROOT).stdout.strip())
+    return sha, dirty
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def build_cell_env(spec, plat, cell, staging):
+    v = VARIANTS[cell["variant"]]
+    env = {}
+    env.update(plat.get("env") or {})
+    env.update(scale_knobs(cell["budget_mib"], spec["topk"], spec["chunk_bytes"]))
+    sym_max = plat.get("sym_size_max_g")
+    if sym_max and int(env["NVSHMEM_SYMMETRIC_SIZE"][:-1]) > int(sym_max):
+        env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_max}G"
+    env.update(v["env"])
+    if cell["mode"] == "phases":
+        env["FLUX_A2AV_TIMING"] = "1"
+    env["FLUX_TEST_DETERMINISTIC"] = "0"
+    env["FLUX_SWEEP_RECORD_DIR"] = os.path.join(staging, "records")
+    env["FLUX_EXTRA_TORCHRUN_ARGS"] = (
+        f"--redirects 3 --log-dir {os.path.join(staging, 'torchrun')}"
+    )
+    env.update(spec.get("extra_env") or {})
+    return env
+
+
+def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging):
+    v = VARIANTS[cell["variant"]]
+    profiling = cell["mode"] in ("torchprof", "nsys")
+    iters = spec["profile_iters"] if profiling else spec["iters"]
+    warmup = spec["profile_iters"] if profiling else spec["warmup_iters"]
+    sm_margin = spec["sm_margin"]
+    if (
+        v["comm_pattern"] == "a2av_hier_compress"
+        and spec["nodes"] > 1
+        and v["env"].get("FLUX_A2AV_UNION_BCAST") != "1"
+    ):
+        sm_margin = max(1, sm_margin)
+    test_args = [
+        TEST,
+        "--traffic_matrix", matrix_path,
+        "--comm_pattern", v["comm_pattern"],
+        "--topk", str(spec["topk"]),
+        "--G", str(spec["G"]),
+        "--H", str(spec["H"]),
+        "--chunk_bytes", str(spec["chunk_bytes"]),
+        "--ffn_hidden_size", str(spec["ffn_hidden"]),
+        "--dtype", spec["dtype"],
+        "--iters", str(iters),
+        "--warmup_iters", str(warmup),
+        "--sm_margin", str(sm_margin),
+    ]
+    if spec["skip_correctness"]:
+        test_args.append("--skip_correctness")
+    if cell["mode"] == "torchprof":
+        test_args.append("--profile")
+    srun = [
+        "srun", f"--jobid={jobid}", f"--nodes={spec['nodes']}", "--ntasks-per-node=1",
+    ] + list(plat.get("srun_extra") or [])
+    launcher = ["./launch.sh"]
+    if cell["mode"] == "nsys":
+        launcher = [
+            "nsys", "profile",
+            "-o", os.path.join(staging, "nsys", "node%q{SLURM_NODEID}"),
+            "--trace=cuda,nvtx,osrt", "--sample=none", "--cpuctxsw=none",
+            "--trace-fork-before-exec=true", "--force-overwrite=true",
+            "./launch.sh",
+        ]
+    return srun + launcher + test_args, sm_margin, iters, warmup
+
+
+def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
+    staging = os.path.join(run_dir_staging, "cells", cell["cell_id"])
+    cmd, sm_margin, iters, warmup = build_cell_cmd(
+        spec, plat, cell, jobid, matrix["path"], staging
+    )
+    env_delta = build_cell_env(spec, plat, cell, staging)
+    if dry:
+        print(f"\n[{cell['cell_id']}]")
+        print("  env: " + " ".join(f"{k}={v}" for k, v in sorted(env_delta.items())))
+        print("  cmd: " + " ".join(cmd))
+        return dict(cell, status="dry", sm_margin=sm_margin, iters=iters, warmup=warmup,
+                    env_delta=env_delta, staging=staging, exit_code=None)
+    for sub in ("records", "torchrun", "nsys"):
+        os.makedirs(os.path.join(staging, sub), exist_ok=True)
+    env = dict(os.environ)
+    env.update(env_delta)
+    start = time.time()
+    status, exit_code = "ok", 0
+    with open(os.path.join(staging, "srun.log"), "w") as logf:
+        logf.write("+ " + " ".join(cmd) + "\n")
+        logf.write("+ env " + json.dumps(env_delta, sort_keys=True) + "\n")
+        logf.flush()
+        try:
+            r = subprocess.run(
+                cmd, cwd=REPO_ROOT, env=env, stdout=logf, stderr=subprocess.STDOUT,
+                timeout=spec["timeout_s"],
+            )
+            exit_code = r.returncode
+            if exit_code != 0:
+                status = "failed"
+        except subprocess.TimeoutExpired:
+            status, exit_code = "timeout", None
+            logf.write(f"\n+ TIMEOUT after {spec['timeout_s']}s\n")
+    if cell["mode"] == "torchprof":
+        # flux.group_profile writes chrome traces under cwd prof/
+        for d in glob.glob(os.path.join(REPO_ROOT, "prof", "moe_ag_scatter_traffic_*")):
+            dest = os.path.join(staging, "prof", os.path.basename(d))
+            if not os.path.exists(dest):
+                os.renames(d, dest)
+    print(f"[{cell['cell_id']}] {status} ({time.time() - start:.0f}s)")
+    return dict(cell, status=status, sm_margin=sm_margin, iters=iters, warmup=warmup,
+                env_delta=env_delta, staging=staging, exit_code=exit_code,
+                start_ts=start, end_ts=time.time())
+
+
+def read_records(staging):
+    """Parse the per-rank recorder JSONLs -> (per-rank meta, iters rows, info, correctness)."""
+    metas, iters_rows, info, correctness = {}, [], {}, {}
+    for path in sorted(glob.glob(os.path.join(staging, "records", "rank_*.jsonl"))):
+        with open(path) as f:
+            for line in f:
+                rec = json.loads(line)
+                t = rec.get("type")
+                if t == "meta":
+                    metas[rec["rank"]] = rec
+                elif t == "iters":
+                    rank = int(os.path.basename(path)[5:8])
+                    for i, val in enumerate(rec["values_ms"]):
+                        iters_rows.append((rec["impl"], rank, i, rec["metric"], val))
+                elif t == "cell_info":
+                    info.update({k: v for k, v in rec.items() if k != "type"})
+                elif t == "correctness":
+                    rank = int(os.path.basename(path)[5:8])
+                    correctness[rank] = (rec["bitwise"], rec["allclose"])
+    return metas, iters_rows, info, correctness
+
+
+def parse_phase_logs(staging, iters):
+    """Scan torchrun per-rank stderr files for the [a2av-*] marks; keep the
+    last `iters` occurrences per (rank, pattern-family) — earlier ones are
+    warmup. Rank identity comes from the in-line `rank %d`, never file paths."""
+    hits = {}  # (pattern_idx, rank) -> [ [values...], ... ]
+    for path in glob.glob(os.path.join(staging, "torchrun", "**", "*"), recursive=True):
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, errors="replace") as f:
+                content = f.read()
+        except OSError:
+            continue
+        for pi, (pat, _, _) in enumerate(PHASE_PATTERNS):
+            for m in pat.finditer(content):
+                rank = int(m.group(1))
+                vals = [float(x) for x in m.groups()[1:]]
+                hits.setdefault((pi, rank), []).append(vals)
+    rows = []
+    for (pi, rank), occurrences in hits.items():
+        _, names, scale = PHASE_PATTERNS[pi]
+        kept = occurrences[-iters:]
+        for i, vals in enumerate(kept):
+            for name, val in zip(names, vals):
+                rows.append(("flux", rank, i, name, val * scale))
+    return rows
+
+
+def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, sos):
+    capsule = os.path.join(RESULTS_ROOT, run_id)
+    os.makedirs(capsule, exist_ok=True)
+    git_sha, git_dirty = git_info()
+    metrics_rows, cells_rows, artifacts = [], [], []
+
+    for cell in cells_done:
+        m = matrices[cell["cell_id"]]
+        row = {c: "" for c in CELLS_COLUMNS}
+        row.update(
+            run_id=run_id, cell_id=cell["cell_id"], status=cell["status"],
+            platform=plat["name"], variant=cell["variant"],
+            comm_pattern=VARIANTS[cell["variant"]]["comm_pattern"], mode=cell["mode"],
+            matrix_id=m["id"], matrix_path=m["path"], matrix_sha256=m["sha"],
+            family=cell["family"],
+            family_params=json.dumps(cell["family_params"], sort_keys=True),
+            budget_mib=cell["budget_mib"], topk=spec["topk"], G=spec["G"], H=spec["H"],
+            chunk_bytes=spec["chunk_bytes"], dtype=spec["dtype"],
+            world_size=cell["world_size"], nnodes=spec["nodes"],
+            ranks_per_node=plat["ranks_per_node"], fabric=plat["fabric"],
+            iters=cell["iters"], warmup_iters=cell["warmup"], sm_margin=cell["sm_margin"],
+            env_json=json.dumps(cell["env_delta"], sort_keys=True),
+            git_sha=git_sha, git_dirty=int(git_dirty),
+            exit_code="" if cell.get("exit_code") is None else cell["exit_code"],
+            start_ts=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(cell.get("start_ts", 0))),
+            end_ts=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(cell.get("end_ts", 0))),
+            log_dir=cell.get("staging", ""), notes=spec["notes"],
+        )
+        if cell["status"] in ("ok", "failed", "timeout"):
+            metas, iters_rows, info, correctness = read_records(cell["staging"])
+            if cell["status"] == "ok" and not metas:
+                row["status"] = cell["status"] = "failed"  # exited 0 but recorded nothing
+            for impl, rank, i, metric, val in iters_rows:
+                metrics_rows.append(
+                    (run_id, cell["cell_id"], cell["mode"], impl, rank, i, metric,
+                     round(val, 6), "recorder")
+                )
+            if cell["mode"] == "phases":
+                for impl, rank, i, metric, val in parse_phase_logs(
+                    cell["staging"], cell["iters"]
+                ):
+                    metrics_rows.append(
+                        (run_id, cell["cell_id"], cell["mode"], impl, rank, i, metric,
+                         round(val, 6), "stderr")
+                    )
+            if metas:
+                row["deterministic"] = int(all(m["deterministic"] for m in metas.values()))
+            if correctness:
+                row["correct_bitwise"] = int(all(b for b, _ in correctness.values()))
+                row["correct_allclose"] = int(all(a for _, a in correctness.values()))
+            for k_src, k_dst in [
+                ("ntokens", "ntokens"), ("tokens_per_rank", "tokens_per_rank"),
+                ("wire_ratio", "wire_ratio"), ("relay_ident_bytes", "relay_ident_bytes"),
+                ("relay_balanced_bytes", "relay_balanced_bytes"),
+            ]:
+                if k_src in info:
+                    row[k_dst] = info[k_src]
+            for p in sorted(glob.glob(os.path.join(cell["staging"], "records", "*.jsonl"))):
+                artifacts.append(
+                    {"path": p, "sha256": sha256_file(p), "bytes": os.path.getsize(p)}
+                )
+            nsys_reps = sorted(glob.glob(os.path.join(cell["staging"], "nsys", "*.nsys-rep")))
+            if nsys_reps:
+                row["nsys_path"] = os.path.dirname(nsys_reps[0])
+                for p in nsys_reps:
+                    artifacts.append(
+                        {"path": p, "sha256": sha256_file(p), "bytes": os.path.getsize(p)}
+                    )
+            profs = sorted(glob.glob(os.path.join(cell["staging"], "prof", "*")))
+            if profs:
+                row["prof_path"] = os.path.join(cell["staging"], "prof")
+        cells_rows.append(row)
+
+    with open(os.path.join(capsule, "metrics.csv"), "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(METRICS_COLUMNS)
+        w.writerows(metrics_rows)
+    with open(os.path.join(capsule, "cells.csv"), "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=CELLS_COLUMNS)
+        w.writeheader()
+        w.writerows(cells_rows)
+    dump_yaml(spec, os.path.join(capsule, "spec.yaml"))
+    manifest = {
+        "run_id": run_id,
+        "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "platform": {k: plat[k] for k in ("name", "ranks_per_node", "fabric")},
+        "host": os.uname().nodename,
+        "git": {"sha": git_sha, "dirty": git_dirty},
+        "flux_libs": [{"path": s, "sha256": sha256_file(s)} for s in sos],
+        "capabilities": probe,
+        "staging_root": run_dir_staging,
+        "cells": [
+            {"cell_id": c["cell_id"], "status": c["status"], "staging": c.get("staging", "")}
+            for c in cells_done
+        ],
+        "artifacts": artifacts,
+    }
+    with open(os.path.join(capsule, "manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=2, sort_keys=True)
+        f.write("\n")
+    return capsule, metrics_rows, cells_rows
+
+
+def cmd_run(spec, jobid_arg, dry):
+    plat = load_platform(spec["platform"], dry=dry)
+    if not dry and not os.environ.get("NVSHMEM_HOME"):
+        raise SystemExit(
+            "NVSHMEM_HOME unset — source the platform env first"
+            " (env_aws.sh on AWS, module.sh on Perlmutter)"
+        )
+    for m in spec["modes"]:
+        if m not in MODES:
+            raise SystemExit(f"unknown mode {m}; choose from {MODES}")
+    cells = expand_cells(spec, plat)
+
+    # matrices (generate-if-missing, sha-verified)
+    matrices = {}
+    if dry and "$" in plat["matrices_root"]:
+        for cell in cells:
+            mid = gen_matrix.matrix_id_of(
+                cell["family"],
+                dict(gen_matrix.FAMILY_DEFAULT_PARAMS[cell["family"]], **cell["family_params"]),
+                cell["world_size"], plat["ranks_per_node"], cell["budget_mib"],
+                spec["topk"], spec["chunk_bytes"], spec["matrix_instance"],
+            )
+            matrices[cell["cell_id"]] = {
+                "id": mid,
+                "path": os.path.join(plat["matrices_root"], f"{mid}.txt"),
+                "sha": "",
+            }
+    else:
+        os.makedirs(plat["matrices_root"], exist_ok=True)
+        for cell in cells:
+            mid, path, sha = gen_matrix.ensure_matrix(
+                cell["family"], cell["family_params"], cell["world_size"],
+                plat["ranks_per_node"], cell["budget_mib"], spec["topk"],
+                spec["chunk_bytes"], spec["matrix_instance"], plat["matrices_root"],
+                nexperts=spec["G"],
+            )
+            matrices[cell["cell_id"]] = {"id": mid, "path": path, "sha": sha}
+
+    needed = sorted({k for v in spec["variants"] for k in VARIANTS[v]["requires"]})
+    try:
+        probe, sos = probe_capabilities(needed)
+    except SystemExit as e:
+        if not dry:
+            raise
+        print(f"WARNING (dry-run): capability probe unavailable ({e}); assuming all capable")
+        probe, sos = {k: True for k in needed}, []
+    runnable, skipped = [], []
+    for cell in cells:
+        missing = [k for k in VARIANTS[cell["variant"]]["requires"] if not probe.get(k)]
+        if missing:
+            print(f"WARNING: {cell['cell_id']}: build lacks {missing} -> skipped_capability")
+            skipped.append(dict(cell, status="skipped_capability", sm_margin=spec["sm_margin"],
+                                iters=spec["iters"], warmup=spec["warmup_iters"],
+                                env_delta={}, staging="", exit_code=None))
+        else:
+            runnable.append(cell)
+
+    run_id = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
+    digest = hashlib.sha256(
+        (json.dumps(spec, sort_keys=True) + git_info()[0] + os.uname().nodename
+         + str(time.time_ns())).encode()
+    ).hexdigest()[:8]
+    run_id = f"{run_id}_{spec['platform']}_{digest}"
+    run_dir_staging = os.path.join(plat["data_root"], run_id)
+
+    jobid = None if dry else detect_jobid(jobid_arg)
+    print(f"run_id: {run_id}")
+    print(f"cells: {len(runnable)} runnable, {len(skipped)} skipped_capability")
+    done = list(skipped)
+    for cell in runnable:
+        done.append(
+            run_cell(spec, plat, cell, jobid, matrices[cell["cell_id"]], run_dir_staging, dry)
+        )
+    if dry:
+        print("\n--dry-run: nothing executed, no capsule written")
+        return
+    capsule, metrics_rows, cells_rows = finalize(
+        spec, plat, done, matrices, run_id, run_dir_staging, probe, sos
+    )
+    n_ok = sum(1 for r in cells_rows if r["status"] == "ok")
+    print(f"\ncapsule: {capsule}")
+    print(f"cells: {n_ok}/{len(cells_rows)} ok, metrics rows: {len(metrics_rows)}")
+    print("\nto persist:")
+    rel = os.path.relpath(capsule, REPO_ROOT)
+    print(f"  git add {rel} && git commit -m 'sweep: {run_id} {spec['notes']}'".rstrip())
+
+
+def parse_list(s):
+    return [x for x in s.split(",") if x]
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="command", required=True)
+    rp = sub.add_parser("run", help="run a sweep")
+    rp.add_argument("--spec", help="YAML spec file; explicit flags override its fields")
+    rp.add_argument("--platform", choices=["aws", "perlmutter"])
+    rp.add_argument("--jobid", help="Slurm allocation (autodetect if exactly one RUNNING)")
+    rp.add_argument("--nodes", type=int)
+    rp.add_argument("--variants", type=parse_list)
+    rp.add_argument("--families", type=parse_list, help="e.g. remotefrac,hotcol:frac=0.7")
+    rp.add_argument("--budgets-mib", dest="budgets_mib", type=lambda s: [int(x) for x in parse_list(s)])
+    rp.add_argument("--topk", type=int)
+    rp.add_argument("--G", type=int)
+    rp.add_argument("--iters", type=int)
+    rp.add_argument("--warmup-iters", dest="warmup_iters", type=int)
+    rp.add_argument("--sm-margin", dest="sm_margin", type=int)
+    rp.add_argument("--modes", type=parse_list)
+    rp.add_argument("--matrix-instance", dest="matrix_instance")
+    rp.add_argument("--skip-correctness", dest="skip_correctness", action="store_true", default=None)
+    rp.add_argument("--timeout-s", dest="timeout_s", type=int)
+    rp.add_argument("--notes")
+    rp.add_argument("--dry-run", action="store_true")
+    rr = sub.add_parser("rerun", help="re-execute a capsule's spec")
+    rr.add_argument("capsule", help="sweeps/results/runs/<run_id>")
+    rr.add_argument("--jobid")
+    rr.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+
+    if args.command == "rerun":
+        spec = load_yaml(os.path.join(args.capsule, "spec.yaml"))
+        merged = dict(SPEC_DEFAULTS, **spec)
+        cmd_run(merged, args.jobid, args.dry_run)
+        return
+
+    spec = dict(SPEC_DEFAULTS)
+    if args.spec:
+        spec.update(load_yaml(args.spec))
+    for key in SPEC_DEFAULTS:
+        val = getattr(args, key, None)
+        if val is not None:
+            spec[key] = val
+    if not spec["platform"]:
+        raise SystemExit("--platform (or a spec with platform:) is required")
+    cmd_run(spec, args.jobid, args.dry_run)
+
+
+if __name__ == "__main__":
+    main()

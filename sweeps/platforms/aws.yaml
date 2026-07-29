@@ -1,0 +1,16 @@
+# AWS ParallelCluster: p4d.24xlarge compute nodes, 8x A100 40GB, 4x100Gbps EFA.
+# Source ./env_aws.sh before running (sets NVSHMEM_HOME + EFA transport env).
+# Allocation: salloc --partition=a100 --nodes=N --exclusive --no-shell
+name: aws
+ranks_per_node: 8
+fabric: efa
+# staging root for raw run artifacts (rank JSONLs, torchrun logs, nsys reps);
+# /home is the only shared filesystem on this cluster
+data_root: /home/ubuntu/sweep_data
+# generated traffic matrices (must be node-readable, i.e. shared FS)
+matrices_root: /home/ubuntu/sw/a2av_test_matrices/generated
+srun_extra: []
+# extra env applied to every cell (before knob scaling / variant env)
+env: {}
+# cap NVSHMEM_SYMMETRIC_SIZE (GiB); 40GB A100s validated up to 16G
+sym_size_max_g: 16
