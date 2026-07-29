@@ -35,6 +35,7 @@ from variants import VARIANTS  # noqa: E402
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESULTS_ROOT = os.path.join(REPO_ROOT, "sweeps", "results", "runs")
 TEST = "test/python/moe_ag_scatter/test_moe_ag_traffic.py"
+TEST_FAST = "test/python/moe_ag_scatter/test_moe_ag_fast_baseline.py"
 
 MODES = ("e2e", "phases", "torchprof", "nsys")
 MODE_ORDER = {m: i for i, m in enumerate(MODES)}  # clean numbers before perturbed
@@ -232,6 +233,19 @@ def expand_cells(spec, plat):
                 for vname in spec["variants"]:
                     if vname not in VARIANTS:
                         raise SystemExit(f"unknown variant {vname}; see sweeps/variants.py")
+                    if VARIANTS[vname].get("driver", "flux") == "fast":
+                        if spec["nodes"] < 2:
+                            raise SystemExit(
+                                f"variant {vname} requires nodes >= 2"
+                                " (FAST asserts server_n > 1)"
+                            )
+                        if mode != "e2e":
+                            print(
+                                f"NOTE: {vname} x {mode} not generated — fast phase"
+                                " metrics arrive free in e2e (host-blocking"
+                                " alltoallv); --profile/nsys unsupported"
+                            )
+                            continue
                     fslug = family_slug(fam, fparams)
                     cells.append(
                         {
@@ -301,14 +315,36 @@ def sha256_file(path):
     return h.hexdigest()
 
 
-def build_cell_env(spec, plat, cell, staging):
+def fast_sym_size(matrix_path, plat):
+    """FAST heap sizing: the test's auto capacity is 4*max(max row sum, max col
+    sum) and the heap holds ~3 capacity-sized buffers; 4x capacity gives
+    headroom. Col sums are family-dependent, so parse the matrix itself."""
+    with open(matrix_path) as f:
+        toks = f.read().split()
+    w = int(toks[0])
+    vals = [int(x) for x in toks[1 : 1 + w * w]]
+    rows = [sum(vals[i * w : (i + 1) * w]) for i in range(w)]
+    cols = [sum(vals[i::w]) for i in range(w)]
+    cap = 4 * max(max(rows), max(cols))
+    sym_g = max(4, math.ceil(4 * cap / (1 << 30)))
+    sym_max = plat.get("sym_size_max_g")
+    if sym_max:
+        sym_g = min(sym_g, int(sym_max))
+    return f"{sym_g}G"
+
+
+def build_cell_env(spec, plat, cell, staging, matrix_path):
     v = VARIANTS[cell["variant"]]
     env = {}
     env.update(plat.get("env") or {})
-    env.update(scale_knobs(cell["budget_mib"], spec["topk"], spec["chunk_bytes"]))
-    sym_max = plat.get("sym_size_max_g")
-    if sym_max and int(env["NVSHMEM_SYMMETRIC_SIZE"][:-1]) > int(sym_max):
-        env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_max}G"
+    if v.get("driver", "flux") == "fast":
+        # FLUX_A2AV_* knobs are meaningless for FAST; its heap follows capacity
+        env["NVSHMEM_SYMMETRIC_SIZE"] = fast_sym_size(matrix_path, plat)
+    else:
+        env.update(scale_knobs(cell["budget_mib"], spec["topk"], spec["chunk_bytes"]))
+        sym_max = plat.get("sym_size_max_g")
+        if sym_max and int(env["NVSHMEM_SYMMETRIC_SIZE"][:-1]) > int(sym_max):
+            env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_max}G"
     env.update(v["env"])
     if cell["mode"] == "phases":
         env["FLUX_A2AV_TIMING"] = "1"
@@ -327,6 +363,26 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging):
     iters = spec["profile_iters"] if profiling else spec["iters"]
     warmup = spec["profile_iters"] if profiling else spec["warmup_iters"]
     sm_margin = spec["sm_margin"]
+    srun_prefix = [
+        "srun", f"--jobid={jobid}", f"--nodes={spec['nodes']}", "--ntasks-per-node=1",
+    ] + list(plat.get("srun_extra") or [])
+    if v.get("driver", "flux") == "fast":
+        test_args = [
+            TEST_FAST,
+            "--traffic_matrix", matrix_path,
+            "--topk", str(spec["topk"]),
+            "--G", str(spec["G"]),
+            "--H", str(spec["H"]),
+            "--chunk_bytes", str(spec["chunk_bytes"]),
+            "--ffn_hidden_size", str(spec["ffn_hidden"]),
+            "--dtype", spec["dtype"],
+            "--iters", str(iters),
+            "--warmup_iters", str(warmup),
+            "--sm_margin", str(sm_margin),
+        ]
+        if spec["skip_correctness"]:
+            test_args.append("--skip_correctness")
+        return srun_prefix + ["./launch_fast.sh"] + test_args, sm_margin, iters, warmup
     if (
         v["comm_pattern"] == "a2av_hier_compress"
         and spec["nodes"] > 1
@@ -351,9 +407,6 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging):
         test_args.append("--skip_correctness")
     if cell["mode"] == "torchprof":
         test_args.append("--profile")
-    srun = [
-        "srun", f"--jobid={jobid}", f"--nodes={spec['nodes']}", "--ntasks-per-node=1",
-    ] + list(plat.get("srun_extra") or [])
     launcher = ["./launch.sh"]
     if cell["mode"] == "nsys":
         launcher = [
@@ -363,7 +416,7 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging):
             "--trace-fork-before-exec=true", "--force-overwrite=true",
             "./launch.sh",
         ]
-    return srun + launcher + test_args, sm_margin, iters, warmup
+    return srun_prefix + launcher + test_args, sm_margin, iters, warmup
 
 
 def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
@@ -371,7 +424,7 @@ def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
     cmd, sm_margin, iters, warmup = build_cell_cmd(
         spec, plat, cell, jobid, matrix["path"], staging
     )
-    env_delta = build_cell_env(spec, plat, cell, staging)
+    env_delta = build_cell_env(spec, plat, cell, staging, matrix["path"])
     if dry:
         print(f"\n[{cell['cell_id']}]")
         print("  env: " + " ".join(f"{k}={v}" for k, v in sorted(env_delta.items())))
@@ -665,9 +718,20 @@ def cmd_run(spec, jobid_arg, dry):
             raise
         print(f"WARNING (dry-run): capability probe unavailable ({e}); assuming all capable")
         probe, sos = {k: True for k in needed}, []
+    # file-existence capabilities (e.g. FAST's libflash.so): probed by path,
+    # recorded in the manifest, and the binary is hashed alongside the flux libs
+    for rf in sorted({VARIANTS[v].get("requires_file") for v in spec["variants"]} - {None}):
+        rf_abs = os.path.join(REPO_ROOT, rf)
+        probe[rf] = os.path.isfile(rf_abs)
+        if probe[rf]:
+            sos.append(rf_abs)
     runnable, skipped = [], []
     for cell in cells:
-        missing = [k for k in VARIANTS[cell["variant"]]["requires"] if not probe.get(k)]
+        v = VARIANTS[cell["variant"]]
+        missing = [k for k in v["requires"] if not probe.get(k)]
+        rf = v.get("requires_file")
+        if rf and not probe.get(rf):
+            missing.append(rf)
         if missing:
             print(f"WARNING: {cell['cell_id']}: build lacks {missing} -> skipped_capability")
             skipped.append(dict(cell, status="skipped_capability", sm_margin=spec["sm_margin"],

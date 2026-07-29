@@ -84,7 +84,7 @@ CMD="torchrun \
   --node_rank=${node_rank} \
   --nproc_per_node=${nproc_per_node} \
   --nnodes=${nnodes} \
-  --rdzv_endpoint=${master_addr}:${master_port} $@"
+  --rdzv_endpoint=${master_addr}:${master_port} ${FLUX_EXTRA_TORCHRUN_ARGS:-} $@"
 
 echo ${CMD}
 ${CMD}

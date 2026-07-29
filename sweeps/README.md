@@ -29,7 +29,7 @@ cross-contaminated.
 | file | role |
 |---|---|
 | `sweep.py` | runner: cells → srun → merge → capsule; `run`, `rerun`, `--dry-run` |
-| `variants.py` | canonical variant names → `--comm_pattern` + env knobs + capability requirements |
+| `variants.py` | canonical variant names → `--comm_pattern` + env knobs + capability requirements (incl. the `fast` baseline, which swaps in `launch_fast.sh` + its own test via `driver="fast"`) |
 | `gen_matrix.py` | deterministic traffic-matrix generator (FNV-1a-seeded families) |
 | `platforms/*.yaml` | per-platform topology, fabric, data/matrices roots |
 | `specs/example.yaml` | annotated spec (flags override; resolved spec always saved in the capsule) |

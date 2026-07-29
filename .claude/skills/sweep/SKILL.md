@@ -30,7 +30,14 @@ root (leave them).
   `hier` (baseline), `hier_compress` (dedup + balanced relay),
   `hier_compress_identity`, `hier_compress_union` (gateway bcast),
   `hier_compress_pack` (bcast + pack overlap), plus `allgather`/`a2av`/
-  `a2av_ring`.
+  `a2av_ring`, and `fast` (the FAST load-balancing alltoallv + un-overlapped
+  GemmGroupedV2 baseline). `fast` constraints: needs `3rdparty/FAST/nvidia/
+  libflash.so` (build once per checkout: `srun ... ./scripts/build_fast.sh`
+  on a compute node, after sourcing the platform env), needs >= 2 nodes,
+  expands in `e2e` mode only (its phase breakdown — pack/schedule/fill/wire/
+  unpack/gemm — is captured structurally, no phases cell), and its `e2e_ms`
+  includes the flat BvN `schedule_ms` recompute (~4.4 ms/iter on p4d) — call
+  that out in small-budget comparisons.
 - `--families` — traffic distribution: `uniform`, `hotcol[:frac=..]`,
   `nodeskew[:frac=..]`, `remotefrac` (per-rank inter-node skew, the relay's
   target case). Distribution identity = matrix_id (deterministic; generated

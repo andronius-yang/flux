@@ -59,7 +59,12 @@ the summarizer's job, never stored here.
 | source | `recorder` (CUDA-event, in-process) or `stderr` (parsed [a2av-*] marks) |
 
 Metrics from the recorder: `e2e_ms` (flux, per-iteration op.forward wall);
-`comm_ms`, `scatter_ms`, `gemm_ms` (torch reference phases).
+`comm_ms`, `scatter_ms`, `gemm_ms` (torch reference phases); FAST baseline
+(`impl=fast`, per iteration): `e2e_ms, pack_ms, schedule_ms, fill_ms, wire_ms,
+unpack_ms, gemm_ms` (components of the e2e window), `reset_ms` (inter-iteration
+hygiene OUTSIDE the window — never add it to e2e), `host_e2e_ms` (host-wall
+cross-check). Metric meaning is scoped by `impl` — `gemm_ms` under torch, fast,
+and (phases) flux are three different measurements by design.
 
 Metrics parsed from stderr in `phases` mode (per iteration, per rank):
 `stage1_ms, stage2_ms, gemmgate_ms, a2av_gemm_ms, barrier_ms` ([a2av-timing]),
@@ -101,6 +106,19 @@ Highlights (full list = header row):
 
 The `mode` column rides along in metrics.csv precisely so no join is needed to
 filter clean numbers.
+
+**`impl=fast` rows appear only in `mode=e2e`.** The FAST baseline's phase
+decomposition (`pack/schedule/fill/wire/unpack/gemm_ms`) is captured
+structurally — its alltoallv is host-blocking and the e2e window syncs every
+iteration by construction (the un-overlapped one-shot methodology) — so phase
+capture does not perturb `e2e_ms` and there is no separate `phases` cell for
+fast. The never-mix rule above governs `FLUX_A2AV_TIMING` instrumentation of
+flux cells only. Semantics: fast `e2e_ms` is the comm-start → gemm-finish
+CUDA-event window ≈ pack + schedule + fill + wire + unpack + gemm; the flat
+BvN `schedule_ms` recompute (~4.4 ms/iter on p4d CPUs, ~0.9 on Perlmutter) is
+INSIDE it and floors small budgets — quote it alongside small-budget
+comparisons. Comparable to flux `e2e_ms` (both windows include their
+pack-equivalents).
 
 ## Comm/comp attribution
 

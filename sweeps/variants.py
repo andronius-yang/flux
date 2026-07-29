@@ -9,6 +9,18 @@ against a build that would silently ignore the env.
 """
 
 VARIANTS = {
+    # FAST load-balancing alltoallv + un-overlapped GemmGroupedV2 (the second
+    # non-overlapped baseline). driver="fast" swaps launcher/test/arg-map in
+    # sweep.py; e2e mode only (its phase decomposition is captured structurally
+    # — host-blocking alltoallv — so there is no separate phases cell); needs
+    # >= 2 nodes and a built libflash.so (scripts/build_fast.sh, per checkout).
+    "fast": dict(
+        comm_pattern="fast_bvn_a2av",  # cells.csv label only, never a CLI flag
+        driver="fast",
+        env={},
+        requires=[],
+        requires_file="3rdparty/FAST/nvidia/libflash.so",
+    ),
     # dense baseline and raw a2av modes
     "allgather": dict(comm_pattern="allgather", env={}, requires=[]),
     "a2av": dict(comm_pattern="a2av", env={}, requires=[]),

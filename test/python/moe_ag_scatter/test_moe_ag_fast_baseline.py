@@ -71,6 +71,7 @@ from flux.testing import (
     parse_traffic_matrix,
     traffic_matrix_to_choosed_experts,
 )
+from flux.testing.recorder import RECORDER
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fast_baseline_utils import build_pack_index, build_unpack_index
@@ -205,22 +206,33 @@ def perf_fast(
     def mean_host_ms(vals_us):
         return sum(vals_us[warmup_iters:]) / iters / 1e3
 
-    return (
-        FastPerfResult(
-            name=f"fast #{TP_GROUP.rank()}",
-            e2e_ms=mean_ms(e2e_start, e2e_end),
-            pack_ms=mean_ms(e2e_start, pack_end),
-            schedule_ms=mean_host_ms(schedule_us),
-            fill_ms=mean_host_ms(fill_us),
-            reset_ms=sum(reset_ms[warmup_iters:]) / iters,
-            wire_ms=mean_host_ms(wire_us),
-            unpack_ms=mean_ms(comm_end, unpack_end),
-            gemm_ms=mean_ms(unpack_end, e2e_end),
-            host_e2e_ms=sum(host_e2e[warmup_iters:]) / iters,
-        ),
-        out,
-        gemm_input,
+    def per_iter_ms(starts, ends):
+        return [starts[i].elapsed_time(ends[i]) for i in range(warmup_iters, total_iters)]
+
+    result = FastPerfResult(
+        name=f"fast #{TP_GROUP.rank()}",
+        e2e_ms=mean_ms(e2e_start, e2e_end),
+        pack_ms=mean_ms(e2e_start, pack_end),
+        schedule_ms=mean_host_ms(schedule_us),
+        fill_ms=mean_host_ms(fill_us),
+        reset_ms=sum(reset_ms[warmup_iters:]) / iters,
+        wire_ms=mean_host_ms(wire_us),
+        unpack_ms=mean_ms(comm_end, unpack_end),
+        gemm_ms=mean_ms(unpack_end, e2e_end),
+        host_e2e_ms=sum(host_e2e[warmup_iters:]) / iters,
     )
+    result.iter_times = {
+        "e2e_ms": per_iter_ms(e2e_start, e2e_end),
+        "pack_ms": per_iter_ms(e2e_start, pack_end),
+        "unpack_ms": per_iter_ms(comm_end, unpack_end),
+        "gemm_ms": per_iter_ms(unpack_end, e2e_end),
+        "schedule_ms": [v / 1e3 for v in schedule_us[warmup_iters:]],
+        "fill_ms": [v / 1e3 for v in fill_us[warmup_iters:]],
+        "wire_ms": [v / 1e3 for v in wire_us[warmup_iters:]],
+        "reset_ms": reset_ms[warmup_iters:],
+        "host_e2e_ms": host_e2e[warmup_iters:],
+    }
+    return result, out, gemm_input
 
 
 def parse_args():
@@ -256,6 +268,15 @@ def parse_args():
             os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "3rdparty", "FAST", "nvidia"
         ),
         help="directory containing libflash.so + flash_utils.py",
+    )
+    parser.add_argument(
+        "--skip_correctness",
+        default=False,
+        action="store_true",
+        help="skip the untimed torch reference and all result checks, and shrink"
+        " the reference's (ntokens * topk, H) scatter staging buffer to one row"
+        " — for large-budget perf sweeps where the reference OOMs; correctness"
+        " is then NOT verified",
     )
     return parser.parse_args()
 
@@ -297,6 +318,7 @@ if __name__ == "__main__":
         weight_groups=1,
         drop_token=False,
         gating_args=gating_args,
+        skip_reference=args.skip_correctness,
     )
 
     # metadata-exchange result (untimed setup, same contract as the traffic test):
@@ -344,6 +366,14 @@ if __name__ == "__main__":
         print(f"FAST wire bytes per rank (send): {matrix.sum(dim=1).tolist()}")
         print(f"FAST wire bytes per rank (recv): {matrix.sum(dim=0).tolist()}")
         print(f"FAST buffer capacity: {capacity_bytes >> 20} MiB per buffer")
+        RECORDER.emit_info(
+            ntokens=ntokens,
+            tokens_per_rank=tokens_per_rank,
+            gemm_rows_per_rank=rows_per_rank.tolist(),
+            fast_send_bytes=matrix.sum(dim=1).tolist(),
+            fast_recv_bytes=matrix.sum(dim=0).tolist(),
+            capacity_bytes=capacity_bytes,
+        )
 
     # The torch reference's gemm_impl ends with out.mul_(output_scale[exp_id]),
     # a synthetic per-expert factor drawn uniform [-1, 1] that the FUSED ops
@@ -353,18 +383,20 @@ if __name__ == "__main__":
     moe_ctx.output_scale[0].fill_(1.0)
 
     # ---- torch reference (untimed): populates ctx.inputs / scatter_inputs / outputs ----
-    gemm_only_op = flux.GemmOnly(
-        moe_ctx.inputs.dtype,
-        moe_ctx.inputs.dtype,
-        moe_ctx.outputs[0].dtype,
-        use_fp8_gemm=flux.is_fp8_dtype(moe_ctx.inputs.dtype),
-    )
-    moe_ctx.clear_outputs()
-    MoeAgScatterWithTorch.comm_impl(moe_ctx, TP_GROUP)
-    MoeAgScatterWithTorch.scatter_impl(moe_ctx)
-    MoeAgScatterWithTorch.gemm_impl(moe_ctx, gemm_only_op)
-    torch_outputs = moe_ctx.get_outputs_clone()
-    torch.cuda.synchronize()
+    torch_outputs = None
+    if not args.skip_correctness:
+        gemm_only_op = flux.GemmOnly(
+            moe_ctx.inputs.dtype,
+            moe_ctx.inputs.dtype,
+            moe_ctx.outputs[0].dtype,
+            use_fp8_gemm=flux.is_fp8_dtype(moe_ctx.inputs.dtype),
+        )
+        moe_ctx.clear_outputs()
+        MoeAgScatterWithTorch.comm_impl(moe_ctx, TP_GROUP)
+        MoeAgScatterWithTorch.scatter_impl(moe_ctx)
+        MoeAgScatterWithTorch.gemm_impl(moe_ctx, gemm_only_op)
+        torch_outputs = moe_ctx.get_outputs_clone()
+        torch.cuda.synchronize()
 
     # ---- timed FAST baseline ----
     gemm_op = flux.GemmGroupedV2(
@@ -384,6 +416,7 @@ if __name__ == "__main__":
     )
 
     flux.exec_in_rank_order(TP_GROUP, lambda: print(perf_result))
+    RECORDER.emit_iters("fast", perf_result.iter_times)
 
     # ---- correctness ----
     # Numerics tolerance for GemmGroupedV2 (CUTLASS) vs the per-expert
@@ -405,6 +438,7 @@ if __name__ == "__main__":
         if flux.testing.bitwise_eq(fast_gemm_input, ref_block):
             print("✅ FAST wire + unpack bitwise-match the reference scatter block")
         else:
+            RECORDER.emit_correctness(bitwise=False, allclose=False)
             raise AssertionError("❌ FAST gemm input does not match the reference scatter block")
         # same-op check: GemmGroupedV2 on the reference block must reproduce the
         # FAST-path output bit-for-bit (pure data-movement equivalence)
@@ -412,6 +446,7 @@ if __name__ == "__main__":
         if flux.testing.bitwise_eq(fast_out, ref_gg_out):
             print("✅ GemmGroupedV2(FAST input) bitwise-matches GemmGroupedV2(reference block)")
         else:
+            RECORDER.emit_correctness(bitwise=False, allclose=False)
             raise AssertionError("❌ same-op outputs differ: data movement is broken")
         # numerics vs the per-expert torch.matmul loop: standard elementwise
         # allclose (|x-y| <= atol + rtol*|y|; see tolerance note above)
@@ -420,15 +455,19 @@ if __name__ == "__main__":
         print(f"   max |diff|: {diff.max().item():.6f}, max rel (vs |y|+atol): {rel:.6f}")
         if not torch.allclose(fast_out, torch_outputs[0], atol=atol, rtol=rtol):
             bad = diff > atol + rtol * torch_outputs[0].float().abs()
+            RECORDER.emit_correctness(bitwise=True, allclose=False)
             raise AssertionError(
                 f"❌ allclose vs torch reference failed: {int(bad.sum())} elements"
                 f" (max diff {diff.max().item():.6f})"
             )
         print("✅ FAST baseline output allclose vs torch reference")
+        RECORDER.emit_correctness(bitwise=True, allclose=True)
 
-    flux.exec_in_rank_order(TP_GROUP, check_result)
+    if not args.skip_correctness:
+        flux.exec_in_rank_order(TP_GROUP, check_result)
 
     comm.alltoallv_teardown()
     del comm
     TP_GROUP.barrier()
     torch.cuda.synchronize()
+    RECORDER.flush()
