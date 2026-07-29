@@ -282,7 +282,14 @@ def probe_capabilities(needed):
 
 def git_info():
     sha = sh(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT).stdout.strip()
-    dirty = bool(sh(["git", "status", "--porcelain"], cwd=REPO_ROOT).stdout.strip())
+    # capsules are data, not code: an uncommitted sibling capsule (e.g. from a
+    # previous run in the same sequence) must not mark later runs dirty
+    dirty = bool(
+        sh(
+            ["git", "status", "--porcelain", "--", ".", ":(exclude)sweeps/results"],
+            cwd=REPO_ROOT,
+        ).stdout.strip()
+    )
     return sha, dirty
 
 
