@@ -23,6 +23,7 @@ import json
 import math
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -39,6 +40,11 @@ TEST_FAST = "test/python/moe_ag_scatter/test_moe_ag_fast_baseline.py"
 
 MODES = ("e2e", "phases", "torchprof", "nsys")
 MODE_ORDER = {m: i for i, m in enumerate(MODES)}  # clean numbers before perturbed
+
+# an nsys capture below this is an empty/aborted report (a real single-node
+# 8-rank rep measures ~1.3 MB); nsys cells missing a full-size rep per node
+# get status nsys_empty instead of silently passing
+NSYS_REP_MIN_BYTES = 100_000
 
 # defaults for the fully-resolved spec; anything not overridden by --spec or
 # flags is pinned here (constants like H/chunk_bytes change only via a spec)
@@ -410,9 +416,20 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging):
     launcher = ["./launch.sh"]
     if cell["mode"] == "nsys":
         launcher = [
-            "nsys", "profile",
-            "-o", os.path.join(staging, "nsys", "node%q{SLURM_NODEID}"),
-            "--trace=cuda,nvtx,osrt", "--sample=none", "--cpuctxsw=none",
+            # node-local pre-clean: a killed nsys leaves multi-GB quadd session
+            # data under /tmp/nvidia; once the root disk fills, every later
+            # nsys dies with SIGBUS (mmap write on a full filesystem)
+            "bash", "-c",
+            'rm -rf /tmp/nvidia/nsight_systems /tmp/nsys-report-*.qdstrm; exec "$@"',
+            "nsys-preclean",
+            plat.get("nsys_bin") or "nsys", "profile",
+            # job id in the name so a retried cell (same staging dir) never
+            # silently overwrites the earlier attempt's capture
+            "-o", os.path.join(staging, "nsys", "node%q{SLURM_NODEID}_%q{SLURM_JOB_ID}"),
+            # NO osrt: the NVSHMEM/EFA proxy thread busy-polls fi_cq_read, and
+            # osrt-tracing it is an event storm (~18 GB per minute of capture,
+            # fills the node-local root disk and wedges the run)
+            "--trace=cuda,nvtx", "--sample=none", "--cpuctxsw=none",
             "--trace-fork-before-exec=true", "--force-overwrite=true",
             "./launch.sh",
         ]
@@ -433,6 +450,15 @@ def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
                     env_delta=env_delta, staging=staging, exit_code=None)
     for sub in ("records", "torchrun", "nsys"):
         os.makedirs(os.path.join(staging, sub), exist_ok=True)
+    if cell["mode"] == "torchprof":
+        # group_profile names its artifact from TORCHELASTIC_RUN_ID, which is
+        # constant ("none") under launch.sh — a leftover from a crashed cell
+        # would be collected by THIS cell below; clear it first
+        for stale in glob.glob(os.path.join(REPO_ROOT, "prof", "moe_ag_scatter_traffic_*")):
+            if os.path.isdir(stale):
+                shutil.rmtree(stale)
+            else:
+                os.remove(stale)
     env = dict(os.environ)
     env.update(env_delta)
     start = time.time()
@@ -479,7 +505,10 @@ def _latest_mtime(root, floor):
 
 
 def _kill_group(proc):
-    for sig, grace in ((signal.SIGTERM, 15), (signal.SIGKILL, 10)):
+    # SIGINT first with a generous grace: nsys traps it and finalizes the
+    # .qdstrm -> .nsys-rep (a SIGKILL'd nsys loses the whole capture), and
+    # torchrun forwards it cleanly to the ranks in every mode
+    for sig, grace in ((signal.SIGINT, 30), (signal.SIGTERM, 15), (signal.SIGKILL, 10)):
         try:
             os.killpg(os.getpgid(proc.pid), sig)
         except (ProcessLookupError, PermissionError):
@@ -637,9 +666,21 @@ def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, s
                     artifacts.append(
                         {"path": p, "sha256": sha256_file(p), "bytes": os.path.getsize(p)}
                     )
+            if cell["mode"] == "nsys" and cell["status"] == "ok":
+                # guard: one full-size rep per node, else the capture was lost
+                # (killed nsys, wrong output path, empty trace) — never report
+                # a profiling cell ok without its profile
+                good = [p for p in nsys_reps if os.path.getsize(p) >= NSYS_REP_MIN_BYTES]
+                if len(good) < spec["nodes"]:
+                    row["status"] = cell["status"] = "nsys_empty"
             profs = sorted(glob.glob(os.path.join(cell["staging"], "prof", "*")))
             if profs:
                 row["prof_path"] = os.path.join(cell["staging"], "prof")
+                for p in profs:
+                    if os.path.isfile(p):
+                        artifacts.append(
+                            {"path": p, "sha256": sha256_file(p), "bytes": os.path.getsize(p)}
+                        )
         cells_rows.append(row)
 
     with open(os.path.join(capsule, "metrics.csv"), "w", newline="") as f:
@@ -682,6 +723,13 @@ def cmd_run(spec, jobid_arg, dry):
     for m in spec["modes"]:
         if m not in MODES:
             raise SystemExit(f"unknown mode {m}; choose from {MODES}")
+    nsys_bin = plat.get("nsys_bin") or "nsys"
+    if "nsys" in spec["modes"] and not dry and not shutil.which(nsys_bin):
+        raise SystemExit(
+            f"modes include nsys but {nsys_bin} not found — source the platform"
+            " env (env_aws.sh / module.sh), set nsys_bin in the platform yaml,"
+            " or drop the nsys mode"
+        )
     cells = expand_cells(spec, plat)
 
     # matrices (generate-if-missing, sha-verified)
@@ -725,6 +773,11 @@ def cmd_run(spec, jobid_arg, dry):
         probe[rf] = os.path.isfile(rf_abs)
         if probe[rf]:
             sos.append(rf_abs)
+    if "nsys" in spec["modes"]:
+        # head-node view only (the empty-capture guard in finalize is the
+        # authoritative check); recorded in the manifest capabilities
+        found = shutil.which(plat.get("nsys_bin") or "nsys")
+        probe["nsys"] = sh([found, "--version"]).stdout.strip() if found else False
     runnable, skipped = [], []
     for cell in cells:
         v = VARIANTS[cell["variant"]]
@@ -821,6 +874,8 @@ def main():
     rp.add_argument("--warmup-iters", dest="warmup_iters", type=int)
     rp.add_argument("--sm-margin", dest="sm_margin", type=int)
     rp.add_argument("--modes", type=parse_list)
+    rp.add_argument("--profile-iters", dest="profile_iters", type=int,
+                    help="iters AND warmup for torchprof/nsys cells (default 3)")
     rp.add_argument("--matrix-instance", dest="matrix_instance")
     rp.add_argument("--skip-correctness", dest="skip_correctness", action="store_true", default=None)
     rp.add_argument("--timeout-s", dest="timeout_s", type=int)

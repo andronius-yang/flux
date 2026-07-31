@@ -23,7 +23,8 @@ warmup_iters: 5
 profile_iters: 3         # iters and warmup for torchprof/nsys cells
 sm_margin: 8
 modes: [e2e, phases]     # e2e (clean) | phases (FLUX_A2AV_TIMING, perturbs)
-                         # | torchprof (--profile chrome traces) | nsys
+                         # | nsys (primary timeline, per-node .nsys-rep)
+                         # | torchprof (secondary, Python-op attribution)
 matrix_instance: "001"   # instance id mixed into the matrix seed
 skip_correctness: false  # true: skip torch reference + checks (large budgets)
 timeout_s: 900

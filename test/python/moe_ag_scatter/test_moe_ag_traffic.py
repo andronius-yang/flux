@@ -243,19 +243,23 @@ def perf_flux(
     for i in range(total_iters):
         ctx.clear_outputs()
         op.clear_buffers()
+        # NVTX iteration markers: ns-scale, inert without a profiler; lets an
+        # nsys-mode capture segment warmup vs timed without device syncs
+        nvtx_tag = f"iter{i}_warmup" if i < warmup_iters else f"iter{i}"
         start_events[i].record()
-        op.forward(
-            inputs_shard=ctx.inputs_shard,
-            weights=ctx.weights[0],
-            splits_gpu=ctx.splits_gpu,
-            scatter_index=ctx.scatter_index,
-            output_scale=take_first_or_none(ctx.output_scale),
-            outputs_buf=take_first_or_none(ctx.outputs),
-            fast_accum=ctx.fast_accum,
-            sm_margin=args.sm_margin,
-            allgather_output=gathered_input,
-            **extra_args,
-        )
+        with torch.cuda.nvtx.range(nvtx_tag):
+            op.forward(
+                inputs_shard=ctx.inputs_shard,
+                weights=ctx.weights[0],
+                splits_gpu=ctx.splits_gpu,
+                scatter_index=ctx.scatter_index,
+                output_scale=take_first_or_none(ctx.output_scale),
+                outputs_buf=take_first_or_none(ctx.outputs),
+                fast_accum=ctx.fast_accum,
+                sm_margin=args.sm_margin,
+                allgather_output=gathered_input,
+                **extra_args,
+            )
         end_events[i].record()
 
     gemm_times = []

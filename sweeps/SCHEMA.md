@@ -99,10 +99,19 @@ Highlights (full list = header row):
 - `phases` — `FLUX_A2AV_TIMING=1`. The C++ marks force a per-iteration device
   sync, so **e2e numbers from phases cells are perturbed and must never be
   compared against e2e-mode cells**. Use them for the phase breakdown only.
-- `torchprof` — `--profile` chrome traces (reliable timeline path).
-- `nsys` — Nsight Systems capture, best-effort (torchrun child-kernel capture
-  has failed on some stacks; the runner flags empty captures). Timings from
-  profiling modes are for inspection, not comparison.
+- `nsys` — Nsight Systems capture, **the primary timeline mode**: one
+  `.nsys-rep` per node (all torchrun ranks followed; validated on the AWS
+  p4d stack 2026-07-31), showing CE vs SM attribution, P2P memcpy sizes and
+  rates, and per-iteration NVTX ranges (`iterN` / `iterN_warmup`). Trace set
+  is `cuda,nvtx` only — osrt is deliberately off (the NVSHMEM/EFA proxy
+  thread busy-polls, and osrt-tracing it emits ~18 GB/min, filling the
+  node-local disk); proxy-thread cost shows up indirectly as wire latency.
+  The runner enforces one full-size rep per node — a missing/undersized
+  capture demotes the cell to status `nsys_empty`.
+- `torchprof` — `--profile` chrome traces; secondary timeline mode, kept for
+  Python-op/shape attribution (which ATen call launched which kernel).
+
+Timings from profiling modes are for inspection, not comparison.
 
 The `mode` column rides along in metrics.csv precisely so no join is needed to
 filter clean numbers.
@@ -126,8 +135,10 @@ Phase wall-times from `phases` mode inherently conflate overlap (comm hidden
 under the GEMM tile-spins shows up as gemm time, not comm time). The honest
 decomposition protocol when needed: pair an `e2e` cell with a comm-only or
 comp-only ablation and difference the results in the summarizer — never store
-derived "exposed comm" as raw truth. Timeline modes (torchprof/nsys) are the
-ground truth for "was it actually overlapped".
+derived "exposed comm" as raw truth. Timeline modes are the ground truth for
+"was it actually overlapped" — nsys first (sees CE memcpys, proxy threads,
+and cross-process node timelines that the torch profiler cannot), torchprof
+when Python-op attribution is needed.
 
 ## Knob scaling (validated anchors)
 

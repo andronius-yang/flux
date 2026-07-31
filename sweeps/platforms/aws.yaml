@@ -10,6 +10,10 @@ data_root: /home/ubuntu/sweep_data
 # generated traffic matrices (must be node-readable, i.e. shared FS)
 matrices_root: /home/ubuntu/sw/a2av_test_matrices/generated
 srun_extra: []
+# nsys-mode profiler binary. The CUDA 12.4 bundle's nsys 2023.4.4 drops most
+# kernel records and loses names under 8-process torchrun injection; the AMI's
+# 2025.3.2 (CUDA 13 toolkit dir, present on head + compute) captures fully.
+nsys_bin: /usr/local/cuda-13.0/bin/nsys
 # extra env applied to every cell (before knob scaling / variant env)
 env: {}
 # cap NVSHMEM_SYMMETRIC_SIZE (GiB); 40GB A100s validated up to 16G

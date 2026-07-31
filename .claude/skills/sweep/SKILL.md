@@ -46,7 +46,12 @@ root (leave them).
 - `--topk`, `--G` — routing shape (G % world_size == 0; the generator
   pre-checks routing feasibility and tells you the minimum G).
 - `--modes` — `e2e` (clean latency), `phases` (FLUX_A2AV_TIMING breakdown —
-  perturbed, never compare its e2e against clean cells), `torchprof`, `nsys`.
+  perturbed, never compare its e2e against clean cells), `nsys` (primary
+  timeline: per-node Nsight capture, CE/P2P visibility, NVTX iter
+  ranges), `torchprof` (secondary timeline: Python-op attribution). For
+  overlap investigations run `--modes e2e,nsys`; start analysis with
+  `nsys stats --report cuda_gpu_kern_sum,cuda_gpu_mem_time_sum <rep>`.
+- `--profile-iters` — iters AND warmup for torchprof/nsys cells (default 3).
 - `--iters/--warmup-iters` (default 10/5), `--skip-correctness` (large
   budgets; correctness columns go empty), `--matrix-instance` (new random
   instance of a family).
@@ -76,7 +81,8 @@ root (leave them).
   anchors only via SCHEMA.md, not ad hoc).
 - `hier_compress*` multi-node needs `sm_margin >= 1` (runner auto-bumps,
   except union-bcast which legitimately allows 0).
-- nsys may capture no kernels on this stack — the runner flags it; use
-  `torchprof` mode as the reliable timeline.
+- An `nsys_empty` cell status means the capture was lost (killed nsys /
+  empty trace) — the rep is missing or undersized; rerun the cell rather
+  than trusting an ok-looking srun.log.
 - Single-node runs can't use `remotefrac`/`nodeskew` (no remote ranks);
   use `uniform`/`hotcol`.
