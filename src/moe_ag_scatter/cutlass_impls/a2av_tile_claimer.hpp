@@ -26,6 +26,7 @@
 #pragma once
 
 #include "cutlass/cutlass.h"
+#include "flux/a2av_progress.h"
 
 namespace cutlass {
 namespace gemm {
@@ -38,6 +39,11 @@ struct A2AVTileClaimer {
   uint64_t const *signal_ptr;   // [world_size] per-source epoch signals
   uint64_t signal_expected;     // current run-id epoch
   int world_size;
+  // FLUX_A2AV_NVTX_PROXY progress slots (host-mapped, nullptr when disabled).
+  // reported_ready lives in thread-0 registers so the poll loop never reads
+  // host memory back; each CTA writes each source's ready_seq at most once.
+  bytedance::flux::A2AVProgressSlots *progress;
+  uint64_t reported_ready = 0;
 
   CUTLASS_DEVICE
   A2AVTileClaimer(
@@ -46,13 +52,15 @@ struct A2AVTileClaimer {
       uint64_t const *multi_masks_,
       uint64_t const *signal_ptr_,
       uint64_t signal_expected_,
-      int world_size_)
+      int world_size_,
+      bytedance::flux::A2AVProgressSlots *progress_ = nullptr)
       : bucket_offsets(bucket_offsets_),
         bucket_cursors(bucket_cursors_),
         multi_masks(multi_masks_),
         signal_ptr(signal_ptr_),
         signal_expected(signal_expected_),
-        world_size(world_size_) {}
+        world_size(world_size_),
+        progress(progress_) {}
 
   // Claim one tile. Returns the claimed index into bucket_tiles, or -1 when
   // every bucket is drained. Called by thread 0 only; the caller broadcasts
@@ -71,6 +79,13 @@ struct A2AVTileClaimer {
             (*reinterpret_cast<uint64_t const volatile *>(signal_ptr + s)) >= signal_expected;
         if (ready) {
           arrived |= (uint64_t(1) << s);
+          if (progress != nullptr && !(reported_ready & (uint64_t(1) << s))) {
+            // idempotent across CTAs; one store pair per (CTA, source) total
+            *reinterpret_cast<uint64_t volatile *>(&progress->arrival_gt[s]) =
+                bytedance::flux::a2av_globaltimer();
+            *reinterpret_cast<uint64_t volatile *>(&progress->ready_seq[s]) = signal_expected;
+            reported_ready |= (uint64_t(1) << s);
+          }
         }
         int size = bucket_offsets[s + 1] - bucket_offsets[s];
         if (*reinterpret_cast<int const volatile *>(bucket_cursors + s) >= size) {
@@ -82,6 +97,9 @@ struct A2AVTileClaimer {
         }
         int idx = atomicAdd(bucket_cursors + s, 1);
         if (idx < size) {
+          if (progress != nullptr) {
+            atomicAdd(&progress->claimed[s], 1u);
+          }
           return bucket_offsets[s] + idx;
         }
       }
@@ -96,6 +114,9 @@ struct A2AVTileClaimer {
           any_remaining = true;
           int idx = atomicAdd(bucket_cursors + W, 1);
           if (idx < msize) {
+            if (progress != nullptr) {
+              atomicAdd(&progress->claimed[W], 1u);
+            }
             return bucket_offsets[W] + idx;
           }
         } else {

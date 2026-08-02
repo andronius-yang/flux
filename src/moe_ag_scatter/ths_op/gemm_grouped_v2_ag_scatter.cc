@@ -36,9 +36,14 @@
 #include "moe_ag_scatter/sort_util.h"
 #include "moe_ag_scatter/triton_util.h"
 #include "moe_ag_scatter/workspace_util.h"
+#include "moe_ag_scatter/ths_op/a2av_nvtx_proxy.hpp"
+#include "flux/a2av_progress.h"
 #include <nvshmemx.h>
+#include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <ATen/core/jit_type.h>
 #include <ATen/core/List.h>
@@ -256,6 +261,11 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // unaffected either way. Contract: forward() inputs must be device-ready
   // when called (this stream does not join the caller stream's tail).
   c10::cuda::CUDAStream pack_stream_;
+  // FLUX_A2AV_NVTX_PROXY only: carries the 1-block progress-mirror kernel. A
+  // dedicated stream because the mirror stays resident for the whole GEMM —
+  // on any comm stream it would serialize that stream's memops behind itself
+  // (deadlock against relay signal chains).
+  c10::cuda::CUDAStream nvtx_proxy_stream_;
   cudaEvent_t ready_event;
   cudaEvent_t fetch_remote_event;
   cudaEvent_t all_gather_event;
@@ -308,6 +318,28 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // FLUX_A2AV_PACK_OVERLAP=1 (compress): see pack_stream_. Must be set
   // identically on every rank (collective 2x symmetric send allocation).
   const bool pack_overlap_;
+  // FLUX_A2AV_EARLY_LAUNCH=1 (any a2av variant): issue the inter-node sends
+  // first, launch the GEMM right after stage 2, and defer the SM-free
+  // cp_stream wire sequence (self copy, round-0 intra puts, hier/union
+  // gateway forwarding) until after the launch; cp_stream FIFO order is
+  // preserved by deferring the whole sequence, never a prefix. On
+  // hier/union/flat/ring the deferred ops are strictly CE memcpys + front-end
+  // memops + nbi CE puts, legal even at CUDA_DEVICE_MAX_CONNECTIONS=1. The
+  // compress gather/relay arms' index_select tails are NOT deferred — a
+  // kernel enqueued after the persistent GEMM blankets every SM can starve at
+  // dispatch forever — but issued inline on the idle pack stream behind
+  // front-end waits (pre-launch enqueue, concurrent execution: the proven
+  // non-early configuration). Those arms require CUDA_DEVICE_MAX_CONNECTIONS
+  // > 1 (ctor-checked) so their pre-launch front-end waits cannot serialize
+  // the GEMM launch behind full wire delivery in a single channel.
+  const bool early_launch_;
+  // FLUX_A2AV_BLOCKING_WIRE=1 (instrumented only): inter-node puts (hier /
+  // compress aggregates, relay phase-2 wire, flat per-dest remote puts) use
+  // the blocking-local put, whose proxy entrypoint kernel spans until local
+  // completion — the wire becomes a visible device span. Under
+  // CUDA_DEVICE_MAX_CONNECTIONS=1 that kernel serializes ahead of the GEMM;
+  // for overlap visualization raise the env (launch.sh default is :-1).
+  const bool blocking_wire_;
   uint64_t run_id_ = 0;             // epoch value carried by the NVSHMEM signals
   int64_t max_recv_ntokens_ = 0;    // rows of the symmetric recv buffer
   int64_t max_stage_ntokens_ = 0;   // rows of the symmetric gateway staging buffer
@@ -382,6 +414,97 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // FLUX_A2AV_TIMING=1, balanced-relay fwd-index build only: op-group boundaries
   static constexpr int kNumRelayFwdEvents = 12;
   cudaEvent_t relay_fwd_events_[kNumRelayFwdEvents] = {};
+  // FLUX_A2AV_NVTX_PROXY=1: host-mapped per-source tile-progress slots and the
+  // poller thread that renders them as NVTX ranges (a2av_nvtx_proxy.hpp).
+  // Progress writes are read-mostly additions; the data path is unchanged.
+  bool nvtx_proxy_enabled_ = false;
+  A2AVProgressSlots *progress_slots_ = nullptr;  // pinned host copy the poller reads
+  // kernel-written slots live in device memory (cheap L2 atomics); the poller
+  // refreshes the pinned copy with ~800 B CE memcpys on nvtx_proxy_stream_.
+  // GEMM CTAs never touch PCIe, and no SM-resident helper exists — a mirror
+  // kernel would deadlock under CUDA_DEVICE_MAX_CONNECTIONS=1 (single compute
+  // queue: resident helper blocks the GEMM whose completion would retire it).
+  A2AVProgressSlots *progress_slots_dev_ = nullptr;
+  // layer C per-tile trace ring (device; lazily sized at first launch when N /
+  // tile shape are known). Extraction and sidecar writing live in the poller.
+  A2AVTileRecord *tile_trace_dev_ = nullptr;
+  uint32_t tile_trace_capacity_ = 0;
+  std::unique_ptr<A2AVNvtxProxy> nvtx_proxy_;
+  // meta-path [E, W] logical splits cumsum snapshot; drives the dense-schedule
+  // per-source expected-tile totals (empty when the meta path didn't run)
+  std::vector<int32_t> nvtx_ssc_;
+
+  // FLUX_A2AV_EARLY_LAUNCH: the cp_stream wire sequence, materialized as
+  // plain descriptors at dispatch time (all offset math is host data) and
+  // issued after the GEMM launch. Descriptors, not closures: the dispatch
+  // helpers capture stack state by reference and would dangle.
+  struct DeferredWireOp {
+    // Deliberately SM-free kinds only (CE copies, nbi CE puts, front-end
+    // memops, event records): deferred ops are enqueued AFTER the persistent
+    // GEMM launch, and a kernel enqueued once the GEMM has blanketed every SM
+    // can starve at dispatch forever (observed on the relay gateway gathers —
+    // see the t_* tail ops in a2av_dispatch, which are issued inline on the
+    // pack stream instead).
+    enum Kind : uint8_t { kSelfCopy, kSignal, kPut, kWait64, kRecordHierEvent };
+    Kind kind;
+    void *dst = nullptr;
+    const void *src = nullptr;
+    int64_t bytes = 0;
+    uint64_t *sig = nullptr;
+    uint64_t val = 0;
+    int pe = 0;
+  };
+  std::vector<DeferredWireOp> deferred_wire_;
+  bool deferred_wire_armed_ = false;
+
+  // Execute the deferred sequence on cp_stream (original FIFO order), then
+  // re-record the tail events the iteration barrier depends on (they must
+  // cover the deferred puts, so they cannot stay at their dispatch-time site).
+  void
+  issue_deferred_wire() {
+    if (!this->deferred_wire_armed_) {
+      return;
+    }
+    // keep the poller's stream syncs out of this window (see set_paused)
+    if (this->nvtx_proxy_) {
+      this->nvtx_proxy_->set_paused(true);
+    }
+    for (const DeferredWireOp &op : this->deferred_wire_) {
+      switch (op.kind) {
+        case DeferredWireOp::kSelfCopy:
+          CUDA_CHECK(cudaMemcpyAsync(
+              op.dst, op.src, op.bytes, cudaMemcpyDeviceToDevice, this->cp_stream));
+          break;
+        case DeferredWireOp::kSignal:
+          nvshmemx_signal_op_on_stream(
+              op.sig, op.val, NVSHMEM_SIGNAL_SET, op.pe, this->cp_stream);
+          break;
+        case DeferredWireOp::kPut:
+          nvshmemx_putmem_signal_nbi_on_stream(
+              op.dst, op.src, op.bytes, op.sig, op.val, NVSHMEM_SIGNAL_SET, op.pe,
+              this->cp_stream);
+          break;
+        case DeferredWireOp::kWait64:
+          CU_CHECK(CUStreamWaitValue64(
+              this->cp_stream,
+              reinterpret_cast<CUdeviceptr>(op.sig),
+              op.val,
+              CU_STREAM_WAIT_VALUE_GEQ));
+          break;
+        case DeferredWireOp::kRecordHierEvent:
+          CUDA_CHECK(cudaEventRecord(this->hier_dispatch_event_, this->cp_stream));
+          break;
+      }
+    }
+    CUDA_CHECK(cudaEventRecord(this->fetch_remote_event, this->cp_stream_inter_node));
+    CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream, this->fetch_remote_event));
+    CUDA_CHECK(cudaEventRecord(this->all_gather_event, this->cp_stream));
+    this->deferred_wire_.clear();
+    this->deferred_wire_armed_ = false;
+    if (this->nvtx_proxy_) {
+      this->nvtx_proxy_->set_paused(false);
+    }
+  }
 
  private:
   c10::cuda::CUDAStream
@@ -448,6 +571,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         cp_stream_inter_node(create_cp_stream()),
         cp_stream_signal(create_cp_stream()),
         pack_stream_(create_cp_stream()),
+        nvtx_proxy_stream_(create_cp_stream()),
         a2av_dispatch_(a2av_dispatch),
         a2av_ring_(a2av_ring),
         a2av_hier_(a2av_hier),
@@ -457,6 +581,8 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             get_int_from_env("FLUX_A2AV_UNION_BCAST", 0) != 0),
         union_bcast_(get_int_from_env("FLUX_A2AV_UNION_BCAST", 0) != 0),
         pack_overlap_(get_int_from_env("FLUX_A2AV_PACK_OVERLAP", 0) != 0),
+        early_launch_(get_int_from_env("FLUX_A2AV_EARLY_LAUNCH", 0) != 0 && a2av_dispatch),
+        blocking_wire_(get_int_from_env("FLUX_A2AV_BLOCKING_WIRE", 0) != 0),
         // ring_mode barriers are CUDA-IPC based and intra-node only; multi-node
         // must take the NVSHMEM barrier (ring_mode = false)
         group_barrier(this->tp_group, nnodes == 1 && this->tp_group->get_size() > 8) {
@@ -475,6 +601,17 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     FLUX_CHECK(!(a2av_hier_compress && a2av_hier))
         << "a2av_hier_compress and a2av_hier are mutually exclusive";
     if (a2av_dispatch) {
+      FLUX_CHECK(!(this->early_launch_ && this->pack_overlap_))
+          << "FLUX_A2AV_EARLY_LAUNCH + FLUX_A2AV_PACK_OVERLAP is untested; unset one";
+      if (this->early_launch_ && a2av_hier_compress && !this->union_bcast_ && nnodes > 1) {
+        // the gather/relay tails are issued inline (pack stream) behind
+        // front-end waits BEFORE the GEMM launch; in a single hardware
+        // channel those pending waits would serialize the GEMM launch behind
+        // full wire delivery, defeating the reorder
+        FLUX_CHECK(get_int_from_env("CUDA_DEVICE_MAX_CONNECTIONS", 1) > 1)
+            << "FLUX_A2AV_EARLY_LAUNCH on the compress gather/relay paths requires "
+               "CUDA_DEVICE_MAX_CONNECTIONS > 1";
+      }
       FLUX_CHECK_EQ(this->ffn_tp_size, 1) << "a2av dispatch requires ep_size == world_size";
       FLUX_CHECK(nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE) == dist_env.local_rank);
       FLUX_CHECK(!this->pack_overlap_ || a2av_hier_compress)
@@ -659,9 +796,33 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     for (int i = 0; i < kNumRelayFwdEvents; i++) {
       CUDA_CHECK(cudaEventCreate(&this->relay_fwd_events_[i]));  // timing-capable
     }
+    this->nvtx_proxy_enabled_ =
+        this->a2av_dispatch_ && get_int_from_env("FLUX_A2AV_NVTX_PROXY", 0) != 0;
+    if (this->nvtx_proxy_enabled_) {
+      CUDA_CHECK(cudaHostAlloc(
+          (void **)&this->progress_slots_, sizeof(A2AVProgressSlots), cudaHostAllocDefault));
+      memset(this->progress_slots_, 0, sizeof(A2AVProgressSlots));
+      CUDA_CHECK(cudaMalloc((void **)&this->progress_slots_dev_, sizeof(A2AVProgressSlots)));
+      CUDA_CHECK(cudaMemset(this->progress_slots_dev_, 0, sizeof(A2AVProgressSlots)));
+      this->nvtx_proxy_ = std::make_unique<A2AVNvtxProxy>(
+          this->progress_slots_,
+          this->progress_slots_dev_,
+          (cudaStream_t)this->nvtx_proxy_stream_,
+          this->rank,
+          this->world_size,
+          this->nnodes);
+    }
   }
 
   ~GemmGroupedV2AGScatterOpImpl() {
+    this->nvtx_proxy_.reset();  // join the poller before freeing its slots
+    if (this->progress_slots_ != nullptr) {
+      CUDA_CHECK(cudaFreeHost(this->progress_slots_));
+      CUDA_CHECK(cudaFree(this->progress_slots_dev_));
+      if (this->tile_trace_dev_ != nullptr) {
+        CUDA_CHECK(cudaFree(this->tile_trace_dev_));
+      }
+    }
     for (int i = 0; i < kNumTimingEvents; i++) {
       CUDA_CHECK(cudaEventDestroy(this->timing_events_[i]));
     }
@@ -687,6 +848,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     CUDA_CHECK(cudaStreamDestroy(this->cp_stream_inter_node));
     CUDA_CHECK(cudaStreamDestroy(this->cp_stream_signal));
     CUDA_CHECK(cudaStreamDestroy(this->pack_stream_));
+    CUDA_CHECK(cudaStreamDestroy(this->nvtx_proxy_stream_));
   }
 
  protected:
@@ -858,6 +1020,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       return chunk_bound(n, m, k + 1) - chunk_bound(n, m, k);
     };
     this->run_id_ += 1;
+    if (this->nvtx_proxy_enabled_) {
+      this->nvtx_ssc_.clear();  // repopulated iff the meta path runs below
+    }
     // pack overlap: parity slice of the send buffer / meta arena, and the
     // stream the pack runs on (the main stream when the knob is off)
     const bool pack_ov = this->pack_overlap_ && this->a2av_hier_compress_;
@@ -943,6 +1108,11 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           c += (int32_t)cnt_at(s, ep_start + e_loc);
           ssc_h[e_loc * W + s] = c;
         }
+      }
+      if (this->nvtx_proxy_enabled_) {
+        // snapshot for the dense-schedule expected-tile totals (forward_impl);
+        // pinned arena parity slices get reused, this copy doesn't
+        this->nvtx_ssc_.assign(ssc_h, ssc_h + nexG);
       }
       // expert_base[e] = prefix sum of column sums (== prefix of splits)
       int64_t base = 0;
@@ -1705,29 +1875,150 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     const int64_t self_send_off =
         compress ? seg_off_h[dist_env.node_idx + dist_env.local_rank] : send_off[rank];
     const int64_t self_recv_off = compress ? recv_off_u[rank] : recv_off[rank];
+    // FLUX_A2AV_EARLY_LAUNCH: cp_stream wire ops are recorded as descriptors
+    // instead of issued; forward_impl replays them (issue_deferred_wire) right
+    // after the GEMM launch. The WHOLE cp_stream sequence defers or none of it
+    // — cp_stream is FIFO and a partial deferral would reorder delivery.
+    const bool defer_wire = this->early_launch_;
+    if (defer_wire) {
+      this->deferred_wire_.clear();
+      this->deferred_wire_armed_ = true;
+    }
+    auto emit_self_copy = [&](void *dst, const void *src, int64_t bytes) {
+      if (defer_wire) {
+        this->deferred_wire_.push_back(
+            {DeferredWireOp::kSelfCopy, dst, src, bytes, nullptr, 0, 0});
+      } else {
+        CUDA_CHECK(cudaMemcpyAsync(dst, src, bytes, cudaMemcpyDeviceToDevice, this->cp_stream));
+      }
+    };
+    auto emit_signal = [&](uint64_t *sig, int pe) {
+      if (defer_wire) {
+        this->deferred_wire_.push_back(
+            {DeferredWireOp::kSignal, nullptr, nullptr, 0, sig, this->run_id_, pe});
+      } else {
+        nvshmemx_signal_op_on_stream(sig, this->run_id_, NVSHMEM_SIGNAL_SET, pe, this->cp_stream);
+      }
+    };
+    auto emit_put = [&](void *dst, const void *src, int64_t bytes, uint64_t *sig, int pe) {
+      if (defer_wire) {
+        this->deferred_wire_.push_back(
+            {DeferredWireOp::kPut, dst, src, bytes, sig, this->run_id_, pe});
+      } else {
+        nvshmemx_putmem_signal_nbi_on_stream(
+            dst, src, bytes, sig, this->run_id_, NVSHMEM_SIGNAL_SET, pe, this->cp_stream);
+      }
+    };
+    auto emit_wait = [&](uint64_t *ptr) {
+      if (defer_wire) {
+        this->deferred_wire_.push_back(
+            {DeferredWireOp::kWait64, nullptr, nullptr, 0, ptr, this->run_id_, 0});
+      } else {
+        CU_CHECK(CUStreamWaitValue64(
+            this->cp_stream,
+            reinterpret_cast<CUdeviceptr>(ptr),
+            this->run_id_,
+            CU_STREAM_WAIT_VALUE_GEQ));
+      }
+    };
+    auto emit_hier_event = [&]() {
+      if (defer_wire) {
+        this->deferred_wire_.push_back(
+            {DeferredWireOp::kRecordHierEvent, nullptr, nullptr, 0, nullptr, 0, 0});
+      } else {
+        CUDA_CHECK(cudaEventRecord(this->hier_dispatch_event_, this->cp_stream));
+      }
+    };
+    // ---- gather/relay tail ops (t_*): the compress gather arm and the relay
+    // gateway loop carry index_select SM kernels. These are NEVER deferred:
+    // kernels enqueued after the persistent GEMM has blanketed the SMs can
+    // starve at dispatch (observed as a permanent mid-tail cp_stream stall on
+    // the relay — the racy loser of the GEMM ramp). Instead, under early
+    // launch the tail is issued INLINE on the otherwise-idle pack stream
+    // (pre-launch enqueue behind the node_sig front-end wait is exactly the
+    // proven non-early configuration); without early launch it stays on
+    // cp_stream as before. pack_stream_ is free here: pack_overlap_ is
+    // FLUX_CHECKed incompatible with early_launch_.
+    const cudaStream_t tail_stream =
+        defer_wire ? (cudaStream_t)this->pack_stream_ : (cudaStream_t)this->cp_stream;
+    auto t_wait_event = [&](cudaEvent_t ev) {
+      CUDA_CHECK(cudaStreamWaitEvent(tail_stream, ev));
+    };
+    auto t_wait = [&](uint64_t *ptr) {
+      CU_CHECK(CUStreamWaitValue64(
+          tail_stream, reinterpret_cast<CUdeviceptr>(ptr), this->run_id_,
+          CU_STREAM_WAIT_VALUE_GEQ));
+    };
+    auto t_signal = [&](uint64_t *sig, int pe) {
+      nvshmemx_signal_op_on_stream(sig, this->run_id_, NVSHMEM_SIGNAL_SET, pe, tail_stream);
+    };
+    auto t_blocking_put = [&](void *dst, const void *src, int64_t bytes, uint64_t *sig, int pe) {
+      nvshmemx_putmem_signal_on_stream(
+          dst, src, bytes, sig, this->run_id_, NVSHMEM_SIGNAL_SET, pe, tail_stream);
+    };
+    auto t_put_nosig = [&](void *dst, const void *src, int64_t bytes, int pe) {
+      nvshmemx_putmem_on_stream(dst, src, bytes, pe, tail_stream);
+    };
+    // dst <- stage_seg[idx[idx_off : idx_off + rows]] via at::index_select_out
+    auto t_index_select =
+        [&](void *dst, const void *stage_ptr, int64_t stage_rows, int64_t idx_off, int64_t rows) {
+          c10::cuda::CUDAStreamGuard guard(at::cuda::getStreamFromExternal(
+              tail_stream, at::cuda::current_device()));
+          auto opt_in = torch::TensorOptions(torch::kCUDA).dtype(this->input_dtype);
+          auto stage_seg = torch::from_blob(
+              const_cast<void *>(stage_ptr), {stage_rows, (int64_t)hidden}, opt_in);
+          auto dst_t = torch::from_blob(dst, {rows, (int64_t)hidden}, opt_in);
+          auto idx = this->a2av_fwd_idx_.narrow(0, idx_off, rows);
+          at::index_select_out(dst_t, stage_seg, 0, idx);
+        };
     if (self_rows > 0) {
-      CUDA_CHECK(cudaMemcpyAsync(
+      emit_self_copy(
           recv_base + self_recv_off * row_bytes,
           send_base + self_send_off * row_bytes,
-          self_rows * row_bytes,
-          cudaMemcpyDeviceToDevice,
-          this->cp_stream));
+          self_rows * row_bytes);
     }
-    nvshmemx_signal_op_on_stream(
-        signal_base + rank, this->run_id_, NVSHMEM_SIGNAL_SET, rank, this->cp_stream);
+    emit_signal(signal_base + rank, rank);
     // zero-payload destinations still get the signal (the GEMM waits on every source)
     auto issue_put = [&](int d, cudaStream_t put_stream) {
       int64_t bytes = chunk_at(rank, d) * row_bytes;
+      if (put_stream == (cudaStream_t)this->cp_stream) {
+        // intra path: goes through the emitters so early-launch can defer it
+        if (bytes > 0) {
+          emit_put(
+              recv_base + recv_off[d] * row_bytes,
+              send_base + send_off[d] * row_bytes,
+              bytes,
+              signal_base + rank,
+              d);
+        } else {
+          emit_signal(signal_base + rank, d);
+        }
+        return;
+      }
       if (bytes > 0) {
-        nvshmemx_putmem_signal_nbi_on_stream(
-            recv_base + recv_off[d] * row_bytes,
-            send_base + send_off[d] * row_bytes,
-            bytes,
-            signal_base + rank,
-            this->run_id_,
-            NVSHMEM_SIGNAL_SET,
-            d,
-            put_stream);
+        // blocking_wire_ (instrumented): inter-node puts only — blocking the
+        // intra-node P2P puts would serialize the whole flat fan-out
+        if (this->blocking_wire_ && d / dist_env.local_world_size != dist_env.node_idx) {
+          nvshmemx_putmem_signal_on_stream(
+              recv_base + recv_off[d] * row_bytes,
+              send_base + send_off[d] * row_bytes,
+              bytes,
+              signal_base + rank,
+              this->run_id_,
+              NVSHMEM_SIGNAL_SET,
+              d,
+              put_stream);
+        } else {
+          nvshmemx_putmem_signal_nbi_on_stream(
+              recv_base + recv_off[d] * row_bytes,
+              send_base + send_off[d] * row_bytes,
+              bytes,
+              signal_base + rank,
+              this->run_id_,
+              NVSHMEM_SIGNAL_SET,
+              d,
+              put_stream);
+        }
       } else {
         nvshmemx_signal_op_on_stream(
             signal_base + rank, this->run_id_, NVSHMEM_SIGNAL_SET, d, put_stream);
@@ -1819,21 +2110,17 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         int d = dist_env.local_rank_to_global_rank(dlg, my_node);
         int64_t rows = u_at(rank, d);
         if (rows > 0) {
-          nvshmemx_putmem_signal_nbi_on_stream(
+          emit_put(
               recv_base + recv_off_of_u(rank, d) * row_bytes,
               send_base + send_seg_off(dlg) * row_bytes,
               rows * row_bytes,
               signal_base + rank,
-              this->run_id_,
-              NVSHMEM_SIGNAL_SET,
-              d,
-              this->cp_stream);
+              d);
         } else {
-          nvshmemx_signal_op_on_stream(
-              signal_base + rank, this->run_id_, NVSHMEM_SIGNAL_SET, d, this->cp_stream);
+          emit_signal(signal_base + rank, d);
         }
       }
-      CUDA_CHECK(cudaEventRecord(this->hier_dispatch_event_, this->cp_stream));
+      emit_hier_event();
       if (NN > 1) {
         uint64_t *node_sig =
             reinterpret_cast<uint64_t *>(this->a2av_node_signal_buffer_.data_ptr());
@@ -1852,15 +2139,29 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             int64_t rows = U_at(rank, tn);
             int seg = tn < my_node ? tn : tn + L - 1;
             if (rows > 0) {
-              nvshmemx_putmem_signal_nbi_on_stream(
-                  stage_base + stage_off_u(tn, my_lr, my_node) * row_bytes,
-                  send_base + seg_off_h[seg] * row_bytes,
-                  rows * row_bytes,
-                  node_sig + my_node,
-                  this->run_id_,
-                  NVSHMEM_SIGNAL_SET,
-                  g,
-                  this->cp_stream_inter_node);
+              // blocking_wire_ (instrumented): local-completion put whose proxy
+              // entrypoint kernel spans the wire drain on the timeline
+              if (this->blocking_wire_) {
+                nvshmemx_putmem_signal_on_stream(
+                    stage_base + stage_off_u(tn, my_lr, my_node) * row_bytes,
+                    send_base + seg_off_h[seg] * row_bytes,
+                    rows * row_bytes,
+                    node_sig + my_node,
+                    this->run_id_,
+                    NVSHMEM_SIGNAL_SET,
+                    g,
+                    this->cp_stream_inter_node);
+              } else {
+                nvshmemx_putmem_signal_nbi_on_stream(
+                    stage_base + stage_off_u(tn, my_lr, my_node) * row_bytes,
+                    send_base + seg_off_h[seg] * row_bytes,
+                    rows * row_bytes,
+                    node_sig + my_node,
+                    this->run_id_,
+                    NVSHMEM_SIGNAL_SET,
+                    g,
+                    this->cp_stream_inter_node);
+              }
             } else {
               nvshmemx_signal_op_on_stream(
                   node_sig + my_node,
@@ -1883,95 +2184,70 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             for (int dn = 1; dn < NN; dn++) {
               int ns = (my_node + dn) % NN;
               int s = dist_env.local_rank_to_global_rank(my_lr, ns);
-              CU_CHECK(CUStreamWaitValue64(
-                  this->cp_stream,
-                  reinterpret_cast<CUdeviceptr>(node_sig + ns),
-                  this->run_id_,
-                  CU_STREAM_WAIT_VALUE_GEQ));
+              emit_wait(node_sig + ns);
               const int64_t union_rows = U_at(s, my_node);
-              const char *ustage = stage_base + stage_off_u(my_node, my_lr, ns) * row_bytes;
+              char *ustage = stage_base + stage_off_u(my_node, my_lr, ns) * row_bytes;
               for (int dl = 0; dl < L; dl++) {
                 int dlg = (my_lr - dl + L) % L;
                 int d = dist_env.local_rank_to_global_rank(dlg, my_node);
                 if (union_rows > 0) {
-                  nvshmemx_putmem_signal_nbi_on_stream(
+                  emit_put(
                       recv_base + recv_off_of_u(s, d) * row_bytes,
                       ustage,
                       union_rows * row_bytes,
                       signal_base + s,
-                      this->run_id_,
-                      NVSHMEM_SIGNAL_SET,
-                      d,
-                      this->cp_stream);
+                      d);
                 } else {
-                  nvshmemx_signal_op_on_stream(
-                      signal_base + s, this->run_id_, NVSHMEM_SIGNAL_SET, d, this->cp_stream);
+                  emit_signal(signal_base + s, d);
                 }
               }
             }
           } else {
           // gateway rounds: per-round front-end wait (cuStreamWaitValue64, zero
           // SMs), then gather each local destination's exact subset out of the
-          // staged union. The index_selects run on cp_stream (stream guard); they
-          // wait on fwd_index_event_ so the index build (main stream) is done.
-          CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream, this->fwd_index_event_));
-          {
-            c10::cuda::CUDAStreamGuard guard(this->cp_stream);
-            auto opt_in = torch::TensorOptions(torch::kCUDA).dtype(this->input_dtype);
-            for (int dn = 1; dn < NN; dn++) {
-              int ns = (my_node + dn) % NN;
-              int s = dist_env.local_rank_to_global_rank(my_lr, ns);
-              CU_CHECK(CUStreamWaitValue64(
-                  this->cp_stream,
-                  reinterpret_cast<CUdeviceptr>(node_sig + ns),
-                  this->run_id_,
-                  CU_STREAM_WAIT_VALUE_GEQ));
-              int64_t union_rows = U_at(s, my_node);
-              auto stage_seg = torch::from_blob(
-                  stage_base + stage_off_u(my_node, my_lr, ns) * row_bytes,
-                  {std::max<int64_t>(union_rows, 1), (int64_t)hidden},
-                  opt_in);
-              const int64_t round_base = fwd_col_off_h[(dn - 1) * L];
-              // forward in mirror local order (same stage slots as a2av_hier)
-              for (int dl = 0; dl < L; dl++) {
-                int dlg = (my_lr - dl + L) % L;
-                int d = dist_env.local_rank_to_global_rank(dlg, my_node);
-                int64_t rows = u_at(s, d);
-                if (rows == 0) {
-                  nvshmemx_signal_op_on_stream(
-                      signal_base + s, this->run_id_, NVSHMEM_SIGNAL_SET, d, this->cp_stream);
-                  continue;
-                }
-                auto idx = this->a2av_fwd_idx_.narrow(0, fwd_col_off_h[(dn - 1) * L + dlg], rows);
-                if (d == rank) {
-                  // gateway's own subset: gather straight into the recv region
-                  auto dst = torch::from_blob(
-                      recv_base + recv_off_of_u(s, rank) * row_bytes,
-                      {rows, (int64_t)hidden},
-                      opt_in);
-                  at::index_select_out(dst, stage_seg, 0, idx);
-                  nvshmemx_signal_op_on_stream(
-                      signal_base + s, this->run_id_, NVSHMEM_SIGNAL_SET, rank, this->cp_stream);
-                } else {
-                  // round-relative offsets: the gateway's own (d == rank) column
-                  // leaves a hole in the scratch — harmless capacity slack, the
-                  // per-round total is still <= copies_per_rank
-                  const int64_t scratch_off = fwd_col_off_h[(dn - 1) * L + dlg] - round_base;
-                  auto dst = torch::from_blob(
-                      scratch_base + scratch_off * row_bytes, {rows, (int64_t)hidden}, opt_in);
-                  at::index_select_out(dst, stage_seg, 0, idx);
-                  // NON-nbi on purpose: the scratch is refilled next round, and
-                  // nbi gives no local-completion guarantee
-                  nvshmemx_putmem_signal_on_stream(
-                      recv_base + recv_off_of_u(s, d) * row_bytes,
-                      scratch_base + scratch_off * row_bytes,
-                      rows * row_bytes,
-                      signal_base + s,
-                      this->run_id_,
-                      NVSHMEM_SIGNAL_SET,
-                      d,
-                      this->cp_stream);
-                }
+          // staged union. The index_selects wait on fwd_index_event_ so the
+          // index build (main stream) is done. Issued via t_* — inline on the
+          // pack stream under early launch (never deferred: see tail_stream).
+          t_wait_event(this->fwd_index_event_);
+          for (int dn = 1; dn < NN; dn++) {
+            int ns = (my_node + dn) % NN;
+            int s = dist_env.local_rank_to_global_rank(my_lr, ns);
+            t_wait(node_sig + ns);
+            int64_t union_rows = U_at(s, my_node);
+            char *ustage = stage_base + stage_off_u(my_node, my_lr, ns) * row_bytes;
+            const int64_t stage_rows = std::max<int64_t>(union_rows, 1);
+            const int64_t round_base = fwd_col_off_h[(dn - 1) * L];
+            // forward in mirror local order (same stage slots as a2av_hier)
+            for (int dl = 0; dl < L; dl++) {
+              int dlg = (my_lr - dl + L) % L;
+              int d = dist_env.local_rank_to_global_rank(dlg, my_node);
+              int64_t rows = u_at(s, d);
+              if (rows == 0) {
+                t_signal(signal_base + s, d);
+                continue;
+              }
+              const int64_t idx_off = fwd_col_off_h[(dn - 1) * L + dlg];
+              if (d == rank) {
+                // gateway's own subset: gather straight into the recv region
+                t_index_select(
+                    recv_base + recv_off_of_u(s, rank) * row_bytes, ustage, stage_rows, idx_off,
+                    rows);
+                t_signal(signal_base + s, rank);
+              } else {
+                // round-relative offsets: the gateway's own (d == rank) column
+                // leaves a hole in the scratch — harmless capacity slack, the
+                // per-round total is still <= copies_per_rank
+                const int64_t scratch_off = idx_off - round_base;
+                t_index_select(
+                    scratch_base + scratch_off * row_bytes, ustage, stage_rows, idx_off, rows);
+                // NON-nbi on purpose: the scratch is refilled next round, and
+                // nbi gives no local-completion guarantee
+                t_blocking_put(
+                    recv_base + recv_off_of_u(s, d) * row_bytes,
+                    scratch_base + scratch_off * row_bytes,
+                    rows * row_bytes,
+                    signal_base + s,
+                    d);
               }
             }
           }
@@ -2109,15 +2385,29 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
               }
               wire_src = relay_base + relay_round_base(my_lr, dn) * row_bytes;
             }
-            nvshmemx_putmem_signal_nbi_on_stream(
-                stage_base + stage_off_chunk(tn, my_lr, my_node) * row_bytes,
-                wire_src,
-                rows * row_bytes,
-                node_sig + my_node,
-                this->run_id_,
-                NVSHMEM_SIGNAL_SET,
-                g,
-                this->cp_stream_inter_node);
+            // blocking_wire_ (instrumented): local-completion put whose proxy
+            // entrypoint kernel spans the wire drain on the timeline
+            if (this->blocking_wire_) {
+              nvshmemx_putmem_signal_on_stream(
+                  stage_base + stage_off_chunk(tn, my_lr, my_node) * row_bytes,
+                  wire_src,
+                  rows * row_bytes,
+                  node_sig + my_node,
+                  this->run_id_,
+                  NVSHMEM_SIGNAL_SET,
+                  g,
+                  this->cp_stream_inter_node);
+            } else {
+              nvshmemx_putmem_signal_nbi_on_stream(
+                  stage_base + stage_off_chunk(tn, my_lr, my_node) * row_bytes,
+                  wire_src,
+                  rows * row_bytes,
+                  node_sig + my_node,
+                  this->run_id_,
+                  NVSHMEM_SIGNAL_SET,
+                  g,
+                  this->cp_stream_inter_node);
+            }
           }
 
           // ---- host sync on the tiny cnt_in/cnt_before D2H: placed AFTER the
@@ -2134,97 +2424,72 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           // inside a source's segment splits its (s, d) recv region across
           // gateways: my slice is contiguous and lands at
           // recv_off_of_u(s, d) + cnt_before (both host-known after the sync).
-          CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream, this->fwd_index_event_));
-          {
-            c10::cuda::CUDAStreamGuard guard(this->cp_stream);
-            auto opt_in = torch::TensorOptions(torch::kCUDA).dtype(this->input_dtype);
-            for (int dn = 1; dn < NN; dn++) {
-              int ns = (my_node + dn) % NN;
-              CU_CHECK(CUStreamWaitValue64(
-                  this->cp_stream,
-                  reinterpret_cast<CUdeviceptr>(node_sig + ns),
-                  this->run_id_,
-                  CU_STREAM_WAIT_VALUE_GEQ));
-              const int64_t win_rows = chunk_rows_of(ns, my_node, my_lr);
-              auto stage_seg = torch::from_blob(
-                  stage_base + stage_off_chunk(my_node, my_lr, ns) * row_bytes,
-                  {std::max<int64_t>(win_rows, 1), (int64_t)hidden},
-                  opt_in);
-              int64_t sc = 0;  // per-round scratch rows, host running-packed
-              for (int dl = 0; dl < L; dl++) {
-                int dlg = (my_lr - dl + L) % L;
-                int d = dist_env.local_rank_to_global_rank(dlg, my_node);
-                int last_sl = -1;
-                for (int sl = 0; sl < L; sl++) {
-                  if (cnt_in_h[((int64_t)(dn - 1) * L + sl) * L + dlg] > 0) {
-                    last_sl = sl;
-                  }
+          // Issued via t_* — inline on the pack stream under early launch
+          // (never deferred: see tail_stream above).
+          t_wait_event(this->fwd_index_event_);
+          for (int dn = 1; dn < NN; dn++) {
+            int ns = (my_node + dn) % NN;
+            t_wait(node_sig + ns);
+            const int64_t win_rows = chunk_rows_of(ns, my_node, my_lr);
+            char *wstage = stage_base + stage_off_chunk(my_node, my_lr, ns) * row_bytes;
+            const int64_t stage_rows = std::max<int64_t>(win_rows, 1);
+            int64_t sc = 0;  // per-round scratch rows, host running-packed
+            for (int dl = 0; dl < L; dl++) {
+              int dlg = (my_lr - dl + L) % L;
+              int d = dist_env.local_rank_to_global_rank(dlg, my_node);
+              int last_sl = -1;
+              for (int sl = 0; sl < L; sl++) {
+                if (cnt_in_h[((int64_t)(dn - 1) * L + sl) * L + dlg] > 0) {
+                  last_sl = sl;
                 }
-                if (last_sl < 0) {
-                  // nothing of my window goes to d this round; still signal
-                  // (the destination aggregation waits on every gateway slot)
-                  nvshmemx_signal_op_on_stream(
-                      gw_sig + (dn - 1) * L + my_lr,
-                      this->run_id_,
-                      NVSHMEM_SIGNAL_SET,
-                      d,
-                      this->cp_stream);
+              }
+              if (last_sl < 0) {
+                // nothing of my window goes to d this round; still signal
+                // (the destination aggregation waits on every gateway slot)
+                t_signal(gw_sig + (dn - 1) * L + my_lr, d);
+                continue;
+              }
+              for (int sl = 0; sl < L; sl++) {
+                const int64_t cnt = cnt_in_h[((int64_t)(dn - 1) * L + sl) * L + dlg];
+                if (cnt == 0) {
                   continue;
                 }
-                for (int sl = 0; sl < L; sl++) {
-                  const int64_t cnt = cnt_in_h[((int64_t)(dn - 1) * L + sl) * L + dlg];
-                  if (cnt == 0) {
-                    continue;
-                  }
-                  int s = dist_env.local_rank_to_global_rank(sl, ns);
-                  auto idx = this->a2av_fwd_idx_.narrow(
-                      0, fwd_col_off_h[((size_t)(dn - 1) * L + sl) * L + dlg], cnt);
-                  const int64_t dst_off = recv_off_of_u(s, d) +
-                                          cnt_bef_h[((int64_t)(dn - 1) * L + sl) * L + dlg];
-                  if (d == rank) {
-                    auto dst = torch::from_blob(
-                        recv_base + dst_off * row_bytes, {cnt, (int64_t)hidden}, opt_in);
-                    at::index_select_out(dst, stage_seg, 0, idx);
-                  } else {
-                    FLUX_CHECK_LE(sc + cnt, copies_per_rank)
-                        << "a2av relay forward scratch overflow";
-                    auto dst = torch::from_blob(
-                        scratch_base + sc * row_bytes, {cnt, (int64_t)hidden}, opt_in);
-                    at::index_select_out(dst, stage_seg, 0, idx);
-                    if (sl == last_sl) {
-                      // NON-nbi (the scratch is refilled next round) with the
-                      // per-round gateway signal fused on the LAST piece:
-                      // intra-node on-stream puts to the same peer land in
-                      // stream order (P2P copies), so the signal covers the
-                      // earlier pieces too
-                      nvshmemx_putmem_signal_on_stream(
-                          recv_base + dst_off * row_bytes,
-                          scratch_base + sc * row_bytes,
-                          cnt * row_bytes,
-                          gw_sig + (dn - 1) * L + my_lr,
-                          this->run_id_,
-                          NVSHMEM_SIGNAL_SET,
-                          d,
-                          this->cp_stream);
-                    } else {
-                      nvshmemx_putmem_on_stream(
-                          recv_base + dst_off * row_bytes,
-                          scratch_base + sc * row_bytes,
-                          cnt * row_bytes,
-                          d,
-                          this->cp_stream);
-                    }
-                    sc += cnt;
-                  }
-                }
+                int s = dist_env.local_rank_to_global_rank(sl, ns);
+                const int64_t idx_off = fwd_col_off_h[((size_t)(dn - 1) * L + sl) * L + dlg];
+                const int64_t dst_off =
+                    recv_off_of_u(s, d) + cnt_bef_h[((int64_t)(dn - 1) * L + sl) * L + dlg];
                 if (d == rank) {
-                  nvshmemx_signal_op_on_stream(
-                      gw_sig + (dn - 1) * L + my_lr,
-                      this->run_id_,
-                      NVSHMEM_SIGNAL_SET,
-                      rank,
-                      this->cp_stream);
+                  t_index_select(
+                      recv_base + dst_off * row_bytes, wstage, stage_rows, idx_off, cnt);
+                } else {
+                  FLUX_CHECK_LE(sc + cnt, copies_per_rank)
+                      << "a2av relay forward scratch overflow";
+                  t_index_select(
+                      scratch_base + sc * row_bytes, wstage, stage_rows, idx_off, cnt);
+                  if (sl == last_sl) {
+                    // NON-nbi (the scratch is refilled next round) with the
+                    // per-round gateway signal fused on the LAST piece:
+                    // intra-node on-stream puts to the same peer land in
+                    // stream order (P2P copies), so the signal covers the
+                    // earlier pieces too
+                    t_blocking_put(
+                        recv_base + dst_off * row_bytes,
+                        scratch_base + sc * row_bytes,
+                        cnt * row_bytes,
+                        gw_sig + (dn - 1) * L + my_lr,
+                        d);
+                  } else {
+                    t_put_nosig(
+                        recv_base + dst_off * row_bytes,
+                        scratch_base + sc * row_bytes,
+                        cnt * row_bytes,
+                        d);
+                  }
+                  sc += cnt;
                 }
+              }
+              if (d == rank) {
+                t_signal(gw_sig + (dn - 1) * L + my_lr, rank);
               }
             }
           }
@@ -2236,6 +2501,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           // reach the epoch, every source of that node is fully delivered
           // (putmem_signal orders payload before signal), so write signal[s]
           // for ALL its sources, zero-traffic ones included.
+          // Issued inline in every mode: pure front-end memops whose gw_sig
+          // dependencies are themselves inline-issued (t_* tail above), so
+          // pre-launch enqueue is the proven non-early configuration.
           for (int dn = 1; dn < NN; dn++) {
             int ns = (my_node + dn) % NN;
             for (int gl = 0; gl < L; gl++) {
@@ -2324,7 +2592,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         int d = dist_env.local_rank_to_global_rank((my_lr - dl + L) % L, my_node);
         issue_put(d, this->cp_stream);
       }
-      CUDA_CHECK(cudaEventRecord(this->hier_dispatch_event_, this->cp_stream));
+      emit_hier_event();
       if (NN > 1) {
         uint64_t *node_sig =
             reinterpret_cast<uint64_t *>(this->a2av_node_signal_buffer_.data_ptr());
@@ -2338,15 +2606,27 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           int g = dist_env.local_rank_to_global_rank(my_lr, tn);
           int64_t rows = node_chunk(rank, tn);
           if (rows > 0) {
-            nvshmemx_putmem_signal_nbi_on_stream(
-                stage_base + seg_off(tn, my_lr, my_node) * row_bytes,
-                send_base + send_off[tn * L] * row_bytes,
-                rows * row_bytes,
-                node_sig + my_node,
-                this->run_id_,
-                NVSHMEM_SIGNAL_SET,
-                g,
-                this->cp_stream_inter_node);
+            if (this->blocking_wire_) {
+              nvshmemx_putmem_signal_on_stream(
+                  stage_base + seg_off(tn, my_lr, my_node) * row_bytes,
+                  send_base + send_off[tn * L] * row_bytes,
+                  rows * row_bytes,
+                  node_sig + my_node,
+                  this->run_id_,
+                  NVSHMEM_SIGNAL_SET,
+                  g,
+                  this->cp_stream_inter_node);
+            } else {
+              nvshmemx_putmem_signal_nbi_on_stream(
+                  stage_base + seg_off(tn, my_lr, my_node) * row_bytes,
+                  send_base + send_off[tn * L] * row_bytes,
+                  rows * row_bytes,
+                  node_sig + my_node,
+                  this->run_id_,
+                  NVSHMEM_SIGNAL_SET,
+                  g,
+                  this->cp_stream_inter_node);
+            }
           } else {
             nvshmemx_signal_op_on_stream(
                 node_sig + my_node,
@@ -2363,11 +2643,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         for (int dn = 1; dn < NN; dn++) {
           int ns = (my_node + dn) % NN;
           int s = dist_env.local_rank_to_global_rank(my_lr, ns);
-          CU_CHECK(CUStreamWaitValue64(
-              this->cp_stream,
-              reinterpret_cast<CUdeviceptr>(node_sig + ns),
-              this->run_id_,
-              CU_STREAM_WAIT_VALUE_GEQ));
+          emit_wait(node_sig + ns);
           char *seg = stage_base + seg_off(my_node, my_lr, ns) * row_bytes;
           // forward in mirror local order so receiver d sees source s at stage
           // L*dn + ((lr_s - lr_d) mod L); the segment interior is ascending
@@ -2382,28 +2658,21 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             if (d == rank) {
               // gateway's own sub-chunk: local copy + local signal
               if (sub_rows > 0) {
-                CUDA_CHECK(cudaMemcpyAsync(
+                emit_self_copy(
                     recv_base + recv_off_of(s, rank) * row_bytes,
                     seg + within * row_bytes,
-                    sub_rows * row_bytes,
-                    cudaMemcpyDeviceToDevice,
-                    this->cp_stream));
+                    sub_rows * row_bytes);
               }
-              nvshmemx_signal_op_on_stream(
-                  signal_base + s, this->run_id_, NVSHMEM_SIGNAL_SET, rank, this->cp_stream);
+              emit_signal(signal_base + s, rank);
             } else if (sub_rows > 0) {
-              nvshmemx_putmem_signal_nbi_on_stream(
+              emit_put(
                   recv_base + recv_off_of(s, d) * row_bytes,
                   seg + within * row_bytes,
                   sub_rows * row_bytes,
                   signal_base + s,
-                  this->run_id_,
-                  NVSHMEM_SIGNAL_SET,
-                  d,
-                  this->cp_stream);
+                  d);
             } else {
-              nvshmemx_signal_op_on_stream(
-                  signal_base + s, this->run_id_, NVSHMEM_SIGNAL_SET, d, this->cp_stream);
+              emit_signal(signal_base + s, d);
             }
           }
         }
@@ -2429,9 +2698,13 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         issue_put(d, dn == 0 ? this->cp_stream : this->cp_stream_inter_node);
       }
     }
-    CUDA_CHECK(cudaEventRecord(this->fetch_remote_event, this->cp_stream_inter_node));
-    CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream, this->fetch_remote_event));
-    CUDA_CHECK(cudaEventRecord(this->all_gather_event, this->cp_stream));
+    if (!defer_wire) {
+      CUDA_CHECK(cudaEventRecord(this->fetch_remote_event, this->cp_stream_inter_node));
+      CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream, this->fetch_remote_event));
+      CUDA_CHECK(cudaEventRecord(this->all_gather_event, this->cp_stream));
+    }
+    // defer_wire: issue_deferred_wire() records these after replaying the
+    // deferred cp_stream ops, so the iteration barrier still covers them
 
     if (kStage2AfterPuts) {
       build_stage2();
@@ -2730,6 +3003,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       args.signal_ptr = reinterpret_cast<uint64_t *>(this->a2av_signal_buffer.data_ptr());
       args.signal_expected = this->run_id_;
       args.a2av_ring_schedule = a2av_ring_ || a2av_hier_ || a2av_hier_compress_;
+      if (this->nvtx_proxy_enabled_) {
+        args.progress_slots = this->progress_slots_dev_;
+      }
     }
     for (int gid = 0; gid < num_weights_group; gid++) {
       args.weight[gid] = weights[gid].data_ptr();
@@ -2739,8 +3015,22 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     }
 
     static const bool kA2avTiming = get_int_from_env("FLUX_A2AV_TIMING", 0) != 0;
+    // FLUX_A2AV_NO_GEMM_GATE=1 (a2av only): launch the GEMM without waiting
+    // for the dispatch events. Correctness is carried by the per-tile signal
+    // spins; the CUDA_DEVICE_MAX_CONNECTIONS=1 invariant (every kernel the
+    // comm path needs precedes the GEMM in the single queue) still holds
+    // because removing the WAITS does not change ENQUEUE order. Note the
+    // events these waits target are stream-ordered AFTER the intra put
+    // payloads (putmem_signal orders signal-after-payload), so the gate
+    // actually waits for this rank's own intra CE copies to COMPLETE, not
+    // merely for their issue — skipping it converts that wait into in-kernel
+    // spin overlapped with compute.
+    static const bool kNoGemmGate = get_int_from_env("FLUX_A2AV_NO_GEMM_GATE", 0) != 0;
     if (a2av_dispatch_) {
-      if (a2av_hier_ || a2av_hier_compress_) {
+      if (kNoGemmGate || this->early_launch_) {
+        // no event waits: GEMM starts as soon as stage-2 outputs are ready
+        // (early_launch_: the intra wire has not even been issued yet)
+      } else if (a2av_hier_ || a2av_hier_compress_) {
         // gate only on round-0 intra puts + inter-node sends being ISSUED; the
         // gateway forwarding proceeds concurrently with the GEMM, whose tiles
         // spin on the per-source signals. hier forwards with front-end waits +
@@ -2775,8 +3065,71 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       int64_t workspace_size = op->get_workspace_size(args);
       lazy_init_buffer_tensor(&this->workspace_buffer, workspace_size);
 
+      if (this->nvtx_proxy_) {
+        if (this->tile_trace_dev_ == nullptr) {
+          // worst-case tiles per iteration: recv-buffer row capacity plus one
+          // partial tile per expert, x tile columns x weight groups
+          const int grid_n = (N + tile_N - 1) / tile_N;
+          const int64_t tiled_m_max = this->max_recv_ntokens_ / tile_M + ep_nexperts;
+          this->tile_trace_capacity_ =
+              (uint32_t)(tiled_m_max * grid_n * (int64_t)num_weights_group);
+          CUDA_CHECK(cudaMalloc(
+              (void **)&this->tile_trace_dev_,
+              sizeof(A2AVTileRecord) * (size_t)this->tile_trace_capacity_));
+          this->nvtx_proxy_->set_tile_trace(this->tile_trace_dev_, this->tile_trace_capacity_);
+        }
+        args.tile_trace = this->tile_trace_dev_;
+        args.tile_trace_capacity = this->tile_trace_capacity_;
+        // dense-schedule expected tiles per gating source: a tile counts for
+        // its segment_end (last source its M rows span), mirroring the
+        // kernel's ballot in process_tile; x tile columns x weight groups.
+        // rows[] is the per-source ROW ground truth (sum over experts) — the
+        // sidecar carries it so analyses can tell small segments from empty
+        // ones (tile attribution alone cannot).
+        std::vector<uint32_t> expected, src_rows;
+        if (!this->nvtx_ssc_.empty()) {
+          const int W = world_size;
+          const int grid_n = (N + tile_N - 1) / tile_N;
+          expected.assign(W + 1, 0);
+          src_rows.assign(W + 1, 0);
+          for (int e = 0; e < ep_nexperts; ++e) {
+            const int32_t *row = this->nvtx_ssc_.data() + (int64_t)e * W;
+            const int32_t M_e = row[W - 1];
+            for (int s = 0; s < W; ++s) {
+              src_rows[s] += (uint32_t)(row[s] - (s ? row[s - 1] : 0));
+            }
+            for (int64_t t = 0; t * tile_M < M_e; ++t) {
+              int32_t last = (int32_t)std::min<int64_t>((t + 1) * tile_M, M_e) - 1;
+              int seg_end = int(std::upper_bound(row, row + W, last) - row);
+              expected[seg_end] += (uint32_t)(grid_n * num_weights_group);
+            }
+          }
+        }
+        // stream-ordered iteration bracket: runs after the GEMM gate, right
+        // before the kernel (and its close after), so the poller needs no sync
+        CUDA_CHECK(cudaLaunchHostFunc(
+            stream,
+            A2AVNvtxProxy::iter_start_cb,
+            new A2AVNvtxProxy::IterStart{
+                this->nvtx_proxy_.get(), this->run_id_, std::move(expected),
+                std::move(src_rows)}));
+      }
       // Step 5: launch GEMM
       op->run(args, workspace_size ? this->workspace_buffer.data_ptr() : nullptr, stream);
+    }
+    // FLUX_A2AV_EARLY_LAUNCH: replay the deferred intra wire now that the GEMM
+    // is launched (or skipped: M_this_ep == 0 still owes the peers its wire)
+    this->issue_deferred_wire();
+    if (this->nvtx_proxy_ && M_this_ep > 0) {
+      // enqueued AFTER the deferred wire in HOST order: under
+      // CUDA_DEVICE_MAX_CONNECTIONS=1 a pending host function blocks the
+      // single channel, and wire ops enqueued behind it would deadlock
+      // against the spinning GEMM the callback waits on (observed hang).
+      // Stream position is unchanged (still right after the GEMM).
+      CUDA_CHECK(cudaLaunchHostFunc(
+          stream,
+          A2AVNvtxProxy::iter_end_cb,
+          new A2AVNvtxProxy::IterEnd{this->nvtx_proxy_.get(), this->run_id_}));
     }
     if (a2av_dispatch_ && kA2avTiming) {
       CUDA_CHECK(cudaEventRecord(this->timing_events_[4], stream));

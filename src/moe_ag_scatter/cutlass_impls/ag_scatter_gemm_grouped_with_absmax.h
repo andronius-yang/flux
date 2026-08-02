@@ -185,6 +185,11 @@ public:
     int *bucket_offsets = nullptr;      // [world_size + 2]
     int *bucket_cursors = nullptr;      // [world_size + 1]
     uint64_t *multi_masks = nullptr;    // one source-mask per multi-source tile
+    // FLUX_A2AV_NVTX_PROXY progress slots (device memory), nullptr when disabled
+    bytedance::flux::A2AVProgressSlots *progress_slots = nullptr;
+    // layer C per-tile trace buffer (device memory), same gate
+    bytedance::flux::A2AVTileRecord *tile_trace = nullptr;
+    uint32_t tile_trace_capacity = 0;
 
     //
     // Methods
@@ -297,6 +302,9 @@ public:
     int *bucket_offsets = nullptr;
     int *bucket_cursors = nullptr;
     uint64_t *multi_masks = nullptr;
+    bytedance::flux::A2AVProgressSlots *progress_slots = nullptr;
+    bytedance::flux::A2AVTileRecord *tile_trace = nullptr;
+    uint32_t tile_trace_capacity = 0;
     //// added by flux /////
 
     //
@@ -341,6 +349,9 @@ public:
       bucket_offsets = args.bucket_offsets;
       bucket_cursors = args.bucket_cursors;
       multi_masks = args.multi_masks;
+      progress_slots = args.progress_slots;
+      tile_trace = args.tile_trace;
+      tile_trace_capacity = args.tile_trace_capacity;
     }
 
     CUTLASS_HOST_DEVICE
@@ -382,6 +393,9 @@ public:
       bucket_offsets = args.bucket_offsets;
       bucket_cursors = args.bucket_cursors;
       multi_masks = args.multi_masks;
+      progress_slots = args.progress_slots;
+      tile_trace = args.tile_trace;
+      tile_trace_capacity = args.tile_trace_capacity;
     }
   };
 
@@ -433,6 +447,16 @@ public:
     using ElementC = typename Epilogue::OutputTileIterator::Element;
     using LayoutC = typename Epilogue::OutputTileIterator::Layout;
 
+    if (params.progress_slots != nullptr && params.signal_ptr != nullptr &&
+        blockIdx.x == 0 && threadIdx.x == 0) {
+      // layer C epoch base: consumed only offline (trace times are absolute
+      // low-32 %globaltimer, so no other CTA ever reads this)
+      params.progress_slots->t0_gt = bytedance::flux::a2av_globaltimer();
+      __threadfence();
+      *reinterpret_cast<uint64_t volatile *>(&params.progress_slots->t0_seq) =
+          params.signal_expected;
+    }
+
     if (params.signal_ptr != nullptr && params.bucket_tiles_ptr != nullptr) {
       // a2av dispatch mode: dynamically claim tiles from per-source buckets in
       // arrival order instead of walking the precomputed ring-order schedule.
@@ -445,10 +469,39 @@ public:
           params.multi_masks,
           params.signal_ptr,
           params.signal_expected,
-          params.world_size);
+          params.world_size,
+          params.progress_slots);
+      auto *progress = params.progress_slots;
+      if (progress != nullptr && blockIdx.x == 0 && threadIdx.x == 0) {
+        // publish per-bucket tile totals for this epoch; seq-after-values so
+        // the poller never mixes totals across iterations
+        int nb = params.world_size + 1;
+        for (int s = 0; s < nb; ++s) {
+          progress->expected[s] =
+              uint32_t(params.bucket_offsets[s + 1] - params.bucket_offsets[s]);
+        }
+        progress->num_buckets = uint32_t(nb);
+        __threadfence_system();
+        *reinterpret_cast<uint64_t volatile *>(&progress->expected_seq) = params.signal_expected;
+      }
+      if (threadIdx.x == 0) {
+        shared_storage.a2av_claimed = -1;  // "no previous tile" sentinel
+      }
       while (true) {
         __syncthreads();  // previous tile done with the claim slot
         if (threadIdx.x == 0) {
+          if (progress != nullptr) {
+            // retire the previous tile: its claimed index is still in the
+            // shared slot, so no register has to stay live across the mainloop
+            int prev = shared_storage.a2av_claimed;
+            if (prev >= 0) {
+              int b = 0;
+              while (b < params.world_size && prev >= params.bucket_offsets[b + 1]) {
+                ++b;
+              }
+              atomicAdd(&progress->completed[b], 1u);
+            }
+          }
           shared_storage.a2av_claimed = claimer.claim();
         }
         __syncthreads();
@@ -512,6 +565,13 @@ public:
 
     {
       // clang-format on
+      // layer C: t_enter dies at the post-spin record write; trace_idx is the
+      // single register that survives the mainloop (t_done touch at the end)
+      int trace_idx = -1;
+      uint32_t t_enter = 0;
+      if (params.tile_trace != nullptr && threadIdx.x == 0) {
+        t_enter = (uint32_t)bytedance::flux::a2av_globaltimer();
+      }
       int tile_idx_m = threadblock_idx / grid_shape.n();
       int tile_idx_n = threadblock_idx % grid_shape.n();
       // tile_idx_m cross which segments and should wait for which signals
@@ -525,13 +585,36 @@ public:
           1;
       int segment_end =
           __ffs(__ballot_sync(0xffffffff, lane_idx < params.world_size ? (m_end < split_accum[lane_idx]) : false)) - 1;
-      if (lane_idx >= segment_start && lane_idx <= segment_end) {
+      // minimal-wait contract: a lane waits only if its source contributes
+      // rows to this tile. Boundary lanes are non-empty by ballot
+      // construction, so this skips exactly the EMPTY INTERIOR segments
+      // (flat cumsum) — their zero-byte signals can arrive arbitrarily late
+      // and used to stall whole fleets on data-free dependencies (the rank-9
+      // empty-signal stall found by the layer-C trace). Skipped lanes have no
+      // rows to acquire-order, so memory semantics are unaffected. Cost: one
+      // shuffle + compare on values the ballot already loaded.
+      int seg_rows_acc = lane_idx < params.world_size ? split_accum[lane_idx] : 0;
+      int seg_prev_acc = __shfl_up_sync(0xffffffff, seg_rows_acc, 1);
+      bool lane_nonempty = seg_rows_acc > (lane_idx == 0 ? 0 : seg_prev_acc);
+      if (lane_idx >= segment_start && lane_idx <= segment_end && lane_nonempty) {
         if (params.signal_ptr != nullptr) {
           // a2av mode: epoch signals delivered by NVSHMEM putmem_signal (proxy/NIC
           // writer -> system scope). Signal-after-payload ordering is guaranteed by
           // putmem_signal semantics; the acquire load orders our A reads after it.
           cuda::atomic_ref<uint64_t, cuda::thread_scope_system> sig(params.signal_ptr[lane_idx]);
-          while (sig.load(cuda::memory_order_acquire) < params.signal_expected) {
+          if (sig.load(cuda::memory_order_acquire) < params.signal_expected) {
+            while (sig.load(cuda::memory_order_acquire) < params.signal_expected) {
+            }
+            if (params.progress_slots != nullptr && threadIdx.x < 32) {
+              // slow path only — this tile visibly blocked on lane_idx's
+              // source, so the spin exit IS the arrival observation. Stores
+              // are idempotent; no cross-tile register state needed.
+              *reinterpret_cast<uint64_t volatile *>(
+                  &params.progress_slots->arrival_gt[lane_idx]) =
+                  bytedance::flux::a2av_globaltimer();
+              *reinterpret_cast<uint64_t volatile *>(&params.progress_slots->ready_seq[lane_idx]) =
+                  params.signal_expected;
+            }
           }
         } else {
           cuda::atomic_ref<int32_t, cuda::thread_scope_device> barrier(params.barrier_ptr[lane_idx]);
@@ -540,6 +623,30 @@ public:
         }
       }
       __syncthreads();
+      // dense (static-schedule) a2av mode: attribute the tile to its gating
+      // source segment_end (the last segment it spans). The claimer path
+      // counts at claim time instead (exact single-source bucket attribution).
+      if (params.progress_slots != nullptr && params.signal_ptr != nullptr &&
+          params.bucket_tiles_ptr == nullptr && threadIdx.x == 0) {
+        atomicAdd(&params.progress_slots->claimed[segment_end], 1u);
+      }
+      if (params.tile_trace != nullptr && threadIdx.x == 0) {
+        // layer C fire touch (both schedule paths): everything except t_done.
+        // The buffer is a ring over the monotonic cursor (capacity == worst
+        // case tiles per iteration, so one iteration never laps itself).
+        uint32_t t_fire = (uint32_t)bytedance::flux::a2av_globaltimer();
+        uint32_t idx =
+            atomicAdd(&params.progress_slots->trace_cursor, 1u) % params.tile_trace_capacity;
+        uint32_t smid;
+        asm volatile("mov.u32 %0, %%smid;" : "=r"(smid));
+        bytedance::flux::A2AVTileRecord &rec = params.tile_trace[idx];
+        rec.tile = (uint32_t(problem_idx) << 22) | (uint32_t(threadblock_idx) & 0x3FFFFFu);
+        rec.meta = (smid << 24) | ((uint32_t(segment_start) & 0x3Fu) << 18) |
+                   ((uint32_t(segment_end) & 0x3Fu) << 12) | (blockIdx.x & 0xFFFu);
+        rec.t_enter = t_enter;
+        rec.t_fire = t_fire;
+        trace_idx = int(idx);
+      }
       // if (threadIdx.x == 0) {
       //   printf("[%d] problem: %d, tile_idx: %d %d %d m: %d %d segment %d %d\n",
       //          blockIdx.x,
@@ -706,6 +813,23 @@ public:
                iterator_Aux,
                problem_size.mn(),
                threadblock_offset.mn());
+      if (params.progress_slots != nullptr && params.signal_ptr != nullptr &&
+          params.bucket_tiles_ptr == nullptr && threadIdx.x == 0) {
+        // thread 0's epilogue done; the CTA's tail is within poller resolution.
+        // Recompute the gating segment scalar-ly instead of keeping the ballot
+        // result live across the mainloop (register pressure costs occupancy).
+        int m_last = min((threadblock_idx / grid_shape.n() + 1) * Mma::Shape::kM,
+                         problem_size.m()) - 1;
+        int seg = 0;
+        while (seg < params.world_size - 1 && m_last >= split_accum[seg]) {
+          ++seg;
+        }
+        atomicAdd(&params.progress_slots->completed[seg], 1u);
+      }
+      if (trace_idx >= 0) {
+        // layer C done touch (thread 0 only: trace_idx stays -1 elsewhere)
+        params.tile_trace[trace_idx].t_done = (uint32_t)bytedance::flux::a2av_globaltimer();
+      }
     }
   }
   // clang-format off

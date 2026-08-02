@@ -51,6 +51,12 @@ root (leave them).
   ranges), `torchprof` (secondary timeline: Python-op attribution). For
   overlap investigations run `--modes e2e,nsys`; start analysis with
   `nsys stats --report cuda_gpu_kern_sum,cuda_gpu_mem_time_sum <rep>`.
+  Export `FLUX_A2AV_NVTX_PROXY=1` with an nsys cell to add per-source
+  wait/pending/compute ranges inside the a2av GEMM span (NVTX domain
+  "a2av"; see sweeps/SCHEMA.md). `FLUX_A2AV_EARLY_LAUNCH=1` (any a2av
+  variant) reorders GEMM-before-intra-wire — treat as its own configuration;
+  `FLUX_A2AV_BLOCKING_WIRE=1` + `CUDA_DEVICE_MAX_CONNECTIONS=8` is the
+  overlap-visualization recipe (instrumented only).
 - `--profile-iters` — iters AND warmup for torchprof/nsys cells (default 3).
 - `--iters/--warmup-iters` (default 10/5), `--skip-correctness` (large
   budgets; correctness columns go empty), `--matrix-instance` (new random

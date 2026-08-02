@@ -107,7 +107,31 @@ Highlights (full list = header row):
   thread busy-polls, and osrt-tracing it emits ~18 GB/min, filling the
   node-local disk); proxy-thread cost shows up indirectly as wire latency.
   The runner enforces one full-size rep per node — a missing/undersized
-  capture demotes the cell to status `nsys_empty`.
+  capture demotes the cell to status `nsys_empty`. Exporting
+  `FLUX_A2AV_NVTX_PROXY=1` adds live per-source ranges inside the a2av GEMM
+  span (NVTX domain "a2av": `src<s>.wait/pending/compute` + completion
+  quartiles + `intra/inter_epoch` envelopes, emitted by a host poller fed
+  from device progress counters; edges lag device truth by ~5–30 µs).
+  Timeline aid only — it adds no metrics.csv columns and its cells follow
+  the same never-compare rule as any instrumented mode. The same gate also
+  writes per-rank tile-trace sidecars (`a2av_tile_trace_r<rank>.bin`) into
+  the cell's records dir at the platform data root (raw, never committed);
+  analyze with `sweeps/plot_a2av_trace.py` (cohort table, fired/in-flight
+  regime plot, Perfetto per-SM Gantt). Related knobs:
+  `FLUX_A2AV_EARLY_LAUNCH=1` (any a2av variant since 2026-08-02: GEMM
+  launches right after stage 2, intra wire issued after it — a functional
+  reorder, so e2e cells with it on are a separate variant configuration, not
+  comparable to gate-order cells; at the variants' default CONNECTIONS=8
+  union measured -12% vs the old conn=1 baseline. On the compress
+  gather/relay arms the index_select tails are issued inline on the pack
+  stream (post-launch-enqueued kernels can starve at dispatch behind the
+  blanketing GEMM) and the ctor requires CONNECTIONS > 1 — visibility mode,
+  not a perf configuration) and `FLUX_A2AV_BLOCKING_WIRE=1` (instrumented
+  only: inter-node puts — hier/compress aggregates, relay phase-2, flat
+  remote per-dest — become visible device spans; under
+  CUDA_DEVICE_MAX_CONNECTIONS=1 they serialize ahead of the GEMM — the
+  three-way overlap capture recipe is EARLY_LAUNCH=1 BLOCKING_WIRE=1
+  CUDA_DEVICE_MAX_CONNECTIONS=8, nsys mode).
 - `torchprof` — `--profile` chrome traces; secondary timeline mode, kept for
   Python-op/shape attribution (which ATen call launched which kernel).
 
