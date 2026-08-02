@@ -753,6 +753,80 @@ runs on one shared time axis.
 
 ---
 
+## 12. Agent handoff addendum (2026-08-02) — facts NOT stated above
+
+Not for human comprehension: dense pointers/details a future agent needs that
+live (or lived) only in session memory, commit bodies, capsule notes, or the
+script docstring. §8–§11 are authoritative for the mechanisms themselves.
+
+**MAX_CONNECTIONS state of the world.** Since 2026-08-01 `sweeps/variants.py`
+pins `CUDA_DEVICE_MAX_CONNECTIONS=8` for the whole a2av family (A/B at b8
+remotefrac: −2..−8% e2e on all four variants, correctness green; commit
+b3f56ca). The conn=1→8 boundary is auditable ONLY via `env_json` in each
+capsule's cells.csv — the Aug-1 A/B capsules (`20260801-*`) have empty
+`notes:` fields. Inconsistent pins that are NOT bugs: `hier_compress_pack`
+still pins conn=2 (its own A/B); `launch.sh` still exports conn=1 as the
+non-sweep default (and CLAUDE.md documents that); only the compress
+gather/relay arms' ctor FLUX_CHECKs conn>1, and only because of §11's inline
+tails. `layer0_dedup_walkthrough.md`'s variant table predates the family pin
+and still shows conn=2 for pack only — read it as stale on this point.
+
+**Do not quote −12% as EARLY_LAUNCH's effect.** SCHEMA.md and commit b3f56ca
+say the union measured −12% "vs the old conn=1 baseline" — that number
+conflates the conn 1→8 switch with the reorder. The controlled result (§9) is:
+at fixed conn, e2e is neutral at b8 (earlier launch buys spin, not compute,
+until head work is guaranteed).
+
+**Starvation-debugging extras (§11's fourth law).** `conn=32` and
+`sm_margin=16` did NOT rescue post-blanket dispatch — margin frees SMs for
+*running*, not for winning the dispatch race. The recipe that cracked the
+hang: per-replay-op cudaEvents queried the NEXT iteration + device
+signal-buffer readback on a fresh stream (the `FLUX_A2AV_DEBUG_HANG` pattern
+— since STRIPPED from the tree; reconstruct, don't search for it) + `cuda-gdb
+info cuda kernels` resident dump. Structural rule that encodes the law:
+`DeferredWireOp` may contain only SM-free ops (CE copies, nbi CE puts,
+memops, event records); anything SM-kernel-shaped goes in the `t_*` lambdas
+issued inline on the idle `pack_stream_` in `a2av_dispatch`.
+
+**Operating the knobs.** All perf/timeline runs go through the sweep runner
+(`--modes e2e,nsys`; SCHEMA.md "Modes" section is the contract). Three-way
+overlap capture recipe: `FLUX_A2AV_EARLY_LAUNCH=1 FLUX_A2AV_BLOCKING_WIRE=1
+FLUX_A2AV_NVTX_PROXY=1` at conn=8. nsys traps (encoded in the runner, will
+bite manual runs): AWS must use `/usr/local/cuda-13.0/bin/nsys` (2025.3.2) —
+the CUDA-12.4 bundle's 2023.4.4 silently drops kernel records under
+8-process torchrun; NEVER trace `osrt` (NVSHMEM/EFA proxy thread busy-polls
+→ ~18 GB/min to node-local /tmp → once full, every later nsys dies SIGBUS
+until `/tmp/nvidia/nsight_systems` is removed). Perf validity: harness
+forces torch deterministic mode in TWO places (`testing/utils.py:init_seed`
+AND `dist_utils.py:setup_deterministic`) — serial `scatter_` ~500x penalizes
+compress/relay; any perf number needs `FLUX_TEST_DETERMINISTIC=0` (runner
+exports it; capsule `deterministic` column audits it).
+
+**Where the data lives.** Capsules: Jul-31 `20260731-*` = nsys bringup;
+Aug-1 `20260801-*` = conn=8 A/B (identify config via env_json); Aug-2
+`20260802-041304` instrumented smoke (EARLY+BLOCKING+PROXY, all 5 variants),
+`20260802-043720` hang probe (relay, expected stuck — the nsys timeline is
+the artifact), `20260802-054951` final-build instrumented smoke,
+`20260802-055204` cross-algorithm tile-trace comparison (identical
+instrumented wire, all 5 variants). Raw `a2av_tile_trace_r<rank>.bin`
+sidecars + rank logs live at the platform data root
+(`/home/ubuntu/sweep_data/` on AWS, per `FLUX_SWEEP_RECORD_DIR`), never in
+the repo.
+
+**`plot_a2av_trace.py` semantics only in its docstring/code.** Iteration
+hygiene filter: an epoch is analyzable iff span < 10 ms AND its record count
+equals the rank's modal count; `--iter last` picks the last passing one.
+Cohort attribution is DYNAMIC — a tile is attributed to the LAST-arriving
+source of its `[seg_start, seg_end)` span (sources with no arrival stamp
+count as already-arrived); the reported static-vs-dynamic disagreement IS
+the boundary-tile error of the live NVTX view. Timestamps are low-32
+`%globaltimer` ns with wrap-safe rebase — exact only for iterations < 4.3 s.
+Sidecar format: magic `0xA2A71E5`, header struct `<IIQ4iQ2I`. Regime reading
+rule for `--curves`: in-flight pinned at capacity = SM-limited; in-flight
+snapping upward at an arrival vertical = comm-limited.
+
+---
+
 ## Comprehension questions
 
 1. **The two-hop signal chain.** In hier, destination `d` (not a gateway for
