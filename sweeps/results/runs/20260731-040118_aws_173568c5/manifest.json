@@ -1,0 +1,82 @@
+{
+  "artifacts": [
+    {
+      "bytes": 1885,
+      "path": "/home/ubuntu/sweep_data/20260731-040118_aws_173568c5/cells/a2av_uniform_b2_k8_nsys/records/rank_000.jsonl",
+      "sha256": "8ea2205c2f3a67ebbf14fb497c0dcf8e42252ba4e8c887a699763d76910c1496"
+    },
+    {
+      "bytes": 1749,
+      "path": "/home/ubuntu/sweep_data/20260731-040118_aws_173568c5/cells/a2av_uniform_b2_k8_nsys/records/rank_001.jsonl",
+      "sha256": "53b864aec96ff728a38ee81e66ae712b3cc3561ac56872a40abbbc7d4d199a48"
+    },
+    {
+      "bytes": 1750,
+      "path": "/home/ubuntu/sweep_data/20260731-040118_aws_173568c5/cells/a2av_uniform_b2_k8_nsys/records/rank_002.jsonl",
+      "sha256": "4f5b08d771da7fc7cffa2d7626163518e51a5ac497db1969460d1f730816f30f"
+    },
+    {
+      "bytes": 1747,
+      "path": "/home/ubuntu/sweep_data/20260731-040118_aws_173568c5/cells/a2av_uniform_b2_k8_nsys/records/rank_003.jsonl",
+      "sha256": "57acc9d0b0af08c3b8584e1e2fb5e84daf7cd408af6bbe895ed593a31c58d7d5"
+    },
+    {
+      "bytes": 1751,
+      "path": "/home/ubuntu/sweep_data/20260731-040118_aws_173568c5/cells/a2av_uniform_b2_k8_nsys/records/rank_004.jsonl",
+      "sha256": "738a872f7b444e3268f5c6a5264a6892bd5a009b27b5d98b2ac951c084d52cc8"
+    },
+    {
+      "bytes": 1750,
+      "path": "/home/ubuntu/sweep_data/20260731-040118_aws_173568c5/cells/a2av_uniform_b2_k8_nsys/records/rank_005.jsonl",
+      "sha256": "738c42b6d5613e2496bbff7f2a7ff6ffe61b1ec40cb9804eae2aca04b3a6f6e2"
+    },
+    {
+      "bytes": 1749,
+      "path": "/home/ubuntu/sweep_data/20260731-040118_aws_173568c5/cells/a2av_uniform_b2_k8_nsys/records/rank_006.jsonl",
+      "sha256": "aae3be0a7382e4ef67e2785daddac1ed8696cacd21b639459d5ce4f2e9ca2bfa"
+    },
+    {
+      "bytes": 1752,
+      "path": "/home/ubuntu/sweep_data/20260731-040118_aws_173568c5/cells/a2av_uniform_b2_k8_nsys/records/rank_007.jsonl",
+      "sha256": "6b24b5348d9c0711e055d3753e658ff4ea14c60dbc9e904e34d2e6ee3788cb74"
+    },
+    {
+      "bytes": 4585996,
+      "path": "/home/ubuntu/sweep_data/20260731-040118_aws_173568c5/cells/a2av_uniform_b2_k8_nsys/nsys/node0_32.nsys-rep",
+      "sha256": "6731103025952781cac90deb9a15edb1db405ab7b436b8546b5a50c7c66d5590"
+    }
+  ],
+  "capabilities": {
+    "nsys": "NVIDIA Nsight Systems version 2025.3.2.474-253236389321v0"
+  },
+  "cells": [
+    {
+      "cell_id": "a2av_uniform_b2_k8_nsys",
+      "staging": "/home/ubuntu/sweep_data/20260731-040118_aws_173568c5/cells/a2av_uniform_b2_k8_nsys",
+      "status": "nsys_empty"
+    }
+  ],
+  "created": "2026-07-31T04:01:45Z",
+  "flux_libs": [
+    {
+      "path": "/home/ubuntu/workspace/flux/python/flux/lib/libflux_cuda.so",
+      "sha256": "99117f189719abe91385ddd732f8b0a931d7cacc11ddbdd6e196c652783513d4"
+    },
+    {
+      "path": "/home/ubuntu/workspace/flux/python/flux/lib/libflux_cuda_ths_op.so",
+      "sha256": "ddffaabb2e6aab53436f7dce31de923cd60d382fe97bf3e0c602be9dd3c46c66"
+    }
+  ],
+  "git": {
+    "dirty": true,
+    "sha": "afc19301aaab6ed6ffcef5b2d191dae656a0ad26"
+  },
+  "host": "ip-10-20-3-140",
+  "platform": {
+    "fabric": "efa",
+    "name": "aws",
+    "ranks_per_node": 8
+  },
+  "run_id": "20260731-040118_aws_173568c5",
+  "staging_root": "/home/ubuntu/sweep_data/20260731-040118_aws_173568c5"
+}
