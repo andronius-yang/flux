@@ -415,16 +415,11 @@ if __name__ == "__main__":
 
     matrix = parse_traffic_matrix(args.traffic_matrix)
     assert matrix.shape[0] == DIST_ENV.WORLD_SIZE, (
-        f"traffic matrix is for {matrix.shape[0]} ranks but world size is"
-        f" {DIST_ENV.WORLD_SIZE}"
+        f"traffic matrix is for {matrix.shape[0]} ranks but world size is" f" {DIST_ENV.WORLD_SIZE}"
     )
-    choosed_experts = traffic_matrix_to_choosed_experts(
-        matrix, args.G, args.topk, args.chunk_bytes
-    )
+    choosed_experts = traffic_matrix_to_choosed_experts(matrix, args.G, args.topk, args.chunk_bytes)
     ntokens = choosed_experts.shape[0]
-    gating_args = gen_moe_gating_args(
-        args.G, args.topk, ntokens, choosed_experts=choosed_experts
-    )
+    gating_args = gen_moe_gating_args(args.G, args.topk, ntokens, choosed_experts=choosed_experts)
 
     moe_ctx = MoeMlp1Ctx(
         TP_GROUP,
@@ -450,14 +445,12 @@ if __name__ == "__main__":
     # W x nexperts int allgather (~10-20 us) done right after gating.
     W = DIST_ENV.WORLD_SIZE
     tokens_per_rank = ntokens // W
-    src_of_copy = (
-        torch.arange(ntokens, dtype=torch.long) // tokens_per_rank
-    ).repeat_interleave(args.topk)
+    src_of_copy = (torch.arange(ntokens, dtype=torch.long) // tokens_per_rank).repeat_interleave(
+        args.topk
+    )
     e_of_copy = choosed_experts.reshape(-1).long().cpu()
     splits_per_source_cpu = (
-        torch.bincount(src_of_copy * args.G + e_of_copy, minlength=W * args.G)
-        .view(W, args.G)
-        .int()
+        torch.bincount(src_of_copy * args.G + e_of_copy, minlength=W * args.G).view(W, args.G).int()
     )
     assert torch.equal(
         splits_per_source_cpu.sum(0), moe_ctx.splits_cpu[: args.G].cpu().int()
@@ -510,9 +503,7 @@ if __name__ == "__main__":
             nn = DIST_ENV.WORLD_SIZE // L
             per_node = matrix.view(DIST_ENV.WORLD_SIZE, nn, L).sum(dim=2)
             src_node = torch.arange(DIST_ENV.WORLD_SIZE) // L
-            inter_bytes = per_node.sum(dim=1) - per_node.gather(
-                1, src_node.view(-1, 1)
-            ).squeeze(1)
+            inter_bytes = per_node.sum(dim=1) - per_node.gather(1, src_node.view(-1, 1)).squeeze(1)
             print(f"a2av_hier inter-node wire bytes per rank (send): {inter_bytes.tolist()}")
         if args.comm_pattern == "a2av_hier_compress":
             # actual wire in compress mode: intra-node dedup puts (own rank
@@ -522,9 +513,7 @@ if __name__ == "__main__":
             L = DIST_ENV.LOCAL_WORLD_SIZE
             nn = DIST_ENV.WORLD_SIZE // L
             src_node = torch.arange(W) // L
-            intra_rows = (
-                u_mat.view(W, nn, L)[torch.arange(W), src_node].sum(1) - u_mat.diag()
-            )
+            intra_rows = u_mat.view(W, nn, L)[torch.arange(W), src_node].sum(1) - u_mat.diag()
             inter_rows = U_mat.sum(1) - U_mat[torch.arange(W), src_node]
             comp_bytes = (intra_rows + inter_rows) * args.chunk_bytes
             inter_bytes_c = inter_rows * args.chunk_bytes
@@ -562,6 +551,26 @@ if __name__ == "__main__":
                     "a2av gateway intra-node forward bytes per gateway"
                     f" (bcast):  {(gw_bcast * args.chunk_bytes).tolist()}"
                 )
+                # FLUX_A2AV_LB_UNION=1: each gateway forwards only its balanced
+                # window, chunk lr of every inbound round's union stream — same
+                # aggregate NVLink bytes as bcast, but the per-gateway max drops
+                # to ~(L-1)/L of the round totals
+                gw_lb = torch.zeros(W, dtype=torch.long)
+                for n in range(nn):
+                    for lr in range(L):
+                        g = n * L + lr
+                        for m in range(nn):
+                            if m == n:
+                                continue
+                            total = int(U_mat[m * L : (m + 1) * L, n].sum())
+                            lo = (total // L) * lr + min(lr, total % L)
+                            hi = (total // L) * (lr + 1) + min(lr + 1, total % L)
+                            gw_lb[g] += (L - 1) * (hi - lo)
+                print(
+                    "a2av gateway intra-node forward bytes per gateway"
+                    f" (lb_bcast): {(gw_lb * args.chunk_bytes).tolist()}"
+                )
+                RECORDER.emit_info(gw_lb_bcast_bytes=int(gw_lb.max()) * args.chunk_bytes)
             # balanced-relay effect (FLUX_A2AV_RELAY_IDENTITY=0, the default):
             # per (node, round) the wire pace is ceil(total / L) instead of the
             # hottest rank's U — report the per-round worst sender both ways

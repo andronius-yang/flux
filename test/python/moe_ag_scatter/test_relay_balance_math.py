@@ -39,7 +39,6 @@ Usage:  python3 test/python/moe_ag_scatter/test_relay_balance_math.py
 
 import torch
 
-
 # ---------------------------------------------------------------- metadata
 
 
@@ -161,9 +160,7 @@ def fwd_build_identity(choosed_experts, rank, W, NN, L, T, E, topk, u_mat, U_mat
     fwd_idx = torch.full((R * T * topk + 1,), -1, dtype=torch.long)
     fwd_garbage = fwd_idx.numel() - 1
     tl = torch.arange(cpr).div(topk, rounding_mode="floor")
-    e_src = (
-        e_all.view(NN, L, cpr).select(1, my_lr).roll(-(my_node + 1), 0).narrow(0, 0, R)
-    )
+    e_src = e_all.view(NN, L, cpr).select(1, my_lr).roll(-(my_node + 1), 0).narrow(0, 0, R)
     dl = e_src.div(E, rounding_mode="floor").sub_(my_node * L)
     off_node = dl.lt(0).logical_or_(dl.ge(L))
     r_base = torch.arange(R).view(R, 1) * (T * L)
@@ -285,9 +282,7 @@ def deliver_intra_and_self(recvs, sends, seg_offs, u_mat, W, NN, L, U_mat=None, 
             seg = my_node + dl  # send_seg_off(dlg) == seg_off_h[my_node + dlg]
             src = sends[r][seg_offs[r][seg] : seg_offs[r][seg] + rows]
             off = (
-                recv_off_bcast(u_mat, U_mat, L, r, d, True)
-                if bcast
-                else recv_off_of_u(u_mat, r, d)
+                recv_off_bcast(u_mat, U_mat, L, r, d, True) if bcast else recv_off_of_u(u_mat, r, d)
             )
             recvs[d].write(off, src)
 
@@ -296,9 +291,7 @@ def wire_identity(recvs, sends, seg_offs, choosed, W, NN, L, T, E, topk, u_mat, 
     """The original scheme: same-lr union aggregate + gateway forward."""
     for g in range(W):  # g = gateway rank on the receiving side
         my_node, my_lr = g // L, g % L
-        fwd_idx, fwd_col_off = fwd_build_identity(
-            choosed, g, W, NN, L, T, E, topk, u_mat, U_mat
-        )
+        fwd_idx, fwd_col_off = fwd_build_identity(choosed, g, W, NN, L, T, E, topk, u_mat, U_mat)
         for dn in range(1, NN):
             ns = (my_node + dn) % NN
             s = ns * L + my_lr
@@ -324,6 +317,7 @@ def wire_relay(recvs, sends, seg_offs, choosed, W, NN, L, T, E, topk, u_mat, U_m
     Returns (moved_rows, wire_rows) for the relocation statistics."""
     moved = 0
     wire = 0
+
     # phase 1: piece puts into per-relay staging, mirroring the exact C++
     # offset arithmetic (relay_round_base + (lo - a_k); own_only skip)
     def relay_round_base(n, k, dn):
@@ -335,10 +329,7 @@ def wire_relay(recvs, sends, seg_offs, choosed, W, NN, L, T, E, topk, u_mat, U_m
     relay_stage = {}  # rank -> staging buffer (all rounds packed by round)
     for r in range(W):
         n, _ = r // L, r % L
-        cap = sum(
-            chunk_rows_of(U_mat, NN, L, n, (n - dn + NN) % NN, r % L)
-            for dn in range(1, NN)
-        )
+        cap = sum(chunk_rows_of(U_mat, NN, L, n, (n - dn + NN) % NN, r % L) for dn in range(1, NN))
         relay_stage[r] = torch.full((max(cap, 1),), -1, dtype=torch.long)
     for r in range(W):  # sender
         n, my_lr = r // L, r % L
@@ -452,9 +443,7 @@ def reference_recv_bcast(choosed, W, NN, L, T, E, topk, u_mat, U_mat):
             toks = torch.nonzero(keep, as_tuple=False).view(-1)
             parts.append(toks + s * T)
         out[d] = torch.cat(parts)
-        assert out[d].numel() == sum(
-            region_rows(u_mat, U_mat, L, s, d, True) for s in range(W)
-        )
+        assert out[d].numel() == sum(region_rows(u_mat, U_mat, L, s, d, True) for s in range(W))
     return out
 
 
@@ -609,15 +598,13 @@ def run_case(NN, L, T, E, topk, seed, skew):
         # nearly nothing crosses nodes: total < L for most rounds (zero chunks)
         choosed = (torch.arange(ntokens).view(-1, 1) % E).expand(-1, topk).clone().int()
         choosed = (choosed + (torch.arange(ntokens).view(-1, 1) // T) * L * E % nexperts).int()
-        choosed[0, 0] = (nexperts - 1)  # a single cross-node token
+        choosed[0, 0] = nexperts - 1  # a single cross-node token
     else:
         choosed = torch.randint(0, nexperts, (ntokens, topk), generator=gen).int()
 
     u_mat, U_mat, _ = build_uc(choosed, W, NN, L, T, E)
     seg_offs = [seg_offsets(u_mat, U_mat, W, NN, L, r) for r in range(W)]
-    sends = [
-        producer_pack(choosed, r, W, NN, L, T, E, topk, seg_offs[r]) for r in range(W)
-    ]
+    sends = [producer_pack(choosed, r, W, NN, L, T, E, topk, seg_offs[r]) for r in range(W)]
     ref = reference_recv(choosed, W, NN, L, T, E, topk, u_mat)
     ref_b = reference_recv_bcast(choosed, W, NN, L, T, E, topk, u_mat, U_mat)
     if NN == 1:  # degeneracy: no remote sources -> bcast layout == dedup layout
@@ -629,9 +616,7 @@ def run_case(NN, L, T, E, topk, seed, skew):
     for mode in ("identity", "relay", "bcast"):
         bcast = mode == "bcast"
         recvs = [Recv(u_mat, W, d, U_mat=U_mat, L=L, bcast=bcast) for d in range(W)]
-        deliver_intra_and_self(
-            recvs, sends, seg_offs, u_mat, W, NN, L, U_mat=U_mat, bcast=bcast
-        )
+        deliver_intra_and_self(recvs, sends, seg_offs, u_mat, W, NN, L, U_mat=U_mat, bcast=bcast)
         if mode == "identity":
             wire_identity(recvs, sends, seg_offs, choosed, W, NN, L, T, E, topk, u_mat, U_mat)
         elif mode == "relay":

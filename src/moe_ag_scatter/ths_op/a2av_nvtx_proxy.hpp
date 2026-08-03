@@ -37,6 +37,18 @@
 // write visibility (~5-30 us worst case). Ordering between edges seen in the
 // same tick is not meaningful. This is a timeline aid, not a metrics source —
 // quote latencies from e2e-mode sweep cells only (sweeps/SCHEMA.md).
+//
+// The layer-C SIDECAR, unlike the live view, is lossless by construction:
+// forward enqueues, in stream order right after the GEMM, a D2H snapshot of
+// the device slots into a pinned per-epoch ring plus a host callback that
+// publishes it (enqueue_epoch_snapshot). The snapshot is the epoch's exact
+// final state — arrival stamps, t0, end trace cursor — regardless of when
+// any host thread gets scheduled; the poller merely drains the ring. The old
+// design sampled the live slots through a single latest-value mailbox, so an
+// epoch whose start AND end both fell inside one poller stall (NFS flush,
+// CE-starved refresh, OS deschedule, pause window) vanished or merged into a
+// neighbor block. Ring depth bounds only drain lag; overflow drops oldest
+// epochs EXPLICITLY (stderr), never silently.
 
 #pragma once
 
@@ -49,8 +61,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <iterator>
+#include <map>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "flux/a2av_progress.h"
@@ -96,6 +111,15 @@ class A2AVNvtxProxy {
     }
     dom_epoch_ = nvtxDomainCreateA("a2av/epochs");
     src_.resize(nb_);
+    if (cudaHostAlloc((void **)&snap_ring_, sizeof(EpochSnap) * kSnapRing, cudaHostAllocDefault) !=
+        cudaSuccess) {
+      snap_ring_ = nullptr;  // sidecar disabled; live NVTX view still works
+      fprintf(
+          stderr,
+          "[a2av-nvtx-proxy] rank %d: snapshot ring alloc failed, "
+          "tile-trace sidecar disabled\n",
+          rank);
+    }
     thread_ = std::thread([this] { run(); });
   }
 
@@ -109,6 +133,9 @@ class A2AVNvtxProxy {
     }
     if (trace_staging_ != nullptr) {
       cudaFreeHost(trace_staging_);
+    }
+    if (snap_ring_ != nullptr) {
+      cudaFreeHost(snap_ring_);
     }
     // domains intentionally leaked: nvtxDomainDestroy may race tool teardown
   }
@@ -135,6 +162,16 @@ class A2AVNvtxProxy {
   A2AVNvtxProxy(const A2AVNvtxProxy &) = delete;
   A2AVNvtxProxy &operator=(const A2AVNvtxProxy &) = delete;
 
+  // pinned per-epoch snapshot ring: depth bounds only how far the sidecar
+  // drain may lag the stream (deepest realistic profile run is ~15 epochs;
+  // 32 lets the drain sleep for an entire run and still lose nothing)
+  static constexpr uint32_t kSnapRing = 32;
+  static constexpr uint32_t kNoSlot = 0xFFFFFFFFu;
+  struct EpochSnap {
+    A2AVProgressSlots slots;
+    uint64_t epoch;
+  };
+
   // ---- stream-ordered callbacks (cudaLaunchHostFunc payloads) -------------
   // iter_start is enqueued immediately before the GEMM launch, iter_end
   // immediately after: they execute at those points in stream order, so they
@@ -156,20 +193,69 @@ class A2AVNvtxProxy {
     IterStart *m = static_cast<IterStart *>(p);
     {
       std::lock_guard<std::mutex> g(m->self->mu_);
-      m->self->pending_expected_ = std::move(m->expected);
-      m->self->pending_rows_ = std::move(m->rows);
+      m->self->pending_meta_[m->epoch] = {std::move(m->expected), std::move(m->rows)};
+      // paranoia bound; the drain erases consumed entries
+      while (m->self->pending_meta_.size() > 4 * kSnapRing) {
+        m->self->pending_meta_.erase(m->self->pending_meta_.begin());
+      }
     }
     m->self->iter_epoch_.store(m->epoch, std::memory_order_release);
     delete m;
   }
 
-  struct IterEnd {
+  // -- lossless per-epoch sidecar capture -----------------------------------
+  // Called by forward at the old iter_end position (after the GEMM launch in
+  // stream order; after the deferred wire in HOST order — a pending host
+  // function blocks the single channel under CUDA_DEVICE_MAX_CONNECTIONS=1).
+  // The memcpy snapshots the epoch's final device slots into ring slot k;
+  // the callback then publishes it and marks the epoch ended for the live
+  // NVTX view. Single producer (the forward thread).
+  void
+  enqueue_epoch_snapshot(cudaStream_t stream, uint64_t epoch) {
+    uint32_t slot = kNoSlot;
+    if (snap_ring_ != nullptr) {
+      slot = (uint32_t)(snap_enqueued_ % kSnapRing);
+      cudaError_t rc = cudaMemcpyAsync(
+          &snap_ring_[slot].slots,
+          dev_slots_,
+          sizeof(A2AVProgressSlots),
+          cudaMemcpyDeviceToHost,
+          stream);
+      if (rc != cudaSuccess) {
+        if (!snap_warned_) {
+          snap_warned_ = true;
+          fprintf(
+              stderr,
+              "[a2av-nvtx-proxy] rank %d: epoch snapshot enqueue failed: %s\n",
+              rank_,
+              cudaGetErrorString(rc));
+        }
+        slot = kNoSlot;
+      } else {
+        snap_enqueued_ += 1;
+      }
+    }
+    SnapMark *m = new SnapMark{this, epoch, slot};
+    if (cudaLaunchHostFunc(stream, snap_cb, m) != cudaSuccess) {
+      // without the callback the slot is never published; the epoch is lost
+      // for the sidecar but the run must not die
+      snap_enqueued_ -= (slot != kNoSlot) ? 1 : 0;
+      delete m;
+    }
+  }
+
+  struct SnapMark {
     A2AVNvtxProxy *self;
     uint64_t epoch;
+    uint32_t slot;  // kNoSlot: publish nothing, only mark the epoch ended
   };
   static void CUDART_CB
-  iter_end_cb(void *p) {
-    IterEnd *m = static_cast<IterEnd *>(p);
+  snap_cb(void *p) {
+    SnapMark *m = static_cast<SnapMark *>(p);
+    if (m->slot != kNoSlot) {
+      m->self->snap_ring_[m->slot].epoch = m->epoch;  // memcpy done: stream order
+      m->self->snap_produced_.fetch_add(1, std::memory_order_release);
+    }
     m->self->end_epoch_.store(m->epoch, std::memory_order_release);
     delete m;
   }
@@ -232,8 +318,14 @@ class A2AVNvtxProxy {
   void
   mark_progress(int s, uint32_t claimed, uint32_t completed) {
     char buf[96];
-    snprintf(buf, sizeof(buf), "i%llu.%s %u/%u",
-             (unsigned long long)cur_epoch_, src_name(s), claimed, completed);
+    snprintf(
+        buf,
+        sizeof(buf),
+        "i%llu.%s %u/%u",
+        (unsigned long long)cur_epoch_,
+        src_name(s),
+        claimed,
+        completed);
     nvtxEventAttributes_t a = {};
     a.version = NVTX_VERSION;
     a.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
@@ -257,8 +349,7 @@ class A2AVNvtxProxy {
       rel = volatile_u64(&slots_->arrival_gt[s]) - volatile_u64(&slots_->t0_gt);
     }
     char buf[64];
-    snprintf(buf, sizeof(buf), "i%llu.%s.arrival",
-             (unsigned long long)cur_epoch_, src_name(s));
+    snprintf(buf, sizeof(buf), "i%llu.%s.arrival", (unsigned long long)cur_epoch_, src_name(s));
     nvtxEventAttributes_t a = {};
     a.version = NVTX_VERSION;
     a.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
@@ -269,54 +360,82 @@ class A2AVNvtxProxy {
     nvtxDomainMarkEx(domains_[s], &a);
   }
 
-  // layer C sidecar: one self-contained block per iteration under
-  // FLUX_SWEEP_RECORD_DIR (the sweep runner exports it per cell; unset on
-  // ad-hoc runs -> skip with one stderr note)
+  // layer C sidecar: one self-contained block per snapshot (= per iteration)
+  // under FLUX_SWEEP_RECORD_DIR (the sweep runner exports it per cell; unset
+  // on ad-hoc runs -> skip with one stderr note). Sourced entirely from the
+  // stream-ordered snapshot, never the live slots.
   void
-  dump_trace() {
-    uint32_t cur = volatile_u32(&slots_->trace_cursor);  // kernel-complete: final
-    uint32_t n = cur - trace_base_;
-    next_trace_base_ = cur;
-    have_next_trace_base_ = true;
-    if (trace_dev_ == nullptr || n == 0) {
+  dump_epoch(const EpochSnap &es) {
+    uint32_t cur = es.slots.trace_cursor;
+    uint32_t n = snap_base_valid_ ? cur - snap_trace_base_ : 0;  // resync: no span
+    uint32_t base = cur - n;
+    snap_trace_base_ = cur;
+    snap_base_valid_ = true;
+    if (trace_dev_ == nullptr) {
       return;
     }
     if (n > trace_capacity_) {
       n = trace_capacity_;  // cursor past capacity = dropped records
+      base = cur - n;
     }
     const char *dir = getenv("FLUX_SWEEP_RECORD_DIR");
     if (dir == nullptr || dir[0] == '\0') {
       if (!sidecar_warned_) {
         sidecar_warned_ = true;
-        fprintf(stderr,
-                "[a2av-nvtx-proxy] rank %d: FLUX_SWEEP_RECORD_DIR unset, tile trace not saved\n",
-                rank_);
+        fprintf(
+            stderr,
+            "[a2av-nvtx-proxy] rank %d: FLUX_SWEEP_RECORD_DIR unset, tile trace not saved\n",
+            rank_);
       }
       return;
     }
     if (trace_staging_ == nullptr) {
-      if (cudaHostAlloc((void **)&trace_staging_, sizeof(A2AVTileRecord) * trace_capacity_,
-                        cudaHostAllocDefault) != cudaSuccess) {
+      if (cudaHostAlloc(
+              (void **)&trace_staging_,
+              sizeof(A2AVTileRecord) * trace_capacity_,
+              cudaHostAllocDefault) != cudaSuccess) {
         return;
       }
     }
     // ring over the monotonic cursor: this epoch's records occupy
     // [base % cap, base % cap + n) mod cap — up to two linear spans
-    uint32_t off = trace_base_ % trace_capacity_;
+    uint32_t off = base % trace_capacity_;
     uint32_t first = n <= trace_capacity_ - off ? n : trace_capacity_ - off;
-    cudaError_t rc = cudaMemcpyAsync(
-        trace_staging_, trace_dev_ + off, sizeof(A2AVTileRecord) * first,
-        cudaMemcpyDeviceToHost, stream_);
-    if (rc == cudaSuccess && n > first) {
+    cudaError_t rc = cudaSuccess;
+    if (n > 0) {
       rc = cudaMemcpyAsync(
-          trace_staging_ + first, trace_dev_, sizeof(A2AVTileRecord) * (n - first),
-          cudaMemcpyDeviceToHost, stream_);
-    }
-    if (rc == cudaSuccess) {
-      rc = cudaStreamSynchronize(stream_);
-    }
-    if (rc != cudaSuccess) {
-      return;
+          trace_staging_,
+          trace_dev_ + off,
+          sizeof(A2AVTileRecord) * first,
+          cudaMemcpyDeviceToHost,
+          stream_);
+      if (rc == cudaSuccess && n > first) {
+        rc = cudaMemcpyAsync(
+            trace_staging_ + first,
+            trace_dev_,
+            sizeof(A2AVTileRecord) * (n - first),
+            cudaMemcpyDeviceToHost,
+            stream_);
+      }
+      if (rc == cudaSuccess) {
+        rc = cudaStreamSynchronize(stream_);
+      }
+      if (rc != cudaSuccess) {
+        return;
+      }
+      // torn-span check: a still-running later epoch may have lapped the ring
+      // while we copied. The live cursor after the copy bounds its writes.
+      refresh();
+      uint32_t live = volatile_u32(&slots_->trace_cursor);
+      if (live - base > trace_capacity_) {
+        fprintf(
+            stderr,
+            "[a2av-nvtx-proxy] rank %d i%llu: trace ring lapped during drain "
+            "(%u records possibly torn); raise FLUX_A2AV_TRACE_EPOCHS\n",
+            rank_,
+            (unsigned long long)es.epoch,
+            live - base - trace_capacity_);
+      }
     }
     if (sidecar_ == nullptr) {
       char path[512];
@@ -326,31 +445,81 @@ class A2AVNvtxProxy {
         return;
       }
     }
+    // expected: host-computed dense-schedule totals when the meta path ran,
+    // else the kernel-published claimer totals (epoch-tag gated); rows: host
+    // meta only. Both keyed by epoch — a late drain still gets its own meta.
+    std::vector<uint32_t> exp(nb_, 0u), rows(nb_, 0u);
+    bool have_host_exp = false;
+    {
+      std::lock_guard<std::mutex> g(mu_);
+      auto it = pending_meta_.find(es.epoch);
+      if (it != pending_meta_.end()) {
+        for (int s = 0; s < nb_ && s < (int)it->second.first.size(); ++s) {
+          exp[s] = it->second.first[s];
+        }
+        have_host_exp = !it->second.first.empty();
+        for (int s = 0; s < nb_ && s < (int)it->second.second.size(); ++s) {
+          rows[s] = it->second.second[s];
+        }
+        pending_meta_.erase(pending_meta_.begin(), std::next(it));
+      }
+    }
+    if (!have_host_exp && es.slots.expected_seq >= es.epoch) {
+      for (int s = 0; s < nb_; ++s) {
+        exp[s] = es.slots.expected[s];
+      }
+    }
     struct Header {
       uint32_t magic, version;
       uint64_t epoch;
       int32_t rank, world_size, nnodes, nb;
       uint64_t t0_gt;
       uint32_t n_records, pad;
-    } h = {0xa2a71e5u, 2u, cur_epoch_, rank_, world_size_,
-           local_world_ > 0 ? world_size_ / local_world_ : 1, nb_,
-           volatile_u64(&slots_->t0_gt), n, 0u};
+    } h = {
+        0xa2a71e5u,
+        2u,
+        es.epoch,
+        rank_,
+        world_size_,
+        local_world_ > 0 ? world_size_ / local_world_ : 1,
+        nb_,
+        es.slots.t0_gt,
+        n,
+        0u};
     fwrite(&h, sizeof(h), 1, sidecar_);
-    fwrite((const void *)slots_->arrival_gt, sizeof(uint64_t), nb_, sidecar_);
+    fwrite((const void *)es.slots.arrival_gt, sizeof(uint64_t), nb_, sidecar_);
     // ready_seq lets the reader validate arrival_gt (stamp is per-epoch valid
     // iff ready_seq[s] >= epoch; otherwise it is stale or never written)
-    fwrite((const void *)slots_->ready_seq, sizeof(uint64_t), nb_, sidecar_);
-    std::vector<uint32_t> exp(nb_);
-    for (int s = 0; s < nb_; ++s) {
-      exp[s] = src_[s].has_expected ? src_[s].expected : 0u;
-    }
+    fwrite((const void *)es.slots.ready_seq, sizeof(uint64_t), nb_, sidecar_);
     fwrite(exp.data(), sizeof(uint32_t), nb_, sidecar_);
-    // v2: per-source row counts (0-filled when the meta path didn't run)
-    std::vector<uint32_t> rows(epoch_rows_);
-    rows.resize(nb_, 0u);
     fwrite(rows.data(), sizeof(uint32_t), nb_, sidecar_);
     fwrite(trace_staging_, sizeof(A2AVTileRecord), n, sidecar_);
     fflush(sidecar_);
+  }
+
+  // consume ready snapshots in order (poller thread; also the teardown
+  // path). Timeliness affects only device trace-ring headroom, never whether
+  // an epoch's block is written.
+  void
+  drain_snapshots() {
+    if (snap_ring_ == nullptr) {
+      return;
+    }
+    uint64_t prod = snap_produced_.load(std::memory_order_acquire);
+    if (prod - snap_consumed_ > kSnapRing) {
+      uint64_t drop = prod - kSnapRing - snap_consumed_;
+      fprintf(
+          stderr,
+          "[a2av-nvtx-proxy] rank %d: snapshot ring overflow, %llu epoch(s) dropped\n",
+          rank_,
+          (unsigned long long)drop);
+      snap_consumed_ = prod - kSnapRing;
+      snap_base_valid_ = false;  // record spans across the gap are unknowable
+    }
+    while (snap_consumed_ < prod) {
+      dump_epoch(snap_ring_[snap_consumed_ % kSnapRing]);
+      snap_consumed_ += 1;
+    }
   }
 
   const char *
@@ -373,15 +542,17 @@ class A2AVNvtxProxy {
     }
     if (rc != cudaSuccess && !copy_failed_) {
       copy_failed_ = true;
-      fprintf(stderr, "[a2av-nvtx-proxy] rank %d refresh failed: %s\n",
-              rank_, cudaGetErrorString(rc));
+      fprintf(
+          stderr, "[a2av-nvtx-proxy] rank %d refresh failed: %s\n", rank_, cudaGetErrorString(rc));
     }
   }
 
-  // close out the active epoch: if its end callback already fired the trace
-  // is final — dump before closing. Called from the normal end path, from a
-  // late-noticed epoch switch (back-to-back iterations can outrun the poll
-  // cadence, especially under nsys/CUPTI overhead), and from thread exit.
+  // close out the active epoch's LIVE NVTX state: if its end callback already
+  // fired, take a final observation so ranges end at their true state. Called
+  // from the normal end path, from a late-noticed epoch switch (back-to-back
+  // iterations can outrun the poll cadence, especially under nsys/CUPTI
+  // overhead), and from thread exit. The sidecar no longer rides this path —
+  // drain_snapshots() owns it and cannot miss epochs.
   void
   close_current(bool ended) {
     if (cur_epoch_ == 0) {
@@ -390,7 +561,6 @@ class A2AVNvtxProxy {
     if (ended) {
       refresh();
       poll_once();
-      dump_trace();
     }
     finish_epoch();
   }
@@ -402,6 +572,7 @@ class A2AVNvtxProxy {
         relax();
         continue;
       }
+      drain_snapshots();
       uint64_t e = iter_epoch_.load(std::memory_order_acquire);
       if (e != last_begun_) {
         close_current(end_epoch_.load(std::memory_order_acquire) >= cur_epoch_);
@@ -418,6 +589,10 @@ class A2AVNvtxProxy {
       relax();
     }
     close_current(end_epoch_.load(std::memory_order_acquire) >= cur_epoch_);
+    // teardown drain: the forward thread is quiesced (op dtor joins us after
+    // the last iteration completed), so pause no longer matters — every
+    // published snapshot gets its sidecar block even if we slept all run.
+    drain_snapshots();
   }
 
   void
@@ -432,18 +607,15 @@ class A2AVNvtxProxy {
     }
     std::vector<uint32_t> expected;
     {
+      // copy (not consume): dump_epoch owns the map's lifetime so a late
+      // drain still finds its epoch's meta
       std::lock_guard<std::mutex> g(mu_);
-      expected = std::move(pending_expected_);
-      pending_expected_.clear();
-      epoch_rows_ = std::move(pending_rows_);
-      pending_rows_.clear();
+      auto it = pending_meta_.find(e);
+      if (it != pending_meta_.end()) {
+        expected = it->second.first;
+      }
     }
     r_iter_ = range_start(dom_epoch_, kColIter, "i%llu", (unsigned long long)e);
-    // iterations serialize, so the previous epoch's end cursor is this
-    // epoch's exact base (a fresh read could already include this epoch's
-    // first fires, dropping them from the dump)
-    trace_base_ = have_next_trace_base_ ? next_trace_base_
-                                        : volatile_u32(&slots_->trace_cursor);
     expected_seq_ticks_ = 0;
     intra_open_ = inter_open_ = false;
     intra_live_ = inter_live_ = 0;
@@ -456,8 +628,8 @@ class A2AVNvtxProxy {
       st.has_expected = s < (int)expected.size();
       st.expected = st.has_expected ? expected[s] : 0;
       st.phase = Phase::kWait;
-      st.r_main = range_start(
-          domains_[s], kColWait, "i%llu.%s.wait", (unsigned long long)e, src_name(s));
+      st.r_main =
+          range_start(domains_[s], kColWait, "i%llu.%s.wait", (unsigned long long)e, src_name(s));
       if (s < world_size_) {
         (is_inter(s) ? inter_live_ : intra_live_) += 1;
       }
@@ -482,7 +654,10 @@ class A2AVNvtxProxy {
         open = true;
         nvtxRangeId_t &r = inter ? r_inter_ : r_intra_;
         r = range_start(
-            dom_epoch_, kColEpoch, "i%llu.%s_epoch", (unsigned long long)cur_epoch_,
+            dom_epoch_,
+            kColEpoch,
+            "i%llu.%s_epoch",
+            (unsigned long long)cur_epoch_,
             inter ? "inter" : "intra");
       }
     }
@@ -533,12 +708,14 @@ class A2AVNvtxProxy {
         if (c > 0) {
           mark_arrival(s);
           enter_compute(s);  // fired before we saw ready (or multi bucket)
-        } else if (
-            s < world_size_ && volatile_u64(&slots_->ready_seq[s]) >= cur_epoch_) {
+        } else if (s < world_size_ && volatile_u64(&slots_->ready_seq[s]) >= cur_epoch_) {
           mark_arrival(s);
           nvtxDomainRangeEnd(domains_[s], st.r_main);
           st.r_main = range_start(
-              domains_[s], kColPending, "i%llu.%s.pending", (unsigned long long)cur_epoch_,
+              domains_[s],
+              kColPending,
+              "i%llu.%s.pending",
+              (unsigned long long)cur_epoch_,
               src_name(s));
           st.phase = Phase::kPending;
         } else if (st.has_expected && st.expected == 0) {
@@ -560,8 +737,12 @@ class A2AVNvtxProxy {
             st.qidx += 1;
             static const char *kQ[] = {"c0-25", "c25-50", "c50-75", "c75-100"};
             st.r_q = range_start(
-                domains_[s], is_inter(s) ? kColInter : kColIntra, "i%llu.%s.%s",
-                (unsigned long long)cur_epoch_, src_name(s), kQ[st.qidx]);
+                domains_[s],
+                is_inter(s) ? kColInter : kColIntra,
+                "i%llu.%s.%s",
+                (unsigned long long)cur_epoch_,
+                src_name(s),
+                kQ[st.qidx]);
           }
           if (d >= st.expected) {
             finish_src(s);
@@ -615,9 +796,18 @@ class A2AVNvtxProxy {
   std::atomic<uint64_t> iter_epoch_{0};
   std::atomic<uint64_t> end_epoch_{0};
   std::mutex mu_;
-  std::vector<uint32_t> pending_expected_;
-  std::vector<uint32_t> pending_rows_;
-  std::vector<uint32_t> epoch_rows_;  // poller-thread copy for the dump
+  // epoch -> (expected tiles, rows) from iter_start_cb; erased by dump_epoch
+  std::map<uint64_t, std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> pending_meta_;
+
+  // per-epoch snapshot ring (pinned): forward-thread producer via
+  // enqueue_epoch_snapshot, poller-thread consumer via drain_snapshots
+  EpochSnap *snap_ring_ = nullptr;
+  uint64_t snap_enqueued_ = 0;              // forward thread only
+  std::atomic<uint64_t> snap_produced_{0};  // bumped by snap_cb after memcpy
+  uint64_t snap_consumed_ = 0;              // poller thread only
+  uint32_t snap_trace_base_ = 0;            // trace cursor at last drained epoch
+  bool snap_base_valid_ = true;             // false across an overflow gap
+  bool snap_warned_ = false;
 
   // poller-thread state
   uint64_t cur_epoch_ = 0;
@@ -626,9 +816,6 @@ class A2AVNvtxProxy {
   // layer C tile-trace extraction
   const A2AVTileRecord *trace_dev_ = nullptr;
   uint32_t trace_capacity_ = 0;
-  uint32_t trace_base_ = 0;
-  uint32_t next_trace_base_ = 0;
-  bool have_next_trace_base_ = false;
   A2AVTileRecord *trace_staging_ = nullptr;
   FILE *sidecar_ = nullptr;
   bool sidecar_warned_ = false;

@@ -30,6 +30,12 @@ nproc=16 ./build.sh \
 ```
 
 Notes:
+- **AWS: NEVER build on the head node.** It is an m7i.large (2 vCPU, 8 GB RAM); a parallel
+  nvcc build OOMs it and deadlock-halts the entire head node. Always build on a compute
+  node via the allocation (p4d: 96 vCPU, 1.1 TB RAM), with the env sourced inside the
+  srun'd shell:
+  `srun --jobid=<id> --nodes=1 --ntasks-per-node=1 bash -lc 'source ./env_aws.sh && FLUX_BUILD_SKIP_CMAKE=1 nproc=32 ./build.sh --arch 80 --sm-cores 108 --nvshmem --no_test --jobs 32'`
+  (`/home` is shared, so the tree the head node sees is the one built.)
 - `--nvshmem` is required for the MoE (Comet) kernels.
 - Set `FLUX_BUILD_SKIP_CMAKE=1` to skip re-running cmake when `build/CMakeCache.txt` already exists (incremental rebuilds).
 - `./build.sh --clean-py` removes only python build artifacts; `./build.sh --clean-all` also removes `build/` and the 3rdparty NCCL/protobuf builds.

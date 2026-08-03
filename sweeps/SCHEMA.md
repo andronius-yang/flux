@@ -70,7 +70,9 @@ Metrics parsed from stderr in `phases` mode (per iteration, per rank):
 `stage1_ms, stage2_ms, gemmgate_ms, a2av_gemm_ms, barrier_ms` ([a2av-timing]),
 `stage2_*_ms` ([a2av-stage2] sub-marks), `host_enq_stage1_ms,
 host_enq_stage2_ms, host_counts_wait_ms` ([a2av-host], µs→ms), and
-`relayfwd_*_ms` ([a2av-relayfwd], balanced-relay builds only).
+`relayfwd_*_ms` ([a2av-relayfwd], balanced-relay gather builds only — the
+`hier_compress_lb_union` variant runs no forward-index build and never emits
+this mark, like the union modes).
 
 ## cells.csv
 
@@ -125,8 +127,10 @@ Highlights (full list = header row):
   union measured -12% vs the old conn=1 baseline. On the compress
   gather/relay arms the index_select tails are issued inline on the pack
   stream (post-launch-enqueued kernels can starve at dispatch behind the
-  blanketing GEMM) and the ctor requires CONNECTIONS > 1 — visibility mode,
-  not a perf configuration) and `FLUX_A2AV_BLOCKING_WIRE=1` (instrumented
+  blanketing GEMM) and the ctor requires CONNECTIONS > 1 — this includes
+  `hier_compress_lb_union`, whose phase-2 wire carries inline pre-launch
+  front-end waits even though its gateway forward is pure-CE — visibility
+  mode, not a perf configuration) and `FLUX_A2AV_BLOCKING_WIRE=1` (instrumented
   only: inter-node puts — hier/compress aggregates, relay phase-2, flat
   remote per-dest — become visible device spans; under
   CUDA_DEVICE_MAX_CONNECTIONS=1 they serialize ahead of the GEMM — the

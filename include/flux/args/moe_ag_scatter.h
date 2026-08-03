@@ -44,9 +44,9 @@ struct GemmGroupedV2AGScatterArguments {
   int num_groups = 0;  // make sure num_groups <= kMaxNumGroups
   int ep_start = 0;
   int ep_nexperts = 0;
-  void *input = nullptr;                 // before gather_A
-  void *weight[kMaxNumGroups] = {};      // with groups
-  void *output[kMaxNumGroups] = {};      // with groups
+  void *input = nullptr;             // before gather_A
+  void *weight[kMaxNumGroups] = {};  // with groups
+  void *output[kMaxNumGroups] = {};  // with groups
   // FP8 arguments
   float *scaleD[kMaxNumGroups] = {};  // with groups
   int M_this_ep = 0, N = 0, K = 0;

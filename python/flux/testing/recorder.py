@@ -84,9 +84,7 @@ class SweepRecorder:
             "ts_start": self._ts_start,
             "ts_flush": time.time(),
             "env": {
-                k: v
-                for k, v in sorted(os.environ.items())
-                if k.startswith(_META_ENV_PREFIXES)
+                k: v for k, v in sorted(os.environ.items()) if k.startswith(_META_ENV_PREFIXES)
             },
         }
         os.makedirs(self._dir, exist_ok=True)

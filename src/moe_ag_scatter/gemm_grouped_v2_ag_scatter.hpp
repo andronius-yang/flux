@@ -292,8 +292,7 @@ class GemmGroupedV2AGScatter_Device
       gemm_args.bucket_offsets = a2av_ws.bucket_offsets;
       gemm_args.bucket_cursors = a2av_ws.bucket_cursors;
       gemm_args.multi_masks = a2av_ws.multi_masks;
-      gemm_args.progress_slots =
-          reinterpret_cast<A2AVProgressSlots *>(args.progress_slots);
+      gemm_args.progress_slots = reinterpret_cast<A2AVProgressSlots *>(args.progress_slots);
       gemm_args.tile_trace = reinterpret_cast<A2AVTileRecord *>(args.tile_trace);
       gemm_args.tile_trace_capacity = args.tile_trace_capacity;
     }

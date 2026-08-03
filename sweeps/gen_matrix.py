@@ -158,9 +158,9 @@ def generate(family, params, W, L, budget_mib, topk, chunk_bytes, matrix_instanc
         # node is the only remote node) — see _row_weights
 
     budget_bytes = budget_mib * (1 << 20)
-    assert budget_bytes % chunk_bytes == 0, (
-        f"budget ({budget_bytes} B) must be a multiple of chunk_bytes ({chunk_bytes})"
-    )
+    assert (
+        budget_bytes % chunk_bytes == 0
+    ), f"budget ({budget_bytes} B) must be a multiple of chunk_bytes ({chunk_bytes})"
     tokens_per_rank = budget_bytes // chunk_bytes  # pre-topk tokens
     row_chunks = tokens_per_rank * topk  # post-fanout wire rows per source
 
@@ -171,14 +171,12 @@ def generate(family, params, W, L, budget_mib, topk, chunk_bytes, matrix_instanc
         rng_derived["hot_col"] = rng.randrange(W)
     elif family == "nodeskew":
         # each source node picks a distinct-from-self hot remote node
-        rng_derived["hot_node"] = [
-            rng.choice([m for m in range(nn) if m != n]) for n in range(nn)
-        ]
+        rng_derived["hot_node"] = [rng.choice([m for m in range(nn) if m != n]) for n in range(nn)]
     elif family == "remotefrac":
         fracs = [float(x) for x in params["fracs"]]
-        assert len(fracs) >= L, (
-            f"remotefrac needs >= ranks_per_node ({L}) fractions, got {len(fracs)}"
-        )
+        assert (
+            len(fracs) >= L
+        ), f"remotefrac needs >= ranks_per_node ({L}) fractions, got {len(fracs)}"
         remote_frac = []
         for n in range(nn):
             perm = fracs[:L][:]
@@ -325,12 +323,20 @@ def main():
     params = dict(FAMILY_DEFAULT_PARAMS[args.family], **parse_params(args.param))
     if args.print_only:
         mid, chunks, tokens_per_rank = generate(
-            args.family, params, args.W, args.ranks_per_node, args.budget_mib, args.topk,
-            args.chunk_bytes, args.id,
+            args.family,
+            params,
+            args.W,
+            args.ranks_per_node,
+            args.budget_mib,
+            args.topk,
+            args.chunk_bytes,
+            args.id,
         )
         min_g = check_feasible(chunks, args.W, args.topk, tokens_per_rank, nexperts=args.G)
         print(f"matrix_id: {mid}")
-        print(f"tokens_per_rank (pre-topk): {tokens_per_rank}, row_chunks: {tokens_per_rank * args.topk}")
+        print(
+            f"tokens_per_rank (pre-topk): {tokens_per_rank}, row_chunks: {tokens_per_rank * args.topk}"
+        )
         print(f"min feasible G: {min_g}")
         for s, row in enumerate(chunks):
             remote = sum(
@@ -339,8 +345,16 @@ def main():
             print(f"row {s:3d}: max {max(row):8d} remote_frac {remote / sum(row):.3f}")
         return
     mid, path, sha = ensure_matrix(
-        args.family, params, args.W, args.ranks_per_node, args.budget_mib, args.topk,
-        args.chunk_bytes, args.id, args.out_root, nexperts=args.G,
+        args.family,
+        params,
+        args.W,
+        args.ranks_per_node,
+        args.budget_mib,
+        args.topk,
+        args.chunk_bytes,
+        args.id,
+        args.out_root,
+        nexperts=args.G,
     )
     print(f"{mid}\n{path}\nsha256 {sha}")
 

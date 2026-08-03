@@ -29,13 +29,12 @@ VARIANTS = {
     # SM kernels, which the a2av paths avoid post-launch). Cells before this
     # change ran at conn=1 — env_json in cells.csv audits which is which; do
     # not compare across the boundary.
-    "a2av": dict(
-        comm_pattern="a2av", env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"}, requires=[]),
+    "a2av": dict(comm_pattern="a2av", env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"}, requires=[]),
     "a2av_ring": dict(
-        comm_pattern="a2av_ring", env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"}, requires=[]),
+        comm_pattern="a2av_ring", env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"}, requires=[]
+    ),
     # hierarchical dispatch family
-    "hier": dict(
-        comm_pattern="a2av_hier", env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"}, requires=[]),
+    "hier": dict(comm_pattern="a2av_hier", env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"}, requires=[]),
     # token-dedup wire semantics; balanced inter-node relay is the default
     "hier_compress": dict(
         comm_pattern="a2av_hier_compress",
@@ -53,6 +52,15 @@ VARIANTS = {
         comm_pattern="a2av_hier_compress",
         env={"FLUX_A2AV_UNION_BCAST": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_UNION_BCAST"],
+    ),
+    # balanced chunked wire + union-broadcast gateway: per-round wire bytes are
+    # ceil(total/L) per rank (like hier_compress) but the gateway forwards its
+    # whole staged window as pure-CE puts (like union) — no index build, no
+    # gathers. Must be set identically on all ranks (changes wire + recv layout).
+    "hier_compress_lb_union": dict(
+        comm_pattern="a2av_hier_compress",
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION"],
     ),
     # union broadcast + source-side pack overlap (dedicated stream,
     # double-buffered send); MAX_CONNECTIONS=2 lets the pack stream actually

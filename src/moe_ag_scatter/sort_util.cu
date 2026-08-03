@@ -524,8 +524,8 @@ ag_scatter_sort_impl_v2(AGScatterSortOpArgumentsV2 const &args, cudaStream_t str
 __global__ void
 a2av_stage1_kernel(A2AVStage1Arguments args) {
   extern __shared__ int a2av_smem[];
-  int *splits_cum = a2av_smem;                  // [nexperts], inclusive
-  int *hist = a2av_smem + args.nexperts;        // [W*W]
+  int *splits_cum = a2av_smem;            // [nexperts], inclusive
+  int *hist = a2av_smem + args.nexperts;  // [W*W]
   const int WW = args.world_size * args.world_size;
   // chunks/expert_base may be nullptr: the metadata path (host-provided
   // splits_per_source) derives both on the CPU and only needs the decode
@@ -581,9 +581,8 @@ a2av_stage1_kernel(A2AVStage1Arguments args) {
         // idempotent — duplicate (token, seg) copies write 1 again.
         const int L = args.local_world_size;
         int nd = owner / L;
-        int seg = nd == args.node_idx
-                      ? owner - args.node_idx * (L - 1)
-                      : (nd < args.node_idx ? nd : nd + L - 1);
+        int seg = nd == args.node_idx ? owner - args.node_idx * (L - 1)
+                                      : (nd < args.node_idx ? nd : nd + L - 1);
         const int64_t tokens = args.copies_per_rank / args.topk;
         args.pack_flag[(int64_t)seg * tokens + lp / args.topk] = 1;
       }

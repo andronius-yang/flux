@@ -93,9 +93,16 @@ PHASE_PATTERNS = [
             r" scatter ([\d.]+) cnt ([\d.]+) cumsum ([\d.]+) ms"
         ),
         [
-            "stage2_mask_ms", "stage2_keyA_ms", "stage2_sortA_ms", "stage2_keyR_ms",
-            "stage2_sortR_ms", "stage2_inv_ms", "stage2_gather_ms", "stage2_scatter_ms",
-            "stage2_cnt_ms", "stage2_cumsum_ms",
+            "stage2_mask_ms",
+            "stage2_keyA_ms",
+            "stage2_sortA_ms",
+            "stage2_keyR_ms",
+            "stage2_sortR_ms",
+            "stage2_inv_ms",
+            "stage2_gather_ms",
+            "stage2_scatter_ms",
+            "stage2_cnt_ms",
+            "stage2_cumsum_ms",
         ],
         1.0,
     ),
@@ -114,9 +121,16 @@ PHASE_PATTERNS = [
             r" flatten ([\d.]+) scatter ([\d.]+) cnts ([\d.]+) d2h ([\d.]+) ms"
         ),
         [
-            "relayfwd_dl_ms", "relayfwd_flag_ms", "relayfwd_canon_ms", "relayfwd_mask_ms",
-            "relayfwd_valid_ms", "relayfwd_cumsum_ms", "relayfwd_tgt_ms",
-            "relayfwd_flatten_ms", "relayfwd_scatter_ms", "relayfwd_cnts_ms",
+            "relayfwd_dl_ms",
+            "relayfwd_flag_ms",
+            "relayfwd_canon_ms",
+            "relayfwd_mask_ms",
+            "relayfwd_valid_ms",
+            "relayfwd_cumsum_ms",
+            "relayfwd_tgt_ms",
+            "relayfwd_flatten_ms",
+            "relayfwd_scatter_ms",
+            "relayfwd_cnts_ms",
             "relayfwd_d2h_ms",
         ],
         1.0,
@@ -124,18 +138,60 @@ PHASE_PATTERNS = [
 ]
 
 CELLS_COLUMNS = [
-    "run_id", "cell_id", "status", "platform", "variant", "comm_pattern", "mode",
-    "matrix_id", "matrix_path", "matrix_sha256", "family", "family_params",
-    "budget_mib", "topk", "G", "H", "chunk_bytes", "dtype",
-    "world_size", "nnodes", "ranks_per_node", "fabric",
-    "ntokens", "tokens_per_rank", "iters", "warmup_iters", "sm_margin",
-    "deterministic", "env_json", "git_sha", "git_dirty",
-    "wire_ratio", "relay_ident_bytes", "relay_balanced_bytes",
-    "correct_bitwise", "correct_allclose", "exit_code",
-    "start_ts", "end_ts", "log_dir", "nsys_path", "prof_path", "notes",
+    "run_id",
+    "cell_id",
+    "status",
+    "platform",
+    "variant",
+    "comm_pattern",
+    "mode",
+    "matrix_id",
+    "matrix_path",
+    "matrix_sha256",
+    "family",
+    "family_params",
+    "budget_mib",
+    "topk",
+    "G",
+    "H",
+    "chunk_bytes",
+    "dtype",
+    "world_size",
+    "nnodes",
+    "ranks_per_node",
+    "fabric",
+    "ntokens",
+    "tokens_per_rank",
+    "iters",
+    "warmup_iters",
+    "sm_margin",
+    "deterministic",
+    "env_json",
+    "git_sha",
+    "git_dirty",
+    "wire_ratio",
+    "relay_ident_bytes",
+    "relay_balanced_bytes",
+    "correct_bitwise",
+    "correct_allclose",
+    "exit_code",
+    "start_ts",
+    "end_ts",
+    "log_dir",
+    "nsys_path",
+    "prof_path",
+    "notes",
 ]
 METRICS_COLUMNS = [
-    "run_id", "cell_id", "mode", "impl", "rank", "iter", "metric", "value_ms", "source",
+    "run_id",
+    "cell_id",
+    "mode",
+    "impl",
+    "rank",
+    "iter",
+    "metric",
+    "value_ms",
+    "source",
 ]
 
 
@@ -175,9 +231,7 @@ def load_platform(name, dry=False):
         plat[key] = os.path.expandvars(plat[key])
         if "$" in plat[key]:
             if not dry:
-                raise SystemExit(
-                    f"platform {name}: {key} has unresolved env vars: {plat[key]}"
-                )
+                raise SystemExit(f"platform {name}: {key} has unresolved env vars: {plat[key]}")
             print(f"WARNING (dry-run): {key} unresolved on this host: {plat[key]}")
     return plat
 
@@ -273,20 +327,22 @@ def probe_capabilities(needed):
     absent knob are skipped instead of silently measuring the wrong thing."""
     # find_spec locates the installed flux package WITHOUT executing it
     # (importing flux needs a GPU; the runner lives on the login/head node)
-    r = sh([
-        sys.executable, "-c",
-        "import importlib.util, os;"
-        " s = importlib.util.find_spec('flux');"
-        " print(os.path.dirname(s.origin) if s else '')",
-    ])
+    r = sh(
+        [
+            sys.executable,
+            "-c",
+            "import importlib.util, os;"
+            " s = importlib.util.find_spec('flux');"
+            " print(os.path.dirname(s.origin) if s else '')",
+        ]
+    )
     libdir = r.stdout.strip()
     if r.returncode != 0 or not libdir:
         libdir = os.path.join(REPO_ROOT, "python", "flux")  # editable-install layout
     if not os.path.isdir(libdir):
         raise SystemExit(f"cannot locate the flux package (tried find_spec and {libdir})")
     sos = sorted(
-        glob.glob(os.path.join(libdir, "lib", "*.so*"))
-        + glob.glob(os.path.join(libdir, "*.so"))
+        glob.glob(os.path.join(libdir, "lib", "*.so*")) + glob.glob(os.path.join(libdir, "*.so"))
     )
     if not sos:
         raise SystemExit(f"no shared libraries under {libdir}")
@@ -356,9 +412,7 @@ def build_cell_env(spec, plat, cell, staging, matrix_path):
         env["FLUX_A2AV_TIMING"] = "1"
     env["FLUX_TEST_DETERMINISTIC"] = "0"
     env["FLUX_SWEEP_RECORD_DIR"] = os.path.join(staging, "records")
-    env["FLUX_EXTRA_TORCHRUN_ARGS"] = (
-        f"--redirects 3 --log-dir {os.path.join(staging, 'torchrun')}"
-    )
+    env["FLUX_EXTRA_TORCHRUN_ARGS"] = f"--redirects 3 --log-dir {os.path.join(staging, 'torchrun')}"
     env.update(spec.get("extra_env") or {})
     return env
 
@@ -370,21 +424,34 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging):
     warmup = spec["profile_iters"] if profiling else spec["warmup_iters"]
     sm_margin = spec["sm_margin"]
     srun_prefix = [
-        "srun", f"--jobid={jobid}", f"--nodes={spec['nodes']}", "--ntasks-per-node=1",
+        "srun",
+        f"--jobid={jobid}",
+        f"--nodes={spec['nodes']}",
+        "--ntasks-per-node=1",
     ] + list(plat.get("srun_extra") or [])
     if v.get("driver", "flux") == "fast":
         test_args = [
             TEST_FAST,
-            "--traffic_matrix", matrix_path,
-            "--topk", str(spec["topk"]),
-            "--G", str(spec["G"]),
-            "--H", str(spec["H"]),
-            "--chunk_bytes", str(spec["chunk_bytes"]),
-            "--ffn_hidden_size", str(spec["ffn_hidden"]),
-            "--dtype", spec["dtype"],
-            "--iters", str(iters),
-            "--warmup_iters", str(warmup),
-            "--sm_margin", str(sm_margin),
+            "--traffic_matrix",
+            matrix_path,
+            "--topk",
+            str(spec["topk"]),
+            "--G",
+            str(spec["G"]),
+            "--H",
+            str(spec["H"]),
+            "--chunk_bytes",
+            str(spec["chunk_bytes"]),
+            "--ffn_hidden_size",
+            str(spec["ffn_hidden"]),
+            "--dtype",
+            spec["dtype"],
+            "--iters",
+            str(iters),
+            "--warmup_iters",
+            str(warmup),
+            "--sm_margin",
+            str(sm_margin),
         ]
         if spec["skip_correctness"]:
             test_args.append("--skip_correctness")
@@ -393,21 +460,35 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging):
         v["comm_pattern"] == "a2av_hier_compress"
         and spec["nodes"] > 1
         and v["env"].get("FLUX_A2AV_UNION_BCAST") != "1"
+        and v["env"].get("FLUX_A2AV_LB_UNION") != "1"
     ):
+        # gather-gateway paths need a free SM for the index_selects; the two
+        # union-broadcast modes forward with pure CE puts and are exempt
         sm_margin = max(1, sm_margin)
     test_args = [
         TEST,
-        "--traffic_matrix", matrix_path,
-        "--comm_pattern", v["comm_pattern"],
-        "--topk", str(spec["topk"]),
-        "--G", str(spec["G"]),
-        "--H", str(spec["H"]),
-        "--chunk_bytes", str(spec["chunk_bytes"]),
-        "--ffn_hidden_size", str(spec["ffn_hidden"]),
-        "--dtype", spec["dtype"],
-        "--iters", str(iters),
-        "--warmup_iters", str(warmup),
-        "--sm_margin", str(sm_margin),
+        "--traffic_matrix",
+        matrix_path,
+        "--comm_pattern",
+        v["comm_pattern"],
+        "--topk",
+        str(spec["topk"]),
+        "--G",
+        str(spec["G"]),
+        "--H",
+        str(spec["H"]),
+        "--chunk_bytes",
+        str(spec["chunk_bytes"]),
+        "--ffn_hidden_size",
+        str(spec["ffn_hidden"]),
+        "--dtype",
+        spec["dtype"],
+        "--iters",
+        str(iters),
+        "--warmup_iters",
+        str(warmup),
+        "--sm_margin",
+        str(sm_margin),
     ]
     if spec["skip_correctness"]:
         test_args.append("--skip_correctness")
@@ -419,18 +500,24 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging):
             # node-local pre-clean: a killed nsys leaves multi-GB quadd session
             # data under /tmp/nvidia; once the root disk fills, every later
             # nsys dies with SIGBUS (mmap write on a full filesystem)
-            "bash", "-c",
+            "bash",
+            "-c",
             'rm -rf /tmp/nvidia/nsight_systems /tmp/nsys-report-*.qdstrm; exec "$@"',
             "nsys-preclean",
-            plat.get("nsys_bin") or "nsys", "profile",
+            plat.get("nsys_bin") or "nsys",
+            "profile",
             # job id in the name so a retried cell (same staging dir) never
             # silently overwrites the earlier attempt's capture
-            "-o", os.path.join(staging, "nsys", "node%q{SLURM_NODEID}_%q{SLURM_JOB_ID}"),
+            "-o",
+            os.path.join(staging, "nsys", "node%q{SLURM_NODEID}_%q{SLURM_JOB_ID}"),
             # NO osrt: the NVSHMEM/EFA proxy thread busy-polls fi_cq_read, and
             # osrt-tracing it is an event storm (~18 GB per minute of capture,
             # fills the node-local root disk and wedges the run)
-            "--trace=cuda,nvtx", "--sample=none", "--cpuctxsw=none",
-            "--trace-fork-before-exec=true", "--force-overwrite=true",
+            "--trace=cuda,nvtx",
+            "--sample=none",
+            "--cpuctxsw=none",
+            "--trace-fork-before-exec=true",
+            "--force-overwrite=true",
             "./launch.sh",
         ]
     return srun_prefix + launcher + test_args, sm_margin, iters, warmup
@@ -438,16 +525,22 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging):
 
 def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
     staging = os.path.join(run_dir_staging, "cells", cell["cell_id"])
-    cmd, sm_margin, iters, warmup = build_cell_cmd(
-        spec, plat, cell, jobid, matrix["path"], staging
-    )
+    cmd, sm_margin, iters, warmup = build_cell_cmd(spec, plat, cell, jobid, matrix["path"], staging)
     env_delta = build_cell_env(spec, plat, cell, staging, matrix["path"])
     if dry:
         print(f"\n[{cell['cell_id']}]")
         print("  env: " + " ".join(f"{k}={v}" for k, v in sorted(env_delta.items())))
         print("  cmd: " + " ".join(cmd))
-        return dict(cell, status="dry", sm_margin=sm_margin, iters=iters, warmup=warmup,
-                    env_delta=env_delta, staging=staging, exit_code=None)
+        return dict(
+            cell,
+            status="dry",
+            sm_margin=sm_margin,
+            iters=iters,
+            warmup=warmup,
+            env_delta=env_delta,
+            staging=staging,
+            exit_code=None,
+        )
     for sub in ("records", "torchrun", "nsys"):
         os.makedirs(os.path.join(staging, sub), exist_ok=True)
     if cell["mode"] == "torchprof":
@@ -468,7 +561,11 @@ def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
         logf.write("+ env " + json.dumps(env_delta, sort_keys=True) + "\n")
         logf.flush()
         proc = subprocess.Popen(
-            cmd, cwd=REPO_ROOT, env=env, stdout=logf, stderr=subprocess.STDOUT,
+            cmd,
+            cwd=REPO_ROOT,
+            env=env,
+            stdout=logf,
+            stderr=subprocess.STDOUT,
             start_new_session=True,  # own process group so a kill reaps srun + children
         )
         status = _wait_with_watchdog(
@@ -488,9 +585,18 @@ def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
             if not os.path.exists(dest):
                 os.renames(d, dest)
     print(f"[{cell['cell_id']}] {status} ({time.time() - start:.0f}s)")
-    return dict(cell, status=status, sm_margin=sm_margin, iters=iters, warmup=warmup,
-                env_delta=env_delta, staging=staging, exit_code=exit_code,
-                start_ts=start, end_ts=time.time())
+    return dict(
+        cell,
+        status=status,
+        sm_margin=sm_margin,
+        iters=iters,
+        warmup=warmup,
+        env_delta=env_delta,
+        staging=staging,
+        exit_code=exit_code,
+        start_ts=start,
+        end_ts=time.time(),
+    )
 
 
 def _latest_mtime(root, floor):
@@ -599,19 +705,34 @@ def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, s
         m = matrices[cell["cell_id"]]
         row = {c: "" for c in CELLS_COLUMNS}
         row.update(
-            run_id=run_id, cell_id=cell["cell_id"], status=cell["status"],
-            platform=plat["name"], variant=cell["variant"],
-            comm_pattern=VARIANTS[cell["variant"]]["comm_pattern"], mode=cell["mode"],
-            matrix_id=m["id"], matrix_path=m["path"], matrix_sha256=m["sha"],
+            run_id=run_id,
+            cell_id=cell["cell_id"],
+            status=cell["status"],
+            platform=plat["name"],
+            variant=cell["variant"],
+            comm_pattern=VARIANTS[cell["variant"]]["comm_pattern"],
+            mode=cell["mode"],
+            matrix_id=m["id"],
+            matrix_path=m["path"],
+            matrix_sha256=m["sha"],
             family=cell["family"],
             family_params=json.dumps(cell["family_params"], sort_keys=True),
-            budget_mib=cell["budget_mib"], topk=spec["topk"], G=spec["G"], H=spec["H"],
-            chunk_bytes=spec["chunk_bytes"], dtype=spec["dtype"],
-            world_size=cell["world_size"], nnodes=spec["nodes"],
-            ranks_per_node=plat["ranks_per_node"], fabric=plat["fabric"],
-            iters=cell["iters"], warmup_iters=cell["warmup"], sm_margin=cell["sm_margin"],
+            budget_mib=cell["budget_mib"],
+            topk=spec["topk"],
+            G=spec["G"],
+            H=spec["H"],
+            chunk_bytes=spec["chunk_bytes"],
+            dtype=spec["dtype"],
+            world_size=cell["world_size"],
+            nnodes=spec["nodes"],
+            ranks_per_node=plat["ranks_per_node"],
+            fabric=plat["fabric"],
+            iters=cell["iters"],
+            warmup_iters=cell["warmup"],
+            sm_margin=cell["sm_margin"],
             env_json=json.dumps(cell["env_delta"], sort_keys=True),
-            git_sha=git_sha, git_dirty=int(git_dirty),
+            git_sha=git_sha,
+            git_dirty=int(git_dirty),
             exit_code="" if cell.get("exit_code") is None else cell["exit_code"],
             start_ts=(
                 time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(cell["start_ts"]))
@@ -632,16 +753,32 @@ def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, s
                 row["status"] = cell["status"] = "failed"  # exited 0 but recorded nothing
             for impl, rank, i, metric, val in iters_rows:
                 metrics_rows.append(
-                    (run_id, cell["cell_id"], cell["mode"], impl, rank, i, metric,
-                     round(val, 6), "recorder")
+                    (
+                        run_id,
+                        cell["cell_id"],
+                        cell["mode"],
+                        impl,
+                        rank,
+                        i,
+                        metric,
+                        round(val, 6),
+                        "recorder",
+                    )
                 )
             if cell["mode"] == "phases":
-                for impl, rank, i, metric, val in parse_phase_logs(
-                    cell["staging"], cell["iters"]
-                ):
+                for impl, rank, i, metric, val in parse_phase_logs(cell["staging"], cell["iters"]):
                     metrics_rows.append(
-                        (run_id, cell["cell_id"], cell["mode"], impl, rank, i, metric,
-                         round(val, 6), "stderr")
+                        (
+                            run_id,
+                            cell["cell_id"],
+                            cell["mode"],
+                            impl,
+                            rank,
+                            i,
+                            metric,
+                            round(val, 6),
+                            "stderr",
+                        )
                     )
             if metas:
                 row["deterministic"] = int(all(m["deterministic"] for m in metas.values()))
@@ -649,16 +786,16 @@ def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, s
                 row["correct_bitwise"] = int(all(b for b, _ in correctness.values()))
                 row["correct_allclose"] = int(all(a for _, a in correctness.values()))
             for k_src, k_dst in [
-                ("ntokens", "ntokens"), ("tokens_per_rank", "tokens_per_rank"),
-                ("wire_ratio", "wire_ratio"), ("relay_ident_bytes", "relay_ident_bytes"),
+                ("ntokens", "ntokens"),
+                ("tokens_per_rank", "tokens_per_rank"),
+                ("wire_ratio", "wire_ratio"),
+                ("relay_ident_bytes", "relay_ident_bytes"),
                 ("relay_balanced_bytes", "relay_balanced_bytes"),
             ]:
                 if k_src in info:
                     row[k_dst] = info[k_src]
             for p in sorted(glob.glob(os.path.join(cell["staging"], "records", "*.jsonl"))):
-                artifacts.append(
-                    {"path": p, "sha256": sha256_file(p), "bytes": os.path.getsize(p)}
-                )
+                artifacts.append({"path": p, "sha256": sha256_file(p), "bytes": os.path.getsize(p)})
             nsys_reps = sorted(glob.glob(os.path.join(cell["staging"], "nsys", "*.nsys-rep")))
             if nsys_reps:
                 row["nsys_path"] = os.path.dirname(nsys_reps[0])
@@ -739,8 +876,12 @@ def cmd_run(spec, jobid_arg, dry):
             mid = gen_matrix.matrix_id_of(
                 cell["family"],
                 dict(gen_matrix.FAMILY_DEFAULT_PARAMS[cell["family"]], **cell["family_params"]),
-                cell["world_size"], plat["ranks_per_node"], cell["budget_mib"],
-                spec["topk"], spec["chunk_bytes"], spec["matrix_instance"],
+                cell["world_size"],
+                plat["ranks_per_node"],
+                cell["budget_mib"],
+                spec["topk"],
+                spec["chunk_bytes"],
+                spec["matrix_instance"],
             )
             matrices[cell["cell_id"]] = {
                 "id": mid,
@@ -751,9 +892,15 @@ def cmd_run(spec, jobid_arg, dry):
         os.makedirs(plat["matrices_root"], exist_ok=True)
         for cell in cells:
             mid, path, sha = gen_matrix.ensure_matrix(
-                cell["family"], cell["family_params"], cell["world_size"],
-                plat["ranks_per_node"], cell["budget_mib"], spec["topk"],
-                spec["chunk_bytes"], spec["matrix_instance"], plat["matrices_root"],
+                cell["family"],
+                cell["family_params"],
+                cell["world_size"],
+                plat["ranks_per_node"],
+                cell["budget_mib"],
+                spec["topk"],
+                spec["chunk_bytes"],
+                spec["matrix_instance"],
+                plat["matrices_root"],
                 nexperts=spec["G"],
             )
             matrices[cell["cell_id"]] = {"id": mid, "path": path, "sha": sha}
@@ -787,16 +934,29 @@ def cmd_run(spec, jobid_arg, dry):
             missing.append(rf)
         if missing:
             print(f"WARNING: {cell['cell_id']}: build lacks {missing} -> skipped_capability")
-            skipped.append(dict(cell, status="skipped_capability", sm_margin=spec["sm_margin"],
-                                iters=spec["iters"], warmup=spec["warmup_iters"],
-                                env_delta={}, staging="", exit_code=None))
+            skipped.append(
+                dict(
+                    cell,
+                    status="skipped_capability",
+                    sm_margin=spec["sm_margin"],
+                    iters=spec["iters"],
+                    warmup=spec["warmup_iters"],
+                    env_delta={},
+                    staging="",
+                    exit_code=None,
+                )
+            )
         else:
             runnable.append(cell)
 
     run_id = time.strftime("%Y%m%d-%H%M%S", time.gmtime())
     digest = hashlib.sha256(
-        (json.dumps(spec, sort_keys=True) + git_info()[0] + os.uname().nodename
-         + str(time.time_ns())).encode()
+        (
+            json.dumps(spec, sort_keys=True)
+            + git_info()[0]
+            + os.uname().nodename
+            + str(time.time_ns())
+        ).encode()
     ).hexdigest()[:8]
     run_id = f"{run_id}_{spec['platform']}_{digest}"
     run_dir_staging = os.path.join(plat["data_root"], run_id)
@@ -823,8 +983,15 @@ def cmd_run(spec, jobid_arg, dry):
                     os.rename(old["staging"], f"{old['staging']}.attempt{attempt - 1}")
                 fresh = {
                     k: old[k]
-                    for k in ("cell_id", "variant", "mode", "family", "family_params",
-                              "budget_mib", "world_size")
+                    for k in (
+                        "cell_id",
+                        "variant",
+                        "mode",
+                        "family",
+                        "family_params",
+                        "budget_mib",
+                        "world_size",
+                    )
                 }
                 redo = run_cell(
                     spec, plat, fresh, jobid, matrices[old["cell_id"]], run_dir_staging, dry
@@ -858,7 +1025,9 @@ def parse_list(s):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = ap.add_subparsers(dest="command", required=True)
     rp = sub.add_parser("run", help="run a sweep")
     rp.add_argument("--spec", help="YAML spec file; explicit flags override its fields")
@@ -867,17 +1036,25 @@ def main():
     rp.add_argument("--nodes", type=int)
     rp.add_argument("--variants", type=parse_list)
     rp.add_argument("--families", type=parse_list, help="e.g. remotefrac,hotcol:frac=0.7")
-    rp.add_argument("--budgets-mib", dest="budgets_mib", type=lambda s: [int(x) for x in parse_list(s)])
+    rp.add_argument(
+        "--budgets-mib", dest="budgets_mib", type=lambda s: [int(x) for x in parse_list(s)]
+    )
     rp.add_argument("--topk", type=int)
     rp.add_argument("--G", type=int)
     rp.add_argument("--iters", type=int)
     rp.add_argument("--warmup-iters", dest="warmup_iters", type=int)
     rp.add_argument("--sm-margin", dest="sm_margin", type=int)
     rp.add_argument("--modes", type=parse_list)
-    rp.add_argument("--profile-iters", dest="profile_iters", type=int,
-                    help="iters AND warmup for torchprof/nsys cells (default 3)")
+    rp.add_argument(
+        "--profile-iters",
+        dest="profile_iters",
+        type=int,
+        help="iters AND warmup for torchprof/nsys cells (default 3)",
+    )
     rp.add_argument("--matrix-instance", dest="matrix_instance")
-    rp.add_argument("--skip-correctness", dest="skip_correctness", action="store_true", default=None)
+    rp.add_argument(
+        "--skip-correctness", dest="skip_correctness", action="store_true", default=None
+    )
     rp.add_argument("--timeout-s", dest="timeout_s", type=int)
     rp.add_argument("--notes")
     rp.add_argument("--dry-run", action="store_true")

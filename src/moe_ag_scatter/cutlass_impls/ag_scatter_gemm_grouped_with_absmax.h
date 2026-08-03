@@ -609,14 +609,14 @@ public:
               // slow path only — this tile visibly blocked on lane_idx's
               // source, so the spin exit IS the arrival observation. Stores
               // are idempotent; no cross-tile register state needed.
-              *reinterpret_cast<uint64_t volatile *>(
-                  &params.progress_slots->arrival_gt[lane_idx]) =
+              *reinterpret_cast<uint64_t volatile *>(&params.progress_slots->arrival_gt[lane_idx]) =
                   bytedance::flux::a2av_globaltimer();
               *reinterpret_cast<uint64_t volatile *>(&params.progress_slots->ready_seq[lane_idx]) =
                   params.signal_expected;
             }
           }
-        } else {
+        }
+        else {
           cuda::atomic_ref<int32_t, cuda::thread_scope_device> barrier(params.barrier_ptr[lane_idx]);
           while (barrier.load(cuda::memory_order_acquire) != 1) {
           }
@@ -626,8 +626,8 @@ public:
       // dense (static-schedule) a2av mode: attribute the tile to its gating
       // source segment_end (the last segment it spans). The claimer path
       // counts at claim time instead (exact single-source bucket attribution).
-      if (params.progress_slots != nullptr && params.signal_ptr != nullptr &&
-          params.bucket_tiles_ptr == nullptr && threadIdx.x == 0) {
+      if (params.progress_slots != nullptr && params.signal_ptr != nullptr && params.bucket_tiles_ptr == nullptr &&
+          threadIdx.x == 0) {
         atomicAdd(&params.progress_slots->claimed[segment_end], 1u);
       }
       if (params.tile_trace != nullptr && threadIdx.x == 0) {
@@ -635,14 +635,13 @@ public:
         // The buffer is a ring over the monotonic cursor (capacity == worst
         // case tiles per iteration, so one iteration never laps itself).
         uint32_t t_fire = (uint32_t)bytedance::flux::a2av_globaltimer();
-        uint32_t idx =
-            atomicAdd(&params.progress_slots->trace_cursor, 1u) % params.tile_trace_capacity;
+        uint32_t idx = atomicAdd(&params.progress_slots->trace_cursor, 1u) % params.tile_trace_capacity;
         uint32_t smid;
         asm volatile("mov.u32 %0, %%smid;" : "=r"(smid));
         bytedance::flux::A2AVTileRecord &rec = params.tile_trace[idx];
         rec.tile = (uint32_t(problem_idx) << 22) | (uint32_t(threadblock_idx) & 0x3FFFFFu);
-        rec.meta = (smid << 24) | ((uint32_t(segment_start) & 0x3Fu) << 18) |
-                   ((uint32_t(segment_end) & 0x3Fu) << 12) | (blockIdx.x & 0xFFFu);
+        rec.meta = (smid << 24) | ((uint32_t(segment_start) & 0x3Fu) << 18) | ((uint32_t(segment_end) & 0x3Fu) << 12) |
+                   (blockIdx.x & 0xFFFu);
         rec.t_enter = t_enter;
         rec.t_fire = t_fire;
         trace_idx = int(idx);
@@ -813,13 +812,12 @@ public:
                iterator_Aux,
                problem_size.mn(),
                threadblock_offset.mn());
-      if (params.progress_slots != nullptr && params.signal_ptr != nullptr &&
-          params.bucket_tiles_ptr == nullptr && threadIdx.x == 0) {
+      if (params.progress_slots != nullptr && params.signal_ptr != nullptr && params.bucket_tiles_ptr == nullptr &&
+          threadIdx.x == 0) {
         // thread 0's epilogue done; the CTA's tail is within poller resolution.
         // Recompute the gating segment scalar-ly instead of keeping the ballot
         // result live across the mainloop (register pressure costs occupancy).
-        int m_last = min((threadblock_idx / grid_shape.n() + 1) * Mma::Shape::kM,
-                         problem_size.m()) - 1;
+        int m_last = min((threadblock_idx / grid_shape.n() + 1) * Mma::Shape::kM, problem_size.m()) - 1;
         int seg = 0;
         while (seg < params.world_size - 1 && m_last >= split_accum[seg]) {
           ++seg;

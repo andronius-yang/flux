@@ -68,11 +68,11 @@ struct A2AVProgressSlots {
 // script rebases with wrap-safe u32 subtraction against low32(t0_gt), exact
 // for any span < 4.3 s.
 struct A2AVTileRecord {
-  uint32_t tile;      // problem_idx (10b) << 22 | problem-local tile idx (22b)
-  uint32_t meta;      // smid (8b) << 24 | seg_start (6b) << 18 | seg_end (6b) << 12 | cta (12b)
-  uint32_t t_enter;   // low32 %globaltimer: CTA reached the tile (spin entry)
-  uint32_t t_fire;    // low32 %globaltimer: spin exit / mainloop start
-  uint32_t t_done;    // low32 %globaltimer: tile retired (epilogue done)
+  uint32_t tile;     // problem_idx (10b) << 22 | problem-local tile idx (22b)
+  uint32_t meta;     // smid (8b) << 24 | seg_start (6b) << 18 | seg_end (6b) << 12 | cta (12b)
+  uint32_t t_enter;  // low32 %globaltimer: CTA reached the tile (spin entry)
+  uint32_t t_fire;   // low32 %globaltimer: spin exit / mainloop start
+  uint32_t t_done;   // low32 %globaltimer: tile retired (epilogue done)
   uint32_t pad;
 };
 

@@ -29,6 +29,8 @@ root (leave them).
 - `--variants` — canonical names from `sweeps/variants.py`:
   `hier` (baseline), `hier_compress` (dedup + balanced relay),
   `hier_compress_identity`, `hier_compress_union` (gateway bcast),
+  `hier_compress_lb_union` (balanced wire + gateway window-bcast; like the
+  union modes it forwards with pure CE puts, so sm_margin 0 is legitimate),
   `hier_compress_pack` (bcast + pack overlap), plus `allgather`/`a2av`/
   `a2av_ring`, and `fast` (the FAST load-balancing alltoallv + un-overlapped
   GemmGroupedV2 baseline). `fast` constraints: needs `3rdparty/FAST/nvidia/

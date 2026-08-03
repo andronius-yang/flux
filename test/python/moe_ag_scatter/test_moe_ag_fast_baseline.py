@@ -121,7 +121,17 @@ def broadcast_uid(flash_utils) -> torch.Tensor:
 
 class FastPerfResult:
     def __init__(
-        self, name, e2e_ms, pack_ms, schedule_ms, fill_ms, reset_ms, wire_ms, unpack_ms, gemm_ms, host_e2e_ms
+        self,
+        name,
+        e2e_ms,
+        pack_ms,
+        schedule_ms,
+        fill_ms,
+        reset_ms,
+        wire_ms,
+        unpack_ms,
+        gemm_ms,
+        host_e2e_ms,
     ):
         self.name = name
         self.e2e_ms = e2e_ms  # PRIMARY: comm start (pack) -> gemm finish (CUDA events)
@@ -201,7 +211,9 @@ def perf_fast(
         schedule_us[i], fill_us[i], wire_us[i] = timings.tolist()
 
     def mean_ms(starts, ends):
-        return sum(starts[i].elapsed_time(ends[i]) for i in range(warmup_iters, total_iters)) / iters
+        return (
+            sum(starts[i].elapsed_time(ends[i]) for i in range(warmup_iters, total_iters)) / iters
+        )
 
     def mean_host_ms(vals_us):
         return sum(vals_us[warmup_iters:]) / iters / 1e3
@@ -265,7 +277,13 @@ def parse_args():
         "--fast_dir",
         type=str,
         default=os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "3rdparty", "FAST", "nvidia"
+            os.path.dirname(os.path.abspath(__file__)),
+            "..",
+            "..",
+            "..",
+            "3rdparty",
+            "FAST",
+            "nvidia",
         ),
         help="directory containing libflash.so + flash_utils.py",
     )
@@ -323,14 +341,12 @@ if __name__ == "__main__":
 
     # metadata-exchange result (untimed setup, same contract as the traffic test):
     # cnt[s][e] = copies source rank s sends to expert e
-    src_of_copy = (
-        torch.arange(ntokens, dtype=torch.long) // tokens_per_rank
-    ).repeat_interleave(args.topk)
+    src_of_copy = (torch.arange(ntokens, dtype=torch.long) // tokens_per_rank).repeat_interleave(
+        args.topk
+    )
     e_of_copy = choosed_experts.reshape(-1).long().cpu()
     splits_per_source_cpu = (
-        torch.bincount(src_of_copy * args.G + e_of_copy, minlength=W * args.G)
-        .view(W, args.G)
-        .int()
+        torch.bincount(src_of_copy * args.G + e_of_copy, minlength=W * args.G).view(W, args.G).int()
     )
     assert torch.equal(splits_per_source_cpu.sum(0), moe_ctx.splits_cpu[: args.G].cpu().int())
 
