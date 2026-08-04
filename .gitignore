@@ -24,3 +24,6 @@ python/flux/version.py
 
 # due to using tox and pytest and clangd
 .tox
+
+# Claude Code machine-local settings
+.claude/settings.local.json
