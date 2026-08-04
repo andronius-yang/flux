@@ -38,7 +38,7 @@ RESULTS_ROOT = os.path.join(REPO_ROOT, "sweeps", "results", "runs")
 TEST = "test/python/moe_ag_scatter/test_moe_ag_traffic.py"
 TEST_FAST = "test/python/moe_ag_scatter/test_moe_ag_fast_baseline.py"
 
-MODES = ("e2e", "phases", "torchprof", "nsys")
+MODES = ("e2e", "isolated", "phases", "torchprof", "nsys")
 MODE_ORDER = {m: i for i, m in enumerate(MODES)}  # clean numbers before perturbed
 
 # an nsys capture below this is an empty/aborted report (a real single-node
@@ -410,6 +410,10 @@ def build_cell_env(spec, plat, cell, staging, matrix_path):
     env.update(v["env"])
     if cell["mode"] == "phases":
         env["FLUX_A2AV_TIMING"] = "1"
+    if cell["mode"] == "isolated":
+        # per-iteration device sync + rank barrier before each timed window
+        # (SCHEMA.md: isolated per-layer latency; quote max-across-ranks)
+        env["FLUX_SWEEP_ISOLATED_ITERS"] = "1"
     env["FLUX_TEST_DETERMINISTIC"] = "0"
     env["FLUX_SWEEP_RECORD_DIR"] = os.path.join(staging, "records")
     env["FLUX_EXTRA_TORCHRUN_ARGS"] = f"--redirects 3 --log-dir {os.path.join(staging, 'torchrun')}"
@@ -765,6 +769,21 @@ def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, s
                         "recorder",
                     )
                 )
+            if cell["mode"] == "isolated":
+                # console-only quoted summary (SCHEMA: aggregation is the
+                # summarizer's job; nothing persisted): per-iteration
+                # max-across-ranks of e2e_ms, then stats over iterations
+                by_iter = {}
+                for impl, rank, i, metric, val in iters_rows:
+                    if impl == "flux" and metric == "e2e_ms":
+                        by_iter[i] = max(by_iter.get(i, 0.0), val)
+                if by_iter:
+                    mx = [by_iter[i] for i in sorted(by_iter)]
+                    print(
+                        f"  [{cell['cell_id']}] isolated max-rank e2e_ms: "
+                        f"mean {sum(mx) / len(mx):.3f}  min {min(mx):.3f}  "
+                        f"max {max(mx):.3f}  ({len(mx)} iters)"
+                    )
             if cell["mode"] == "phases":
                 for impl, rank, i, metric, val in parse_phase_logs(cell["staging"], cell["iters"]):
                     metrics_rows.append(

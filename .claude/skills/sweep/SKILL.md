@@ -76,7 +76,10 @@ root (leave them).
 4. After: check `cells.csv` statuses; `ok` + `correct_allclose=1` (or empty
    when skipped) is the bar. Commit with the printed `git add ... && git
    commit ...` command.
-5. Report results from the capsule (max-rank and mean over ranks of e2e_ms
+5. Report results from the capsule. For latency claims quote `isolated`-mode
+   cells: mean over iterations of per-iteration max-across-ranks of e2e_ms
+   (the runner prints it; recompute from metrics.csv when needed). Pipelined
+   `e2e` cells are the throughput view (max-rank and mean over ranks of e2e_ms
    per cell), never from eyeballing stdout.
 
 ## Gotchas

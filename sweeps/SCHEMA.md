@@ -96,8 +96,24 @@ Highlights (full list = header row):
 
 ## Modes — the never-mix rule
 
-- `e2e` — clean run, no instrumentation. The only mode whose `e2e_ms` may be
-  quoted as the variant's latency.
+- `e2e` — clean run, no instrumentation, back-to-back iterations (pipelined:
+  the host runs ~1 iteration ahead; consecutive iterations hide parts of each
+  other's wire tails). This is the **throughput view**; its `e2e_ms` may be
+  quoted as pipelined steady-state latency only, and never compared against
+  `isolated` cells.
+- `isolated` — `FLUX_SWEEP_ISOLATED_ITERS=1` (set by the runner): the harness
+  runs `torch.cuda.synchronize()` + `torch.distributed.barrier()` before EVERY
+  timed window, so each iteration measures one isolated layer execution —
+  inference semantics (routing changes per activation; no cross-iteration
+  pipelining, no launch-skew echo). **This is the default mode for latency
+  claims.** The quoted number is the mean over iterations of the
+  per-iteration MAX across ranks of `e2e_ms` (the runner prints it at cell
+  finish; metrics.csv stays raw per the aggregation rule). `iso_sync_ms` (per
+  rank, per iteration) is the host wall time of the sync+barrier pair — a
+  straggler-skew indicator, not a latency component. Never compare isolated
+  vs `e2e` cells: they measure different regimes. The knob may also ride any
+  other mode via spec `extra_env` (e.g. an nsys capture under isolated
+  discipline); audit via `env_json` / recorder `meta.env`.
 - `phases` — `FLUX_A2AV_TIMING=1`. The C++ marks force a per-iteration device
   sync, so **e2e numbers from phases cells are perturbed and must never be
   compared against e2e-mode cells**. Use them for the phase breakdown only.

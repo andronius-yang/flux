@@ -40,6 +40,7 @@ rank there, which then forwards each destination's sub-chunk intra-node
 
 import argparse
 import os
+import time
 from functools import partial
 from typing import Any, List, Optional
 
@@ -240,9 +241,21 @@ def perf_flux(
     torch.cuda.synchronize()
     torch.distributed.barrier()
     gathered_input = torch.empty_like(ctx.inputs) if gather_input else None
+    # isolated mode (sweeps SCHEMA.md): drain the device and align all ranks
+    # before EVERY timed window, so each iteration measures one isolated layer
+    # execution (inference semantics — routing changes per activation) with no
+    # cross-iteration pipelining. iso_sync_ms (host wall time of the pair) is
+    # a per-rank straggler indicator: it is the wait for the slowest rank.
+    isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))
+    iso_sync_times = []
     for i in range(total_iters):
         ctx.clear_outputs()
         op.clear_buffers()
+        if isolated:
+            t_iso = time.perf_counter()
+            torch.cuda.synchronize()
+            torch.distributed.barrier()
+            iso_sync_times.append((time.perf_counter() - t_iso) * 1e3)
         # NVTX iteration markers: ns-scale, inert without a profiler; lets an
         # nsys-mode capture segment warmup vs timed without device syncs
         nvtx_tag = f"iter{i}_warmup" if i < warmup_iters else f"iter{i}"
@@ -279,6 +292,8 @@ def perf_flux(
         comm_time_ms=0.0,
     )
     result.iter_times = {"e2e_ms": gemm_times}
+    if isolated:
+        result.iter_times["iso_sync_ms"] = iso_sync_times[warmup_iters:]
     return result
 
 
