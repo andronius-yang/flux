@@ -56,7 +56,9 @@ VARIANTS = {
     # balanced chunked wire + union-broadcast gateway: per-round wire bytes are
     # ceil(total/L) per rank (like hier_compress) but the gateway forwards its
     # whole staged window as pure-CE puts (like union) — no index build, no
-    # gathers. Must be set identically on all ranks (changes wire + recv layout).
+    # gathers. Tier B (2026-08-04): forwards land per (gateway, round) WINDOW
+    # with ring-rotated destination order; tiles unblock per landed window.
+    # Must be set identically on all ranks (changes wire + recv layout).
     "hier_compress_lb_union": dict(
         comm_pattern="a2av_hier_compress",
         env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},

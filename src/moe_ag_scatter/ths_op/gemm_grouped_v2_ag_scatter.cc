@@ -399,8 +399,21 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // chunk boundaries derive from the replicated U matrix, so sender / relay /
   // gateway / destination agree with zero extra metadata.
   torch::Tensor a2av_relay_stage_;           // symmetric [max_relay_ntokens_, hidden]
-  torch::Tensor a2av_relay_sig_;             // symmetric u64[(NN-1)*L], slot (dn-1)*L + src_lr
   torch::Tensor a2av_gw_round_sig_;          // symmetric u64[(NN-1)*L], slot (dn-1)*L + gw_lr
+  // balanced relay phase 1 is PULL (A/B vs serial/push 2026-08-03, capsule
+  // 20260803-150832: pull wins isolated max-rank e2e by 3.7%, significant):
+  // symmetric u64[L], slot = source local rank, SET to run_id_ right after
+  // the pack — the only cross-rank dependency of a relay's gets
+  torch::Tensor a2av_pack_ready_sig_;
+  // Tier B (lb_union): per-(expert, gating-lane) inclusive cumsum [E, W]
+  // where the remote node's lanes are WINDOW boundaries (data-dependent under
+  // dedup, hence device-computed) and local lanes keep source boundaries.
+  // Fed to args.accum_per_rank_ptr so the bucket build and the per-tile spin
+  // ballot are window-keyed with zero kernel changes.
+  torch::Tensor a2av_gating_cumsum_;
+  // Tier B sidecar ground truth: per-slot window rows (remote slots only),
+  // filled in the meta block where the chunk lambdas are in scope
+  std::vector<uint32_t> nvtx_window_rows_;
   torch::Tensor a2av_fwd_cnt_pinned_;        // pinned i32 [2, NN-1, L, L]: cnt_in / cnt_before
   int64_t max_relay_ntokens_ = 0;            // rows of the symmetric relay staging buffer
   cudaEvent_t fwd_cnt_event_ = nullptr;      // cnt_in/cnt_before D2H done (host reads)
@@ -676,8 +689,6 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
               (int)std::min<int64_t>((int64_t)max_ntokens * topk, tokens_per_rank_max * topk * 2));
           this->a2av_relay_stage_ =
               nvshmem_create_tensor({this->max_relay_ntokens_, hidden}, input_dtype);
-          this->a2av_relay_sig_ = nvshmem_create_tensor(
-              {(int64_t)(nnodes - 1) * L}, at::ScalarType::Long, /*init_zero=*/true);
           this->a2av_gw_round_sig_ = nvshmem_create_tensor(
               {(int64_t)(nnodes - 1) * L}, at::ScalarType::Long, /*init_zero=*/true);
           if (!this->union_bcast_) {
@@ -686,6 +697,8 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                 {2, (int64_t)nnodes - 1, L, L},
                 torch::TensorOptions(torch::kCPU).dtype(torch::kInt).pinned_memory(true));
           }
+          this->a2av_pack_ready_sig_ =
+              nvshmem_create_tensor({L}, at::ScalarType::Long, /*init_zero=*/true);
         }
       }
       const int64_t n_copies_max = tokens_per_rank_max * (int64_t)topk * world_size;
@@ -719,9 +732,11 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         const int64_t L = world_size / nnodes;
         const int64_t nseg = L + nnodes - 1;
         const int64_t R = nnodes - 1;
-        // union bcast forwards whole unions: no forward-index tables at all
-        const int64_t extra =
-            this->union_bcast_ ? 0 : (this->relay_identity_ ? R * L : R * L * L + R * L + 2 * R);
+        // union bcast forwards whole unions: no forward-index tables; the Tier B
+        // gating searchsorted queries i64[E * (W + 1)] ride the upload instead
+        const int64_t extra = this->union_bcast_
+                                  ? (int64_t)this->ep_nexperts * (world_size + 1)
+                                  : (this->relay_identity_ ? R * L : R * L * L + R * L + 2 * R);
         this->compress_meta_off_ = pad_to(meta_bytes, (int64_t)8);
         total_meta_bytes =
             this->compress_meta_off_ + (nseg + 1 + extra) * (int64_t)sizeof(int64_t);
@@ -773,7 +788,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                     1024.0 / 1024.0;
         }
         if (this->a2av_relay_stage_.defined()) {
-          sym_mb += (this->a2av_relay_stage_.nbytes() + this->a2av_relay_sig_.nbytes() +
+          sym_mb += (this->a2av_relay_stage_.nbytes() + this->a2av_pack_ready_sig_.nbytes() +
                      this->a2av_gw_round_sig_.nbytes()) /
                     1024.0 / 1024.0;
         }
@@ -1001,7 +1016,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     std::vector<int64_t> u_mat, U_mat, recv_off_u, seg_off_h, fwd_col_off_h;
     // balanced-relay only: canonical starts of the inbound sources per round,
     // and my per-round staging window [win_a, win_b)
-    std::vector<int64_t> recv_start_h, win_a_h, win_b_h;
+    std::vector<int64_t> recv_start_h, win_a_h, win_b_h, gate_q_h;
     int64_t total_send_rows = 0;
     torch::Tensor seg_off_dev, fwd_col_off_dev, recv_start_dev, win_a_dev, win_b_dev;
     // ---- balanced-relay partition (compress && !relay_identity_): per round,
@@ -1062,7 +1077,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     const int64_t nexG = E * W;  // number of (expert_loc, source) groups
     int64_t M_this_ep = 0;
     std::vector<int64_t> chunks64((size_t)W * W, 0);
-    torch::Tensor cumA_dev, offA_dev, offR_of_A_dev, expert_base_dev, ssc_dev;
+    torch::Tensor cumA_dev, offA_dev, offR_of_A_dev, expert_base_dev, ssc_dev, gate_q_dev;
     if (use_meta) {
       // guard pinned-staging reuse: the previous iteration's H2D must be done
       // (counts_event_ doubles as the H2D-completion event on this path; it is
@@ -1229,6 +1244,35 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         if (this->union_bcast_) {
           // union bcast: whole-union forwards need no per-destination columns
           fwd_col_off_h.clear();
+          gate_q_h.clear();
+          if (NN > 1 && !this->relay_identity_) {
+            // Tier B gating queries, per expert e: [e * R | e * R + end(w)...]
+            // with R = max_recv_ntokens_ and end(w) the recv-row end of lane w
+            // in global source order — local lanes end at their union region
+            // end, remote lanes at their delivering window's end. Consumed by
+            // one searchsorted over the (expert, dedup recv row) composite key
+            // in build_stage2 (per-expert A-row counts, right-open at ends).
+            const int64_t R_key = this->max_recv_ntokens_;
+            const int64_t E_loc = this->ep_nexperts;
+            std::vector<int64_t> lane_end(W, 0);
+            this->nvtx_window_rows_.assign(W, 0);
+            for (int s = 0; s < W; s++) {
+              if (s / L == my_node) {
+                lane_end[s] = recv_off_u[s] + region_rows(s, rank);
+              } else {
+                const int ns = s / (int)L, gl = s % (int)L;
+                lane_end[s] = recv_off_u[ns * L] + chunk_bound(ns, my_node, gl + 1);
+                this->nvtx_window_rows_[s] = (uint32_t)chunk_rows_of(ns, my_node, gl);
+              }
+            }
+            gate_q_h.assign((size_t)E_loc * (W + 1), 0);
+            for (int64_t e = 0; e < E_loc; e++) {
+              gate_q_h[e * (W + 1)] = e * R_key;
+              for (int s = 0; s < W; s++) {
+                gate_q_h[e * (W + 1) + 1 + s] = e * R_key + lane_end[s];
+              }
+            }
+          }
         } else if (this->relay_identity_ || NN == 1) {
           fwd_col_off_h.assign((size_t)std::max(NN - 1, 0) * L, 0);
           int64_t facc = 0;
@@ -1290,6 +1334,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         for (size_t i = 0; i < win_b_h.size(); i++) {
           cmp_h[coff++] = win_b_h[i];
         }
+        for (size_t i = 0; i < gate_q_h.size(); i++) {
+          cmp_h[coff++] = gate_q_h[i];
+        }
       }
       if (pack_ov) {
         // GEMM n-1 reads this parity's meta slice (ssc_dev) until it finishes;
@@ -1320,6 +1367,12 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         const int64_t NN = dist_env.nnodes;
         const int64_t nseg = L + NN - 1;
         seg_off_dev = torch::from_blob(dev + this->compress_meta_off_, {nseg}, opt_dev_i64);
+        if (NN > 1 && this->union_bcast_ && !this->relay_identity_) {
+          gate_q_dev = torch::from_blob(
+              dev + this->compress_meta_off_ + (nseg + 1) * 8,
+              {(int64_t)this->ep_nexperts * ((int64_t)W + 1)},
+              opt_dev_i64);
+        }
         if (NN > 1 && !this->union_bcast_) {
           char *cbase = dev + this->compress_meta_off_ + (nseg + 1) * 8;
           if (this->relay_identity_) {
@@ -1664,12 +1717,33 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         mark(4);
         auto gidx = c_excl.index_select(0, flat_token);
         // tail rows (>= M_this_ep) are unread garbage; clamp is pure hygiene
-        sorted_gather_index =
-            gidx.index_select(0, perm_a).clamp_(0, this->max_recv_ntokens_ - 1).to(torch::kInt);
+        auto sorted_gidx = gidx.index_select(0, perm_a).clamp_(0, this->max_recv_ntokens_ - 1);
+        sorted_gather_index = sorted_gidx.to(torch::kInt);
         auto scatter_val = flat_dst - expert_base_dev.index_select(0, e_all);
         sorted_scatter_index = scatter_val.index_select(0, perm_a).to(torch::kInt);
         mark(5);
         sorted_splits_cumsum = ssc_dev;  // uploaded, exact LOGICAL [E, W] semantics
+        if (this->union_bcast_ && !this->relay_identity_ && dist_env.nnodes > 1) {
+          // Tier B gating cumsum via one searchsorted: rows sorted by key_a are
+          // (expert, source, copy)-ordered and the dedup recv row is monotone
+          // in that order, so (expert, recv row) composited as e * R + row is a
+          // globally sorted key. Lane ends (local = union region ends, remote =
+          // window ends, both host constants) ride the meta arena as queries
+          // e * R and e * R + end(w); gating[e][w] = bisect_left(end) -
+          // bisect_left(base). Lane id == signal slot id (the window slot of
+          // remote rank (ns, gl)). No H2D and no hidden sync on this path.
+          if (!this->a2av_gating_cumsum_.defined()) {
+            this->a2av_gating_cumsum_ = torch::empty(
+                {(int64_t)E, (int64_t)W}, torch::TensorOptions(torch::kCUDA).dtype(torch::kInt));
+          }
+          auto e2 = e_loc.index_select(0, perm_a).narrow(0, 0, M_this_ep);
+          auto key2 = torch::add(
+              sorted_gidx.narrow(0, 0, M_this_ep), e2, (int64_t)this->max_recv_ntokens_);
+          auto res = torch::searchsorted(key2, gate_q_dev, /*out_int32=*/true, /*right=*/false)
+                         .view({(int64_t)E, (int64_t)W + 1});
+          this->a2av_gating_cumsum_.copy_(
+              res.narrow(1, 1, W) - res.narrow(1, 0, 1), /*non_blocking=*/true);
+        }
         // stages 6-10 don't exist in the compress consumer; mark them anyway so
         // the FLUX_A2AV_TIMING readout keeps one fixed index layout
         for (int i = 6; i <= 10; i++) {
@@ -2261,7 +2335,6 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           // to the same-local-rank gateway on the target node, so every rank's
           // per-round wire bytes are ceil(total / L) instead of U[rank][tn].
           char *relay_base = reinterpret_cast<char *>(this->a2av_relay_stage_.data_ptr());
-          uint64_t *relay_sig = reinterpret_cast<uint64_t *>(this->a2av_relay_sig_.data_ptr());
           uint64_t *gw_sig = reinterpret_cast<uint64_t *>(this->a2av_gw_round_sig_.data_ptr());
           // staging offset of the round chunk from source node ns at gateway
           // (gnode, glr): chunks exact-packed ascending by source node,
@@ -2291,55 +2364,87 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             return seg_off_h[seg];
           };
 
-          // ---- phase 1: ALL piece transfers for ALL rounds, before any wire
-          // wait. DEADLOCK RULE: piece puts depend only on the local pack
-          // (ready_event), never on a wait — interleaving them with the wire
-          // rounds would create a cross-rank wait cycle. Zero-overlap pairs
-          // are skipped entirely on both sides (no signal, no wait).
+          // ---- phase 1 (PULL): each relay gathers its own chunk with
+          // intra-node gets on its own wire stream, for ALL rounds, before
+          // any wire wait — 8 relays run on 8 copy engines instead of
+          // chaining on each source's piece-put FIFO (the retired serial
+          // design; A/B capsule 20260803-150832). DEADLOCK RULE: a get waits
+          // only on the peer's pack-ready flag, which depends only on that
+          // peer's local pack — acyclic. Announce my pack FIRST (my writers
+          // precede any of my waits: no same-rank wait inversion). Zero-
+          // overlap pairs are skipped on both sides (no signal, no wait).
+          uint64_t *pack_ready =
+              reinterpret_cast<uint64_t *>(this->a2av_pack_ready_sig_.data_ptr());
+          for (int dl = 1; dl < L; dl++) {
+            int d = dist_env.local_rank_to_global_rank((my_lr + dl) % L, my_node);
+            nvshmemx_signal_op_on_stream(
+                pack_ready + my_lr,
+                this->run_id_,
+                NVSHMEM_SIGNAL_SET,
+                d,
+                this->cp_stream_inter_node);
+          }
+          // peer send-segment base for (peer local rank, target node): the
+          // U/u rows are replicated, so every peer's send layout is
+          // host-computable (generalizes seg_off_h / my_seg_base)
+          auto peer_seg_base = [&](int plr, int tn) -> int64_t {
+            int prank = dist_env.local_rank_to_global_rank(plr, my_node);
+            int64_t acc = 0;
+            for (int n = 0; n < tn; n++) {
+              if (n == my_node) {
+                for (int dl = 0; dl < L; dl++) {
+                  acc += u_at(prank, n * L + dl);
+                }
+              } else {
+                acc += U_at(prank, n);
+              }
+            }
+            return acc;
+          };
           for (int dn = 1; dn < NN; dn++) {
             int tn = (my_node - dn + NN) % NN;
-            const int64_t sstart = canon_start(my_node, my_lr, tn);
-            const int64_t send = sstart + U_at(rank, tn);
-            for (int k = 0; k < L; k++) {
-              const int64_t a_k = chunk_bound(my_node, tn, k);
-              const int64_t b_k = chunk_bound(my_node, tn, k + 1);
-              const int64_t lo = std::max(a_k, sstart);
-              const int64_t hi = std::min(b_k, send);
+            const int64_t a_me = chunk_bound(my_node, tn, my_lr);
+            const int64_t b_me = chunk_bound(my_node, tn, my_lr + 1);
+            for (int sl = 0; sl < L; sl++) {
+              const int64_t s0 = canon_start(my_node, sl, tn);
+              const int64_t s1 = s0 + U_of(my_node, sl, tn);
+              const int64_t lo = std::max(a_me, s0);
+              const int64_t hi = std::min(b_me, s1);
               if (hi <= lo) {
                 continue;
               }
-              if (k == my_lr && a_k >= sstart && b_k <= send) {
-                // single-source fast path: my chunk lives entirely in my own
-                // segment — the wire loop puts it straight from the send
-                // buffer, no staging hop (must mirror own_only below)
-                continue;
-              }
-              char *src = send_base + (my_seg_base(tn) + (lo - sstart)) * row_bytes;
-              if (k == my_lr) {
+              if (sl == my_lr) {
+                if (a_me >= s0 && b_me <= s1) {
+                  // single-source fast path (must mirror own_only below)
+                  continue;
+                }
                 CUDA_CHECK(cudaMemcpyAsync(
-                    relay_base + (relay_round_base(k, dn) + (lo - a_k)) * row_bytes,
-                    src,
+                    relay_base + (relay_round_base(my_lr, dn) + (lo - a_me)) * row_bytes,
+                    send_base + (my_seg_base(tn) + (lo - s0)) * row_bytes,
                     (hi - lo) * row_bytes,
                     cudaMemcpyDeviceToDevice,
                     this->cp_stream_inter_node));
-              } else {
-                int rk = dist_env.local_rank_to_global_rank(k, my_node);
-                nvshmemx_putmem_signal_nbi_on_stream(
-                    relay_base + (relay_round_base(k, dn) + (lo - a_k)) * row_bytes,
-                    src,
-                    (hi - lo) * row_bytes,
-                    relay_sig + (dn - 1) * L + my_lr,
-                    this->run_id_,
-                    NVSHMEM_SIGNAL_SET,
-                    rk,
-                    this->cp_stream_inter_node);
+                continue;
               }
+              int prank = dist_env.local_rank_to_global_rank(sl, my_node);
+              CU_CHECK(CUStreamWaitValue64(
+                  this->cp_stream_inter_node,
+                  reinterpret_cast<CUdeviceptr>(pack_ready + sl),
+                  this->run_id_,
+                  CU_STREAM_WAIT_VALUE_GEQ));
+              nvshmemx_getmem_nbi_on_stream(
+                  relay_base + (relay_round_base(my_lr, dn) + (lo - a_me)) * row_bytes,
+                  send_base + (peer_seg_base(sl, tn) + (lo - s0)) * row_bytes,
+                  (hi - lo) * row_bytes,
+                  prank,
+                  this->cp_stream_inter_node);
             }
           }
-          // GEMM gate: piece puts are issued (pure local nbi work); the wire
-          // loop below contains cross-rank front-end waits and must NOT gate
-          // the GEMM launch (forward_impl waits on this instead of
-          // fetch_remote_event in relay mode)
+          // GEMM gate: piece transfers are issued (local nbi work; pull adds
+          // pack-ready waits, which are acyclic); the wire loop below contains
+          // cross-rank front-end waits and must NOT gate the GEMM launch
+          // (forward_impl waits on this instead of fetch_remote_event in
+          // relay mode)
           CUDA_CHECK(cudaEventRecord(this->relay_send_event_, this->cp_stream_inter_node));
 
           // ---- phase 2: wire loop, mirror node order. One contiguous put of
@@ -2367,22 +2472,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             if (own_only) {
               wire_src = send_base + (my_seg_base(tn) + (a_me - sstart)) * row_bytes;
             } else {
-              // front-end waits (zero SMs) for every remote contributor of my
-              // chunk; the host knows the contributor set from U
-              for (int sl = 0; sl < L; sl++) {
-                if (sl == my_lr) {
-                  continue;
-                }
-                const int64_t c0 = canon_start(my_node, sl, tn);
-                const int64_t c1 = c0 + U_of(my_node, sl, tn);
-                if (std::min(b_me, c1) > std::max(a_me, c0)) {
-                  CU_CHECK(CUStreamWaitValue64(
-                      this->cp_stream_inter_node,
-                      reinterpret_cast<CUdeviceptr>(relay_sig + (dn - 1) * L + sl),
-                      this->run_id_,
-                      CU_STREAM_WAIT_VALUE_GEQ));
-                }
-              }
+              // pull phase 1 assembled my chunk with gets that are FIFO-
+              // ordered before this wire put on the same stream — no inbound
+              // signal to wait for (relay_sig retired with the push design)
               wire_src = relay_base + relay_round_base(my_lr, dn) * row_bytes;
             }
             // blocking_wire_ (instrumented): local-completion put whose proxy
@@ -2411,77 +2503,40 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           }
 
           if (this->union_bcast_) {
-            // ==== lb_union gateway forward: my staged window of each round is
-            // broadcast whole to every local rank as per-source contiguous CE
-            // puts, host-addressed from the replicated U matrix (window ∩
-            // per-source segments). No index tables, no cnt D2H, no scratch,
-            // no SM kernels — the recv image is byte-identical to union-bcast,
-            // assembled by L gateways instead of one.
+            // ==== lb_union gateway forward (Tier B window gating): the
+            // window is CONTIGUOUS in every destination's recv image (windows
+            // are chunk_bound cuts of the canonical stream that the
+            // source-major union regions concatenate into), so each round is
+            // ONE contiguous put per destination, its fused signal flipping
+            // the WINDOW's gating slot — the a2av_signal_buffer slot of
+            // remote rank (ns, my_lr), re-keyed from source-identity to
+            // delivering-window identity (the gating cumsum re-keys the
+            // claimer + tile spin to match). Tiles gated on this window
+            // unblock as it lands; the destination-side aggregation is gone.
             // Issued via t_* (inline; pack stream under early launch), NEVER
-            // the deferred emit_* path: the destination aggregation's gw_sig
-            // waits are enqueued pre-launch, so their writers (these puts,
-            // loopback included) must be pre-launch-enqueued too — a deferred
-            // forward inverts that order whenever cp_stream shares a hardware
-            // channel with cp_stream_signal, and the loopback put then queues
-            // BEHIND the very wait it satisfies (observed 2-node hang).
+            // deferred: the GEMM reads these slots from launch, so writers
+            // must be pre-launch-enqueued (channel wait-order-inversion rule).
             for (int dn = 1; dn < NN; dn++) {
               int ns = (my_node + dn) % NN;
               t_wait(node_sig + ns);  // one writer: relay (ns, my_lr)
               const int64_t win_a = chunk_bound(ns, my_node, my_lr);
               const int64_t win_b = chunk_bound(ns, my_node, my_lr + 1);
               char *wstage = stage_base + stage_off_chunk(my_node, my_lr, ns) * row_bytes;
-              struct Piece {
-                int sl;
-                int64_t lo, hi, c0;
-              };
-              std::vector<Piece> pieces;
-              int64_t covered = 0;
-              for (int sl = 0; sl < L; sl++) {
-                const int64_t c0 = canon_start(ns, sl, my_node);
-                const int64_t c1 = c0 + U_of(ns, sl, my_node);
-                const int64_t lo = std::max(win_a, c0);
-                const int64_t hi = std::min(win_b, c1);
-                if (hi > lo) {
-                  pieces.push_back({sl, lo, hi, c0});
-                  covered += hi - lo;
+              uint64_t *wslot = signal_base + (int64_t)ns * L + my_lr;
+              for (int dl = 0; dl < L; dl++) {
+                // ring rotation: dest order staggered per (gateway, round) so
+                // every destination receives its windows in a different
+                // sequence — spreads first-window arrival across destinations
+                // at zero extra resources (A/B/C verdict: capsule
+                // 20260804-043026, significant at b2, never worse)
+                int dlg = (my_lr + 1 + dn + dl) % L;
+                int d = dist_env.local_rank_to_global_rank(dlg, my_node);
+                char *dst = recv_base + (recv_off_of_u(ns * L, d) + win_a) * row_bytes;
+                if (win_b <= win_a) {
+                  t_signal(wslot, d);
+                  continue;
                 }
-              }
-              // pieces must tile the window exactly; pure U math, identical on
-              // every rank -> collective failure
-              FLUX_CHECK_EQ(covered, win_b - win_a)
-                  << "a2av lb_union window/piece mismatch at round " << dn;
-              if (pieces.empty()) {
-                // empty window: still signal every dest (the destination
-                // aggregation waits on every gateway slot of the round)
-                for (int dl = 0; dl < L; dl++) {
-                  int d = dist_env.local_rank_to_global_rank((my_lr - dl + L) % L, my_node);
-                  t_signal(gw_sig + (dn - 1) * L + my_lr, d);
-                }
-                continue;
-              }
-              // piece-outer, dest-inner (mirror order, loopback first): every
-              // dest receives every piece, so a piece's L puts are equal-size.
-              // gw_sig rides ONLY the last piece's puts — SET + GEQ semantics
-              // mean an earlier signal would satisfy the aggregation wait while
-              // later payloads are still in flight; the last put's fused signal
-              // covers earlier same-pe payloads by stream order (the gather
-              // arm's 'NON-nbi last piece' precedent, verbatim).
-              for (size_t pi = 0; pi < pieces.size(); pi++) {
-                const Piece &p = pieces[pi];
-                const bool last_piece = (pi + 1 == pieces.size());
-                int s = dist_env.local_rank_to_global_rank(p.sl, ns);
-                char *src = wstage + (p.lo - win_a) * row_bytes;
-                for (int dl = 0; dl < L; dl++) {
-                  int dlg = (my_lr - dl + L) % L;
-                  int d = dist_env.local_rank_to_global_rank(dlg, my_node);
-                  char *dst = recv_base + (recv_off_of_u(s, d) + (p.lo - p.c0)) * row_bytes;
-                  if (last_piece) {
-                    t_blocking_put(
-                        dst, src, (p.hi - p.lo) * row_bytes, gw_sig + (dn - 1) * L + my_lr, d);
-                  } else {
-                    t_put_nosig(dst, src, (p.hi - p.lo) * row_bytes, d);
-                  }
-                }
+                t_blocking_put(dst, wstage, (win_b - win_a) * row_bytes, wslot, d);
               }
             }
           } else {
@@ -2570,35 +2625,39 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             }
           }  // !union_bcast_ (gather gateway)
 
-          // ---- destination-side signal aggregation (cp_stream_signal, pure
-          // front-end memops): a source's (s, d) rows may now arrive via
-          // several gateways, so the per-source epoch signals the GEMM spins
-          // on get ONE writer again — me. Once all L gateway slots of a round
-          // reach the epoch, every source of that node is fully delivered
-          // (putmem_signal orders payload before signal), so write signal[s]
-          // for ALL its sources, zero-traffic ones included.
-          // Issued inline in every mode: pure front-end memops whose gw_sig
-          // dependencies are themselves inline-issued (t_* tail above), so
-          // pre-launch enqueue is the proven non-early configuration.
-          for (int dn = 1; dn < NN; dn++) {
-            int ns = (my_node + dn) % NN;
-            for (int gl = 0; gl < L; gl++) {
-              CU_CHECK(CUStreamWaitValue64(
-                  this->cp_stream_signal,
-                  reinterpret_cast<CUdeviceptr>(gw_sig + (dn - 1) * L + gl),
-                  this->run_id_,
-                  CU_STREAM_WAIT_VALUE_GEQ));
+          if (!this->union_bcast_) {
+            // Tier B: lb_union gateways signal window slots directly; only the
+            // gather arm still needs the per-source aggregation below
+            // ---- destination-side signal aggregation (cp_stream_signal, pure
+            // front-end memops): a source's (s, d) rows may now arrive via
+            // several gateways, so the per-source epoch signals the GEMM spins
+            // on get ONE writer again — me. Once all L gateway slots of a round
+            // reach the epoch, every source of that node is fully delivered
+            // (putmem_signal orders payload before signal), so write signal[s]
+            // for ALL its sources, zero-traffic ones included.
+            // Issued inline in every mode: pure front-end memops whose gw_sig
+            // dependencies are themselves inline-issued (t_* tail above), so
+            // pre-launch enqueue is the proven non-early configuration.
+            for (int dn = 1; dn < NN; dn++) {
+              int ns = (my_node + dn) % NN;
+              for (int gl = 0; gl < L; gl++) {
+                CU_CHECK(CUStreamWaitValue64(
+                    this->cp_stream_signal,
+                    reinterpret_cast<CUdeviceptr>(gw_sig + (dn - 1) * L + gl),
+                    this->run_id_,
+                    CU_STREAM_WAIT_VALUE_GEQ));
+              }
+              for (int sl = 0; sl < L; sl++) {
+                int s = dist_env.local_rank_to_global_rank(sl, ns);
+                CU_CHECK(CUStreamWriteValue64(
+                    this->cp_stream_signal,
+                    reinterpret_cast<CUdeviceptr>(signal_base + s),
+                    this->run_id_,
+                    CU_STREAM_WRITE_VALUE_DEFAULT));
+              }
             }
-            for (int sl = 0; sl < L; sl++) {
-              int s = dist_env.local_rank_to_global_rank(sl, ns);
-              CU_CHECK(CUStreamWriteValue64(
-                  this->cp_stream_signal,
-                  reinterpret_cast<CUdeviceptr>(signal_base + s),
-                  this->run_id_,
-                  CU_STREAM_WRITE_VALUE_DEFAULT));
-            }
+            CUDA_CHECK(cudaEventRecord(this->signal_done_event_, this->cp_stream_signal));
           }
-          CUDA_CHECK(cudaEventRecord(this->signal_done_event_, this->cp_stream_signal));
         }
       }
     } else if (a2av_hier_) {
@@ -3071,13 +3130,21 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         .problem_schedules =
             problem_schedules_gpu.defined() ? problem_schedules_gpu.data_ptr() : nullptr,
         .num_problem_schedules = num_problem_schedules,
-        .accum_per_rank_ptr = sorted_splits_cumsum.data_ptr<int32_t>(),
+        .accum_per_rank_ptr =
+            (this->union_bcast_ && !this->relay_identity_ && this->a2av_gating_cumsum_.defined())
+                ? this->a2av_gating_cumsum_.data_ptr<int32_t>()
+                : sorted_splits_cumsum.data_ptr<int32_t>(),
         .tile_size_m = tile_M,
         .tile_size_n = tile_N,
         .barrier_ptr = barrier_ptr};
     if (a2av_dispatch_) {
       args.signal_ptr = reinterpret_cast<uint64_t *>(this->a2av_signal_buffer.data_ptr());
       args.signal_expected = this->run_id_;
+      // Tier B: lb_union runs the claimer over window-keyed buckets (its
+      // gating cumsum + window-slot signals re-key the whole path); the other
+      // hier modes keep the dense static schedule
+      // Tier B candidate D: dense static schedule + window-keyed per-tile
+      // spin (fine-grained release, zero claimer overhead at G=128 geometry)
       args.a2av_ring_schedule = a2av_ring_ || a2av_hier_ || a2av_hier_compress_;
       if (this->nvtx_proxy_enabled_) {
         args.progress_slots = this->progress_slots_dev_;
@@ -3168,7 +3235,33 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         // sidecar carries it so analyses can tell small segments from empty
         // ones (tile attribution alone cannot).
         std::vector<uint32_t> expected, src_rows;
-        if (!this->nvtx_ssc_.empty()) {
+        if (this->union_bcast_ && !this->relay_identity_ && nnodes > 1) {
+          // Tier B: buckets are window-keyed and the claimer publishes exact
+          // bucket totals from the device — host expected[] would be
+          // source-keyed and SHADOW them in the sidecar, so leave it empty.
+          // src_rows: local sources keep u rows; remote slots carry the
+          // WINDOW's row count (host-known from chunk bounds).
+          const int Lw = world_size / nnodes;
+          const int my_node_w = rank / Lw;
+          src_rows.assign(world_size + 1, 0);
+          for (int s = 0; s < world_size; ++s) {
+            if (s / Lw == my_node_w) {
+              if (!this->nvtx_ssc_.empty()) {
+                uint32_t acc = 0;
+                for (int e = 0; e < ep_nexperts; ++e) {
+                  const int32_t *row = this->nvtx_ssc_.data() + (int64_t)e * world_size;
+                  acc += (uint32_t)(row[s] - (s ? row[s - 1] : 0));
+                }
+                src_rows[s] = acc;
+              }
+            } else {
+              // window rows (remote slot = delivering window), staged by the
+              // meta block where the chunk lambdas are in scope
+              src_rows[s] =
+                  s < (int)this->nvtx_window_rows_.size() ? this->nvtx_window_rows_[s] : 0u;
+            }
+          }
+        } else if (!this->nvtx_ssc_.empty()) {
           const int W = world_size;
           const int grid_n = (N + tile_N - 1) / tile_N;
           expected.assign(W + 1, 0);
@@ -3217,7 +3310,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       CUDA_CHECK(cudaEventRecord(this->timing_events_[4], stream));
     }
     CUDA_CHECK(cudaStreamWaitEvent(stream, this->all_gather_event));
-    if (a2av_hier_compress_ && nnodes > 1 && !relay_identity_) {
+    if (a2av_hier_compress_ && nnodes > 1 && !relay_identity_ && !union_bcast_) {
       // fold the signal-aggregation stream into the epoch: its front-end ops
       // must complete before the barrier closes this iteration (the GEMM
       // transitively drains it, but keep the ordering explicit)

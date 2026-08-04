@@ -780,20 +780,22 @@ def extract_union(copies, L):
 
 def extract_lb_union(copies, L):
     """lb_union: the forward is P >= 1 enqueue-consecutive runs of exactly L
-    equal-size copies — one run per window piece, every piece broadcast to all
-    L local ranks, DtoD loopback enqueue-first per run. P is not predictable
-    from the sidecar (piece count needs U plus the chunk bounds), so chain
-    consecutive matching runs and take the earliest device start of the chain
-    (the first forward copy, gated by the node_sig wait)."""
+    equal-size copies — one run per window piece (Tier B: one run per window),
+    every piece broadcast to all L local ranks with exactly one DtoD loopback
+    per run. The loopback's run position depends on the destination order
+    (serial mirror: first; ring rotation: L-1-dn), so it may sit anywhere. P is
+    not predictable from the sidecar (piece count needs U plus the chunk
+    bounds), so chain consecutive matching runs and take the earliest device
+    start of the chain (the first forward copy, gated by the window wait)."""
     if len(copies) < L:
         return None, f"only {len(copies)} copies in window (< L={L})"
 
     def match(run):
-        return len({c[3] for c in run}) == 1 and [i for i, c in enumerate(run) if c[4] == 8] == [0]
+        return len({c[3] for c in run}) == 1 and sum(1 for c in run if c[4] == 8) == 1
 
     runs = _signature_runs(copies, L, match)
     if not runs:
-        return None, f"no run of {L} equal-size DtoD-first copies"
+        return None, f"no run of {L} equal-size single-DtoD copies"
     chains = []
     for i in runs:
         if chains and i == chains[-1][-1] + L:
