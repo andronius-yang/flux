@@ -1,0 +1,31 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 8
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env:
+  FLUX_A2AV_BLOCKING_WIRE: "1"
+  FLUX_A2AV_EARLY_LAUNCH: "1"
+  FLUX_A2AV_NVTX_PROXY: "1"
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+families:
+  - remotefrac
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "001"
+modes:
+  - nsys
+nodes: 2
+notes: "E4 reference: union-bc same-protocol capture for deficit comparison"
+platform: aws
+profile_iters: 6
+retries: 1
+skip_correctness: false
+sm_margin: 8
+timeout_s: 900
+topk: 8
+variants:
+  - hier_compress_union
+warmup_iters: 5
