@@ -56,8 +56,19 @@ has a copy on each node, so every rank's remote union saturates to roughly its w
 count regardless of routing skew. Dedup has already done the balancing. **This is the key
 L/NN-dependent quantity — see §5.**
 
-**Do this first on any new shape:** run one cheap cell, read the ratio, and predict. If
-headroom is ~0.9, do not expect `lb_union` to win and do not spend a sweep proving it.
+**Headroom is a property of the traffic matrix, not of topk.** The canonical `remotefrac`
+uses `fracs = (0.05, 0.10, 0.15, 0.20, 0.30, 0.50, 0.70, 0.90)`. Two deliberately high-skew
+parameterisations also exist in the capsule record and reach **headroom 0.19 and 0.26**:
+
+| `fracs` | headroom | matrix id fragment |
+|---|---|---|
+| `0.01 ×7, 0.99` | **0.19** | `remotefrac-494119` (b8), `-da835f` (b2), `-773d88` (b32) |
+| `0.02 ×7, 0.90` | **0.26** | `remotefrac-228dc7` (b8), `-f70811` (b2), `-9b7dea` (b32) |
+
+**And on those matrices `lb_union` does win — at large budgets.** See §3.
+
+**Do this first on any new shape:** run one cheap cell, read the ratio, and predict. Headroom
+~0.9 means there is almost nothing to win; headroom ~0.2 means there is, and §3 says where.
 
 ---
 
@@ -96,10 +107,45 @@ capsule**. `build` is the `libflux_cuda_ths_op.so` sha256 prefix. Negative delta
   the interim regression (`afa9b674`, `91b97767`, `834cbae8`), not a property of the design.
 - Everything else loses: b2 by 4–7%, b32 by 1–5%, b64 by ~1.3%.
 
-**The remembered rule is a conjecture, not a law.** It was stated as "headroom ≤ ~0.8 AND
-payload in an amortization band." It has **one confirming cell** (k4/b8) and a standing
-counterexample: **k2 has the best headroom of all (0.575) and still loses** (+4.44% at b8).
-Keep the table. Treat the rule as a hypothesis worth testing on the new shape — §6 says how.
+### The high-skew matrices — where the headroom hypothesis actually gets tested
+
+Everything above is the **canonical** matrix (headroom 0.90 at k8), i.e. the case with almost
+nothing to win. The high-skew matrices from §2 tell a different and more coherent story.
+
+These cells are **`e2e` mode, not `isolated`** — so under the never-mix rule they are *not*
+quotable as latency. But they are **paired arms inside one capsule on one build**, which
+makes the *ordering* meaningful. Read them as a direction, not a number.
+
+| headroom | budget | lb_union | union | Δ% | capsule |
+|---:|---:|---:|---:|---:|---|
+| 0.19 | 2 | 1.456 | 1.361 | +7.01 | 20260803-0341 |
+| 0.19 | 8 | 3.452 | 3.445 | +0.21 | 20260803-0341 |
+| 0.19 | 32 | 11.947 | 12.308 | **−2.94** | 20260803-0341 |
+| 0.26 | 2 | 1.499 | 1.413 | +6.09 | 20260803-0341 |
+| 0.26 | 8 | 3.440 | 3.447 | −0.21 | 20260803-0341 |
+| 0.26 | 8 | 3.405 | 3.399 | +0.18 | 20260803-0410 |
+| 0.26 | 32 | 11.855 | 12.098 | **−2.01** | 20260803-0341 |
+| 0.26 | 32 | 11.879 | 12.292 | **−3.36** | 20260803-0410 |
+
+**This inverts the canonical-matrix conclusion at b32, 3 runs out of 3.** On the canonical
+matrix `lb_union` *loses* at b32 (+1.2…+5.0%); on the high-skew matrices it *wins*
+(−2.0…−3.4%).
+
+**The synthesis that fits all the data.** Two independent conditions, and the interaction
+between them is what the single-condition rule missed:
+
+1. **Headroom** decides whether balancing the wire can pay at all.
+2. **Budget** decides whether the wire is worth balancing — at b2 the fixed intra-node pass
+   (phase-1 pull) dominates and lb_union always loses; at b32 the wire dominates, so with
+   real headroom the balancing wins, and without it the fixed cost is charged for nothing.
+
+So the win moves to **large** budgets when headroom is real, and collapses to a single narrow
+cell (k4/b8) when it is not. The earlier framing — "the advantage inverts above ~8 MiB" — is
+true *only on the high-headroom canonical matrix*, and §7 is scoped accordingly.
+
+**Status: promising, not established.** The high-skew evidence is `e2e`-mode only, from a
+single day and two capsules on one build (`6d86e529`). The isolated-mode confirmation is
+**M3 in §6** and is the highest-value experiment available.
 
 ---
 
@@ -178,13 +224,30 @@ python sweeps/sweep.py run --platform perlmutter --variants hier_compress_lb_uni
 Prediction: the −5…−7% win survives, possibly larger (thinner copies ⇒ more headroom).
 Falsified if it vanishes ⇒ the win was an L=8 artifact.
 
-**M3 — Test the headroom conjecture where it makes its strongest claim.**
-**This is the experiment that was never run on AWS.** High-skew `remotefrac` matrices exist
-with headroom **0.19 and 0.26** (`w16x8_remotefrac-494119_*`, `w16x8_remotefrac-228dc7_*`) —
-but no capsule ever paired `lb_union` against `union` on them in `isolated` mode. The
-conjecture predicts a *large* win there. If `lb_union` loses at headroom 0.19, the headroom
-framing is dead and §2 should be rewritten. Regenerate the equivalent at L=4 and run paired
-arms. **Highest information per allocation-hour of anything in this list.**
+**M3 — Confirm the high-skew win in `isolated` mode. Highest value in this list.**
+The high-skew matrices were paired on AWS but **only in `e2e`/`phases` mode** (§3), which
+cannot be quoted as latency. The e2e ordering says `lb_union` wins at b32 by 2–3.4% (3/3).
+Repeat it in `isolated` mode. If it holds, the headroom framing is established and the
+operating rule becomes "high skew + large budget"; if it evaporates, the framing is dead and
+§2/§3 should be rewritten around the single k4/b8 cell.
+
+**Generating them — they are fully reproducible, but the `fracs` list must be redesigned
+for L=4.** The matrices are not stored anywhere; they are regenerated deterministically and
+verified by `matrix_sha256`. The AWS parameters were:
+
+```bash
+# headroom 0.19 (AWS, L=8)
+python sweeps/gen_matrix.py --family remotefrac --W 16 --ranks-per-node 8 \
+    --budget-mib 8 --topk 8 --param fracs=0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.99
+# headroom 0.26 (AWS, L=8):  --param fracs=0.02,0.02,0.02,0.02,0.02,0.02,0.02,0.9
+```
+
+**Trap:** `gen_matrix.py` uses `fracs[:L]` — only the **first L** entries — then shuffles them
+per node. At L=4 the lists above truncate to `[0.01,0.01,0.01,0.01]` and `[0.02]*4`, i.e.
+**uniform, no skew, no headroom at all**, silently. The skew lives in the *last* element.
+Rebuild the list for L=4 so the spread survives truncation, e.g.
+`--param fracs=0.01,0.05,0.30,0.99`, and **verify by reading the emitted
+`relay_balanced_bytes/relay_ident_bytes` before trusting the cell.**
 
 **M4 — The landing-spread prediction.** nsys pair, `lb_union` vs `union`, same protocol,
 same build (as `20260804-043510` / `044057` did). Prediction: Slingshot's per-GPU NIC binding
@@ -198,7 +261,11 @@ Throughout: **paired arms inside one capsule on one build.** See `04` and `SCHEM
 
 ---
 
-## 7. The budget inversion, stated honestly
+## 7. The budget inversion — real, but scoped to the high-headroom matrix
+
+**Scope first:** everything in this section is the **canonical** `remotefrac` matrix
+(headroom 0.90), where there is almost no wire imbalance to remove. On the high-skew
+matrices the sign flips at b32 (§3), so do not state this as a general property of Tier B.
 
 Tier B's occupancy advantage **inverts above ~8 MiB**. Mean tile-occupancy deficit,
 lb_union vs union: b8 `0.347 vs 0.382` (−9%), b32 `0.230 vs 0.211` (+9%), b64

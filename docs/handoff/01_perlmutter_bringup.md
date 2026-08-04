@@ -186,11 +186,22 @@ size, budget and topk. There is no such thing as "the same cell on the other pla
 Cross-platform comparison is comparison of *variants within a matrix*, never of absolute
 milliseconds across matrices.
 
-**[VERIFIED-AWS]** A second identity subtlety, discovered while writing this handoff: the
-`remotefrac` family exists in more than one parameterisation. Alongside the canonical
-`w16x8_remotefrac_*` there are `w16x8_remotefrac-494119_*` and `w16x8_remotefrac-228dc7_*`
-— high-skew variants with **balance headroom 0.19 and 0.26** versus the canonical 0.90. See
-`02`; they matter more than anything else you will regenerate.
+**No matrix is stored in git or on the remote** — that is deliberate, and nothing was lost:
+every capsule records `family`, the full `family_params` (plain JSON, not a hash) and
+`matrix_sha256`, so any matrix ever measured can be regenerated and verified byte-for-byte.
+See `04` §5b.
+
+**[VERIFIED-AWS]** A second identity subtlety: the `remotefrac` family exists in more than
+one parameterisation. Alongside the canonical `w16x8_remotefrac_*` (headroom 0.90) there are
+`-494119` and `-228dc7` high-skew variants with **headroom 0.19 and 0.26**. They matter more
+than anything else you will regenerate — `02` §3 is the reason.
+
+**[VERIFIED-AWS] The `fracs[:L]` truncation trap.** `gen_matrix.py` takes only the **first L**
+entries of the `fracs` list and shuffles them per node. The AWS high-skew lists put the
+outlier **last** (`0.01 ×7, 0.99`), so at L=4 they truncate to `[0.01,0.01,0.01,0.01]` —
+**uniform, zero skew, zero headroom, silently.** Any `fracs` list carried over from AWS must
+be redesigned for L=4, and you must confirm the intended skew by reading
+`relay_balanced_bytes / relay_ident_bytes` out of the first cell rather than assuming it.
 
 ---
 

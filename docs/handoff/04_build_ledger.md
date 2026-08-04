@@ -115,10 +115,33 @@ unconditional behaviour, so there is nothing to recover — but the losing arms 
 reproduced without reconstructing the knobs. The full env for every one is preserved in
 `cells.csv` `env_json`.
 
-Also note the high-skew matrices from §3: `w16x8_remotefrac-494119_*` (headroom 0.19) and
-`w16x8_remotefrac-228dc7_*` (0.26). These were generated to create balance headroom and were
-run on build `6d86e529` — but **never as a paired `lb_union` vs `union` isolated comparison**.
-That missing experiment is item **M3** in `02` §6 and is the highest-value thing you can run.
+## 5b. Matrices are NOT stored — but they are fully reproducible
+
+No traffic matrix is in git, on the remote, or in any capsule. By design: raw matrices live
+at the platform `matrices_root` (`/home/ubuntu/sw/a2av_test_matrices/generated` on the
+now-dead AWS cluster). **Nothing was lost**, because every capsule records what is needed to
+regenerate them exactly:
+
+- `family` and **`family_params`** in `cells.csv` — the full parameter set, not a hash. The
+  `-494119`-style suffix in a `matrix_id` is a slug of those params, and the params themselves
+  are stored beside it in plain JSON.
+- `matrix_sha256` — verify a regeneration is byte-identical to what was measured.
+- `sweeps/gen_matrix.py` is deterministic (FNV-1a of `family|params|WxL|b|k|chunk|id`) and is
+  in the repo.
+
+The two high-skew parameterisations recovered from the record:
+
+| headroom | `family_params` |
+|---|---|
+| 0.19 | `{"fracs": [0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.99]}` |
+| 0.26 | `{"fracs": [0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.02, 0.9]}` |
+| 0.90 (canonical) | `{"fracs": [0.05, 0.10, 0.15, 0.20, 0.30, 0.50, 0.70, 0.90]}` |
+
+**Correction to an earlier draft of this handoff:** those matrices *were* run with paired
+`lb_union` vs `union` arms — in `e2e` and `phases` modes, capsules `20260803-034102` and
+`-041030`. What is missing is the **`isolated`-mode** confirmation, not the experiment. The
+e2e ordering is in `02` §3 and favours `lb_union` at b32 (3/3 runs). See `02` §6 M3, and note
+the `fracs[:L]` truncation trap before regenerating at L=4.
 
 ---
 
