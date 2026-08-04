@@ -66,7 +66,12 @@ VARIANTS = {
     ),
     # union broadcast + source-side pack overlap (dedicated stream,
     # double-buffered send); MAX_CONNECTIONS=2 lets the pack stream actually
-    # run concurrently with compute (the validated best config)
+    # run concurrently with compute.
+    # CAVEAT (audited 2026-08-04): conn=2 was chosen 2026-07-29 and has NOT
+    # been re-validated since. All 15 pack cells in the capsule set are conn=2
+    # -- there is no committed A/B -- and all predate both the family conn=8
+    # pin and isolated mode. Re-derive before quoting pack numbers.
+    # See docs/handoff/03_insight_ledger.md NR-11.
     "hier_compress_pack": dict(
         comm_pattern="a2av_hier_compress",
         env={

@@ -209,6 +209,16 @@ rest spin at 100% GPU. That is what the cell timeout is for.
 3. `--skip_correctness` is for large budgets where the torch reference
    dominates or OOMs; its cells carry empty correctness columns — visible,
    not silent.
-4. Comparisons across capsules must match on: platform, world_size, topk, G,
-   matrix_id, mode, deterministic. `git_sha` may differ — that's often the
-   point — but say so.
+4. **Prefer paired arms inside ONE capsule.** All defensible results in this
+   project are within-capsule A/Bs. Comparisons across capsules must match on:
+   platform, world_size, topk, G, matrix_id, mode, deterministic — **and on
+   the build**, i.e. the `flux_libs` sha256 in `manifest.json`. `git_sha` is
+   NOT a build identity: 124 capsules span only 5 shas but **28 distinct
+   `libflux_cuda_ths_op.so` builds**, and 308 of 405 cells were produced from
+   a dirty tree. Measured spreads for one unchanged configuration: ~0.3–1.7%
+   across capsules at b8/b32/b64 on the *same* build (up to ~4.8% at b2), but
+   **6–33% across different builds**. Every headline claim in this project is
+   ≤7%, i.e. below the cross-build spread — so a cross-build comparison can
+   manufacture a result of either sign. If you must compare across capsules,
+   state the build hashes and treat anything below the same-build spread as
+   noise. See `docs/handoff/04_build_ledger.md`.

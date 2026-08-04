@@ -47,7 +47,11 @@ root (leave them).
 - `--budgets-mib` — pre-topk budgets, typically `2,4,8,16,32,64`.
 - `--topk`, `--G` — routing shape (G % world_size == 0; the generator
   pre-checks routing feasibility and tells you the minimum G).
-- `--modes` — `e2e` (clean latency), `phases` (FLUX_A2AV_TIMING breakdown —
+- `--modes` — `isolated` (**the default for latency claims**:
+  FLUX_SWEEP_ISOLATED_ITERS=1 syncs + barriers before every timed window, so
+  each iteration is one isolated layer execution — inference semantics),
+  `e2e` (clean, back-to-back — the *throughput* view; never compare against
+  `isolated`), `phases` (FLUX_A2AV_TIMING breakdown —
   perturbed, never compare its e2e against clean cells), `nsys` (primary
   timeline: per-node Nsight capture, CE/P2P visibility, NVTX iter
   ranges), `torchprof` (secondary timeline: Python-op attribution). For

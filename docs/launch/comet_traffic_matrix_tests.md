@@ -1,3 +1,14 @@
+> **Two caveats (2026-08-04).**
+> 1. **Any performance number in this file dated before 2026-07-29 is void.**
+>    The harness force-enabled torch deterministic mode, making `scatter_`
+>    ~500x slower and biasing every compress/relay path. See
+>    `docs/handoff/03_insight_ledger.md` NR-10.
+> 2. The manual `srun`/`launch.sh` command lines below are **superseded by the
+>    sweep runner** (`sweeps/sweep.py`) for anything perf-related — CLAUDE.md
+>    requires all perf asks go through it, never hand-rolled loops. This file
+>    remains the reference for the knobs, argument constraints and correctness
+>    invocations.
+
 # Launching the COMET traffic-matrix tests (Perlmutter)
 
 Profiles MoE layer0 (`moe_ag_scatter`) and layer1 (`moe_gather_rs`) with token

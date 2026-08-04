@@ -762,10 +762,17 @@ script docstring. §8–§11 are authoritative for the mechanisms themselves.
 **MAX_CONNECTIONS state of the world.** Since 2026-08-01 `sweeps/variants.py`
 pins `CUDA_DEVICE_MAX_CONNECTIONS=8` for the whole a2av family (A/B at b8
 remotefrac: −2..−8% e2e on all four variants, correctness green; commit
-b3f56ca). The conn=1→8 boundary is auditable ONLY via `env_json` in each
-capsule's cells.csv — the Aug-1 A/B capsules (`20260801-*`) have empty
-`notes:` fields. Inconsistent pins that are NOT bugs: `hier_compress_pack`
-still pins conn=2 (its own A/B); `launch.sh` still exports conn=1 as the
+b3f56ca). **Correction (2026-08-04):** an earlier version of this paragraph
+said the conn=1→8 boundary is "auditable ONLY via `env_json`". That is wrong.
+Pre-change capsules have **no `CUDA_DEVICE_MAX_CONNECTIONS` key in `env_json`
+at all** — the value came from `launch.sh`'s default and was never part of the
+runner's env delta — so the conn=1 arm is identifiable only by **key absence
+plus date**. The Aug-1 A/B capsules (`20260801-*`) also have empty `notes:`
+fields, and two of them differ from their partners *only* by build hash; see
+`docs/handoff/04_build_ledger.md` §4. Inconsistent pins that are NOT bugs:
+`hier_compress_pack` still pins conn=2 (but see
+`docs/handoff/03_insight_ledger.md` NR-11 — that pin has no committed A/B);
+`launch.sh` still exports conn=1 as the
 non-sweep default (and CLAUDE.md documents that); only the compress
 gather/relay arms' ctor FLUX_CHECKs conn>1, and only because of §11's inline
 tails. `layer0_dedup_walkthrough.md`'s variant table predates the family pin

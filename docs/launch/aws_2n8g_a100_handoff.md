@@ -1,3 +1,14 @@
+> **SUPERSEDED (2026-08-04) — HISTORICAL ONLY.**
+> This document was written *before* any of the work ran on hardware, and says
+> so in several places ("never run on hardware"). Everything it anticipates has
+> since happened: 124 sweep capsules, the sweep runner replacing its manual test
+> ladder, and the branches it maps have all merged into `main`.
+> **For the current handoff — including the AWS→Perlmutter migration — read
+> `docs/handoff/00_START_HERE.md`.** Its §4 "Environment: AWS 2x8 vs Perlmutter"
+> in particular is stale and should not be used for the migration.
+> Kept for provenance: its §2 design points and §3 rejected-alternatives are
+> still a useful record of what was under test and why.
+
 # Handoff: Comet a2av work on an AWS 2-node 8x A100 cluster
 
 Audience: bringing up this repository (branches `main`, `hier-compress`,
