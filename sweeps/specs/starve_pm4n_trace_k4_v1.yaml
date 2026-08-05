@@ -1,0 +1,30 @@
+# Starvation campaign C2b — nsys + tile-trace capture, k4 arm.
+# Same discipline as C2a; fanoutskew(0.9,0.25,0.25,0.25) k4 = the
+# latency-visible two-mechanism contrast arm.
+platform: perlmutter
+nodes: 4
+variants:
+  - hier_compress_lb_union
+  - hier_compress_union
+families:
+  - "fanoutskew:nodefracs=0.9,0.25,0.25,0.25"
+budgets_mib: [32]
+topk: 4
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [nsys]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env:
+  FLUX_A2AV_NVTX_PROXY: "1"
+  FLUX_A2AV_EARLY_LAUNCH: "1"
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+notes: "starvation campaign C2b: nsys+tile-trace capture, lb_union vs union, fanoutskew(0.9,0.25,0.25,0.25), b32 k4, isolated discipline, non-blocking wire"

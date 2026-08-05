@@ -1,0 +1,31 @@
+# Starvation campaign C1b — clean isolated latency, k4 arm.
+# fanoutskew(0.9,0.25,0.25,0.25) at topk=4: latency-VISIBLE starvation on
+# critical-path ranks, with a two-mechanism contrast between destination
+# nodes (fat at dn=1: gateway-broadcast-limited, signal-late/arrival-early;
+# fat at dn=3: relay wire serialization H2b, arrival-late). Predicted
+# deficit 0.49 (node 1) vs 0.32 (node 3).
+platform: perlmutter
+nodes: 4
+variants:
+  - hier_compress_lb_union
+  - hier_compress_union
+families:
+  - "fanoutskew:nodefracs=0.9,0.25,0.25,0.25"
+budgets_mib: [32]
+topk: 4
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env:
+  FLUX_A2AV_EARLY_LAUNCH: "1"
+notes: "starvation campaign C1b: clean isolated latency, lb_union vs union, fanoutskew(0.9,0.25,0.25,0.25), b32 k4, EARLY_LAUNCH campaign config"

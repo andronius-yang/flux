@@ -1,0 +1,35 @@
+# Starvation campaign C1a — clean isolated latency, k8 arms (SCHEMA rules apply).
+# EARLY_LAUNCH=1 is the campaign-wide functional configuration (clean cells
+# included): captures and quoted latencies describe ONE config. Numbers pair
+# only within this capsule — never against historical (non-EARLY_LAUNCH)
+# capsules.
+# Arms: uniform (headline: every round saturated, headroom exactly 1 — any
+# starvation is pure ordering) and fanoutskew default = (0.9,0.1,0.9,0.1)
+# (two hot exporter nodes; hot destinations combine short local runway with
+# fat inbound; predicted deficit 0.55 hot vs 0.01 thin).
+platform: perlmutter
+nodes: 4
+variants:
+  - hier_compress_lb_union
+  - hier_compress_union
+families:
+  - "uniform"
+  - "fanoutskew"
+budgets_mib: [32]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env:
+  FLUX_A2AV_EARLY_LAUNCH: "1"
+notes: "starvation campaign C1a: clean isolated latency, lb_union vs union, uniform + fanoutskew(0.9,0.1,0.9,0.1), b32 k8, EARLY_LAUNCH campaign config"
