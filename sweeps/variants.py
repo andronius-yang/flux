@@ -64,6 +64,29 @@ VARIANTS = {
         env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_LB_UNION"],
     ),
+    # TEMPORARY A/B arms for the fused stage-2 consumer build (2026-08-05):
+    # identical wire/gateway semantics to their base variants, but the ATen
+    # key/argsort/index_select chain + Tier B gating searchsorted are replaced
+    # by the fused sort_util kernels. Canonicalize (flip the knob default,
+    # drop these) after the phases + isolated verdict.
+    "hier_compress_union_fused": dict(
+        comm_pattern="a2av_hier_compress",
+        env={
+            "FLUX_A2AV_UNION_BCAST": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8",
+        },
+        requires=["FLUX_A2AV_UNION_BCAST", "FLUX_A2AV_FUSED_STAGE2"],
+    ),
+    "hier_compress_lb_union_fused": dict(
+        comm_pattern="a2av_hier_compress",
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8",
+        },
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2"],
+    ),
     # union broadcast + source-side pack overlap (dedicated stream,
     # double-buffered send); MAX_CONNECTIONS=2 lets the pack stream actually
     # run concurrently with compute.
