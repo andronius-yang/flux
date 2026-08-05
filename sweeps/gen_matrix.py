@@ -26,6 +26,14 @@ row sums, per-(row,dst) routing feasibility for distinct-topk experts):
                L-1 intra-node peers, where p comes from a seeded per-node
                permutation of `fracs` (default: the measured set of the
                original 2n_16r_skew matrices)
+  fanoutskew — per-NODE exporter skew: every rank of node i sends fraction
+               nodefracs[i] uniformly to all remote ranks and 1-nodefracs[i]
+               uniformly to its L-1 intra-node peers. No per-rank shuffle and
+               no seeded state (--id still enters the identity/seed, but this
+               family draws nothing from the RNG). len(nodefracs) must equal
+               the node count; needs >= 3 nodes (below 3 the per-node wire
+               stagger this family exists for cannot be expressed — see the
+               dealer saturation law U = T*min(1, f*topk)).
 """
 
 import argparse
@@ -46,6 +54,8 @@ FAMILY_DEFAULT_PARAMS = {
     "hotcol": {"frac": 0.5},
     "nodeskew": {"frac": 0.75},
     "remotefrac": {"fracs": REMOTEFRAC_DEFAULT},
+    # two hot exporter nodes, two thin — the NN=4 starvation-campaign arm 1
+    "fanoutskew": {"nodefracs": (0.9, 0.1, 0.9, 0.1)},
 }
 
 
@@ -141,6 +151,15 @@ def _row_weights(family, params, s, W, L, rng_derived):
                 w[d] = (1.0 - p) / (L - 1)
             else:
                 w[d] = p / (W - L)
+    elif family == "fanoutskew":
+        p = float(params["nodefracs"][node])
+        for d in range(W):
+            if d == s:
+                continue
+            if d // L == node:
+                w[d] = (1.0 - p) / (L - 1)
+            else:
+                w[d] = p / (W - L)
     else:
         raise ValueError(f"unknown family: {family}")
     return w
@@ -156,6 +175,12 @@ def generate(family, params, W, L, budget_mib, topk, chunk_bytes, matrix_instanc
         assert nn >= 2, f"family {family} needs >= 2 nodes (W={W}, L={L})"
         # note: nodeskew with exactly 2 nodes degrades to frac=1.0 (the hot
         # node is the only remote node) — see _row_weights
+    if family == "fanoutskew":
+        assert nn >= 3, f"fanoutskew needs >= 3 nodes (W={W}, L={L})"
+        assert len(params["nodefracs"]) == nn, (
+            f"fanoutskew needs exactly one nodefrac per node:"
+            f" got {len(params['nodefracs'])} for {nn} nodes"
+        )
 
     budget_bytes = budget_mib * (1 << 20)
     assert (
@@ -195,6 +220,57 @@ def generate(family, params, W, L, budget_mib, topk, chunk_bytes, matrix_instanc
 
     mid = matrix_id_of(family, params, W, L, budget_mib, topk, chunk_bytes, matrix_instance)
     return mid, chunks, tokens_per_rank
+
+
+def dedup_round_stats(chunks, L, tokens_per_rank):
+    """Closed-form dedup/wire statistics under the sorted column-major dealer
+    (traffic_matrix_to_choosed_experts): a contiguous run of C copies to one
+    destination node covers exactly min(C, T) distinct tokens, so
+    U[s][n] = min(sum of chunks[s][d] over d in node n, tokens_per_rank).
+
+    Returns a dict with:
+      U            — [W][nn] unique-token counts (the runtime's U_mat)
+      pair         — {(sn, dn): (copies, unique, dedup_ratio)} over ordered
+                     node pairs, sn != dn
+      round_profile— {dest_node: [(dn, src_node, U_rows), ...]} for dn
+                     ascending (the gateway's round processing order)
+      col_rows     — [W] per-destination-rank GEMM rows (column sums)
+      headroom     — closed-form relay_balanced_bytes / relay_ident_bytes
+                     (the test harness's metric, test_moe_ag_traffic.py)
+    """
+    W = len(chunks)
+    nn = W // L
+    T = tokens_per_rank
+    U = [[min(sum(chunks[s][m * L + j] for j in range(L)), T) for m in range(nn)] for s in range(W)]
+    pair = {}
+    for sn in range(nn):
+        for dn_ in range(nn):
+            if dn_ == sn:
+                continue
+            copies = sum(chunks[sn * L + sl][dn_ * L + j] for sl in range(L) for j in range(L))
+            uniq = sum(U[sn * L + sl][dn_] for sl in range(L))
+            pair[(sn, dn_)] = (copies, uniq, (copies / uniq) if uniq else float("nan"))
+    round_profile = {}
+    for m in range(nn):
+        round_profile[m] = [
+            (dn, (m + dn) % nn, pair[((m + dn) % nn, m)][1]) for dn in range(1, nn)
+        ]
+    col_rows = [sum(chunks[s][d] for s in range(W)) for d in range(W)]
+    ident = balanced = 0
+    for n in range(nn):
+        for dn in range(1, nn):
+            tn = (n - dn + nn) % nn
+            seg = [U[n * L + sl][tn] for sl in range(L)]
+            ident += max(seg)
+            balanced += (sum(seg) + L - 1) // L
+    headroom = (balanced / ident) if ident else float("nan")
+    return {
+        "U": U,
+        "pair": pair,
+        "round_profile": round_profile,
+        "col_rows": col_rows,
+        "headroom": headroom,
+    }
 
 
 def check_feasible(chunks, W, topk, tokens_per_rank, nexperts=None):
@@ -298,7 +374,7 @@ def parse_params(kvs):
     params = {}
     for kv in kvs or []:
         k, _, v = kv.partition("=")
-        if k == "fracs":
+        if k in ("fracs", "nodefracs"):
             params[k] = tuple(float(x) for x in v.split(","))
         else:
             params[k] = float(v)
@@ -343,6 +419,22 @@ def main():
                 c for d, c in enumerate(row) if d // args.ranks_per_node != s // args.ranks_per_node
             )
             print(f"row {s:3d}: max {max(row):8d} remote_frac {remote / sum(row):.3f}")
+        nn = args.W // args.ranks_per_node
+        if nn >= 2:
+            st = dedup_round_stats(chunks, args.ranks_per_node, tokens_per_rank)
+            print("dedup per ordered node pair (closed form, current dealer):")
+            for (sn, dn_), (copies, uniq, ratio) in sorted(st["pair"].items()):
+                print(f"  n{sn}->n{dn_}: copies {copies:8d}  unique {uniq:8d}  dedup {ratio:.2f}")
+            print("per-dest-node round profile (dn ascending = gateway order), U rows:")
+            for m in range(nn):
+                prof = "  ".join(f"dn{dn}(src n{sn}) {u:7d}" for dn, sn, u in st["round_profile"][m])
+                print(f"  dest n{m}: {prof}")
+            L = args.ranks_per_node
+            per_node = [st["col_rows"][n * L : (n + 1) * L] for n in range(nn)]
+            print("per-dest-rank GEMM rows (column sums), by node:")
+            for n, cols in enumerate(per_node):
+                print(f"  node {n}: {' '.join(f'{c:7d}' for c in cols)}")
+            print(f"predicted headroom (relay_balanced/relay_ident): {st['headroom']:.3f}")
         return
     mid, path, sha = ensure_matrix(
         args.family,
