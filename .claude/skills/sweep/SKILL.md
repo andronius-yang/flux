@@ -63,6 +63,14 @@ root (leave them).
   variant) reorders GEMM-before-intra-wire — treat as its own configuration;
   `FLUX_A2AV_BLOCKING_WIRE=1` + `CUDA_DEVICE_MAX_CONNECTIONS=8` is the
   overlap-visualization recipe (instrumented only).
+  **Default for profiling captures (user directive 2026-08-05): nsys/timeline
+  cells carry `FLUX_SWEEP_ISOLATED_ITERS: "1"` and `FLUX_A2AV_EARLY_LAUNCH:
+  "1"` in `extra_env`** — plain nsys mode runs profiled iterations
+  back-to-back (per-iter sync+barrier exists only under the isolated knob),
+  so without it iter-n wire tails contaminate peer ranks' iter-n+1 on the
+  timeline; early launch makes the GEMM/comm overlap visible. Template:
+  `sweeps/specs/lb_union_pm4n_trace_b32skew_blocking_iso.yaml`. Still
+  instrumented — never a latency source.
 - `--profile-iters` — iters AND warmup for torchprof/nsys cells (default 3).
 - `--iters/--warmup-iters` (default 10/5), `--skip-correctness` (large
   budgets; correctness columns go empty), `--matrix-instance` (new random
