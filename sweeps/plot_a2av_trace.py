@@ -817,6 +817,76 @@ def extract_lb_union(copies, L):
     )
 
 
+def extract_union_marks(copies, L, n_expect):
+    """NN>2 union: the gateway forwards one staged union per remote node —
+    up to n_expect non-overlapping runs of exactly L equal-size copies with
+    the DtoD loopback enqueue-first. Returns [(res)] in enqueue order, one
+    marker per forward run. No per-source attribution is claimed: the run ->
+    source-node mapping would need the arrival rotation, which this tool has
+    not verified at NN>2. On CXI the fused putmem_signal materializes as a
+    separate 8B device copy interleaved with the payloads (AWS/EFA did not
+    show these), so signal-size copies are dropped before matching."""
+    copies = [c for c in copies if c[3] >= 4096]
+    if len(copies) < L:
+        return None, f"only {len(copies)} payload copies in window (< L={L})"
+
+    def match(run):
+        return len({c[3] for c in run}) == 1 and [i for i, c in enumerate(run) if c[4] == 8] == [0]
+
+    runs = _signature_runs(copies, L, match)
+    if not runs:
+        return None, f"no run of {L} equal-size DtoD-first copies"
+    sel = []
+    for i in reversed(runs):  # companion/harness copies precede the forwards
+        if not sel or i + L <= sel[-1]:
+            sel.append(i)
+        if len(sel) == n_expect:
+            break
+    sel.reverse()
+    note = "" if len(sel) == n_expect else f"found {len(sel)} of {n_expect} forward runs"
+    return [
+        dict(
+            t=min(c[1] for c in copies[i : i + L]),
+            stall=_stall_before(copies, i) if i else None,
+            note=note if j == 0 else "",
+        )
+        for j, i in enumerate(sel)
+    ], None
+
+
+def extract_lb_union_marks(copies, L):
+    """NN>2 lb_union: one marker per matched forward run. Each Tier B round
+    broadcasts one contiguous window to all L local ranks (one DtoD loopback,
+    position ring-rotated), so every non-overlapping run of L equal-size
+    single-DtoD payload copies IS one round's window forward; markers come out
+    in enqueue (round-issue) order but carry no source-node attribution — the
+    round -> remote-node mapping is unverified at NN>2. Signal-size copies
+    (fused putmem_signal shows as separate 8B copies on CXI) are dropped
+    before matching."""
+    copies = [c for c in copies if c[3] >= 4096]
+    if len(copies) < L:
+        return None, f"only {len(copies)} payload copies in window (< L={L})"
+
+    def match(run):
+        return len({c[3] for c in run}) == 1 and sum(1 for c in run if c[4] == 8) == 1
+
+    runs = _signature_runs(copies, L, match)
+    if not runs:
+        return None, f"no run of {L} equal-size single-DtoD copies"
+    sel = []
+    for i in runs:
+        if not sel or i >= sel[-1] + L:
+            sel.append(i)
+    return [
+        dict(
+            t=min(c[1] for c in copies[i : i + L]),
+            stall=_stall_before(copies, i) if i else None,
+            note="",
+        )
+        for i in sel
+    ], None
+
+
 def extract_hier(copies, L, g_lr, src, rows_by_local):
     """Forwards = the enqueue-contiguous run matching the exact per-destination
     size signature (mirror order, zero sub-chunks skipped) from sidecar
@@ -895,10 +965,11 @@ def compute_gw_marks(db_path, sel, iters, wire, debug=False, stamped_only=False)
     import sqlite3
 
     L, NN = local_world(sel), sel.nnodes
-    if NN != 2:
+    if NN != 2 and wire not in ("union", "lb_union"):
         raise SystemExit(
-            f"--gw-marks: nnodes={NN} unsupported (per-round "
-            "window mapping is only implemented for 2 nodes)"
+            f"--gw-marks: nnodes={NN} unsupported for wire={wire} (per-round "
+            "window mapping is only implemented for 2 nodes; union/lb_union "
+            "draw unattributed per-gateway markers at NN>2)"
         )
     node = sel.rank // L
     db = sqlite3.connect(resolve_gw_db(db_path, node))
@@ -959,7 +1030,9 @@ def compute_gw_marks(db_path, sel, iters, wire, debug=False, stamped_only=False)
     ]
     for lr in sorted(anchors):
         lo, hi = windows[lr][k]
-        src = (1 - node) * L + lr if wire not in ("balanced", "lb_union") else None
+        # per-source attribution only exists at NN=2 (single remote peer)
+        src = (1 - node) * L + lr if wire not in ("balanced", "lb_union") and NN == 2 else None
+        res_list = None
         if wire in ("identity", "balanced"):
             # the gather tails are issued inline at dispatch, BEFORE their own
             # GEMM launch (never deferred — dispatch-starvation rule), so their
@@ -994,45 +1067,64 @@ def compute_gw_marks(db_path, sel, iters, wire, debug=False, stamped_only=False)
                 hi = windows[lr][k][0]
             copies = device_copies(db, lr, lo, hi)
             if wire == "union":
-                res, err = extract_union(copies, L)
+                if NN == 2:
+                    res, err = extract_union(copies, L)
+                    res_list = [("", res)] if res is not None else None
+                else:
+                    # this build enqueues the union forwards at dispatch (pre-
+                    # launch), so search the preceding inter-launch segment too
+                    lo2 = windows[lr][k - 1][0] if k else 0
+                    copies = device_copies(db, lr, lo2, windows[lr][k][1])
+                    multi, err = extract_union_marks(copies, L, NN - 1)
+                    res_list = [(f"f{j}", r) for j, r in enumerate(multi)] if multi else None
             elif wire == "lb_union":
-                res, err = extract_lb_union(copies, L)
+                if NN == 2:
+                    res, err = extract_lb_union(copies, L)
+                    res_list = [("", res)] if res is not None else None
+                else:
+                    multi, err = extract_lb_union_marks(copies, L)
+                    res_list = [(f"w{j}", r) for j, r in enumerate(multi)] if multi else None
             else:
                 res, err = extract_hier(copies, L, lr, src, rows_by_local)
+                res_list = [("", res)] if res is not None else None
             if debug:
                 print(
                     f"  -- gw dev {lr} ({len(copies)} copies in enqueue " f"window, enqueue order)",
                     file=sys.stderr,
                 )
-                _dump_events(copies, t0_dst, res["t"] if res else None)
+                _dump_events(copies, t0_dst, res_list[0][1]["t"] if res_list else None)
+        if wire in ("identity", "balanced") and res_list is None:
+            res_list = [("", res)] if res is not None else None
         s_lab = f"src{src}" if src is not None else "-"
-        if res is None:
+        if not res_list:
             lines.append(
                 f"{lr:>4} {s_lab:>6} {'-':>10} {'-':>9} {'-':>9} " f"{'-':>9}  SKIP: {err}"
             )
             continue
-        x = res["t"] - t0_dst
-        flag = arr.get(src) if src is not None else None
-        note = res.get("note", "")
-        flagged = "no-stall" in note
-        if flag is not None:
-            delta = (flag - x) / 1e3
-            if not 0 < delta < 5000:
-                note += " WARN:marker/flag order"
-                flagged = True
-            f_txt, d_txt = f"{flag / 1e3:>9.1f}", f"{delta:>9.1f}"
-        else:
-            f_txt, d_txt = f"{'-':>9}", f"{'-':>9}"
-        st = res["stall"]
-        st_txt = f"{st / 1e3:>9.1f}" if st is not None else f"{'-':>9}"
-        if stamped_only and src is not None and flag is None:
-            note += " unstamped (not drawn)"
-            lines.append(
-                f"{lr:>4} {s_lab:>6} {x / 1e3:>10.1f} {f_txt} {d_txt} " f"{st_txt}  {note}"
-            )
-            continue
-        lines.append(f"{lr:>4} {s_lab:>6} {x / 1e3:>10.1f} {f_txt} {d_txt} " f"{st_txt}  {note}")
-        marks.append((x, f"gw:src{src}" if src is not None else f"gw{lr}", flagged))
+        for suf, res in res_list:
+            x = res["t"] - t0_dst
+            flag = arr.get(src) if src is not None else None
+            note = res.get("note", "")
+            flagged = "no-stall" in note
+            if flag is not None:
+                delta = (flag - x) / 1e3
+                if not 0 < delta < 5000:
+                    note += " WARN:marker/flag order"
+                    flagged = True
+                f_txt, d_txt = f"{flag / 1e3:>9.1f}", f"{delta:>9.1f}"
+            else:
+                f_txt, d_txt = f"{'-':>9}", f"{'-':>9}"
+            st = res["stall"]
+            st_txt = f"{st / 1e3:>9.1f}" if st is not None else f"{'-':>9}"
+            g_lab = f"{lr}{suf}" if suf else f"{lr}"
+            if stamped_only and src is not None and flag is None:
+                note += " unstamped (not drawn)"
+                lines.append(
+                    f"{g_lab:>4} {s_lab:>6} {x / 1e3:>10.1f} {f_txt} {d_txt} " f"{st_txt}  {note}"
+                )
+                continue
+            lines.append(f"{g_lab:>4} {s_lab:>6} {x / 1e3:>10.1f} {f_txt} {d_txt} " f"{st_txt}  {note}")
+            marks.append((x, f"gw:src{src}" if src is not None else f"gw{lr}{suf}", flagged))
     if wire in ("balanced", "lb_union") and marks:
         inter = [a for s, a in arr.items() if is_inter(sel, s)]
         if inter:

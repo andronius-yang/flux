@@ -1,0 +1,31 @@
+# Megadiagram companion to lb_union_pm4n_v1: nsys pair with the NVTX proxy on,
+# which also writes per-rank tile-trace sidecars (a2av_tile_trace_r<rank>.bin)
+# into the cell records dir — analyzed by sweeps/plot_a2av_trace.py
+# (--scan-ranks / --curves / --compare). Instrumented mode: NEVER quote
+# latency from these cells (SCHEMA.md). Mirrors the AWS same-protocol pair
+# 20260804-043510 / -044057.
+platform: perlmutter
+nodes: 4
+variants:
+  - hier_compress_lb_union
+  - hier_compress_union
+families:
+  - "remotefrac:fracs=0.01,0.05,0.30,0.99"
+budgets_mib: [32]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [nsys]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env:
+  FLUX_A2AV_NVTX_PROXY: "1"
+notes: "Perlmutter 4n16r tile-trace/nsys pair for the b32 high-skew winning-regime trace"
