@@ -342,7 +342,11 @@ def probe_capabilities(needed):
     if not os.path.isdir(libdir):
         raise SystemExit(f"cannot locate the flux package (tried find_spec and {libdir})")
     sos = sorted(
-        glob.glob(os.path.join(libdir, "lib", "*.so*")) + glob.glob(os.path.join(libdir, "*.so"))
+        glob.glob(os.path.join(libdir, "lib", "*.so*"))
+        # Perlmutter's pip/setuptools lays the CUDA libs into lib64/ (AWS used
+        # lib/); probe both so the capability check is layout-independent
+        + glob.glob(os.path.join(libdir, "lib64", "*.so*"))
+        + glob.glob(os.path.join(libdir, "*.so"))
     )
     if not sos:
         raise SystemExit(f"no shared libraries under {libdir}")

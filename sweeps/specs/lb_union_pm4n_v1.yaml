@@ -1,0 +1,32 @@
+# lb_union on Perlmutter, first NN>2 measurement (4 nodes x 4 GPUs = 16 ranks).
+# Paired arms (union = the variant to beat) per docs/handoff/02 M1/M2/M3/M5:
+# canonical remotefrac (high-headroom control) + ONE high-skew family whose
+# fracs are REDESIGNED for L=4 — gen_matrix.py takes fracs[:L], so the AWS
+# 8-entry lists (outlier last) silently truncate to uniform at L=4
+# (docs/handoff/01 §7). Verify actual skew via relay_balanced_bytes /
+# relay_ident_bytes in cells.csv before trusting any conclusion.
+platform: perlmutter
+nodes: 4
+variants:
+  - hier_compress_union
+  - hier_compress_lb_union
+families:
+  - remotefrac
+  - "remotefrac:fracs=0.01,0.05,0.30,0.99"
+budgets_mib: [2, 8, 32]
+topk: 8
+G: 128                   # feasibility: G >= W * ceil(0.99 * 8) = 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env: {}
+notes: "Perlmutter bring-up: lb_union vs union at NN=4/L=4, isolated latency, canonical + L=4-redesigned high-skew remotefrac"

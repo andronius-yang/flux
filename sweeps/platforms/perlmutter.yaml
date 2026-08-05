@@ -4,9 +4,16 @@
 name: perlmutter
 ranks_per_node: 4
 fabric: cxi
-# job inputs/outputs must live on a shared filesystem visible to compute nodes
-data_root: ${PSCRATCH}/sweep_data
-matrices_root: ${PSCRATCH}/a2av_test_matrices/generated
+# job inputs/outputs must live on a shared filesystem visible to compute nodes.
+# 2026-08-04: rooted under workspace/andrewy so this work never contaminates
+# other users of the same $PSCRATCH (first exercised run: see git log).
+data_root: ${PSCRATCH}/workspace/andrewy/sweep_data
+matrices_root: ${PSCRATCH}/workspace/andrewy/a2av_test_matrices/generated
 srun_extra: []
 env: {}
 sym_size_max_g: 16
+# 2026-08-04: login/compute PATH nsys is the HPC SDK 2025.3.1 bundle
+# (/opt/nvidia/hpc_sdk/.../Nsight_Systems/bin/nsys), NOT the CUDA 12.4-era
+# 2023.4.4 that dropped kernel records under multi-process torchrun on AWS.
+# Pinned explicitly so nsys-mode provenance does not depend on PATH order.
+nsys_bin: /opt/nvidia/hpc_sdk/Linux_x86_64/25.5/profilers/Nsight_Systems/bin/nsys
