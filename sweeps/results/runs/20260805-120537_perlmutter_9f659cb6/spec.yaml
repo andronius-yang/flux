@@ -1,0 +1,29 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 32
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env:
+  FLUX_A2AV_EARLY_LAUNCH: "1"
+families:
+  - "fanoutskew:nodefracs=0.9,0.25,0.25,0.25"
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+nodes: 4
+notes: "starvation campaign C1b: clean isolated latency, lb_union vs union, fanoutskew(0.9,0.25,0.25,0.25), b32 k4, EARLY_LAUNCH campaign config"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+skip_correctness: false
+sm_margin: 8
+timeout_s: 900
+topk: 4
+variants:
+  - hier_compress_lb_union
+  - hier_compress_union
+warmup_iters: 5
