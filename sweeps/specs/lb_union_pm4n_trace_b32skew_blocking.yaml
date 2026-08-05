@@ -1,0 +1,34 @@
+# Overlap-visualization capture (SCHEMA.md three-way overlap recipe):
+# EARLY_LAUNCH=1 reorders GEMM-before-intra-wire so the inter-node rounds
+# proceed DURING the GEMM; BLOCKING_WIRE=1 turns the inter-node puts (compress
+# aggregates + relay phase-2) into visible blocking device spans on the
+# timeline. Instrumented configuration — timeline inspection ONLY, never
+# quote latency, never compare against clean cells. b32 high-skew = the
+# regime where lb_union wins at 4n16r (capsule 20260805-032012).
+platform: perlmutter
+nodes: 4
+variants:
+  - hier_compress_lb_union
+  - hier_compress_union
+families:
+  - "remotefrac:fracs=0.01,0.05,0.30,0.99"
+budgets_mib: [32]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [nsys]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env:
+  FLUX_A2AV_NVTX_PROXY: "1"
+  FLUX_A2AV_EARLY_LAUNCH: "1"
+  FLUX_A2AV_BLOCKING_WIRE: "1"
+notes: "Perlmutter 4n16r b32 high-skew nsys pair under EARLY_LAUNCH+BLOCKING_WIRE: GEMM vs blocking inter-node rounds overlap"
