@@ -315,8 +315,46 @@ def arrival_and_wavefront(geo, args):
 
 
 # ---------------------------------------------------------------------------
-# sidecar check
+# sidecar check / comparison
 # ---------------------------------------------------------------------------
+def compare_sidecar(geo, res, path):
+    """Per-stage: predicted signal vs measured arrival stamp vs tile fires.
+
+    arrival_gt is stamped only when a tile actually blocked on that slot
+    (backstop spin) — absence means the wavefront never waited there. Tile
+    fires are grouped by the record's seg_end attribution label.
+    """
+    import plot_a2av_trace as pat
+
+    iters = pat.read_sidecar(path)
+    clean = [it for it in iters if it.recs]
+    it = clean[-1]
+    arr = it.arrivals_rel()  # ns since t0, stamped slots only
+    fires = {}
+    spins = {}
+    for r in it.recs:
+        s = r[4]  # seg_end label
+        fires.setdefault(s, []).append(r[7])
+        spins.setdefault(s, []).append(r[7] - r[6])
+    print(
+        f"  == predicted vs measured (epoch i{it.epoch}, rank {it.rank}) =="
+        f"  [us since t0; arrival '-' = never blocked]"
+    )
+    print("  stage slot kind          pred_signal  meas_arrival  first_fire  max_spin  tiles")
+    for stg in res["stages"]:
+        s = stg["slot"]
+        a = arr.get(s)
+        f0 = min(fires[s]) / 1e3 if s in fires else None
+        sp = max(spins[s]) / 1e3 if s in spins else 0.0
+        print(
+            f"  {stg['stage']:5d} {s:4d} {stg['kind']:12s}"
+            f" {stg['signal_us']:11.1f}"
+            f"  {a / 1e3 if a is not None else float('nan'):12.1f}"
+            f"  {f0 if f0 is not None else float('nan'):10.1f}"
+            f"  {sp:8.1f}  {len(fires.get(s, [])):5d}"
+        )
+
+
 def check_sidecar(geo, path):
     """Compare predicted remote-slot rows[] against a tile-trace sidecar."""
     import plot_a2av_trace as pat
@@ -359,6 +397,7 @@ def main():
     ap.add_argument("--t-local-us", type=float, default=300.0, help="local-lane signal time")
     ap.add_argument("--json", help="write full per-rank JSON here")
     ap.add_argument("--check-sidecar", help="tile-trace .bin to validate rows[] against")
+    ap.add_argument("--compare-sidecar", help="tile-trace .bin: predicted vs measured table")
     ap.add_argument("--selftest-dealer", action="store_true", help="bit-compare dealer (torch)")
     args = ap.parse_args()
 
@@ -423,6 +462,8 @@ def main():
         if args.check_sidecar:
             print(f"  sidecar rows[] check vs {args.check_sidecar}:")
             check_sidecar(geo, args.check_sidecar)
+        if args.compare_sidecar:
+            compare_sidecar(geo, res, args.compare_sidecar)
 
     if args.json:
         with open(args.json, "w") as f:
