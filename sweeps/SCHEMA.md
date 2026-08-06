@@ -41,6 +41,42 @@ deleted once a capsule is committed — the manifest hashes record what existed.
 - `matrix_id` = `w{W}x{L}_{family}[-p]_b{budget}_k{topk}_id{instance}` — a pure
   function of the generator inputs; the FNV-1a seed derives from the same
   canonical string, so any platform regenerates a byte-identical file.
+  For the `trace` family the canonical params include an injected `poolsha`
+  (content fingerprint of the referenced trace pools' `pool.manifest.json`
+  shas), so identity is a pure function of the actual trace bytes: re-fetched
+  or changed traces mint a new matrix_id rather than silently regenerating a
+  different file under the old one.
+
+### The `trace` family (real MoE routing; gen_trace_routing.py)
+
+Batches sampled from real expert-selection traces (the "Patterns behind
+Chaos" dataset, arXiv 2510.05497; fetched by `fetch_traces.py`, analyzed
+offline by `trace_analysis.py`). Differences from the synthetic families:
+
+- **Two artifacts** per matrix_id under `matrices_root`: the `[W][W]` byte
+  matrix `.txt` (derived) and `.routing.txt` — the per-token expert ids that
+  produced it (line 1 `ntokens topk G`, then one token per line). The bench
+  consumes the routing via `--routing_file`, which bypasses the synthetic
+  dealer. This matters because the dealer is the MAXIMUM-dedup assignment:
+  feeding trace-derived bytes through it overstates every dedup/union win and
+  the closed-form `dedup_round_stats` law is INVALID for real routing. A
+  spec arm with `dealer=1` in the family params deliberately runs the same
+  bytes through the dealer (identical matrix_id, distinct cell) as the
+  token-overlap counterfactual; `cells.csv` records `routing_mode`
+  (`real`/`dealer`), `routing_path`, `routing_sha256` (empty for synthetic
+  families).
+- **Nonzero diagonal**: real tokens route to experts owned by their home rank.
+  Row sums still satisfy the budget invariant (`budget_mib*2^20*topk`), but
+  wire bytes per row = row_sum − diag, so trace arms move fewer wire bytes
+  than a synthetic family at the same budget. Compare lb vs union (or any
+  variants) on the SAME trace matrix; never quote trace-vs-synthetic latency
+  as a family effect.
+- Params: `pools` (`+`-joined `bench/subject` list; ORDER is semantic for
+  `sem=pernode` — node i samples pools[i]; canonical-sorted for `mixed`),
+  `layer` (int), `sem` (`homog`/`pernode`/`mixed`), `pool`
+  (`decode`/`prefill`/`all`), `model`. Sampling is with replacement (the pool
+  is a distribution, not a corpus); `sample_multiplicity` in the meta records
+  the draws/pool-size ratio. Requires the platform yaml key `traces_root`.
 
 ## metrics.csv
 

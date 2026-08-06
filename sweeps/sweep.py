@@ -150,6 +150,9 @@ CELLS_COLUMNS = [
     "matrix_sha256",
     "family",
     "family_params",
+    "routing_mode",
+    "routing_path",
+    "routing_sha256",
     "budget_mib",
     "topk",
     "G",
@@ -227,7 +230,9 @@ def dump_yaml(obj, path):
 
 def load_platform(name, dry=False):
     plat = load_yaml(os.path.join(REPO_ROOT, "sweeps", "platforms", f"{name}.yaml"))
-    for key in ("data_root", "matrices_root"):
+    for key in ("data_root", "matrices_root", "traces_root"):
+        if key not in plat:
+            continue  # traces_root is optional (only trace-family cells need it)
         plat[key] = os.path.expandvars(plat[key])
         if "$" in plat[key]:
             if not dry:
@@ -289,10 +294,21 @@ def expand_cells(spec, plat):
     for mode in sorted(spec["modes"], key=lambda m: MODE_ORDER[m]):
         for fam_str in spec["families"]:
             fam, fparams = parse_family(fam_str)
+            # trace family: real per-token routing by default; dealer=1 keeps
+            # the SAME matrix_id/bytes but feeds them through the synthetic
+            # max-dedup dealer (paired counterfactual isolating token overlap)
+            routing_mode = ""
+            if fam == "trace":
+                routing_mode = "dealer" if fparams.get("dealer") else "real"
             for budget in spec["budgets_mib"]:
                 for vname in spec["variants"]:
                     if vname not in VARIANTS:
                         raise SystemExit(f"unknown variant {vname}; see sweeps/variants.py")
+                    if routing_mode == "real" and VARIANTS[vname].get("driver") == "fast":
+                        raise SystemExit(
+                            f"variant {vname} (fast driver) cannot consume a routing"
+                            f" file; use the dealer=1 arm for trace matrices"
+                        )
                     if VARIANTS[vname].get("driver", "flux") == "fast":
                         if spec["nodes"] < 2:
                             raise SystemExit(
@@ -314,6 +330,7 @@ def expand_cells(spec, plat):
                             "mode": mode,
                             "family": fam,
                             "family_params": fparams,
+                            "routing_mode": routing_mode,
                             "budget_mib": budget,
                             "world_size": world,
                         }
@@ -425,7 +442,7 @@ def build_cell_env(spec, plat, cell, staging, matrix_path):
     return env
 
 
-def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging):
+def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=None):
     v = VARIANTS[cell["variant"]]
     profiling = cell["mode"] in ("torchprof", "nsys")
     iters = spec["profile_iters"] if profiling else spec["iters"]
@@ -498,6 +515,8 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging):
         "--sm_margin",
         str(sm_margin),
     ]
+    if routing_path:
+        test_args += ["--routing_file", routing_path]
     if spec["skip_correctness"]:
         test_args.append("--skip_correctness")
     if cell["mode"] == "torchprof":
@@ -533,7 +552,15 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging):
 
 def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
     staging = os.path.join(run_dir_staging, "cells", cell["cell_id"])
-    cmd, sm_margin, iters, warmup = build_cell_cmd(spec, plat, cell, jobid, matrix["path"], staging)
+    cmd, sm_margin, iters, warmup = build_cell_cmd(
+        spec,
+        plat,
+        cell,
+        jobid,
+        matrix["path"],
+        staging,
+        routing_path=matrix.get("routing") if cell.get("routing_mode") == "real" else None,
+    )
     env_delta = build_cell_env(spec, plat, cell, staging, matrix["path"])
     if dry:
         print(f"\n[{cell['cell_id']}]")
@@ -725,6 +752,9 @@ def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, s
             matrix_sha256=m["sha"],
             family=cell["family"],
             family_params=json.dumps(cell["family_params"], sort_keys=True),
+            routing_mode=cell.get("routing_mode", ""),
+            routing_path=m.get("routing", ""),
+            routing_sha256=m.get("routing_sha", ""),
             budget_mib=cell["budget_mib"],
             topk=spec["topk"],
             G=spec["G"],
@@ -896,9 +926,12 @@ def cmd_run(spec, jobid_arg, dry):
     matrices = {}
     if dry and "$" in plat["matrices_root"]:
         for cell in cells:
+            # dealer is an arm marker, not a matrix param (same bytes both arms);
+            # trace ids are approximate here (poolsha needs the trace files)
+            mparams = {k: v for k, v in cell["family_params"].items() if k != "dealer"}
             mid = gen_matrix.matrix_id_of(
                 cell["family"],
-                dict(gen_matrix.FAMILY_DEFAULT_PARAMS[cell["family"]], **cell["family_params"]),
+                dict(gen_matrix.FAMILY_DEFAULT_PARAMS[cell["family"]], **mparams),
                 cell["world_size"],
                 plat["ranks_per_node"],
                 cell["budget_mib"],
@@ -914,9 +947,10 @@ def cmd_run(spec, jobid_arg, dry):
     else:
         os.makedirs(plat["matrices_root"], exist_ok=True)
         for cell in cells:
+            mparams = {k: v for k, v in cell["family_params"].items() if k != "dealer"}
             mid, path, sha = gen_matrix.ensure_matrix(
                 cell["family"],
-                cell["family_params"],
+                mparams,
                 cell["world_size"],
                 plat["ranks_per_node"],
                 cell["budget_mib"],
@@ -925,8 +959,14 @@ def cmd_run(spec, jobid_arg, dry):
                 spec["matrix_instance"],
                 plat["matrices_root"],
                 nexperts=spec["G"],
+                traces_root=plat.get("traces_root"),
             )
             matrices[cell["cell_id"]] = {"id": mid, "path": path, "sha": sha}
+            if cell.get("routing_mode") == "real":
+                rpath = path[: -len(".txt")] + ".routing.txt"
+                with open(os.path.join(plat["matrices_root"], f"{mid}.meta.json")) as f:
+                    rsha = json.load(f)["routing_sha256"]
+                matrices[cell["cell_id"]].update({"routing": rpath, "routing_sha": rsha})
 
     needed = sorted({k for v in spec["variants"] for k in VARIANTS[v]["requires"]})
     try:

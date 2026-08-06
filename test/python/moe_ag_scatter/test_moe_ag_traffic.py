@@ -55,6 +55,8 @@ from flux.testing import (
     MoeAgScatterWithTorch,
     MoeMlp1Ctx,
     gen_moe_gating_args,
+    choosed_experts_to_matrix_chunks,
+    load_routing_file,
     parse_traffic_matrix,
     traffic_matrix_to_choosed_experts,
 )
@@ -335,6 +337,15 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--traffic_matrix", type=str, required=True, help="traffic matrix file")
     parser.add_argument(
+        "--routing_file",
+        type=str,
+        default=None,
+        help="per-token expert-id sidecar (<matrix>.routing.txt, trace family):"
+        " use the REAL token-overlap structure instead of synthesizing the"
+        " max-dedup dealer assignment from the byte matrix; must realize"
+        " exactly --traffic_matrix",
+    )
+    parser.add_argument(
         "--chunk_bytes",
         type=int,
         default=8192,
@@ -432,7 +443,24 @@ if __name__ == "__main__":
     assert matrix.shape[0] == DIST_ENV.WORLD_SIZE, (
         f"traffic matrix is for {matrix.shape[0]} ranks but world size is" f" {DIST_ENV.WORLD_SIZE}"
     )
-    choosed_experts = traffic_matrix_to_choosed_experts(matrix, args.G, args.topk, args.chunk_bytes)
+    if args.routing_file:
+        choosed_experts = load_routing_file(args.routing_file, args.G, args.topk)
+        assert choosed_experts.shape[0] % DIST_ENV.WORLD_SIZE == 0
+        got = choosed_experts_to_matrix_chunks(
+            choosed_experts, DIST_ENV.WORLD_SIZE, args.G // DIST_ENV.WORLD_SIZE
+        )
+        assert torch.equal(got * args.chunk_bytes, matrix), (
+            f"routing file {args.routing_file} does not realize --traffic_matrix"
+            f" {args.traffic_matrix}"
+        )
+        if torch.cuda.is_available():
+            choosed_experts = choosed_experts.cuda()
+        if TP_GROUP.rank() == 0:
+            print(f"routing: REAL trace file {args.routing_file}")
+    else:
+        choosed_experts = traffic_matrix_to_choosed_experts(
+            matrix, args.G, args.topk, args.chunk_bytes
+        )
     ntokens = choosed_experts.shape[0]
     gating_args = gen_moe_gating_args(args.G, args.topk, ntokens, choosed_experts=choosed_experts)
 

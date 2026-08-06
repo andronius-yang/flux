@@ -9,6 +9,8 @@ fabric: cxi
 # other users of the same $PSCRATCH (first exercised run: see git log).
 data_root: ${PSCRATCH}/workspace/andrewy/sweep_data
 matrices_root: ${PSCRATCH}/workspace/andrewy/a2av_test_matrices/generated
+# real MoE routing traces (fetch_traces.py); only needed for the trace family
+traces_root: ${PSCRATCH}/workspace/andrewy/moe_traces
 srun_extra: []
 env: {}
 sym_size_max_g: 16

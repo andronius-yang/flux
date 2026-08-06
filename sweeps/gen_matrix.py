@@ -34,6 +34,12 @@ row sums, per-(row,dst) routing feasibility for distinct-topk experts):
                the node count; needs >= 3 nodes (below 3 the per-node wire
                stagger this family exists for cannot be expressed — see the
                dealer saturation law U = T*min(1, f*topk)).
+  trace      — batches sampled from REAL MoE routing traces (Patterns behind
+               Chaos dataset); implemented in gen_trace_routing.py. The one
+               family with a NONZERO diagonal (real self-routed tokens) and a
+               second artifact, <matrix_id>.routing.txt, holding the per-token
+               expert ids — the bench must consume it via --routing_file or
+               the dealer's max-dedup assignment misrepresents the trace.
 """
 
 import argparse
@@ -56,6 +62,9 @@ FAMILY_DEFAULT_PARAMS = {
     "remotefrac": {"fracs": REMOTEFRAC_DEFAULT},
     # two hot exporter nodes, two thin — the NN=4 starvation-campaign arm 1
     "fanoutskew": {"nodefracs": (0.9, 0.1, 0.9, 0.1)},
+    # real-trace routing (gen_trace_routing.py); `pools` and `layer` are
+    # required, `poolsha` is injected from the trace content fingerprint
+    "trace": {"model": "Qwen3-235B", "pool": "decode", "sem": "homog"},
 }
 
 
@@ -169,6 +178,8 @@ def generate(family, params, W, L, budget_mib, topk, chunk_bytes, matrix_instanc
     """Return (matrix_id, chunks) where chunks is a [W][W] list of chunk counts."""
     import random
 
+    if family == "trace":
+        raise ValueError("the trace family is generated via gen_trace_routing.ensure_trace_matrix")
     assert W % L == 0, f"W ({W}) must be a multiple of ranks_per_node ({L})"
     nn = W // L
     if family in ("nodeskew", "remotefrac"):
@@ -242,6 +253,16 @@ def dedup_round_stats(chunks, L, tokens_per_rank):
     nn = W // L
     T = tokens_per_rank
     U = [[min(sum(chunks[s][m * L + j] for j in range(L)), T) for m in range(nn)] for s in range(W)]
+    return dedup_stats_from_U(chunks, U, L, tokens_per_rank)
+
+
+def dedup_stats_from_U(chunks, U, L, tokens_per_rank):
+    """Round/pair/headroom statistics from an explicit U ([W][nn] unique-token
+    counts). dedup_round_stats feeds it the dealer closed form; the trace
+    family (gen_trace_routing.py) feeds it the U measured from real routing —
+    the closed form does NOT hold there."""
+    W = len(chunks)
+    nn = W // L
     pair = {}
     for sn in range(nn):
         for dn_ in range(nn):
@@ -325,10 +346,26 @@ def ensure_matrix(
     matrix_instance,
     out_root,
     nexperts=None,
+    traces_root=None,
 ):
     """Generate the matrix if missing; verify sha if present. Returns
     (matrix_id, path, sha256)."""
     params = dict(FAMILY_DEFAULT_PARAMS[family], **(params or {}))
+    if family == "trace":
+        import gen_trace_routing
+
+        return gen_trace_routing.ensure_trace_matrix(
+            params,
+            W,
+            L,
+            budget_mib,
+            topk,
+            chunk_bytes,
+            matrix_instance,
+            out_root,
+            traces_root=traces_root,
+            nexperts=nexperts,
+        )[:3]
     mid = matrix_id_of(family, params, W, L, budget_mib, topk, chunk_bytes, matrix_instance)
     path = os.path.join(out_root, f"{mid}.txt")
     meta_path = os.path.join(out_root, f"{mid}.meta.json")
@@ -376,8 +413,13 @@ def parse_params(kvs):
         k, _, v = kv.partition("=")
         if k in ("fracs", "nodefracs"):
             params[k] = tuple(float(x) for x in v.split(","))
+        elif k == "layer":
+            params[k] = int(v)
         else:
-            params[k] = float(v)
+            try:
+                params[k] = float(v)
+            except ValueError:
+                params[k] = v  # string param (trace family: pools/sem/pool/model)
     return params
 
 
@@ -394,9 +436,40 @@ def main():
     ap.add_argument("--out-root", default=".", help="directory for <matrix_id>.txt + meta")
     ap.add_argument("--param", action="append", help="family param override, e.g. frac=0.5")
     ap.add_argument("--print-only", action="store_true", help="print stats, write nothing")
+    ap.add_argument(
+        "--traces-root",
+        default=os.path.expandvars("${PSCRATCH}/workspace/andrewy/moe_traces"),
+        help="root of fetched trace pools (trace family only)",
+    )
     args = ap.parse_args()
 
     params = dict(FAMILY_DEFAULT_PARAMS[args.family], **parse_params(args.param))
+    if args.print_only and args.family == "trace":
+        import gen_trace_routing
+
+        mid, params, specs, pools_rows, routing, chunks, tokens_per_rank = (
+            gen_trace_routing.generate_trace(
+                params,
+                args.W,
+                args.ranks_per_node,
+                args.budget_mib,
+                args.topk,
+                args.chunk_bytes,
+                args.id,
+                args.traces_root,
+                args.G,
+            )
+        )
+        print(f"matrix_id: {mid}")
+        print(
+            f"tokens_per_rank (pre-topk): {tokens_per_rank},"
+            f" row_chunks: {tokens_per_rank * args.topk}"
+        )
+        print(f"pools: {['/'.join(s) for s in specs]} rows {[len(p) for p in pools_rows]}")
+        gen_trace_routing.print_stats(
+            routing, chunks, args.W, args.ranks_per_node, tokens_per_rank, args.G, args.topk
+        )
+        return
     if args.print_only:
         mid, chunks, tokens_per_rank = generate(
             args.family,
@@ -447,6 +520,7 @@ def main():
         args.id,
         args.out_root,
         nexperts=args.G,
+        traces_root=args.traces_root,
     )
     print(f"{mid}\n{path}\nsha256 {sha}")
 

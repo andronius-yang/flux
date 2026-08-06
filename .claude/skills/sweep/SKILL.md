@@ -42,7 +42,12 @@ root (leave them).
   that out in small-budget comparisons.
 - `--families` — traffic distribution: `uniform`, `hotcol[:frac=..]`,
   `nodeskew[:frac=..]`, `remotefrac` (per-rank inter-node skew, the relay's
-  target case). Distribution identity = matrix_id (deterministic; generated
+  target case), `fanoutskew[:nodefracs=..]` (per-NODE exporter skew, the
+  starvation-campaign family), `trace` (REAL Qwen3-235B routing sampled from
+  the Patterns-behind-Chaos pools; needs `pools=...;layer=..;sem=..` params,
+  fetched pools under the platform `traces_root`, and emits a
+  `.routing.txt` sidecar the bench consumes via `--routing_file` — see
+  SCHEMA.md). Distribution identity = matrix_id (deterministic; generated
   on demand).
 - `--budgets-mib` — pre-topk budgets, typically `2,4,8,16,32,64`.
 - `--topk`, `--G` — routing shape (G % world_size == 0; the generator
