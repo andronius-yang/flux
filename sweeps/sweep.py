@@ -614,11 +614,14 @@ def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
             with open(os.path.join(staging, "srun.log"), "a") as f:
                 f.write(f"\n+ killed by runner: {status}\n")
     if cell["mode"] == "torchprof":
-        # flux.group_profile writes chrome traces under cwd prof/
+        # flux.group_profile writes chrome traces under cwd prof/; move can
+        # cross filesystems (repo on /global home, staging on $PSCRATCH), so
+        # shutil.move, not os.renames
         for d in glob.glob(os.path.join(REPO_ROOT, "prof", "moe_ag_scatter_traffic_*")):
             dest = os.path.join(staging, "prof", os.path.basename(d))
             if not os.path.exists(dest):
-                os.renames(d, dest)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.move(d, dest)
     print(f"[{cell['cell_id']}] {status} ({time.time() - start:.0f}s)")
     return dict(
         cell,
