@@ -64,6 +64,21 @@ VARIANTS = {
         env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_LB_UNION"],
     ),
+    # TEMPORARY A/B arm (2026-08-07, NR-06 re-check on L=4/CXI/realistic
+    # traces): lb_union with EAGER per-round gateway forwards — each round's
+    # node_sig wait + window puts on its own stream instead of the shipped
+    # ascending-round single-stream order, so a late round never head-of-line
+    # blocks a later one. Canonicalize (make default or delete knob + this
+    # entry) once the eager-vs-ring capsule verdict is in the ledger.
+    "hier_compress_lb_union_eager": dict(
+        comm_pattern="a2av_hier_compress",
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FANOUT": "1",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8",
+        },
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_FANOUT"],
+    ),
     # union broadcast + source-side pack overlap (dedicated stream,
     # double-buffered send); MAX_CONNECTIONS=2 lets the pack stream actually
     # run concurrently with compute.

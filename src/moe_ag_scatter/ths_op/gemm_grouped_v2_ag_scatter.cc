@@ -340,6 +340,17 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // CUDA_DEVICE_MAX_CONNECTIONS=1 that kernel serializes ahead of the GEMM;
   // for overlap visualization raise the env (launch.sh default is :-1).
   const bool blocking_wire_;
+  // FLUX_A2AV_FANOUT=1 (lb_union Tier B only; NR-06 re-check 2026-08-07):
+  // eager per-round gateway forwards — round dn's node_sig wait + window puts
+  // enqueue on fanout_streams_[dn-1] instead of the single tail stream, so a
+  // late round never head-of-line blocks a later round whose relay chunk
+  // already landed. Rounds are re-joined into the tail stream via
+  // fanout_events_ right after the loop, so the existing all_gather_event /
+  // iteration-barrier structure covers the eager arm unchanged. Knob off
+  // (default) keeps the shipped ring order byte-identical.
+  const bool fanout_eager_;
+  std::vector<c10::cuda::CUDAStream> fanout_streams_;  // NN-1, knob on && nnodes > 1
+  std::vector<cudaEvent_t> fanout_events_;             // NN-1, DisableTiming
   uint64_t run_id_ = 0;              // epoch value carried by the NVSHMEM signals
   int64_t max_recv_ntokens_ = 0;     // rows of the symmetric recv buffer
   int64_t max_stage_ntokens_ = 0;    // rows of the symmetric gateway staging buffer
@@ -603,6 +614,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         pack_overlap_(get_int_from_env("FLUX_A2AV_PACK_OVERLAP", 0) != 0),
         early_launch_(get_int_from_env("FLUX_A2AV_EARLY_LAUNCH", 0) != 0 && a2av_dispatch),
         blocking_wire_(get_int_from_env("FLUX_A2AV_BLOCKING_WIRE", 0) != 0),
+        fanout_eager_(get_int_from_env("FLUX_A2AV_FANOUT", 0) != 0),
         // ring_mode barriers are CUDA-IPC based and intra-node only; multi-node
         // must take the NVSHMEM barrier (ring_mode = false)
         group_barrier(this->tp_group, nnodes == 1 && this->tp_group->get_size() > 8) {
@@ -632,6 +644,16 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           << "FLUX_A2AV_LB_UNION and FLUX_A2AV_UNION_BCAST are mutually exclusive";
       FLUX_CHECK(!(lb_union && this->pack_overlap_))
           << "FLUX_A2AV_LB_UNION + FLUX_A2AV_PACK_OVERLAP is unsupported";
+      FLUX_CHECK(!this->fanout_eager_ || lb_union)
+          << "FLUX_A2AV_FANOUT requires FLUX_A2AV_LB_UNION (eager Tier B gateway forward)";
+      if (this->fanout_eager_ && nnodes > 1) {
+        for (int i = 0; i < nnodes - 1; i++) {
+          this->fanout_streams_.push_back(create_cp_stream());
+          cudaEvent_t ev = nullptr;
+          CUDA_CHECK(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming));
+          this->fanout_events_.push_back(ev);
+        }
+      }
       FLUX_CHECK(!(this->early_launch_ && this->pack_overlap_))
           << "FLUX_A2AV_EARLY_LAUNCH + FLUX_A2AV_PACK_OVERLAP is untested; unset one";
       if (this->early_launch_ && a2av_hier_compress &&
@@ -875,6 +897,12 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     CUDA_CHECK(cudaEventDestroy(this->all_gather_event));
     CUDA_CHECK(cudaEventDestroy(this->fetch_remote_event));
     CUDA_CHECK(cudaEventDestroy(this->ready_event));
+    for (auto &ev : this->fanout_events_) {
+      CUDA_CHECK(cudaEventDestroy(ev));
+    }
+    for (auto &s : this->fanout_streams_) {
+      CUDA_CHECK(cudaStreamDestroy(s));
+    }
     CUDA_CHECK(cudaStreamDestroy(this->cp_stream));
     CUDA_CHECK(cudaStreamDestroy(this->cp_stream_inter_node));
     CUDA_CHECK(cudaStreamDestroy(this->cp_stream_signal));
@@ -2518,7 +2546,20 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             // must be pre-launch-enqueued (channel wait-order-inversion rule).
             for (int dn = 1; dn < NN; dn++) {
               int ns = (my_node + dn) % NN;
-              t_wait(node_sig + ns);  // one writer: relay (ns, my_lr)
+              // FLUX_A2AV_FANOUT=1 (eager, NR-06 re-check): this round's wait
+              // + puts enqueue on their own stream, so a late round's
+              // node_sig wait (and its local-completion puts) never
+              // head-of-line block a later round whose relay chunk already
+              // landed. Knob off: rs == tail_stream, byte-identical to the
+              // shipped ring order.
+              const cudaStream_t rs = this->fanout_eager_
+                                          ? (cudaStream_t)this->fanout_streams_[dn - 1]
+                                          : tail_stream;
+              CU_CHECK(CUStreamWaitValue64(
+                  rs,
+                  reinterpret_cast<CUdeviceptr>(node_sig + ns),
+                  this->run_id_,
+                  CU_STREAM_WAIT_VALUE_GEQ));  // one writer: relay (ns, my_lr)
               const int64_t win_a = chunk_bound(ns, my_node, my_lr);
               const int64_t win_b = chunk_bound(ns, my_node, my_lr + 1);
               char *wstage = stage_base + stage_off_chunk(my_node, my_lr, ns) * row_bytes;
@@ -2533,10 +2574,30 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                 int d = dist_env.local_rank_to_global_rank(dlg, my_node);
                 char *dst = recv_base + (recv_off_of_u(ns * L, d) + win_a) * row_bytes;
                 if (win_b <= win_a) {
-                  t_signal(wslot, d);
+                  nvshmemx_signal_op_on_stream(wslot, this->run_id_, NVSHMEM_SIGNAL_SET, d, rs);
                   continue;
                 }
-                t_blocking_put(dst, wstage, (win_b - win_a) * row_bytes, wslot, d);
+                nvshmemx_putmem_signal_on_stream(
+                    dst,
+                    wstage,
+                    (win_b - win_a) * row_bytes,
+                    wslot,
+                    this->run_id_,
+                    NVSHMEM_SIGNAL_SET,
+                    d,
+                    rs);
+              }
+              if (this->fanout_eager_) {
+                CUDA_CHECK(cudaEventRecord(this->fanout_events_[dn - 1], rs));
+              }
+            }
+            if (this->fanout_eager_) {
+              // re-join the fan-out into the tail stream so all_gather_event
+              // (and the pre-barrier wait at forward_impl) covers the eager
+              // rounds exactly as it covers the ring order — the staging /
+              // recv reuse invariant is unchanged
+              for (int dn = 1; dn < NN; dn++) {
+                CUDA_CHECK(cudaStreamWaitEvent(tail_stream, this->fanout_events_[dn - 1]));
               }
             }
           } else {

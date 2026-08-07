@@ -1,0 +1,32 @@
+# Eager-forward A/B E1 (NR-06 re-check, 2026-08-07): lb_union ring vs eager
+# per-round gateway forwards vs union (same-build reference), clean isolated
+# latency on the two starving realistic-trace arms. EARLY_LAUNCH campaign
+# config, b32 k8, 4n16r. New build (FLUX_A2AV_FANOUT knob) — pairs only
+# within this capsule.
+platform: perlmutter
+nodes: 4
+variants:
+  - hier_compress_lb_union
+  - hier_compress_lb_union_eager
+  - hier_compress_union
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+  - "trace:pools=mmlu_ZH_CN/high_school_world_history;layer=92;sem=homog"
+budgets_mib: [32]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env:
+  FLUX_A2AV_EARLY_LAUNCH: "1"
+notes: "eager-forward A/B E1: lb_union ring vs eager vs union, trace pernode+homogZH b32 k8, isolated latency, EARLY_LAUNCH"

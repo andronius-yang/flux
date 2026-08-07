@@ -174,6 +174,21 @@ parallelism beats queue ordering.
 
 **Confidence: measured.** **Cost to re-test:** 9 cells (the original A/B/C spec).
 
+**Re-check 2026-08-07 (L=4/CXI/realistic traces): the ring verdict does NOT transfer
+to the starving regime.** After the realistic-trace campaign showed lb_union deficits
+0.41–0.80 with windows parked behind the ascending-round forward order, the eager arm
+was reimplemented as `FLUX_A2AV_FANOUT=1` (per-ROUND fan-out streams for the Tier-B
+gateway forward + event re-join into the tail stream; variant
+`hier_compress_lb_union_eager`). Capsules `20260807-055012_perlmutter_d5f3160a` (iso)
++ `20260807-055227_perlmutter_b9a6fc40` (nsys), b32 k8 EARLY_LAUNCH, Qwen3 trace arms:
+isolated latency ring 17.26 / eager 16.57 / union 16.55 ms (pernode — eager recovers
+~97% of the gap) and 29.00 / 28.61 / 28.22 (homogZH — ~50%). Correctness clean both
+knob states. Tile-trace deficits were INCONCLUSIVE in that capture: run variance on
+unchanged code paths (union worst-rank 0.238–0.466 vs 0.079–0.094 in capsule
+1120f2ea, different build/nodes) exceeded the variant deltas — do not quote E2
+deficits. Eager is a canonicalization candidate (make default for lb_union or fold
+into a redesign); the original b2 −69 µs ring win was a non-starving-regime result.
+
 ---
 
 ## NR-07 — The tile claimer is not worth it for lb_union
