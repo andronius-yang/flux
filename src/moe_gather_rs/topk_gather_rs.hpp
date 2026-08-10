@@ -71,5 +71,10 @@ void a2av_combine_pack(
 
 void a2av_combine_reduce(
     A2AVCombineReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream);
+
+// FLUX_A2AV_RS_EAGER=1: one persistent arrival-order reduce kernel per forward
+// replacing the per-split host wait-all-W gates (see A2AVCombineEagerReduceArguments)
+void a2av_combine_eager_reduce(
+    A2AVCombineEagerReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream);
 }  // namespace flux
 }  // namespace bytedance

@@ -256,4 +256,31 @@ struct A2AVCombineReduceArguments {
   int threadblock_count;
 };
 
+constexpr int kA2AVMaxWorld = 64;
+
+// Eager (arrival-order) destination reduce: ONE persistent kernel per forward,
+// launched with no front-end waits. Per output element it keeps a remaining-mask
+// over the token's topk recv rows and folds in any row whose source lane's
+// per-split recv signal has already fired (64-bit acquire poll), spinning only
+// when no remaining lane has arrived — the minimal real dependency, replacing
+// the host-side wait-all-W gate per split. The source lane of a recv row is
+// recovered by binary search over recv_cum (per-source rows are contiguous in
+// the recv panel, and split slices columns, so the prefix is split-invariant).
+struct A2AVCombineEagerReduceArguments {
+  void const *recv_panel;        // [n_split, panel_rows, n_per] symmetric
+  int32_t const *reduce_index;   // [ntokens_local * topk]: local copy -> recv-panel row
+  void *output;                  // [ntokens_local, n]
+  uint64_t const *recv_signals;  // [world_size * n_split] epoch signals, never reset
+  uint64_t run_id;               // this epoch's expected signal value (GEQ)
+  int64_t recv_cum[kA2AVMaxWorld + 1];  // recv-row prefix by source rank; [W] = cpr
+  int64_t panel_rows;            // recv panel row capacity per split
+  int64_t ntokens_local;
+  int world_size;
+  int n;
+  int n_per;
+  int n_split;
+  int topk;
+  int threadblock_count;
+};
+
 }  // namespace bytedance::flux

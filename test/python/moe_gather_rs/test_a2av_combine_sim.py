@@ -159,6 +159,169 @@ def simulate(W, L, G, topk, tokens_per_rank, seed, skew=False):
         want = torch.arange(d * cpr, (d + 1) * cpr, dtype=torch.long)
         assert torch.equal(got, want), f"rank {d}: reduce index mismatch"
 
+    # eager-reduce lane contract: the kernel maps each recv row to its source
+    # rank by binary search over recv_cum (prefix sums of C[:, d]) and polls
+    # that lane's per-split signal. The lane must equal the true owner rank of
+    # the copy, and the per-source ranges must partition each token's rows —
+    # this is what makes arrival-order accumulation sum each copy exactly once.
+    for d in range(W):
+        _, reduce_index, _, _ = build_indices(routing_idx, splits, d, W)
+        recv_cum = C[:, d].cumsum(0)
+        lanes = torch.searchsorted(recv_cum, reduce_index, right=True)
+        local_copy = torch.arange(cpr, dtype=torch.long)
+        t_global = d * tokens_per_rank + local_copy // topk
+        owners = choosed[t_global, local_copy % topk].long() // E_loc
+        assert torch.equal(lanes, owners), f"rank {d}: eager lane != copy owner"
+
+
+def simulate_compress(W, L, G, topk, tokens_per_rank, seed, skew=False):
+    """Compress (dedup) transport: one partial per (token, source node) crosses
+    the wire. Source rank (n, lr) owns all wire rows destined to rank (tn, lr)
+    (same-lr end-to-end); the source node's copies converge on it (conv panel),
+    are merged per token (pre-reduce), and land in the destination's recv panel
+    at offsets given by the compress chunk matrix C'. Payloads are SETS of
+    global copy indices, so the final per-token union check fails on any
+    double-counted or missing copy regardless of accumulation order.
+    """
+    torch.manual_seed(seed)
+    NN = W // L
+    E_loc = G // W
+    ntokens = tokens_per_rank * W
+    cpr = tokens_per_rank * topk
+    pool = G // 2 if skew else G
+    choosed = torch.stack([torch.randperm(pool)[:topk] for _ in range(ntokens)])
+    splits = torch.bincount(choosed.flatten(), minlength=G).long()
+    routing_idx = stable_scatter_index(choosed, G)
+    cnt = (
+        torch.bincount(
+            (torch.arange(ntokens, dtype=torch.long) // tokens_per_rank).repeat_interleave(topk)
+            * G
+            + choosed.flatten().long(),
+            minlength=W * G,
+        )
+        .view(W, G)
+        .long()
+    )
+    C = torch.stack([cnt[:, s * E_loc : (s + 1) * E_loc].sum(1) for s in range(W)])
+
+    # dedup counts, transposed U: Ucomb[d][n] = distinct tokens homed at rank d
+    # with >= 1 copy owned on node n (the layer0 U-matrix recipe, consumed
+    # transposed). This is the compress wire row count node n -> rank d.
+    owner = choosed.long() // E_loc  # [ntokens, topk] owner rank per copy
+    on_node = torch.zeros(ntokens, NN, dtype=torch.bool)
+    on_node.scatter_(1, owner // L, True)
+    Ucomb = (
+        on_node.view(W, tokens_per_rank, NN).sum(1).long().t().contiguous()
+    )  # [NN, W] -> transpose to index [d][n]
+    Ucomb = Ucomb.t()  # [W(d), NN(n)]
+
+    # compress chunk matrix C'[s][d]: own-node lanes keep per-rank chunks; the
+    # remote lane materializes only at the same-lr source rank as Ucomb[d][n]
+    Cp = torch.zeros(W, W, dtype=torch.long)
+    for s in range(W):
+        for d in range(W):
+            if s // L == d // L:
+                Cp[s, d] = C[s, d]
+            elif s % L == d % L:
+                Cp[s, d] = Ucomb[d, s // L]
+
+    def send_off(s, d):
+        return int(C[s, :d].sum())
+
+    def recv_off_cp(s, d):
+        return int(Cp[:s, d].sum())
+
+    # payload: per gemm row, the singleton set of its global copy index
+    a_row_to_copy = torch.empty(ntokens * topk, dtype=torch.long).scatter_(
+        0, routing_idx, torch.arange(ntokens * topk, dtype=torch.long)
+    )
+    send_panels = []
+    for s in range(W):
+        pack_index, _, ep_m_start, m_this = build_indices(routing_idx, splits, s, W)
+        send_panels.append(a_row_to_copy[ep_m_start : ep_m_start + m_this][pack_index])
+
+    recv = [[None] * (int(Cp[:, d].sum())) for d in range(W)]
+
+    def deliver(d, off, rows_payload):
+        for i, p in enumerate(rows_payload):
+            assert recv[d][off + i] is None, f"rank {d}: recv row {off+i} written twice"
+            recv[d][off + i] = p
+
+    for s in range(W):
+        sn = s // L
+        # own node: direct per-rank puts, no dedup (NVLink; zero wire savings)
+        for d in range(sn * L, (sn + 1) * L):
+            rows = [frozenset([int(c)]) for c in send_panels[s][send_off(s, d) : send_off(s, d) + int(C[s, d])]]
+            deliver(d, recv_off_cp(s, d), rows)
+    # remote nodes: convergence -> pre-reduce at (n, lr(d)) -> one put per (n, d)
+    for n in range(NN):
+        for tn in range(NN):
+            if tn == n:
+                continue
+            for dl in range(L):
+                d = tn * L + dl
+                gw = n * L + dl  # source-side wire owner, same-lr as d
+                # conv panel at gw for dest d: peer segments ls ascending, each
+                # peer's rows in its send-panel (s -> d) order
+                conv = []
+                for ls in range(L):
+                    s = n * L + ls
+                    conv.extend(
+                        int(c)
+                        for c in send_panels[s][send_off(s, d) : send_off(s, d) + int(C[s, d])]
+                    )
+                # pre-reduce: merge copies per token, wire rows token-ascending
+                # by home-local index (global copy index // topk orders tokens)
+                by_token = {}
+                for c in conv:
+                    by_token.setdefault(c // topk, set()).add(c)
+                tokens_sorted = sorted(by_token)
+                assert len(tokens_sorted) == int(Ucomb[d, n]), (
+                    f"wire rows {len(tokens_sorted)} != Ucomb[{d}][{n}] {int(Ucomb[d, n])}"
+                )
+                wire_rows = [frozenset(by_token[t]) for t in tokens_sorted]
+                deliver(d, recv_off_cp(gw, d), wire_rows)
+
+    # destination CSR (red_ptr/red_row), built INDEPENDENTLY via the transposed
+    # one-cumsum identity: remote merged row position = exclusive count of
+    # earlier home tokens with >= 1 copy on that node
+    for d in range(W):
+        dn, dl = d // L, d % L
+        assert all(r is not None for r in recv[d]), f"rank {d}: recv gap (compress)"
+        _, reduce_index, _, _ = build_indices(routing_idx, splits, d, W)
+        tok_rows = [[] for _ in range(tokens_per_rank)]
+        for i in range(cpr):  # own-node copies via today's reduce_index lanes
+            row = int(reduce_index[i])
+            # lane under C (uncompressed): recover, keep only own-node lanes
+            lane = int(torch.searchsorted(C[:, d].cumsum(0), torch.tensor(row), right=True))
+            if lane // L != dn:
+                continue
+            # own-node rows sit at the same intra-lane position under C'
+            row_cp = recv_off_cp(lane, d) + (row - int(C[:lane, d].sum()))
+            tok_rows[i // topk].append(row_cp)
+        node_flags = on_node[d * tokens_per_rank : (d + 1) * tokens_per_rank]  # [tpr, NN]
+        for n in range(NN):
+            if n == dn:
+                continue
+            gw = n * L + dl
+            cum = 0
+            for tl in range(tokens_per_rank):
+                if bool(node_flags[tl, n]):
+                    tok_rows[tl].append(recv_off_cp(gw, d) + cum)
+                    cum += 1
+            assert cum == int(Ucomb[d, n])
+        # reduce: union over the token's CSR rows == exactly its topk copies
+        for tl in range(tokens_per_rank):
+            got = set()
+            total = 0
+            for row in tok_rows[tl]:
+                got |= recv[d][row]
+                total += len(recv[d][row])
+            t_global = d * tokens_per_rank + tl
+            want = set(range(t_global * topk, (t_global + 1) * topk))
+            assert got == want, f"rank {d} token {tl}: union {got} != {want}"
+            assert total == topk, f"rank {d} token {tl}: copy double-counted"
+
 
 if __name__ == "__main__":
     cases = [
@@ -173,4 +336,9 @@ if __name__ == "__main__":
         for seed in range(5):
             simulate(seed=seed, **case)
         print(f"ok: {case}")
+    for case in cases:
+        for seed in range(5):
+            simulate_compress(seed=seed, **case)
+        print(f"ok compress: {case}")
     print("✅ a2av_hier combine layout contract holds (pack -> transport -> reduce)")
+    print("✅ compress contract holds (conv -> pre-reduce -> C' wire -> CSR reduce)")

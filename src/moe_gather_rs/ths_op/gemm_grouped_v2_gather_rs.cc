@@ -172,6 +172,10 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   // send layout), so every copy lands back at its layer0 pack position and the
   // pack/reduce gather indices are the inverses of layer0's index math.
   const bool a2av_hier;
+  // FLUX_A2AV_RS_EAGER: replace the per-split host wait-all-W reduce gates with
+  // one persistent arrival-order reduce kernel (variant-selection ctor boolean,
+  // knob-off leaves the shipped schedule untouched)
+  const bool a2av_eager_;
   int64_t a2av_send_rows_ = 0;   // send panel row capacity per split (routing-dependent load)
   int64_t a2av_recv_rows_ = 0;   // recv panel rows per split: exactly max_m / world_size
   int64_t a2av_stage_rows_ = 0;  // gateway staging row capacity per split
@@ -337,6 +341,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         n_split(n_split_),
         internode_stream(create_internode_stream()),
         a2av_hier(a2av_hier_),
+        a2av_eager_(a2av_hier_ && get_int_from_env("FLUX_A2AV_RS_EAGER", 0) != 0),
         barriers(barriers) {
     FLUX_CHECK_GE(nnodes, 1);
     FLUX_CHECK_DIV(world_size, nnodes);
@@ -618,6 +623,34 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         .sid = 0,
         .threadblock_count = get_a2av_reduce_blocks()};
 
+    if (this->a2av_eager_) {
+      // eager arrival-order reduce: ONE persistent kernel for all splits,
+      // enqueued while the front-end channel still holds no host wait (conn=1:
+      // a blocked wait ahead of a kernel launch could park it forever). It
+      // polls the epoch-valued recv signals directly, so it needs neither the
+      // flag-reset event nor any per-split gate below.
+      A2AVCombineEagerReduceArguments eager_args{
+          .recv_panel = this->a2av_recv_panel_.data_ptr(),
+          .reduce_index = reduce_index.data_ptr<int32_t>(),
+          .output = output.data_ptr(),
+          .recv_signals = recv_sig,
+          .run_id = this->run_id_,
+          .recv_cum = {},
+          .panel_rows = this->a2av_recv_rows_,
+          .ntokens_local = cpr / this->topk,
+          .world_size = W,
+          .n = this->n_dim,
+          .n_per = (int)n_per,
+          .n_split = this->n_split,
+          .topk = this->topk,
+          .threadblock_count = get_a2av_reduce_blocks()};
+      for (int s = 0; s < W; s++) {
+        eager_args.recv_cum[s] = recv_off_of(s, this->rank);
+      }
+      eager_args.recv_cum[W] = cpr;
+      a2av_combine_eager_reduce(eager_args, flux_dtype, reduce_stream);
+    }
+
     // The ladders are enqueued INTERLEAVED PER SPLIT, in dependency order
     // (inter -> intra -> gateway -> reduce): under CUDA_DEVICE_MAX_CONNECTIONS=1
     // all streams multiplex one front-end channel and a pending wait can block
@@ -763,18 +796,22 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           }
         }
       }
-      // per-split reduce: gate on all W per-source recv signals of the split (a
-      // token's topk copies come from up to topk different owners), then one
-      // memory-bound kernel folds them into the output column window
-      for (int s = 0; s < W; s++) {
-        CU_CHECK(CUStreamWaitValue64(
-            reduce_stream,
-            (CUdeviceptr)(recv_sig + s * this->n_split + sid),
-            this->run_id_,
-            CU_STREAM_WAIT_VALUE_GEQ));
+      // per-split reduce (legacy gate, a2av_eager_ off): gate on all W
+      // per-source recv signals of the split (a token's topk copies come from
+      // up to topk different owners), then one memory-bound kernel folds them
+      // into the output column window. With a2av_eager_ the persistent kernel
+      // launched above already consumes the signals in arrival order.
+      if (!this->a2av_eager_) {
+        for (int s = 0; s < W; s++) {
+          CU_CHECK(CUStreamWaitValue64(
+              reduce_stream,
+              (CUdeviceptr)(recv_sig + s * this->n_split + sid),
+              this->run_id_,
+              CU_STREAM_WAIT_VALUE_GEQ));
+        }
+        reduce_args.sid = sid;
+        a2av_combine_reduce(reduce_args, flux_dtype, reduce_stream);
       }
-      reduce_args.sid = sid;
-      a2av_combine_reduce(reduce_args, flux_dtype, reduce_stream);
     }
 
     // tail joins: everything the epoch produced must reach the gather-rs stream

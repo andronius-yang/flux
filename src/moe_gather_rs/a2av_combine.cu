@@ -129,6 +129,88 @@ __launch_bounds__(1024, 1) a2av_combine_pack_kernel(A2AVCombinePackArguments arg
   }
 }
 
+CUTLASS_DEVICE uint64_t
+load_acquire_sys_u64(uint64_t const *ptr) {
+  uint64_t v;
+  asm volatile("ld.global.acquire.sys.b64 %0, [%1];\n" : "=l"(v) : "l"(ptr));
+  return v;
+}
+
+// source lane of a recv-panel row: the unique s with cum[s] <= row < cum[s+1]
+// (zero-row lanes have cum[s] == cum[s+1] and can never contain a row)
+CUTLASS_DEVICE int
+lane_of_row(int64_t const *cum, int world_size, int64_t row) {
+  int lo = 0, hi = world_size - 1;
+  while (lo < hi) {
+    int mid = (lo + hi) >> 1;
+    if (row < cum[mid + 1]) {
+      hi = mid;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  return lo;
+}
+
+// Eager reduce: split-major outer loop like the pack kernel; per element the
+// remaining-mask loop consumes contributions in arrival order. Summation order
+// is arrival-dependent (like the dense ring path); correctness checks are
+// tolerance-based. Resident on the reserved reduce SMs for the whole epoch.
+template <typename T>
+__global__ void
+__launch_bounds__(512, 1) a2av_combine_eager_reduce_kernel(
+    A2AVCombineEagerReduceArguments args) {
+  constexpr int kElemsPerPack = PackU<T>::kElemsPerPack;
+  const int64_t n_per = args.n_per;
+  const int64_t packs_per_row = n_per / kElemsPerPack;
+  const int64_t total = args.ntokens_local * packs_per_row;
+  CUTLASS_PRAGMA_NO_UNROLL
+  for (int sid = 0; sid < args.n_split; sid++) {
+    T const *panel = (T const *)args.recv_panel + (int64_t)sid * args.panel_rows * n_per;
+    for (int64_t idx = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; idx < total;
+         idx += (int64_t)gridDim.x * blockDim.x) {
+      const int64_t t = idx / packs_per_row;
+      const int64_t col = (idx % packs_per_row) * kElemsPerPack;
+      float acc[kElemsPerPack];
+      CUTLASS_PRAGMA_UNROLL
+      for (int i = 0; i < kElemsPerPack; i++) {
+        acc[i] = 0.0f;
+      }
+      uint32_t remaining = (args.topk >= 32) ? ~0u : ((1u << args.topk) - 1u);
+      while (remaining != 0) {
+        bool made_progress = false;
+        for (int j = 0; j < args.topk; j++) {
+          if ((remaining & (1u << j)) == 0) {
+            continue;
+          }
+          const int64_t row = args.reduce_index[t * args.topk + j];
+          const int lane = lane_of_row(args.recv_cum, args.world_size, row);
+          if (load_acquire_sys_u64(
+                  args.recv_signals + (int64_t)lane * args.n_split + sid) >= args.run_id) {
+            PackU<T> pk;
+            pk.data = loadPack(panel + row * n_per + col);
+            CUTLASS_PRAGMA_UNROLL
+            for (int i = 0; i < kElemsPerPack; i++) {
+              acc[i] += elem_to_float<T>(pk.elems[i]);
+            }
+            remaining &= ~(1u << j);
+            made_progress = true;
+          }
+        }
+        if (!made_progress) {
+          __nanosleep(200);
+        }
+      }
+      PackU<T> out;
+      CUTLASS_PRAGMA_UNROLL
+      for (int i = 0; i < kElemsPerPack; i++) {
+        out.elems[i] = float_to_elem<T>(acc[i]);
+      }
+      storePack((T *)args.output + t * args.n + (int64_t)sid * n_per + col, out.data);
+    }
+  }
+}
+
 template <typename T>
 __global__ void
 a2av_combine_reduce_kernel(A2AVCombineReduceArguments args) {
@@ -189,6 +271,25 @@ a2av_combine_pack(
         a2av_combine_pack_kernel<T, kHasVecScale><<<grid, block, 0, stream>>>(args);
       },
       [&]() { FLUX_CHECK(false) << "unsupported dtype for a2av combine pack: " << dtype; });
+  CUDA_CHECK(cudaGetLastError());
+}
+
+void
+a2av_combine_eager_reduce(
+    A2AVCombineEagerReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream) {
+  constexpr int kThreads = 512;
+  FLUX_CHECK(args.n_per % 8 == 0) << "n/n_split must be a multiple of the 8-elem pack width";
+  FLUX_CHECK_LE(args.world_size, kA2AVMaxWorld);
+  FLUX_CHECK_LE(args.topk, 31) << "eager reduce remaining-mask holds topk in 31 bits";
+  dim3 grid(args.threadblock_count), block(kThreads);
+  tuple_return_if(
+      cute::make_tuple(_FP16{}, _BF16{}),
+      [&](auto cdtype) { return cdtype == dtype; },
+      [&](auto cdtype) {
+        using T = decltype(to_cuda_dtype(cdtype));
+        a2av_combine_eager_reduce_kernel<T><<<grid, block, 0, stream>>>(args);
+      },
+      [&]() { FLUX_CHECK(false) << "unsupported dtype for a2av eager reduce: " << dtype; });
   CUDA_CHECK(cudaGetLastError());
 }
 
