@@ -2,11 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Deployment context: NERSC Perlmutter
+> **New here, or resuming layer0 a2av work? Read `docs/handoff/00_START_HERE.md` first.**
+> The 2026-07-28 → 08-04 AWS campaign (Tier B window gating for
+> `hier_compress_lb_union`) is handed off there, along with the Perlmutter
+> bring-up ladder, the settled-questions ledger, and the build ledger needed to
+> interpret the 124 existing sweep capsules.
 
-This is ByteDance's Flux/Comet repository (fine-grained computation-communication overlapping GPU kernels), **deployed on the NERSC Perlmutter platform**. Compute nodes have **4x A100 GPUs each** (sm80, 108 SM cores — hence `--arch 80 --sm-cores 108`). The working tree contains **local edits made specifically to get Flux/Comet to compile on Perlmutter** — do not blindly revert them to match upstream:
+## Deployment context: NERSC Perlmutter (+ AWS ParallelCluster)
 
-- `module.sh` (untracked, Perlmutter-specific): restores Cray lmod defaults, loads `PrgEnv-gnu`, `gcc/12.2.0`, `cray-mpich`, `cudatoolkit/12.4`, `nvshmem/3.2.5-1`, `nccl/2.24.3`, and activates the conda env at `$PSCRATCH/conda_envs/andrewy-comet`. Sets `CC/CXX/CUDAHOSTCXX`, `CUDA_HOME`, `TORCH_CUDA_ARCH_LIST=8.0`, `FLUX_ROOT`, and puts the bundled NCCL headers on `CPATH`.
+This is ByteDance's Flux/Comet repository (fine-grained computation-communication overlapping GPU kernels), deployed on **two platforms**: NERSC Perlmutter (4x A100/node, Slingshot/CXI — `source ./module.sh`) and an AWS ParallelCluster (p4d, **8x A100/node**, EFA — `source ./env_aws.sh`, tracked in-repo; see `docs/launch/aws_efa_environment.md`). Both are sm80, 108 SM cores — hence `--arch 80 --sm-cores 108`. Platform specifics live in opt-in env files and overridable `${VAR:-default}` launcher defaults — there is no platform branch. The working tree contains **local edits made specifically to compile on these platforms** — do not blindly revert them to match upstream:
+
+- `module.sh` (tracked; Perlmutter-specific — note its `FLUX_ROOT` is a stale hardcoded path, see `docs/handoff/01_perlmutter_bringup.md` §1): restores Cray lmod defaults, loads `PrgEnv-gnu`, `gcc/12.2.0`, `cray-mpich`, `cudatoolkit/12.4`, `nvshmem/3.2.5-1`, `nccl/2.24.3`, and activates the conda env at `$PSCRATCH/conda_envs/andrewy-comet`. Sets `CC/CXX/CUDAHOSTCXX`, `CUDA_HOME`, `TORCH_CUDA_ARCH_LIST=8.0`, `FLUX_ROOT`, and puts the bundled NCCL headers on `CPATH`.
 - `build.sh`: python bindings installed via `pip install --no-build-isolation --editable .` instead of upstream's `python3 setup.py develop --user`.
 - `setup.py` / `python/flux/cpp_mod.py`: `NVSHMEM_HOME` from the environment (the Perlmutter module) takes strict precedence over the pip-installed nvshmem; the eager import of pip nvshmem is avoided. The `nvshmem_transport_ibrc.so.3` preload is commented out (Perlmutter is Slingshot, not InfiniBand).
 
@@ -30,6 +36,12 @@ nproc=16 ./build.sh \
 ```
 
 Notes:
+- **AWS: NEVER build on the head node.** It is an m7i.large (2 vCPU, 8 GB RAM); a parallel
+  nvcc build OOMs it and deadlock-halts the entire head node. Always build on a compute
+  node via the allocation (p4d: 96 vCPU, 1.1 TB RAM), with the env sourced inside the
+  srun'd shell:
+  `srun --jobid=<id> --nodes=1 --ntasks-per-node=1 bash -lc 'source ./env_aws.sh && FLUX_BUILD_SKIP_CMAKE=1 nproc=32 ./build.sh --arch 80 --sm-cores 108 --nvshmem --no_test --jobs 32'`
+  (`/home` is shared, so the tree the head node sees is the one built.)
 - `--nvshmem` is required for the MoE (Comet) kernels.
 - Set `FLUX_BUILD_SKIP_CMAKE=1` to skip re-running cmake when `build/CMakeCache.txt` already exists (incremental rebuilds).
 - `./build.sh --clean-py` removes only python build artifacts; `./build.sh --clean-all` also removes `build/` and the 3rdparty NCCL/protobuf builds.
@@ -85,6 +97,23 @@ srun --nodes=2 --ntasks-per-node=1 ./launch.sh test/python/moe_gather_rs/test_mo
 
 Multi-node constraints: token counts divisible by `world_size * topk`; `max_m/topk` divisible by `world_size`; for large configs export `NVSHMEM_SYMMETRIC_SIZE=4G` (all reduce/staging buffers live on the symmetric heap). `do_all_reduce`, `use_read_mode`, and the triton/int8 paths are single-node only (FLUX_CHECK-guarded).
 
+## Perf sweeps (`sweeps/`)
+
+All perf sweeps of the layer0 a2av variants go through the sweep runner — never hand-rolled loops. **`sweeps/SCHEMA.md` is the authority** on what results mean; the `/sweep` skill has the operating procedure. Example:
+
+```bash
+python sweeps/sweep.py run --platform aws --variants hier,hier_compress_union \
+    --families remotefrac --budgets-mib 2,8,64 --topk 8 --G 128 --modes e2e,phases
+```
+
+Each invocation writes one immutable capsule under `sweeps/results/runs/<run_id>/` (manifest + resolved spec + per-iteration `metrics.csv` + `cells.csv`) — the runner prints the `git add && git commit` command, a human commits. Raw rank logs stay at the platform data root (`sweeps/platforms/*.yaml`), never in the repo.
+
+Four invariants, never violate:
+1. **Budget is strictly the pre-topk send budget** (matrix row sums = `budget_mib * 2^20 * topk`).
+2. **Perf runs need `FLUX_TEST_DETERMINISTIC=0`** — the runner enforces it and the capsule's `deterministic` column records it; a perf number is only valid if that column says 0 (deterministic `scatter_` serializes ~500x and lands on the compress/relay paths).
+3. **Instrumented modes never compare against clean ones** — `phases` (FLUX_A2AV_TIMING) and `nsys` force per-iteration device syncs; they are for breakdowns, never latency. Quote **`isolated`** mode for latency (per-layer, inference semantics) and `e2e` for pipelined throughput — and never compare those two against each other either.
+4. **Compare arms inside one capsule, built from one binary.** `git_sha` is not a build identity (124 capsules span 5 shas but 28 distinct `.so` builds); the same configuration moved 6–33% across builds, which is larger than every headline result. See `sweeps/SCHEMA.md` protocol rule 4.
+
 ## Formatting
 
 `./code-format.sh` runs clang-format/black over the diff (`--format-all` for everything, `--fail-on-diff` for CI-style checks). Style follows Google style guides via clang-format.
@@ -108,3 +137,13 @@ Layering, bottom to top:
 Key design points (details in `docs/design.md`): on Ampere (this deployment), communication is fused into the GEMM epilogue and the threadblock scheduler hides remote-I/O latency by switching among oversubscribed threadblocks; kernels reschedule tile computation along the independent dimension (Dim-M for MoE layer0, Dim-N for layer1) to start overlap early. Hopper uses a different warp-specialization design that does not apply on A100.
 
 Inter-GPU data movement for the MoE kernels goes through **NVSHMEM** (hence the hard requirement on `--nvshmem` and a correct `NVSHMEM_HOME`).
+
+## Explanations
+
+When asked for an explanation (rather than a code change), explain in a clear,
+easy-to-understand tone: lead with the concrete mechanism, use small worked
+examples, and only then generalize. Most importantly, end every explanation
+with one or two **non-trivial comprehension questions** — questions that test
+whether the key implication or design choice actually landed, and that require
+transferring the idea to a new situation (never answerable by restating the
+explanation). Wait for the answer and correct any misunderstanding.

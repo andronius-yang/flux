@@ -1,0 +1,42 @@
+{
+  "artifacts": [],
+  "capabilities": {
+    "FLUX_A2AV_UNION_BCAST": true,
+    "nsys": "NVIDIA Nsight Systems version 2025.3.2.474-253236389321v0"
+  },
+  "cells": [
+    {
+      "cell_id": "hier_compress_union_remotefrac_b8_k8_e2e",
+      "staging": "/home/ubuntu/sweep_data/20260731-154557_aws_345b313f/cells/hier_compress_union_remotefrac_b8_k8_e2e",
+      "status": "stuck"
+    },
+    {
+      "cell_id": "hier_compress_union_remotefrac_b8_k8_nsys",
+      "staging": "/home/ubuntu/sweep_data/20260731-154557_aws_345b313f/cells/hier_compress_union_remotefrac_b8_k8_nsys",
+      "status": "stuck"
+    }
+  ],
+  "created": "2026-07-31T16:01:34Z",
+  "flux_libs": [
+    {
+      "path": "/home/ubuntu/workspace/flux/python/flux/lib/libflux_cuda.so",
+      "sha256": "8c064abe016ec1569fae8699442459ff379833889980c35c446f60dcb84a55c8"
+    },
+    {
+      "path": "/home/ubuntu/workspace/flux/python/flux/lib/libflux_cuda_ths_op.so",
+      "sha256": "f2c63c07579603254efcc54a5da885320fd1fb1911f00a0691244132bf18ebae"
+    }
+  ],
+  "git": {
+    "dirty": true,
+    "sha": "6da24e128befcf973d0cc79a397a754bddef1804"
+  },
+  "host": "ip-10-20-3-140",
+  "platform": {
+    "fabric": "efa",
+    "name": "aws",
+    "ranks_per_node": 8
+  },
+  "run_id": "20260731-154557_aws_345b313f",
+  "staging_root": "/home/ubuntu/sweep_data/20260731-154557_aws_345b313f"
+}

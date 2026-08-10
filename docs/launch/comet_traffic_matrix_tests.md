@@ -1,3 +1,14 @@
+> **Two caveats (2026-08-04).**
+> 1. **Any performance number in this file dated before 2026-07-29 is void.**
+>    The harness force-enabled torch deterministic mode, making `scatter_`
+>    ~500x slower and biasing every compress/relay path. See
+>    `docs/handoff/03_insight_ledger.md` NR-10.
+> 2. The manual `srun`/`launch.sh` command lines below are **superseded by the
+>    sweep runner** (`sweeps/sweep.py`) for anything perf-related — CLAUDE.md
+>    requires all perf asks go through it, never hand-rolled loops. This file
+>    remains the reference for the knobs, argument constraints and correctness
+>    invocations.
+
 # Launching the COMET traffic-matrix tests (Perlmutter)
 
 Profiles MoE layer0 (`moe_ag_scatter`) and layer1 (`moe_gather_rs`) with token
@@ -125,6 +136,132 @@ NVSHMEM_SYMMETRIC_SIZE=4G srun --nodes=4 --ntasks-per-node=1 ./launch.sh \
   topk=4 (7%). a2av_hier is fastest in all 9 cells. (16mib tk2 ring 3.34 is
   an off-trend outlier vs tk1/tk4 ~2.35 — likely a contention blip.)
 
+## Layer0 dedup hierarchical a2av (`--comm_pattern a2av_hier_compress`, sm80/V2 only)
+
+Design: `comet_traffic_matrix_a2av.md` §11. Same hierarchical structure as
+a2av_hier, but the matrix is treated as LOGICAL bytes: the wire sends each
+token at most once per destination rank (intra-node) and at most once per
+destination node (one union aggregate to the gateway, which gathers each local
+rank's exact subset out of the union and forwards it). splits / scatter_index /
+GEMM problem sizes and the static ring schedule are unchanged; receivers alias
+duplicate GEMM A rows onto one received row via `sorted_gather_index`.
+
+```bash
+# single node (NN=1 degenerates to intra-node dedup puts; sm_margin optional)
+srun --nodes=1 --ntasks-per-node=1 ./launch.sh \
+  test/python/moe_ag_scatter/test_moe_ag_traffic.py <matrix> \
+  --comm_pattern a2av_hier_compress
+
+# 4 nodes x 4 GPUs — sm_margin is REQUIRED multi-node (gateway gathers need SMs)
+NVSHMEM_SYMMETRIC_SIZE=4G srun --nodes=4 --ntasks-per-node=1 ./launch.sh \
+  test/python/moe_ag_scatter/test_moe_ag_traffic.py \
+  <matrices>/4n_16r/16mib/..._dist_001.txt \
+  --comm_pattern a2av_hier_compress --sm_margin 8
+```
+
+- Requires the metadata inputs (`splits_per_source` + the new
+  `a2av_unique_counts`, both computed untimed by the harness) —
+  `--no_metadata_cnt` is rejected. Multi-node additionally requires
+  `--sm_margin >= 1` (FLUX_CHECKed): the gateway `index_select` gathers need
+  SMs while GEMM tiles spin on signals only those gathers can produce.
+- Same knobs as a2av_hier (`FLUX_A2AV_MAX_RECV_NTOKENS`,
+  `FLUX_A2AV_MAX_STAGE_NTOKENS`) — capacities now checked against the dedup
+  sums, so the same settings are always sufficient.
+- Debug: `FLUX_A2AV_CHECK_COMPRESS=1` asserts the dedup consumer-index
+  identity on-device, plus that the pack / gateway flag counts match the
+  `a2av_unique_counts` metadata (may sync; keep off when timing).
+- The harness prints the compressed per-rank send bytes, compressed inter-node
+  bytes, and the dedup wire/logical ratio next to the logical matrix numbers.
+  A/B against `--comm_pattern a2av_hier` (byte-identical to before) isolates
+  the dedup win.
+- NOT yet validated on hardware (implemented on a non-Perlmutter box):
+  run the single-node degenerate first (+ `FLUX_A2AV_CHECK_COMPRESS=1`,
+  allclose vs torch), then the 4n_16r sweeps above.
+
+### Balanced inter-node relay (default in compress mode; design §12)
+
+Multi-node compress now balances each node's per-round outgoing wire bytes
+across its L ranks at token-row granularity (src -> local relay -> wire ->
+same-lr cross-node relay -> dst); the §11 fixed relay = self scheme remains
+available as `FLUX_A2AV_RELAY_IDENTITY=1`.
+
+- `FLUX_A2AV_RELAY_IDENTITY=1` — byte-identical §11 wire for A/B. Changes the
+  wire layout: set it identically on EVERY rank (it is read at op-construction
+  time).
+- `FLUX_A2AV_MAX_RELAY_NTOKENS` — rows of the new symmetric relay staging
+  buffer (holds all rounds at once, ~ the node's outbound / L; default
+  mirrors the stage default). Checked collectively like the other capacities.
+- Gateway staging demand becomes balanced, so the "inbound node traffic
+  concentrates on one source local rank" case that needed a raised
+  `FLUX_A2AV_MAX_STAGE_NTOKENS` under a2av_hier/identity no longer inflates
+  the requirement in relay mode.
+- The harness prints `a2av relay balance: ... identity X -> balanced Y`: the
+  sum over (node, round) of the worst sender's bytes, i.e. the wire-pace bound
+  the relay removes (`max_lr U` vs `ceil(total/L)` per round).
+- CPU-only validation (no GPU/flux build needed, runs anywhere):
+  `python3 test/python/moe_ag_scatter/test_relay_balance_math.py`
+  — 182 cases (identity / relay / bcast): recv identity vs §11 and vs a direct dedup reference, write
+  coverage, window-bounded indices, ≤ 1-row chunk imbalance, zero relocation
+  for uniform U, and deadlock-freedom of the three-stream schedule over two
+  epochs. Run it after any change to the partition or forward-index math.
+- Hardware bring-up order: single-node degenerate (relay inactive, must be
+  unchanged) -> 2n identity vs relay allclose A/B (+
+  `FLUX_A2AV_CHECK_COMPRESS=1`) -> 4n_16r skewed sweeps, timing identity vs
+  relay with the same matrices.
+
+### Union broadcast at the gateway (`FLUX_A2AV_UNION_BCAST=1`; design §11's a2av_hier_bcast)
+
+Replaces the gateway's exact-subset gather-forward with broadcasting the WHOLE
+staged union to every local rank as contiguous fire-and-forget nbi puts straight
+from the symmetric staging buffer — no token-level forward-index build, no
+gather scratch, no non-nbi completion wait — restoring a2av_hier's forward
+structure with the dedup'd inter-node wire. Receivers alias their subset out of
+the U-sized region through the same one-cumsum consumer identity (keep-flag =
+needed-by-my-node for remote-node sources).
+
+- Implies the identity wire (relay disabled); selects a third gateway arm.
+- Changes the RECV layout (remote-source regions hold `U[s][n]` rows, not
+  `u[s][d]`): set identically on EVERY rank (read at op construction).
+- No `--sm_margin` requirement (the forward is pure copy engine); keep the
+  margin equal across variants when A/B timing for fairness.
+- Costs: intra-node forward inflates to `(L-1)·U[s][n]` per gateway round
+  (harness prints gather-vs-bcast forward bytes) and recv regions grow u -> U —
+  raise `FLUX_A2AV_MAX_RECV_NTOKENS` accordingly (still collectively checked).
+- Validated: `test_relay_balance_math.py` (182 cases incl. bcast wire sim +
+  NN==1 degeneracy); 2n x 8 A100 16/16 allclose with
+  `FLUX_A2AV_CHECK_COMPRESS=1` (adds a bcast-only flag-total vs host-layout
+  assert).
+
+### Fused pack + pack/GEMM overlap
+
+The compress producer pack is fused into two custom kernels (stage1 writes
+seg-major `[nseg, tokens]` flags; a per-segment CUB block-scan builds
+pack_gather) + the one index_select — 4 launches total, replacing the previous
+~12-launch ATen chain whose cost was launch/issue overhead on the single
+hardware queue (`CUDA_DEVICE_MAX_CONNECTIONS=1`), not bandwidth. Unconditional
+in compress mode.
+
+`FLUX_A2AV_PACK_OVERLAP=1` (compress only, default off) additionally moves the
+pack (meta H2D + stage1 + scan + send gather) to a dedicated stream so
+iteration n+1's pack overlaps iteration n's GEMM:
+
+- Parity (`run_id & 1`) double-buffers the send buffer (2x symmetric — the
+  allocation is collective, so set the env identically on EVERY rank) and the
+  meta arena (the GEMM reads its slice for its whole runtime).
+- Cross-iteration put ordering moves from main-stream program order to an
+  explicit end-of-epoch event waited by both cp streams; the pack itself
+  deliberately does not wait it.
+- Contract: forward() inputs must be device-ready when called (the pack stream
+  does not join the caller stream's tail), and the caller must keep
+  inputs/scatter_index/splits alive and unmutated until the next forward() or
+  a device sync (no allocator record_stream is done — repo convention). True
+  for the perf harness.
+- Wall-clock no-ops (correctness unaffected): `CUDA_DEVICE_MAX_CONNECTIONS=1`
+  (launch.sh default — export >= 2 to observe the overlap, after validating
+  allclose at that setting) and `FLUX_A2AV_TIMING=1` (host-syncs every
+  iteration; use external wall-clock timing instead).
+- Incompatible with `FLUX_A2AV_STAGE2_AFTER_PUTS` (FLUX_CHECKed).
+
 ## Layer0 FAST baseline (un-overlapped: FAST alltoallv + separate grouped GEMM)
 
 `test/python/moe_ag_scatter/test_moe_ag_fast_baseline.py` measures the
@@ -199,9 +336,51 @@ srun --nodes=4 --ntasks-per-node=1 ./launch_fast.sh \
   the fused overlapped patterns beat both un-overlapped baselines at every
   budget, a2av_hier fastest everywhere.
 
+### AWS p4d (2 nodes x 8x A100, EFA)
+
+The baseline also runs on the AWS ParallelCluster (`source ./env_aws.sh`
+instead of `module.sh`; see the FAST submodule branch `aws-8gpu` for the
+8-GPUs/node + torch-ABI relaxations). The pip-wheel NVSHMEM ships no cmake
+package, so `build_fast.sh` falls back to the self-built install (override
+with `FAST_NVSHMEM_ROOT`); `launch_fast.sh` preloads the host lib from that
+same tree so the statically linked device lib and the transport plugins come
+from one build. Build on a compute node:
+
+```bash
+salloc --partition=a100 --nodes=2 --exclusive --no-shell   # note jobid
+srun --jobid=<id> -N1 -n1 bash -lc 'source ./env_aws.sh && JOBS=32 ./scripts/build_fast.sh'
+srun --jobid=<id> --nodes=2 --ntasks-per-node=1 bash -lc 'source ./env_aws.sh && \
+  ./launch_fast.sh scripts/run_nondeterministic.py \
+  test/python/moe_ag_scatter/test_moe_ag_fast_baseline.py \
+  --traffic_matrix /home/ubuntu/sw/a2av_test_matrices/2n_16r_skew/16mib/skew_2n_16r_dist_001.txt \
+  --topk 8 --G 128 --iters 10 --warmup_iters 5'
+```
+
+Perf runs go through `scripts/run_nondeterministic.py`: the harness's forced
+`torch.use_deterministic_algorithms(True)` serializes `scatter_` ~500x and
+the fused-variant sweeps are measured with it off (correctness checks still
+run and are unaffected).
+
+Validated 2026-07-29 (2n x 8g/16 ranks, `2n_16r_skew/{2..64}mib/`
+`skew_2n_16r_dist_001.txt`, topk=8 G=128, iters 10 + warmup 5, deterministic
+off, 48/48 rank-checks per budget). Max-rank e2e ms, with the sweep-6 fused
+numbers at 64mib for reference (a2av_hier ~9.9, dedup bcast+overlap 8.69):
+
+  | budget | 2mib | 4mib | 8mib | 16mib | 32mib | 64mib |
+  |--------|------|------|------|-------|-------|-------|
+  | FAST   | 5.68 | 5.92 | 6.85 | 9.07  | 11.28 | 20.14 |
+
+  Phase means at 64mib (pack/sched/fill/wire/unpack/gemm, ms):
+  0.40/4.62/0.18/8.10/0.48/1.35. The BvN schedule recompute costs a flat
+  ~4.4 ms per iteration on the p4d head CPUs (vs ~0.9 ms on Perlmutter) and
+  sets the small-budget floor; at 64mib FAST is ~2x the fused a2av_hier.
+  Occasional EFA wire transients inflate a whole run (one 8mib run measured
+  4.25 ms mean wire vs 1.22 on rerun) — rerun before reading too much into a
+  single point.
+
 ## Layer1 hierarchical a2av combine (`--comm_pattern a2av_hier`, sm80/V2 only)
 
-Design: `comet_traffic_matrix_a2av.md` §11. The combine mirror of the layer0
+Design: `comet_traffic_matrix_a2av.md` §13. The combine mirror of the layer0
 dispatch: after the split-major grouped GEMM, each `(token, topk-slot)` copy
 travels ONCE from its expert-owner rank back to its token-home rank (wire bytes
 = the transpose of the traffic matrix), inter-node as one aggregated

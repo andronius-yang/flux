@@ -1,0 +1,31 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 32
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env:
+  FLUX_A2AV_BLOCKING_WIRE: "1"
+  FLUX_A2AV_EARLY_LAUNCH: "1"
+  FLUX_A2AV_NVTX_PROXY: "1"
+families:
+  - "remotefrac:fracs=0.01,0.05,0.30,0.99"
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "001"
+modes:
+  - nsys
+nodes: 4
+notes: "Perlmutter 4n16r b32 high-skew nsys pair under EARLY_LAUNCH+BLOCKING_WIRE: GEMM vs blocking inter-node rounds overlap"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+skip_correctness: false
+sm_margin: 8
+timeout_s: 900
+topk: 8
+variants:
+  - hier_compress_lb_union
+  - hier_compress_union
+warmup_iters: 5

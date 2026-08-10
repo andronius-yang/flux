@@ -40,6 +40,7 @@ rank there, which then forwards each destination's sub-chunk intra-node
 
 import argparse
 import os
+import time
 from functools import partial
 from typing import Any, List, Optional
 
@@ -54,10 +55,13 @@ from flux.testing import (
     MoeAgScatterWithTorch,
     MoeMlp1Ctx,
     gen_moe_gating_args,
+    choosed_experts_to_matrix_chunks,
+    load_routing_file,
     parse_traffic_matrix,
     traffic_matrix_to_choosed_experts,
 )
 from flux.testing.perf_db_helper import log_perf, set_global_args, should_log_to_rds
+from flux.testing.recorder import RECORDER
 
 DIST_ENV = flux.get_dist_env()
 TP_GROUP = DIST_ENV.get_world()
@@ -161,7 +165,7 @@ def perf_torch(ctx: MoeMlp1Ctx, warmup_iters: int, iters: int, gather_input: boo
     scatter_time = sum(scatter_times) / iters
     gemm_time = sum(gemm_times) / iters
 
-    return PerfResult(
+    result = PerfResult(
         name=f"torch #{TP_GROUP.rank()}",
         outputs=ctx.get_outputs_clone(),
         gathered_input=flux.testing.clone_with_fp8(ctx.inputs),
@@ -169,6 +173,12 @@ def perf_torch(ctx: MoeMlp1Ctx, warmup_iters: int, iters: int, gather_input: boo
         scatter_time_ms=scatter_time,
         comm_time_ms=comm_time,
     )
+    result.iter_times = {
+        "comm_ms": comm_times,
+        "scatter_ms": scatter_times,
+        "gemm_ms": gemm_times,
+    }
+    return result
 
 
 @torch.no_grad()
@@ -180,6 +190,7 @@ def perf_flux(
     ag_option: flux.AllGatherOption = flux.AllGatherOption(),
     comm_pattern: str = "allgather",
     splits_per_source: torch.Tensor = None,
+    a2av_unique_counts: torch.Tensor = None,
 ):
     tp_env = flux.DistEnvTPWithEP(tp_group=TP_GROUP, nnodes=DIST_ENV.NNODES, ep_group=EP_GROUP)
     moe_args = flux.MoeArguments(
@@ -192,7 +203,7 @@ def perf_flux(
         output_dtype=ctx.outputs[0].dtype,
     )
 
-    use_a2av = comm_pattern in ("a2av", "a2av_ring", "a2av_hier")
+    use_a2av = comm_pattern in ("a2av", "a2av_ring", "a2av_hier", "a2av_hier_compress")
     extra_args = {}
     if flux.util.get_arch() >= 90:
         assert not use_a2av, "--comm_pattern a2av is only implemented for the sm80/V2 op"
@@ -204,6 +215,7 @@ def perf_flux(
             a2av_dispatch=use_a2av,
             a2av_ring=(comm_pattern == "a2av_ring"),
             a2av_hier=(comm_pattern == "a2av_hier"),
+            a2av_hier_compress=(comm_pattern == "a2av_hier_compress"),
         )
         extra_args = {
             "ag_option": ag_option,
@@ -216,6 +228,11 @@ def perf_flux(
             # int32 CPU [W, nexperts]; the real exchange is a ~W*nexperts-int
             # allgather (~10-20 us), declared out of scope by the harness contract
             extra_args["splits_per_source"] = splits_per_source
+        if a2av_unique_counts is not None:
+            # compress dedup counts (same untimed-metadata contract): int32 CPU
+            # [W, W + nnodes], cols [0, W) = unique tokens s -> rank d, cols
+            # [W, W + nnodes) = unique tokens s -> node union
+            extra_args["a2av_unique_counts"] = a2av_unique_counts
     if use_a2av:
         assert not gather_input, "--gather_input has no dense gathered buffer in a2av mode"
 
@@ -226,22 +243,38 @@ def perf_flux(
     torch.cuda.synchronize()
     torch.distributed.barrier()
     gathered_input = torch.empty_like(ctx.inputs) if gather_input else None
+    # isolated mode (sweeps SCHEMA.md): drain the device and align all ranks
+    # before EVERY timed window, so each iteration measures one isolated layer
+    # execution (inference semantics — routing changes per activation) with no
+    # cross-iteration pipelining. iso_sync_ms (host wall time of the pair) is
+    # a per-rank straggler indicator: it is the wait for the slowest rank.
+    isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))
+    iso_sync_times = []
     for i in range(total_iters):
         ctx.clear_outputs()
         op.clear_buffers()
+        if isolated:
+            t_iso = time.perf_counter()
+            torch.cuda.synchronize()
+            torch.distributed.barrier()
+            iso_sync_times.append((time.perf_counter() - t_iso) * 1e3)
+        # NVTX iteration markers: ns-scale, inert without a profiler; lets an
+        # nsys-mode capture segment warmup vs timed without device syncs
+        nvtx_tag = f"iter{i}_warmup" if i < warmup_iters else f"iter{i}"
         start_events[i].record()
-        op.forward(
-            inputs_shard=ctx.inputs_shard,
-            weights=ctx.weights[0],
-            splits_gpu=ctx.splits_gpu,
-            scatter_index=ctx.scatter_index,
-            output_scale=take_first_or_none(ctx.output_scale),
-            outputs_buf=take_first_or_none(ctx.outputs),
-            fast_accum=ctx.fast_accum,
-            sm_margin=args.sm_margin,
-            allgather_output=gathered_input,
-            **extra_args,
-        )
+        with torch.cuda.nvtx.range(nvtx_tag):
+            op.forward(
+                inputs_shard=ctx.inputs_shard,
+                weights=ctx.weights[0],
+                splits_gpu=ctx.splits_gpu,
+                scatter_index=ctx.scatter_index,
+                output_scale=take_first_or_none(ctx.output_scale),
+                outputs_buf=take_first_or_none(ctx.outputs),
+                fast_accum=ctx.fast_accum,
+                sm_margin=args.sm_margin,
+                allgather_output=gathered_input,
+                **extra_args,
+            )
         end_events[i].record()
 
     gemm_times = []
@@ -252,7 +285,7 @@ def perf_flux(
 
     gemm_time_ms = sum(gemm_times) / iters
 
-    return PerfResult(
+    result = PerfResult(
         name=f"flux #{TP_GROUP.rank()}",
         outputs=ctx.get_outputs_clone(),
         gathered_input=gathered_input,
@@ -260,6 +293,10 @@ def perf_flux(
         scatter_time_ms=0.0,
         comm_time_ms=0.0,
     )
+    result.iter_times = {"e2e_ms": gemm_times}
+    if isolated:
+        result.iter_times["iso_sync_ms"] = iso_sync_times[warmup_iters:]
+    return result
 
 
 @torch.no_grad()
@@ -299,6 +336,15 @@ def tune_flux(ctx: MoeMlp1Ctx) -> flux.ProfilingContext:
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--traffic_matrix", type=str, required=True, help="traffic matrix file")
+    parser.add_argument(
+        "--routing_file",
+        type=str,
+        default=None,
+        help="per-token expert-id sidecar (<matrix>.routing.txt, trace family):"
+        " use the REAL token-overlap structure instead of synthesizing the"
+        " max-dedup dealer assignment from the byte matrix; must realize"
+        " exactly --traffic_matrix",
+    )
     parser.add_argument(
         "--chunk_bytes",
         type=int,
@@ -344,13 +390,25 @@ def parse_args():
     parser.add_argument(
         "--comm_pattern",
         default="allgather",
-        choices=["allgather", "a2av", "a2av_ring", "a2av_hier"],
+        choices=["allgather", "a2av", "a2av_ring", "a2av_hier", "a2av_hier_compress"],
         help="layer0 comm pattern: dense allgather (default), raw alltoallv"
         " dispatch whose wire bytes equal the traffic matrix (dynamic tile"
-        " schedule), a2av_ring (same wire bytes, static ring schedule), or"
+        " schedule), a2av_ring (same wire bytes, static ring schedule),"
         " a2av_hier (hierarchical: one aggregated inter-node message per peer"
         " node to the same-local-rank gateway, which forwards intra-node;"
-        " static ring schedule)",
+        " static ring schedule), or a2av_hier_compress (hierarchical with"
+        " token-dedup wire semantics: each token crosses the wire at most once"
+        " per destination rank / node; requires metadata inputs and, multi-node,"
+        " --sm_margin >= 1)",
+    )
+    parser.add_argument(
+        "--skip_correctness",
+        default=False,
+        action="store_true",
+        help="skip the torch reference (perf_torch + result checks) and shrink"
+        " its (ntokens * topk, H) scatter staging buffer to one row — for"
+        " large-budget perf sweeps where the reference dominates wall time or"
+        " OOMs; correctness is then NOT verified",
     )
     parser.add_argument(
         "--no_metadata_cnt",
@@ -383,16 +441,28 @@ if __name__ == "__main__":
 
     matrix = parse_traffic_matrix(args.traffic_matrix)
     assert matrix.shape[0] == DIST_ENV.WORLD_SIZE, (
-        f"traffic matrix is for {matrix.shape[0]} ranks but world size is"
-        f" {DIST_ENV.WORLD_SIZE}"
+        f"traffic matrix is for {matrix.shape[0]} ranks but world size is" f" {DIST_ENV.WORLD_SIZE}"
     )
-    choosed_experts = traffic_matrix_to_choosed_experts(
-        matrix, args.G, args.topk, args.chunk_bytes
-    )
+    if args.routing_file:
+        choosed_experts = load_routing_file(args.routing_file, args.G, args.topk)
+        assert choosed_experts.shape[0] % DIST_ENV.WORLD_SIZE == 0
+        got = choosed_experts_to_matrix_chunks(
+            choosed_experts, DIST_ENV.WORLD_SIZE, args.G // DIST_ENV.WORLD_SIZE
+        )
+        assert torch.equal(got * args.chunk_bytes, matrix), (
+            f"routing file {args.routing_file} does not realize --traffic_matrix"
+            f" {args.traffic_matrix}"
+        )
+        if torch.cuda.is_available():
+            choosed_experts = choosed_experts.cuda()
+        if TP_GROUP.rank() == 0:
+            print(f"routing: REAL trace file {args.routing_file}")
+    else:
+        choosed_experts = traffic_matrix_to_choosed_experts(
+            matrix, args.G, args.topk, args.chunk_bytes
+        )
     ntokens = choosed_experts.shape[0]
-    gating_args = gen_moe_gating_args(
-        args.G, args.topk, ntokens, choosed_experts=choosed_experts
-    )
+    gating_args = gen_moe_gating_args(args.G, args.topk, ntokens, choosed_experts=choosed_experts)
 
     moe_ctx = MoeMlp1Ctx(
         TP_GROUP,
@@ -410,6 +480,7 @@ if __name__ == "__main__":
         weight_groups=1,
         drop_token=False,
         gating_args=gating_args,
+        skip_reference=args.skip_correctness,
     )
 
     # metadata-exchange result (untimed setup): cnt[s][e] = copies source rank s
@@ -417,18 +488,37 @@ if __name__ == "__main__":
     # W x nexperts int allgather (~10-20 us) done right after gating.
     W = DIST_ENV.WORLD_SIZE
     tokens_per_rank = ntokens // W
-    src_of_copy = (
-        torch.arange(ntokens, dtype=torch.long) // tokens_per_rank
-    ).repeat_interleave(args.topk)
+    src_of_copy = (torch.arange(ntokens, dtype=torch.long) // tokens_per_rank).repeat_interleave(
+        args.topk
+    )
     e_of_copy = choosed_experts.reshape(-1).long().cpu()
     splits_per_source_cpu = (
-        torch.bincount(src_of_copy * args.G + e_of_copy, minlength=W * args.G)
-        .view(W, args.G)
-        .int()
+        torch.bincount(src_of_copy * args.G + e_of_copy, minlength=W * args.G).view(W, args.G).int()
     )
     assert torch.equal(
         splits_per_source_cpu.sum(0), moe_ctx.splits_cpu[: args.G].cpu().int()
     ), "splits_per_source column sums must equal splits"
+
+    # compress dedup counts (untimed setup, same contract as splits_per_source;
+    # a real system needs NO extra exchange — every rank already holds the
+    # global choosed_experts, so this is a local computation): u[s][d] = UNIQUE
+    # tokens source s must deliver to rank d (any of d's experts), U[s][n] =
+    # unique tokens s must deliver to the node-n union. NOT derivable from
+    # cnt[s][e] — depends on which tokens overlap across experts/ranks.
+    a2av_unique_counts_cpu = None
+    if args.comm_pattern == "a2av_hier_compress":
+        assert (
+            not args.no_metadata_cnt
+        ), "a2av_hier_compress requires the metadata inputs (drop --no_metadata_cnt)"
+        experts_per_rank = args.G // W
+        L = DIST_ENV.LOCAL_WORLD_SIZE
+        nn = W // L
+        owner = choosed_experts.long().cpu() // experts_per_rank  # [ntokens, topk] dest rank
+        flags = torch.zeros(ntokens, W, dtype=torch.bool)
+        flags.scatter_(1, owner, True)  # token t needed by rank d (any expert)
+        u_mat = flags.view(W, tokens_per_rank, W).sum(1)  # [W, W]
+        U_mat = flags.view(ntokens, nn, L).any(dim=2).view(W, tokens_per_rank, nn).sum(1)  # [W, nn]
+        a2av_unique_counts_cpu = torch.cat([u_mat, U_mat], dim=1).int().contiguous()
 
     if TP_GROUP.rank() == 0:
         experts_per_rank = args.G // DIST_ENV.WORLD_SIZE
@@ -437,7 +527,12 @@ if __name__ == "__main__":
         print(f"Splits: {moe_ctx.splits_cpu.tolist()}, Sum: {sum(moe_ctx.splits_cpu.tolist())}")
         print(f"Per-rank gemm rows: {rows_per_rank.tolist()}")
         print(f"comm_pattern: {args.comm_pattern}")
-        if args.comm_pattern in ("a2av", "a2av_ring", "a2av_hier"):
+        RECORDER.emit_info(
+            ntokens=ntokens,
+            tokens_per_rank=ntokens // DIST_ENV.WORLD_SIZE,
+            gemm_rows_per_rank=rows_per_rank.tolist(),
+        )
+        if args.comm_pattern in ("a2av", "a2av_ring", "a2av_hier", "a2av_hier_compress"):
             send_bytes = (matrix.sum(dim=1) - matrix.diag()).tolist()
             recv_bytes = (matrix.sum(dim=0) - matrix.diag()).tolist()
             print(f"a2av wire bytes per rank (send): {send_bytes}")
@@ -451,10 +546,93 @@ if __name__ == "__main__":
             nn = DIST_ENV.WORLD_SIZE // L
             per_node = matrix.view(DIST_ENV.WORLD_SIZE, nn, L).sum(dim=2)
             src_node = torch.arange(DIST_ENV.WORLD_SIZE) // L
-            inter_bytes = per_node.sum(dim=1) - per_node.gather(
-                1, src_node.view(-1, 1)
-            ).squeeze(1)
+            inter_bytes = per_node.sum(dim=1) - per_node.gather(1, src_node.view(-1, 1)).squeeze(1)
             print(f"a2av_hier inter-node wire bytes per rank (send): {inter_bytes.tolist()}")
+        if args.comm_pattern == "a2av_hier_compress":
+            # actual wire in compress mode: intra-node dedup puts (own rank
+            # excluded) + one union aggregate per remote node; the matrix above
+            # stays the LOGICAL traffic. Gateway forwarding is extra NVLink
+            # traffic on top, exactly u[s][d] rows per (source, local dest).
+            L = DIST_ENV.LOCAL_WORLD_SIZE
+            nn = DIST_ENV.WORLD_SIZE // L
+            src_node = torch.arange(W) // L
+            intra_rows = u_mat.view(W, nn, L)[torch.arange(W), src_node].sum(1) - u_mat.diag()
+            inter_rows = U_mat.sum(1) - U_mat[torch.arange(W), src_node]
+            comp_bytes = (intra_rows + inter_rows) * args.chunk_bytes
+            inter_bytes_c = inter_rows * args.chunk_bytes
+            logical_bytes = matrix.sum(dim=1) - matrix.diag()
+            ratio = comp_bytes.sum().item() / max(logical_bytes.sum().item(), 1)
+            print(f"a2av_hier_compress wire bytes per rank (send): {comp_bytes.tolist()}")
+            print(
+                "a2av_hier_compress inter-node wire bytes per rank (send):"
+                f" {inter_bytes_c.tolist()}"
+            )
+            print(f"a2av_hier_compress dedup wire/logical send-byte ratio: {ratio:.3f}")
+            RECORDER.emit_info(wire_ratio=ratio)
+            # gateway forward cost on NVLink, exact-subset gathers vs the
+            # FLUX_A2AV_UNION_BCAST=1 whole-union broadcast ((L-1) * U rows;
+            # the gateway's own copy is a local D2D either way)
+            if nn > 1:
+                gw_gather = torch.zeros(W, dtype=torch.long)
+                gw_bcast = torch.zeros(W, dtype=torch.long)
+                for n in range(nn):
+                    for lr in range(L):
+                        g = n * L + lr
+                        for m in range(nn):
+                            if m == n:
+                                continue
+                            s = m * L + lr
+                            gw_gather[g] += int(u_mat[s, n * L : (n + 1) * L].sum()) - int(
+                                u_mat[s, g]
+                            )
+                            gw_bcast[g] += (L - 1) * int(U_mat[s, n])
+                print(
+                    "a2av gateway intra-node forward bytes per gateway"
+                    f" (gather): {(gw_gather * args.chunk_bytes).tolist()}"
+                )
+                print(
+                    "a2av gateway intra-node forward bytes per gateway"
+                    f" (bcast):  {(gw_bcast * args.chunk_bytes).tolist()}"
+                )
+                # FLUX_A2AV_LB_UNION=1: each gateway forwards only its balanced
+                # window, chunk lr of every inbound round's union stream — same
+                # aggregate NVLink bytes as bcast, but the per-gateway max drops
+                # to ~(L-1)/L of the round totals
+                gw_lb = torch.zeros(W, dtype=torch.long)
+                for n in range(nn):
+                    for lr in range(L):
+                        g = n * L + lr
+                        for m in range(nn):
+                            if m == n:
+                                continue
+                            total = int(U_mat[m * L : (m + 1) * L, n].sum())
+                            lo = (total // L) * lr + min(lr, total % L)
+                            hi = (total // L) * (lr + 1) + min(lr + 1, total % L)
+                            gw_lb[g] += (L - 1) * (hi - lo)
+                print(
+                    "a2av gateway intra-node forward bytes per gateway"
+                    f" (lb_bcast): {(gw_lb * args.chunk_bytes).tolist()}"
+                )
+                RECORDER.emit_info(gw_lb_bcast_bytes=int(gw_lb.max()) * args.chunk_bytes)
+            # balanced-relay effect (FLUX_A2AV_RELAY_IDENTITY=0, the default):
+            # per (node, round) the wire pace is ceil(total / L) instead of the
+            # hottest rank's U — report the per-round worst sender both ways
+            rounds = []
+            for n in range(nn):
+                for dn in range(1, nn):
+                    tn = (n - dn + nn) % nn
+                    seg = [int(U_mat[n * L + sl, tn]) for sl in range(L)]
+                    total = sum(seg)
+                    rounds.append((max(seg), (total + L - 1) // L))
+            if rounds:
+                ident = sum(m for m, _ in rounds) * args.chunk_bytes
+                balanced = sum(b for _, b in rounds) * args.chunk_bytes
+                print(
+                    "a2av relay balance: sum of per-round max sender bytes"
+                    f" identity {ident} -> balanced {balanced}"
+                    f" ({balanced / max(ident, 1):.3f}x)"
+                )
+                RECORDER.emit_info(relay_ident_bytes=ident, relay_balanced_bytes=balanced)
 
     if args.tune:
         prof_ctx = tune_flux(moe_ctx)
@@ -487,8 +665,13 @@ if __name__ == "__main__":
             ag_option,
             args.comm_pattern,
             splits_per_source=None if args.no_metadata_cnt else splits_per_source_cpu,
+            a2av_unique_counts=a2av_unique_counts_cpu,
         )
-        perf_result_torch = perf_torch(moe_ctx, args.warmup_iters, args.iters, args.gather_input)
+        perf_result_torch = (
+            None
+            if args.skip_correctness
+            else perf_torch(moe_ctx, args.warmup_iters, args.iters, args.gather_input)
+        )
 
     if TP_GROUP.rank() == 0:
         flux.testing.print_grouped_gemm_sol_time_ms(
@@ -500,8 +683,11 @@ if __name__ == "__main__":
         )
     if should_log_to_rds():
         set_global_args("moe_ag_scatter_traffic", args)
-    flux.exec_in_rank_order(TP_GROUP, lambda: log_perf(perf_result_torch))
+    if perf_result_torch is not None:
+        flux.exec_in_rank_order(TP_GROUP, lambda: log_perf(perf_result_torch))
+        RECORDER.emit_iters("torch", perf_result_torch.iter_times)
     flux.exec_in_rank_order(TP_GROUP, lambda: log_perf(perf_result_flux))
+    RECORDER.emit_iters("flux", perf_result_flux.iter_times)
 
     if input_dtype == torch.float16:
         atol, rtol = 1e-2, 1e-3
@@ -514,11 +700,13 @@ if __name__ == "__main__":
         print(f"Checking RANK #{TP_GROUP.rank()}...")
         if args.gather_input:
             assert flux.testing.bitwise_eq(perf_out_x.gathered_input, perf_out_y.gathered_input)
+        bitwise_all = True
         for x, y in zip(perf_out_x.outputs, perf_out_y.outputs):
             print("output shape", x.size())
             if flux.testing.bitwise_eq(x, y):
                 print(f"✅ {name_x} and torch bitwise match")
             else:
+                bitwise_all = False
                 print(f"❌ {name_x} and torch not bitwise match")
             try:
                 flux.torch_allclose(x, y, atol=atol, rtol=rtol)
@@ -527,13 +715,17 @@ if __name__ == "__main__":
                 torch.save(y, f"{name_y}_{TP_GROUP.rank()}.pt")
                 torch.save(moe_ctx, f"moe_ctx_{TP_GROUP.rank()}.pt")
                 print(f"❌ {name_x} check failed")
+                RECORDER.emit_correctness(bitwise=bitwise_all, allclose=False)
                 raise e
             else:
                 print(f"✅ {name_x} check passed")
+        RECORDER.emit_correctness(bitwise=bitwise_all, allclose=True)
 
-    flux.exec_in_rank_order(
-        TP_GROUP, lambda: check_result(perf_result_flux, perf_result_torch, "flux", "torch")
-    )
+    if perf_result_torch is not None:
+        flux.exec_in_rank_order(
+            TP_GROUP, lambda: check_result(perf_result_flux, perf_result_torch, "flux", "torch")
+        )
 
     TP_GROUP.barrier()
     torch.cuda.synchronize()
+    RECORDER.flush()

@@ -34,7 +34,8 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
                         MoeArguments &moe_args,
                         bool a2av_dispatch,
                         bool a2av_ring,
-                        bool a2av_hier) {
+                        bool a2av_hier,
+                        bool a2av_hier_compress) {
               return new GemmGroupedV2AGScatterOpCls(
                   std::make_shared<C10dProcessGroup>("", tp_env.tp_group),
                   tp_env.ep_size,
@@ -48,13 +49,15 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
                   moe_args.output_dtype,
                   a2av_dispatch,
                   a2av_ring,
-                  a2av_hier);
+                  a2av_hier,
+                  a2av_hier_compress);
             }),
             py::arg("tp_env"),
             py::arg("moe_args"),
             py::arg("a2av_dispatch") = false,
             py::arg("a2av_ring") = false,
-            py::arg("a2av_hier") = false)
+            py::arg("a2av_hier") = false,
+            py::arg("a2av_hier_compress") = false)
         .def("clear_buffers", &GemmGroupedV2AGScatterOpCls::clear_buffers)
         .def(
             "forward",
@@ -72,7 +75,8 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("fast_accum") = false,
             py::arg("sm_margin") = 0,
             py::arg("ag_option") = AllGatherOptionWithOptional(),
-            py::arg("splits_per_source") = py::none())
+            py::arg("splits_per_source") = py::none(),
+            py::arg("a2av_unique_counts") = py::none())
         .def(
             "forward_triton_aot",
             &GemmGroupedV2AGScatterOpCls::forward_triton_aot,
@@ -105,7 +109,8 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("fast_accum") = false,
             py::arg("sm_margin") = 0,
             py::arg("ag_option") = AllGatherOptionWithOptional(),
-            py::arg("splits_per_source") = py::none())
+            py::arg("splits_per_source") = py::none(),
+            py::arg("a2av_unique_counts") = py::none())
         .def(
             "profiling",
             &GemmGroupedV2AGScatterOpCls::profiling,

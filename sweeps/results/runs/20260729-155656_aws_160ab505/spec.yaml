@@ -1,0 +1,34 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 8
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env: {}
+families:
+  - remotefrac
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "001"
+modes:
+  - torchprof
+nodes: 2
+notes: "full sweep 3/3: torchprof timelines b8"
+platform: aws
+profile_iters: 3
+retries: 1
+skip_correctness: false
+sm_margin: 8
+timeout_s: 900
+topk: 8
+variants:
+  - allgather
+  - a2av
+  - a2av_ring
+  - hier
+  - hier_compress
+  - hier_compress_identity
+  - hier_compress_union
+  - hier_compress_pack
+warmup_iters: 5

@@ -1,0 +1,115 @@
+{
+  "artifacts": [
+    {
+      "bytes": 2426,
+      "path": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372/cells/a2av_remotefrac_b8_k8_e2e/records/rank_000.jsonl",
+      "sha256": "8bcb92c78c6755ed983fca83d2dc62f070dc9cdfb8acca22c80be35a9076db39"
+    },
+    {
+      "bytes": 2226,
+      "path": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372/cells/a2av_remotefrac_b8_k8_e2e/records/rank_001.jsonl",
+      "sha256": "a635c3fe30db102c558c94c03434735a38f2442a97651a8b9ca7e3e7525c55e6"
+    },
+    {
+      "bytes": 2237,
+      "path": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372/cells/a2av_remotefrac_b8_k8_e2e/records/rank_002.jsonl",
+      "sha256": "110a87e6ace19f236f22d641ab5cee21ddecd65ad7b7c901325415567d27ce7c"
+    },
+    {
+      "bytes": 2228,
+      "path": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372/cells/a2av_remotefrac_b8_k8_e2e/records/rank_003.jsonl",
+      "sha256": "d8da42351daf176849d2e47c671cecf80c22542ea29531e534c8770e8d90c039"
+    },
+    {
+      "bytes": 2230,
+      "path": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372/cells/a2av_remotefrac_b8_k8_e2e/records/rank_004.jsonl",
+      "sha256": "54914dd6e6d7532703a507fc4505c78e9f0f850a6fce68bfce32376c8435c323"
+    },
+    {
+      "bytes": 2224,
+      "path": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372/cells/a2av_remotefrac_b8_k8_e2e/records/rank_005.jsonl",
+      "sha256": "d70cb286faeeec8c30f145d0806106153bbbb6b9561ff97ba28624698cbe5960"
+    },
+    {
+      "bytes": 2226,
+      "path": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372/cells/a2av_remotefrac_b8_k8_e2e/records/rank_006.jsonl",
+      "sha256": "9ae61629e7998fc850ac19242fba770c2d432d09b36deb348bfb74ba718e9892"
+    },
+    {
+      "bytes": 2227,
+      "path": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372/cells/a2av_remotefrac_b8_k8_e2e/records/rank_007.jsonl",
+      "sha256": "12495716055f4968c0d7f714b87c9535a3c645e255fada38157dd094aebd78ce"
+    },
+    {
+      "bytes": 2231,
+      "path": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372/cells/a2av_remotefrac_b8_k8_e2e/records/rank_008.jsonl",
+      "sha256": "caffd477ee45d1401939bf0102eb466277b2c562cf82ab1dcb77944fad6d87af"
+    },
+    {
+      "bytes": 2232,
+      "path": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372/cells/a2av_remotefrac_b8_k8_e2e/records/rank_009.jsonl",
+      "sha256": "1704c2baf6510167e530fb13c7cca9bb0c0f4daead5c8f9adb1c364bde926262"
+    },
+    {
+      "bytes": 2232,
+      "path": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372/cells/a2av_remotefrac_b8_k8_e2e/records/rank_010.jsonl",
+      "sha256": "56a6c8adf8fa32f98e1168e96be13574ff6d554fcae74a266e6a4d4fa182257c"
+    },
+    {
+      "bytes": 2232,
+      "path": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372/cells/a2av_remotefrac_b8_k8_e2e/records/rank_011.jsonl",
+      "sha256": "85b0e331ac4aec51636010f83016ef8cbca60f194287ab50dec397803fd6420b"
+    },
+    {
+      "bytes": 2231,
+      "path": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372/cells/a2av_remotefrac_b8_k8_e2e/records/rank_012.jsonl",
+      "sha256": "34f8f5b305214dd33d27fe34ae34a3160437e377b8193391df7eb1469a32cdd5"
+    },
+    {
+      "bytes": 2233,
+      "path": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372/cells/a2av_remotefrac_b8_k8_e2e/records/rank_013.jsonl",
+      "sha256": "1659b23b1f53437222485bec07385c944f429e7989dee56aa39a2097c0de6b3b"
+    },
+    {
+      "bytes": 2228,
+      "path": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372/cells/a2av_remotefrac_b8_k8_e2e/records/rank_014.jsonl",
+      "sha256": "e4f3e4838d9a911eff1a1851eaf49730d794d342d9f4c0882b0707f8b01ccfd6"
+    },
+    {
+      "bytes": 2238,
+      "path": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372/cells/a2av_remotefrac_b8_k8_e2e/records/rank_015.jsonl",
+      "sha256": "792ccc2fe4e8c9c08dc26ff140269a5a59a2a2483785438a3516ee01d8bf310e"
+    }
+  ],
+  "capabilities": {},
+  "cells": [
+    {
+      "cell_id": "a2av_remotefrac_b8_k8_e2e",
+      "staging": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372/cells/a2av_remotefrac_b8_k8_e2e",
+      "status": "ok"
+    }
+  ],
+  "created": "2026-08-01T11:04:31Z",
+  "flux_libs": [
+    {
+      "path": "/home/ubuntu/workspace/flux/python/flux/lib/libflux_cuda.so",
+      "sha256": "e622380c33d5a47ce3da557c13560a0981a883ef2537493c55930c0d05278fd5"
+    },
+    {
+      "path": "/home/ubuntu/workspace/flux/python/flux/lib/libflux_cuda_ths_op.so",
+      "sha256": "cb3e5b77a6bc4fd7d8256e5a11b5ce1e82417a6b78d742f17105234494c740a6"
+    }
+  ],
+  "git": {
+    "dirty": true,
+    "sha": "6da24e128befcf973d0cc79a397a754bddef1804"
+  },
+  "host": "ip-10-20-3-140",
+  "platform": {
+    "fabric": "efa",
+    "name": "aws",
+    "ranks_per_node": 8
+  },
+  "run_id": "20260801-110411_aws_34d7d372",
+  "staging_root": "/home/ubuntu/sweep_data/20260801-110411_aws_34d7d372"
+}

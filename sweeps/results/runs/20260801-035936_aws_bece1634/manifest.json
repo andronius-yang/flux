@@ -1,0 +1,117 @@
+{
+  "artifacts": [
+    {
+      "bytes": 2675,
+      "path": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634/cells/hier_compress_union_remotefrac_b8_k8_phases/records/rank_000.jsonl",
+      "sha256": "0d8222b2dbe534be586c6143af1f3823d093d0eb4ea3904ccdfe6f36dfe28fc6"
+    },
+    {
+      "bytes": 2352,
+      "path": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634/cells/hier_compress_union_remotefrac_b8_k8_phases/records/rank_001.jsonl",
+      "sha256": "d031ec5c3e140778fc90223f85b879f972ec39198b5b5effc37353064de232fa"
+    },
+    {
+      "bytes": 2352,
+      "path": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634/cells/hier_compress_union_remotefrac_b8_k8_phases/records/rank_002.jsonl",
+      "sha256": "b1e3cb7a0daaa58627babcaf49f0a8a7b07b462ce76cf16ccc9cfacebdb4d6d7"
+    },
+    {
+      "bytes": 2355,
+      "path": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634/cells/hier_compress_union_remotefrac_b8_k8_phases/records/rank_003.jsonl",
+      "sha256": "42c97ce1823fff1724f4b0473e7ca874121ce70dd683f2d6001005dfa71d5438"
+    },
+    {
+      "bytes": 2353,
+      "path": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634/cells/hier_compress_union_remotefrac_b8_k8_phases/records/rank_004.jsonl",
+      "sha256": "ea20d544c7976ad1da6d610c2eecae66bcedbaa0346176dba1a373209ebdedb5"
+    },
+    {
+      "bytes": 2352,
+      "path": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634/cells/hier_compress_union_remotefrac_b8_k8_phases/records/rank_005.jsonl",
+      "sha256": "9061cbe36d97f8f6dfa139bbc19ab1b1661873973309451aa783635a49faf4bb"
+    },
+    {
+      "bytes": 2352,
+      "path": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634/cells/hier_compress_union_remotefrac_b8_k8_phases/records/rank_006.jsonl",
+      "sha256": "07892de7acee70f5a04aea3824dc9e9e4311d1026b1ebb97eff9391e71d818ba"
+    },
+    {
+      "bytes": 2347,
+      "path": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634/cells/hier_compress_union_remotefrac_b8_k8_phases/records/rank_007.jsonl",
+      "sha256": "9bf4e1193911ed5c8f9df6c5e705a9d8aacb2d4e8a5a939604d72be18929012d"
+    },
+    {
+      "bytes": 2348,
+      "path": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634/cells/hier_compress_union_remotefrac_b8_k8_phases/records/rank_008.jsonl",
+      "sha256": "66ed849e53a7d0cd59f2fc260ab10125faa928288bb0a1be448fadcaeb9835fd"
+    },
+    {
+      "bytes": 2353,
+      "path": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634/cells/hier_compress_union_remotefrac_b8_k8_phases/records/rank_009.jsonl",
+      "sha256": "e6ef22c9253ca55293ce8427d4bf8ab81e8f3318fbedf39093e5335e75a59a38"
+    },
+    {
+      "bytes": 2358,
+      "path": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634/cells/hier_compress_union_remotefrac_b8_k8_phases/records/rank_010.jsonl",
+      "sha256": "31194808d133269c7461d1b2f8b44eb9a1f8e8094340727a61f3d8ea50320188"
+    },
+    {
+      "bytes": 2355,
+      "path": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634/cells/hier_compress_union_remotefrac_b8_k8_phases/records/rank_011.jsonl",
+      "sha256": "3449df99a930b742852138c06c2d68d7a556c8088b44dca546d5070a21ba19f2"
+    },
+    {
+      "bytes": 2358,
+      "path": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634/cells/hier_compress_union_remotefrac_b8_k8_phases/records/rank_012.jsonl",
+      "sha256": "2018eeeefbf638dc2923da914cddb8c3e2559c9302044868cc21824644746cb9"
+    },
+    {
+      "bytes": 2353,
+      "path": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634/cells/hier_compress_union_remotefrac_b8_k8_phases/records/rank_013.jsonl",
+      "sha256": "2db71d247dc196833c6e627452d149704afd883592eee448df478b1ce38a4706"
+    },
+    {
+      "bytes": 2352,
+      "path": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634/cells/hier_compress_union_remotefrac_b8_k8_phases/records/rank_014.jsonl",
+      "sha256": "d7e0dfc6b5b7df5540b3444e8f1f5d8c97b88ba4ef82b4e27bcde3b0e69442f0"
+    },
+    {
+      "bytes": 2353,
+      "path": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634/cells/hier_compress_union_remotefrac_b8_k8_phases/records/rank_015.jsonl",
+      "sha256": "a280f2f6c5105780e33fb34b200594a9edcb5d0738b40a002f84f6adc84f7246"
+    }
+  ],
+  "capabilities": {
+    "FLUX_A2AV_UNION_BCAST": true
+  },
+  "cells": [
+    {
+      "cell_id": "hier_compress_union_remotefrac_b8_k8_phases",
+      "staging": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634/cells/hier_compress_union_remotefrac_b8_k8_phases",
+      "status": "ok"
+    }
+  ],
+  "created": "2026-08-01T03:59:56Z",
+  "flux_libs": [
+    {
+      "path": "/home/ubuntu/workspace/flux/python/flux/lib/libflux_cuda.so",
+      "sha256": "e622380c33d5a47ce3da557c13560a0981a883ef2537493c55930c0d05278fd5"
+    },
+    {
+      "path": "/home/ubuntu/workspace/flux/python/flux/lib/libflux_cuda_ths_op.so",
+      "sha256": "3acf2b0f05bc8d8346a33c8b642ab499f4d1bfce4aec09c6443c03b8091f1a3d"
+    }
+  ],
+  "git": {
+    "dirty": true,
+    "sha": "6da24e128befcf973d0cc79a397a754bddef1804"
+  },
+  "host": "ip-10-20-3-140",
+  "platform": {
+    "fabric": "efa",
+    "name": "aws",
+    "ranks_per_node": 8
+  },
+  "run_id": "20260801-035936_aws_bece1634",
+  "staging_root": "/home/ubuntu/sweep_data/20260801-035936_aws_bece1634"
+}

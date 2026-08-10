@@ -21,6 +21,7 @@
 #include <cstdint>
 
 #include "cutlass_impls/default_ag_scatter_gemm_grouped_with_absmax.h"
+#include "flux/a2av_progress.h"
 #include "flux/args/moe_ag_scatter.h"
 #include "flux/cuda/cuda_common.h"
 #include "flux/cuda/gemm_impls/gemm_grouped_v2_impl.hpp"
@@ -291,6 +292,9 @@ class GemmGroupedV2AGScatter_Device
       gemm_args.bucket_offsets = a2av_ws.bucket_offsets;
       gemm_args.bucket_cursors = a2av_ws.bucket_cursors;
       gemm_args.multi_masks = a2av_ws.multi_masks;
+      gemm_args.progress_slots = reinterpret_cast<A2AVProgressSlots *>(args.progress_slots);
+      gemm_args.tile_trace = reinterpret_cast<A2AVTileRecord *>(args.tile_trace);
+      gemm_args.tile_trace_capacity = args.tile_trace_capacity;
     }
     return gemm_args;
   }

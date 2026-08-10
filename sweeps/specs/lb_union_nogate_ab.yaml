@@ -1,0 +1,30 @@
+# NO_GEMM_GATE A/B companion to lb_union_v1: measures cost #1 (the GEMM gate
+# waiting on phase-1 piece payload copies) directly. Separate capsule because
+# extra_env applies to every cell in a spec; compare against the gate-on cells
+# of lb_union_v1 at matching (family, budget, mode=e2e) only.
+platform: aws
+nodes: 2
+variants:
+  - hier_compress_lb_union
+  - hier_compress_union
+families:
+  - remotefrac
+  - "remotefrac:fracs=0.02,0.02,0.02,0.02,0.02,0.02,0.02,0.90"
+budgets_mib: [8, 32]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [e2e]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env:
+  FLUX_A2AV_NO_GEMM_GATE: "1"
+notes: "lb_union NO_GEMM_GATE A/B: ungated GEMM launch (no SM comm kernels post-launch on these variants)"

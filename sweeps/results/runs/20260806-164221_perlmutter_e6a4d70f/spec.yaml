@@ -1,0 +1,38 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 8
+  - 32
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env:
+  FLUX_A2AV_EARLY_LAUNCH: "1"
+families:
+  - uniform
+  - "trace:pools=mmlu/college_mathematics;layer=92;sem=homog"
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
+  - "trace:pools=mmlu_ZH_CN/college_mathematics;layer=92;sem=homog"
+  - "trace:pools=mmlu_ZH_CN/high_school_world_history;layer=92;sem=homog"
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=mixed"
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode;dealer=1"
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=60;sem=pernode"
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+nodes: 4
+notes: "realistic-trace campaign R1: clean isolated latency, lb_union vs union, Qwen3-235B 2x2 subject/lang pools (+pernode/mixed/dealer/median-layer arms), b8+b32 k8, EARLY_LAUNCH campaign config"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+skip_correctness: false
+sm_margin: 8
+timeout_s: 900
+topk: 8
+variants:
+  - hier_compress_lb_union
+  - hier_compress_union
+warmup_iters: 5

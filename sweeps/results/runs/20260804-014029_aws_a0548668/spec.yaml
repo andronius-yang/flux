@@ -1,0 +1,32 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 2
+  - 8
+  - 32
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env: {}
+families:
+  - remotefrac
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 30
+matrix_instance: "001"
+modes:
+  - isolated
+nodes: 2
+notes: "Tier B window gating + fanout A/B/C across budgets, isolated max-rank"
+platform: aws
+profile_iters: 3
+retries: 1
+skip_correctness: false
+sm_margin: 8
+timeout_s: 900
+topk: 8
+variants:
+  - hier_compress_union
+  - hier_compress_lb_union
+  - hier_compress_lb_union_fanpar
+  - hier_compress_lb_union_fanring
+warmup_iters: 5

@@ -58,7 +58,8 @@ class GemmGroupedV2AGScatterOp {
       at::ScalarType output_dtype,
       bool a2av_dispatch = false,
       bool a2av_ring = false,
-      bool a2av_hier = false);
+      bool a2av_hier = false,
+      bool a2av_hier_compress = false);
   ~GemmGroupedV2AGScatterOp();
   void clear_buffers();
   torch::Tensor forward(
@@ -78,7 +79,12 @@ class GemmGroupedV2AGScatterOp {
       // metadata-exchange result: int32 CPU [world_size, nexperts] per-source
       // per-expert copy counts; splits is its column sum. nullopt = derive
       // everything from splits/scatter_index as before.
-      c10::optional<torch::Tensor> splits_per_source = c10::nullopt);
+      c10::optional<torch::Tensor> splits_per_source = c10::nullopt,
+      // a2av_hier_compress metadata: int32 CPU [world_size, world_size + nnodes]
+      // dedup counts — cols [0, W) = unique tokens source s -> rank d, cols
+      // [W, W + nnodes) = unique tokens source s -> node-n union. Identical on
+      // all ranks; required (with splits_per_source) in compress mode.
+      c10::optional<torch::Tensor> a2av_unique_counts = c10::nullopt);
   torch::Tensor forward_triton_aot(
       torch::Tensor inputs_shard,
       torch::Tensor weights,
@@ -107,7 +113,8 @@ class GemmGroupedV2AGScatterOp {
       bool fast_accum,
       int sm_margin,
       AllGatherOptionWithOptional ag_option,
-      c10::optional<torch::Tensor> splits_per_source = c10::nullopt);
+      c10::optional<torch::Tensor> splits_per_source = c10::nullopt,
+      c10::optional<torch::Tensor> a2av_unique_counts = c10::nullopt);
   std::vector<torch::Tensor> profiling(
       torch::Tensor inputs_shard,
       std::vector<torch::Tensor> weights,

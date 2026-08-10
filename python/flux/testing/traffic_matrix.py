@@ -38,6 +38,8 @@ import torch
 __all__ = [
     "parse_traffic_matrix",
     "traffic_matrix_to_choosed_experts",
+    "load_routing_file",
+    "choosed_experts_to_matrix_chunks",
 ]
 
 
@@ -143,6 +145,55 @@ def traffic_matrix_to_choosed_experts(
     if torch.cuda.is_available():
         choosed_experts = choosed_experts.cuda()
     return choosed_experts
+
+
+def load_routing_file(path: str, nexperts: int, topk: int) -> torch.Tensor:
+    """Load a per-token routing file (sweeps/gen_trace_routing.py sidecar of a
+    trace-family matrix): line 1 is "ntokens topk G", then one token per line
+    with topk space-separated expert ids. Returns [ntokens, topk] int32 CPU,
+    token t homed on rank t // (ntokens // W). Unlike the dealer, this carries
+    the REAL token-overlap structure of the trace."""
+    with open(path, "r") as f:
+        header = f.readline().split()
+        assert len(header) == 3, f"routing file {path}: bad header {header}"
+        ntokens, file_topk, file_g = (int(x) for x in header)
+        assert file_topk == topk, f"routing file topk {file_topk} != --topk {topk}"
+        assert file_g == nexperts, f"routing file G {file_g} != --G {nexperts}"
+        values = [int(x) for x in f.read().split()]
+    assert len(values) == ntokens * topk, (
+        f"routing file {path} declares {ntokens} tokens x {topk} but has"
+        f" {len(values)} ids"
+    )
+    routing = torch.tensor(values, dtype=torch.int32).reshape(ntokens, topk)
+    assert int(routing.min()) >= 0 and int(routing.max()) < nexperts, (
+        f"routing file {path} has expert ids outside [0, {nexperts})"
+    )
+    srt, _ = routing.sort(dim=1)
+    assert ((srt[:, 1:] - srt[:, :-1]) > 0).all(), (
+        f"routing file {path} has a duplicate expert within a token's topk"
+    )
+    return routing
+
+
+def choosed_experts_to_matrix_chunks(
+    choosed_experts: torch.Tensor, nranks: int, experts_per_rank: int
+) -> torch.Tensor:
+    """[W, W] int64 per-(src, dst-rank) chunk counts realized by a routing
+    (same math as the dealer's reconstruction self-check)."""
+    ntokens, _ = choosed_experts.shape
+    assert ntokens % nranks == 0
+    tokens_per_rank = ntokens // nranks
+    owner_rank = choosed_experts.long().cpu() // experts_per_rank
+    chunks = torch.stack(
+        [
+            torch.bincount(
+                owner_rank[s * tokens_per_rank : (s + 1) * tokens_per_rank].flatten(),
+                minlength=nranks,
+            )
+            for s in range(nranks)
+        ]
+    )
+    return chunks
 
 
 def traffic_matrix_stats(

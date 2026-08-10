@@ -1,0 +1,34 @@
+# lb_union v1: balanced chunked wire + union-broadcast gateway, vs its two
+# parents (union = gateway shape, hier_compress = wire shape) and identity.
+# Families sweep the theoretical ident->balanced wire ratio: 0.900 (default
+# remotefrac — dedup-saturated control), 0.262, 0.188 (one saturating sender
+# per node, rest at p*topk << 1). fracs MUST live here in the spec — the
+# --families CLI flag comma-splits and would shred them.
+platform: aws
+nodes: 2
+variants:
+  - hier_compress_union
+  - hier_compress_lb_union
+  - hier_compress_identity
+  - hier_compress
+families:
+  - remotefrac
+  - "remotefrac:fracs=0.02,0.02,0.02,0.02,0.02,0.02,0.02,0.90"
+  - "remotefrac:fracs=0.01,0.01,0.01,0.01,0.01,0.01,0.01,0.99"
+budgets_mib: [2, 8, 32]  # b2 = put-count-overhead regime, b32 = bandwidth regime
+topk: 8
+G: 128                   # feasibility: G >= W * ceil(0.99 * 8) = 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [e2e, phases]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env: {}
+notes: "lb_union v1: balanced wire + union gateway vs union/identity/balanced across skew"

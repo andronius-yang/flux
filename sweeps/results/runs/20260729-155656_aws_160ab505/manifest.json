@@ -1,0 +1,714 @@
+{
+  "artifacts": [
+    {
+      "bytes": 1942,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/allgather_remotefrac_b8_k8_torchprof/records/rank_000.jsonl",
+      "sha256": "57cf077a4dc7ade7696af00c732aaf7e7a49ca726997b449082e53a292d43d53"
+    },
+    {
+      "bytes": 1754,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/allgather_remotefrac_b8_k8_torchprof/records/rank_001.jsonl",
+      "sha256": "c56b7187c1da17339ad92595525f33924aa0c416b0d98400c75f9952315ce650"
+    },
+    {
+      "bytes": 1752,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/allgather_remotefrac_b8_k8_torchprof/records/rank_002.jsonl",
+      "sha256": "bdd3c7fe869db503ff3a22c648e7e0ba695394a10e6a15551af56cc2816be1a1"
+    },
+    {
+      "bytes": 1745,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/allgather_remotefrac_b8_k8_torchprof/records/rank_003.jsonl",
+      "sha256": "689a82880ddb15e82d62cffec9f63f7744cc07c954601336830e7f41ceb271aa"
+    },
+    {
+      "bytes": 1751,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/allgather_remotefrac_b8_k8_torchprof/records/rank_004.jsonl",
+      "sha256": "48f47c2f35e8b89072054531a219016e0e05fa09a94cc092b7c323ec999397af"
+    },
+    {
+      "bytes": 1752,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/allgather_remotefrac_b8_k8_torchprof/records/rank_005.jsonl",
+      "sha256": "f08d81cddf60f0a870c526cb3a947453fa15f29d81478df7fc352c59960bbd8c"
+    },
+    {
+      "bytes": 1746,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/allgather_remotefrac_b8_k8_torchprof/records/rank_006.jsonl",
+      "sha256": "61330225ad4013d7d204d06188132b5be744ee7cb3c0a7ca4704e847999c26a7"
+    },
+    {
+      "bytes": 1751,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/allgather_remotefrac_b8_k8_torchprof/records/rank_007.jsonl",
+      "sha256": "60c905d5dc4c6727cd0f8a65a6f7cb1c0c6f77ec469e3b48b59d2aa143267ae6"
+    },
+    {
+      "bytes": 1751,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/allgather_remotefrac_b8_k8_torchprof/records/rank_008.jsonl",
+      "sha256": "6fbd658ac599ce0e67b9f161b10002cb71c624ff01d8f7220d23c655c3783421"
+    },
+    {
+      "bytes": 1753,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/allgather_remotefrac_b8_k8_torchprof/records/rank_009.jsonl",
+      "sha256": "f73f74088f5c6e06401d7df2993018b27bb28327c6cf8015e5f824ab7c567734"
+    },
+    {
+      "bytes": 1753,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/allgather_remotefrac_b8_k8_torchprof/records/rank_010.jsonl",
+      "sha256": "84301d6c44f0feb6328db513e266edc763e5a03f3aeee630480d09926ad8b27b"
+    },
+    {
+      "bytes": 1751,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/allgather_remotefrac_b8_k8_torchprof/records/rank_011.jsonl",
+      "sha256": "07e2408a3faf90ea79ae426a83db2b916bb83c1e00fad8ae33e43330d61631cc"
+    },
+    {
+      "bytes": 1752,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/allgather_remotefrac_b8_k8_torchprof/records/rank_012.jsonl",
+      "sha256": "8372a46ee412561dad26b45c0f68b592e313602313943ee51037d0256f68dd0a"
+    },
+    {
+      "bytes": 1756,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/allgather_remotefrac_b8_k8_torchprof/records/rank_013.jsonl",
+      "sha256": "cca94c10921c1e733b9eb704573fd3fc8108802481fb3c6038dafe1143824142"
+    },
+    {
+      "bytes": 1753,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/allgather_remotefrac_b8_k8_torchprof/records/rank_014.jsonl",
+      "sha256": "4698db39dc0398399cf32be092f3480f9ff000057cd5824e92b5ce51a5a9d808"
+    },
+    {
+      "bytes": 1754,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/allgather_remotefrac_b8_k8_torchprof/records/rank_015.jsonl",
+      "sha256": "3b45f371c2b9b26975f614e403c0ae2ea9976cea88d30fcb350eab50c0c557d1"
+    },
+    {
+      "bytes": 1929,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_remotefrac_b8_k8_torchprof/records/rank_000.jsonl",
+      "sha256": "d056d88f41f623ff740ab8c48065c426c82506f55a72897f8fc7ec1bb7b5a155"
+    },
+    {
+      "bytes": 1741,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_remotefrac_b8_k8_torchprof/records/rank_001.jsonl",
+      "sha256": "0c426fbe75c2bea8a469155015864343be133ecf17e99e81222e780805612d83"
+    },
+    {
+      "bytes": 1744,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_remotefrac_b8_k8_torchprof/records/rank_002.jsonl",
+      "sha256": "058da228013d07d85b64fa6d90bb35d6ede5b1e2adc1917a1b41ea8e14fe8033"
+    },
+    {
+      "bytes": 1741,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_remotefrac_b8_k8_torchprof/records/rank_003.jsonl",
+      "sha256": "f45ca8f4ebe6b3c27df0c7bec49374b5df1e0b0b6ec640e85857383276ad9207"
+    },
+    {
+      "bytes": 1741,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_remotefrac_b8_k8_torchprof/records/rank_004.jsonl",
+      "sha256": "61b74337ee1058003e0d20c5311e4283f7a282823a39de87bf8662c0f8129c28"
+    },
+    {
+      "bytes": 1742,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_remotefrac_b8_k8_torchprof/records/rank_005.jsonl",
+      "sha256": "e932a09c343eaabac25a84b31cbb7f70943ebe389475a4376242f9d608b1a0a8"
+    },
+    {
+      "bytes": 1742,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_remotefrac_b8_k8_torchprof/records/rank_006.jsonl",
+      "sha256": "b3f7556e28a23ca4c846f01a53d59884b1d6644f57128491ca947051ee38be1d"
+    },
+    {
+      "bytes": 1743,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_remotefrac_b8_k8_torchprof/records/rank_007.jsonl",
+      "sha256": "f8f0906df2ee05897942a841b0d6f2461e15fbec4b4a712de66fddfe242e96c7"
+    },
+    {
+      "bytes": 1742,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_remotefrac_b8_k8_torchprof/records/rank_008.jsonl",
+      "sha256": "227deb2e74e60edc12e320fac334af013196b7c4917add9c4e04d9e2a4db636b"
+    },
+    {
+      "bytes": 1742,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_remotefrac_b8_k8_torchprof/records/rank_009.jsonl",
+      "sha256": "bbddfd2c5843aa5749ebbc094ebf3dd0a802e72d7c613fafd0b74cfae47e2c24"
+    },
+    {
+      "bytes": 1744,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_remotefrac_b8_k8_torchprof/records/rank_010.jsonl",
+      "sha256": "28206f0caf26420a7e81110f9b3dada764db2ce5be0e5d68ee97c4415cfedb28"
+    },
+    {
+      "bytes": 1745,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_remotefrac_b8_k8_torchprof/records/rank_011.jsonl",
+      "sha256": "109d3f72bbf99ed1071e501fe35fbdd6cbe5eb83a667625ee34089d69e18f70d"
+    },
+    {
+      "bytes": 1743,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_remotefrac_b8_k8_torchprof/records/rank_012.jsonl",
+      "sha256": "0975f7871d3d7cfc8f9fd3b828e75643b1fccddc148f4aeaec80edcfbdc57a5d"
+    },
+    {
+      "bytes": 1742,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_remotefrac_b8_k8_torchprof/records/rank_013.jsonl",
+      "sha256": "d3565bf1724afc8250181e774c67ce728a02810a5448462d7db965122c47d97e"
+    },
+    {
+      "bytes": 1745,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_remotefrac_b8_k8_torchprof/records/rank_014.jsonl",
+      "sha256": "18d295444a6107b01933169991453de759f8e6be6947dd67551828f4fa55a555"
+    },
+    {
+      "bytes": 1747,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_remotefrac_b8_k8_torchprof/records/rank_015.jsonl",
+      "sha256": "7ce9e8b53cb06690a41d5f7e9cdeea626ae958fda56299f7f317099f20dfed85"
+    },
+    {
+      "bytes": 1938,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_ring_remotefrac_b8_k8_torchprof/records/rank_000.jsonl",
+      "sha256": "dd831b3cb1ae2ab34999731c7858fc072a106aeb235343a94ef0cdbddf7469c7"
+    },
+    {
+      "bytes": 1752,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_ring_remotefrac_b8_k8_torchprof/records/rank_001.jsonl",
+      "sha256": "c08a889211cb80aec57ea2b581c3a72f889d05564387be5e851bdf69dc6ae770"
+    },
+    {
+      "bytes": 1753,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_ring_remotefrac_b8_k8_torchprof/records/rank_002.jsonl",
+      "sha256": "825747a219af7832742007b2e9c31af9c6f8000735a7abcd1364e6f64d99a145"
+    },
+    {
+      "bytes": 1751,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_ring_remotefrac_b8_k8_torchprof/records/rank_003.jsonl",
+      "sha256": "8cbd0c347323aa304238c815c7f0a12ac365207e067827f003a0e8ad0f788260"
+    },
+    {
+      "bytes": 1749,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_ring_remotefrac_b8_k8_torchprof/records/rank_004.jsonl",
+      "sha256": "bd150f41cda04c5faa4ebbe55f23c96952df8a5f8c97ff5ad41948018e0cc9a8"
+    },
+    {
+      "bytes": 1753,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_ring_remotefrac_b8_k8_torchprof/records/rank_005.jsonl",
+      "sha256": "0179abecdabe0298c39dd5a2eb4c51fe11e1defd07ab06acb744396c09585bef"
+    },
+    {
+      "bytes": 1750,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_ring_remotefrac_b8_k8_torchprof/records/rank_006.jsonl",
+      "sha256": "56f0bec77d04a42563279a82ac2c4a71eb1a005674d62af020a1ce1d16a1f26e"
+    },
+    {
+      "bytes": 1753,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_ring_remotefrac_b8_k8_torchprof/records/rank_007.jsonl",
+      "sha256": "42916835ae8b1fdc4a5886a976f9b51b0c425c196ac1747e2772c6d9acb5de6b"
+    },
+    {
+      "bytes": 1751,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_ring_remotefrac_b8_k8_torchprof/records/rank_008.jsonl",
+      "sha256": "081ece790be46e63ea640def2d753fa2de38bf603e3ed22d3e1a678f068e7e1d"
+    },
+    {
+      "bytes": 1751,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_ring_remotefrac_b8_k8_torchprof/records/rank_009.jsonl",
+      "sha256": "11bdb3bae4b8e007dd555c6eefd4f6c93757d637ba2cf2732af5a437f61340ca"
+    },
+    {
+      "bytes": 1755,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_ring_remotefrac_b8_k8_torchprof/records/rank_010.jsonl",
+      "sha256": "3f7647aa1e11744d7230d2e21a7055aec3e5d43050d4970ba0040b358e1ae00e"
+    },
+    {
+      "bytes": 1751,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_ring_remotefrac_b8_k8_torchprof/records/rank_011.jsonl",
+      "sha256": "2e9ff8be5c516401d27c7589bf79df5fc5e1a4bf07edcf74acda4b0924df5029"
+    },
+    {
+      "bytes": 1751,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_ring_remotefrac_b8_k8_torchprof/records/rank_012.jsonl",
+      "sha256": "3f3b0a95607743cccc6eecfba7ac5256f614e7bc3fe47e56ff10845ef976a6ff"
+    },
+    {
+      "bytes": 1749,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_ring_remotefrac_b8_k8_torchprof/records/rank_013.jsonl",
+      "sha256": "b504f47da16e17bcf646ff327a11f86ada807b7585b0ba46ddd740f57dae61fe"
+    },
+    {
+      "bytes": 1753,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_ring_remotefrac_b8_k8_torchprof/records/rank_014.jsonl",
+      "sha256": "a03045ef4c62b35b0db23f92c08714f13d675b3eaca63b554be56400e438d25b"
+    },
+    {
+      "bytes": 1752,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_ring_remotefrac_b8_k8_torchprof/records/rank_015.jsonl",
+      "sha256": "c9ab5984b326ec29cdde2407db7401f6d13c7210b22652a9d9fea6629dbfbd01"
+    },
+    {
+      "bytes": 1929,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_remotefrac_b8_k8_torchprof/records/rank_000.jsonl",
+      "sha256": "153c957b6662e265115a7b350e6af2b38a6e3cbe72604105ff0067651ad44ad6"
+    },
+    {
+      "bytes": 1741,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_remotefrac_b8_k8_torchprof/records/rank_001.jsonl",
+      "sha256": "b607b28bad69c935bce7bfe41427960faf4e13f47d9674bb4020db269ffcd0da"
+    },
+    {
+      "bytes": 1741,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_remotefrac_b8_k8_torchprof/records/rank_002.jsonl",
+      "sha256": "40754b2620eba6988bb082913291f31abfaf3f59b51847da3d16d527c22edc1c"
+    },
+    {
+      "bytes": 1735,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_remotefrac_b8_k8_torchprof/records/rank_003.jsonl",
+      "sha256": "ed5519a6f31ea03e232ab232498deb4326284c3425e82ff02f6590336acf20d5"
+    },
+    {
+      "bytes": 1742,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_remotefrac_b8_k8_torchprof/records/rank_004.jsonl",
+      "sha256": "41df9708fcad642d2dcea77283ee83bf20f460f85e8cd62138eb5cc2f887c2ec"
+    },
+    {
+      "bytes": 1741,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_remotefrac_b8_k8_torchprof/records/rank_005.jsonl",
+      "sha256": "2d7cb673139b4e31e13054d53715f35b05e04d72a2e81002645b4a7799be55d9"
+    },
+    {
+      "bytes": 1743,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_remotefrac_b8_k8_torchprof/records/rank_006.jsonl",
+      "sha256": "94611cda6b9406f7d37ad6d08be18f421128d3c2082b8f3f7ead6dabdd70db70"
+    },
+    {
+      "bytes": 1740,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_remotefrac_b8_k8_torchprof/records/rank_007.jsonl",
+      "sha256": "a0a94a1fe057d8251638d1afe0fb751a4c8dfccd0d404955a1e8865ff8753a83"
+    },
+    {
+      "bytes": 1737,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_remotefrac_b8_k8_torchprof/records/rank_008.jsonl",
+      "sha256": "44ae5d71ea431ba7ed06617268396feab5eb2fbabb43ff436a8b9d7b88dc70c2"
+    },
+    {
+      "bytes": 1743,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_remotefrac_b8_k8_torchprof/records/rank_009.jsonl",
+      "sha256": "5c4be6b997f35d5dc16889e577607fbfaafb46966c775fdeead59b5163027b91"
+    },
+    {
+      "bytes": 1743,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_remotefrac_b8_k8_torchprof/records/rank_010.jsonl",
+      "sha256": "6785787241e6059023298302b1c7cf1ebef83501499ad595d0e2722af11520f7"
+    },
+    {
+      "bytes": 1737,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_remotefrac_b8_k8_torchprof/records/rank_011.jsonl",
+      "sha256": "6cbd5757e08ff59d5b6ad33995701db5c32a174fd4becae8e57ac24d2c131a24"
+    },
+    {
+      "bytes": 1744,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_remotefrac_b8_k8_torchprof/records/rank_012.jsonl",
+      "sha256": "c1d223a22a9fa5dec44c6a1c9e57d35d22270bbf3b3a5806f65e30d15a9a063e"
+    },
+    {
+      "bytes": 1740,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_remotefrac_b8_k8_torchprof/records/rank_013.jsonl",
+      "sha256": "dbee853fd1fb17b324bf287b1e410fcc3df35ff30696b001913107d27936d3b2"
+    },
+    {
+      "bytes": 1738,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_remotefrac_b8_k8_torchprof/records/rank_014.jsonl",
+      "sha256": "239a1abe3a9613d21f3d1b355d60267f32bb2fec2d6504e20a71a88b147bddad"
+    },
+    {
+      "bytes": 1742,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_remotefrac_b8_k8_torchprof/records/rank_015.jsonl",
+      "sha256": "0b40747e72fa69240a119ad0c0de5f4aeab2855fbeabcfe97c2141698c46147c"
+    },
+    {
+      "bytes": 2087,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_remotefrac_b8_k8_torchprof/records/rank_000.jsonl",
+      "sha256": "22c8df0a4f08e44d5b7cbdf73b0fd88840df05c3b765d1e1f48e9ce467887487"
+    },
+    {
+      "bytes": 1758,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_remotefrac_b8_k8_torchprof/records/rank_001.jsonl",
+      "sha256": "248f9ac685d1d7075c57077a434c00788f176c9856a84e166ff3222e1fe75f28"
+    },
+    {
+      "bytes": 1761,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_remotefrac_b8_k8_torchprof/records/rank_002.jsonl",
+      "sha256": "064451774aebfd569679d45b1f80a10e49dae47eb1a6c75b1bc3a89b6f40858d"
+    },
+    {
+      "bytes": 1756,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_remotefrac_b8_k8_torchprof/records/rank_003.jsonl",
+      "sha256": "92a98d089bbb5d739ddf588de1c7db6ff15f18be4fc43caeff393339f3a13a8e"
+    },
+    {
+      "bytes": 1763,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_remotefrac_b8_k8_torchprof/records/rank_004.jsonl",
+      "sha256": "9ce86634427f3239308d346591bf16fc448caa9335c01f69adc2989f4f88d7ab"
+    },
+    {
+      "bytes": 1759,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_remotefrac_b8_k8_torchprof/records/rank_005.jsonl",
+      "sha256": "3a1e4362a813693ca077f5a69603c5790bc8844c562fb81bdb078491b3446316"
+    },
+    {
+      "bytes": 1756,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_remotefrac_b8_k8_torchprof/records/rank_006.jsonl",
+      "sha256": "e8b57fd525917904cbd0e76b728c01c0332c3d8a363b9f282f2454932c7e80de"
+    },
+    {
+      "bytes": 1759,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_remotefrac_b8_k8_torchprof/records/rank_007.jsonl",
+      "sha256": "7870fded2259974fbeb5b5215ec0f6eeea50215c9c3c65e802256237d13e29ac"
+    },
+    {
+      "bytes": 1763,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_remotefrac_b8_k8_torchprof/records/rank_008.jsonl",
+      "sha256": "a4cee86d8cbc5b0990b1c73d82fd8dad9ce213f31dbaf80b43343545e63562ca"
+    },
+    {
+      "bytes": 1758,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_remotefrac_b8_k8_torchprof/records/rank_009.jsonl",
+      "sha256": "4289c9c768d8ec0f83e4b21c1d2b63fbccdadecd7361dc5107d31c6f8c1cb2eb"
+    },
+    {
+      "bytes": 1761,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_remotefrac_b8_k8_torchprof/records/rank_010.jsonl",
+      "sha256": "bc6d221d2888f49ec9fad92b77de53eefbe216bac8422fcae2ee36e9e6b226e6"
+    },
+    {
+      "bytes": 1761,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_remotefrac_b8_k8_torchprof/records/rank_011.jsonl",
+      "sha256": "ced4d979126a9e7b4f9bfc55900c79a989421448e796bd917cfb7d819695bb05"
+    },
+    {
+      "bytes": 1761,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_remotefrac_b8_k8_torchprof/records/rank_012.jsonl",
+      "sha256": "75fe448ae31ce5bcf78e21dbb86c628b2bbe276ce4c33f8354379cab1647eb1e"
+    },
+    {
+      "bytes": 1757,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_remotefrac_b8_k8_torchprof/records/rank_013.jsonl",
+      "sha256": "e605951cabb479b991317d7291307af9764b323b783d1e1639f599bfe6407370"
+    },
+    {
+      "bytes": 1763,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_remotefrac_b8_k8_torchprof/records/rank_014.jsonl",
+      "sha256": "5e708009b8b5f50c582a2950472c3b8d29b77f5e33c49ee59f851c1947deceb1"
+    },
+    {
+      "bytes": 1759,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_remotefrac_b8_k8_torchprof/records/rank_015.jsonl",
+      "sha256": "024659c35f5adfbe40dc046e26d69cac91233079b2c6a67a025538e6511db874"
+    },
+    {
+      "bytes": 2137,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_identity_remotefrac_b8_k8_torchprof/records/rank_000.jsonl",
+      "sha256": "23a85153db88a520a8d0ecaf41c0c5ac1351964e4954b8f2da9dca51c52c43a0"
+    },
+    {
+      "bytes": 1807,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_identity_remotefrac_b8_k8_torchprof/records/rank_001.jsonl",
+      "sha256": "e220cdc7123d4632796311d6f22b6225d9a6cbbefd5e45e12e87cc841255314c"
+    },
+    {
+      "bytes": 1812,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_identity_remotefrac_b8_k8_torchprof/records/rank_002.jsonl",
+      "sha256": "731e91200cff32036cfe823777895f76777759452f6367efa6ab522bc1b70c1c"
+    },
+    {
+      "bytes": 1811,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_identity_remotefrac_b8_k8_torchprof/records/rank_003.jsonl",
+      "sha256": "86140d21c335ddf81e93a89cce9d65b7972b92928a6472be93a1dc334dc6444e"
+    },
+    {
+      "bytes": 1812,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_identity_remotefrac_b8_k8_torchprof/records/rank_004.jsonl",
+      "sha256": "a51553fffa9fa5ecb986db55d139603a5333afaa25b705973da90e3af644ae56"
+    },
+    {
+      "bytes": 1812,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_identity_remotefrac_b8_k8_torchprof/records/rank_005.jsonl",
+      "sha256": "55cc2d007b044a5b9a5dae654dc3ba1f99592999fc8a69375fe2f350c6f67d22"
+    },
+    {
+      "bytes": 1808,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_identity_remotefrac_b8_k8_torchprof/records/rank_006.jsonl",
+      "sha256": "f21845b4ab1d04dab11b3dbc4db83f96c380f8a7f6dcc0bc77d87a6a7b030771"
+    },
+    {
+      "bytes": 1810,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_identity_remotefrac_b8_k8_torchprof/records/rank_007.jsonl",
+      "sha256": "4edc654c38cad7b9eec5b0788a808c4c9181bdb9f5bd1cc50c1de7e2653806bc"
+    },
+    {
+      "bytes": 1813,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_identity_remotefrac_b8_k8_torchprof/records/rank_008.jsonl",
+      "sha256": "2957afeb80da46d9a3e92282bfc4364149cc0b684256e6b8ecc523faf004d36d"
+    },
+    {
+      "bytes": 1810,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_identity_remotefrac_b8_k8_torchprof/records/rank_009.jsonl",
+      "sha256": "fc8b3da84003c7c41629d28b55854f68b08ae095089b7d36646e33f1eba9b289"
+    },
+    {
+      "bytes": 1809,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_identity_remotefrac_b8_k8_torchprof/records/rank_010.jsonl",
+      "sha256": "b5b1f013c0c7b293bd1345c27cbb379fe85724971caa1764ef5bc3b7bc748190"
+    },
+    {
+      "bytes": 1812,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_identity_remotefrac_b8_k8_torchprof/records/rank_011.jsonl",
+      "sha256": "b856d2276bef86c7399f6daabac3229ad37f08158e087b272818c0d74c15277b"
+    },
+    {
+      "bytes": 1811,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_identity_remotefrac_b8_k8_torchprof/records/rank_012.jsonl",
+      "sha256": "65f1c8c8805b0f3f031f3df247204af918b4846bc943a4287308a765fd30a876"
+    },
+    {
+      "bytes": 1809,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_identity_remotefrac_b8_k8_torchprof/records/rank_013.jsonl",
+      "sha256": "64bafcf912a56a7fd544dcbf364818c38f02ab369853a2061ab6db413ac4a539"
+    },
+    {
+      "bytes": 1813,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_identity_remotefrac_b8_k8_torchprof/records/rank_014.jsonl",
+      "sha256": "fbdc8ee984c80c0d05984c6d05811653e90246047f0b93bc644ba3cfe1002f07"
+    },
+    {
+      "bytes": 1810,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_identity_remotefrac_b8_k8_torchprof/records/rank_015.jsonl",
+      "sha256": "0e6563aee7d94cc7240ae3fa34d184fbbac6b218224643f9c57d885830f535c6"
+    },
+    {
+      "bytes": 2128,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_union_remotefrac_b8_k8_torchprof/records/rank_000.jsonl",
+      "sha256": "d5afb4155e9c525265ba226f88802657ea5adf091bc9f9018063799f896d0d22"
+    },
+    {
+      "bytes": 1801,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_union_remotefrac_b8_k8_torchprof/records/rank_001.jsonl",
+      "sha256": "1999cf0b07ecdb0e2668bd11451fdeefa853658be5dbf0ecc80b593d153e4b15"
+    },
+    {
+      "bytes": 1804,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_union_remotefrac_b8_k8_torchprof/records/rank_002.jsonl",
+      "sha256": "2f8f31f7496072bf786fe6bcdd8fc94bc6f1fd932dc77743978fde90b9186173"
+    },
+    {
+      "bytes": 1802,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_union_remotefrac_b8_k8_torchprof/records/rank_003.jsonl",
+      "sha256": "1c07071d796a4ed87a1499db03cc16294de3063e2bb5571b320cc6adf805ac39"
+    },
+    {
+      "bytes": 1804,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_union_remotefrac_b8_k8_torchprof/records/rank_004.jsonl",
+      "sha256": "b88bb2b340d2551cb3fd82623387955ade8482af7a38aaec6c49cf2b1121a87e"
+    },
+    {
+      "bytes": 1803,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_union_remotefrac_b8_k8_torchprof/records/rank_005.jsonl",
+      "sha256": "c65287ddc4682c0dc96d181bdf4e5a7b2a9b4cbcd227e1eb9a32fc0b1a807e11"
+    },
+    {
+      "bytes": 1802,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_union_remotefrac_b8_k8_torchprof/records/rank_006.jsonl",
+      "sha256": "1e8783e9c00013042f317c5c328072ed2ffa6a4423aa6cf3fad08e6c2ca72ff1"
+    },
+    {
+      "bytes": 1803,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_union_remotefrac_b8_k8_torchprof/records/rank_007.jsonl",
+      "sha256": "04e97b084b4ba51989f0a451fd578fc03eece93c59545449cd71975a845a6772"
+    },
+    {
+      "bytes": 1804,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_union_remotefrac_b8_k8_torchprof/records/rank_008.jsonl",
+      "sha256": "e69281d8bf7edabebe43567d2caa1e9cc13775df1f76f77a816afbd202ca3a3e"
+    },
+    {
+      "bytes": 1802,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_union_remotefrac_b8_k8_torchprof/records/rank_009.jsonl",
+      "sha256": "1c406aee4b7b08668e1a9106077443ccb0217e40759a2d68819c2d96c4ffd2ef"
+    },
+    {
+      "bytes": 1806,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_union_remotefrac_b8_k8_torchprof/records/rank_010.jsonl",
+      "sha256": "75df1e8b6b311e8c88053492df33fcc2d1a96d0a8f8e64ebb77fab3198b30a4a"
+    },
+    {
+      "bytes": 1803,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_union_remotefrac_b8_k8_torchprof/records/rank_011.jsonl",
+      "sha256": "2c9ed019786fb394d7a5d215ce8757feef66cd4e9af26859c93f6291bdd6cd51"
+    },
+    {
+      "bytes": 1805,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_union_remotefrac_b8_k8_torchprof/records/rank_012.jsonl",
+      "sha256": "d7670606c691b172b2a4c289193dd032d5e1dbc18203efcc901952fa94b30997"
+    },
+    {
+      "bytes": 1807,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_union_remotefrac_b8_k8_torchprof/records/rank_013.jsonl",
+      "sha256": "7c08411a0e52f224907275fe078f9305177d074be0688c8bbfaf367487059026"
+    },
+    {
+      "bytes": 1805,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_union_remotefrac_b8_k8_torchprof/records/rank_014.jsonl",
+      "sha256": "5458cc05444c5a340655f9e4e0a022002abaf41578b8d28c5efabe59a7347b5f"
+    },
+    {
+      "bytes": 1806,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_union_remotefrac_b8_k8_torchprof/records/rank_015.jsonl",
+      "sha256": "5e6cb95182aaf67a3675f50cc99deec19309bcc98d704bcfcd1e9553bf616ac5"
+    },
+    {
+      "bytes": 2159,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_pack_remotefrac_b8_k8_torchprof/records/rank_000.jsonl",
+      "sha256": "61e06ff51f6c25fe3b478c9ffdc095cd9ced49e2c679c1d922c6fe69121ddeb5"
+    },
+    {
+      "bytes": 1833,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_pack_remotefrac_b8_k8_torchprof/records/rank_001.jsonl",
+      "sha256": "e6097abb53322a1cd76f1c8e6ba2c290e192c2c1e22fe81c94865aee31cf2774"
+    },
+    {
+      "bytes": 1832,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_pack_remotefrac_b8_k8_torchprof/records/rank_002.jsonl",
+      "sha256": "386ea372fd0ba425d773f92a19bf98e1b8a8128e8ea745ed3d0e3fd6999e08ef"
+    },
+    {
+      "bytes": 1834,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_pack_remotefrac_b8_k8_torchprof/records/rank_003.jsonl",
+      "sha256": "7f87fe1a93ffa8071b81834c242434aaa41cec44f5dc184aeac68dee65f4fa1a"
+    },
+    {
+      "bytes": 1833,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_pack_remotefrac_b8_k8_torchprof/records/rank_004.jsonl",
+      "sha256": "14c0700325a1dfc878a4b93d46152a55f2f3f40ce3064e24a0f59abc8501b9d3"
+    },
+    {
+      "bytes": 1831,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_pack_remotefrac_b8_k8_torchprof/records/rank_005.jsonl",
+      "sha256": "4f1d95b1eab1f0bd863c3409602ab4bf452fe552e55f75297523e173622c0fd2"
+    },
+    {
+      "bytes": 1833,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_pack_remotefrac_b8_k8_torchprof/records/rank_006.jsonl",
+      "sha256": "8d8d2c2ab3d5dde910c115abfc03f8087af7626e087d49bb79b569a810c58d97"
+    },
+    {
+      "bytes": 1832,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_pack_remotefrac_b8_k8_torchprof/records/rank_007.jsonl",
+      "sha256": "ee038fe64ec408f46904b1c82bd90257e11a867d6700f923978920eb94d4b0ee"
+    },
+    {
+      "bytes": 1833,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_pack_remotefrac_b8_k8_torchprof/records/rank_008.jsonl",
+      "sha256": "5a2f85c75a744145fd4452b2894b77ae8893b4423130cde062492c1ce1f90b92"
+    },
+    {
+      "bytes": 1835,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_pack_remotefrac_b8_k8_torchprof/records/rank_009.jsonl",
+      "sha256": "7de75b6130b41ffad8228aa1ca7038d4b21b31828a7f6879673d73d70f06f3de"
+    },
+    {
+      "bytes": 1831,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_pack_remotefrac_b8_k8_torchprof/records/rank_010.jsonl",
+      "sha256": "15f3f4216b33d2695fa7b50d9ff684dcd0580a9cd8b6d727bffb6a8df84f8ec6"
+    },
+    {
+      "bytes": 1835,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_pack_remotefrac_b8_k8_torchprof/records/rank_011.jsonl",
+      "sha256": "42e9d72a2f663b69df276d5294dbde06cd374d31253593507994d6fe8aa989a0"
+    },
+    {
+      "bytes": 1835,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_pack_remotefrac_b8_k8_torchprof/records/rank_012.jsonl",
+      "sha256": "308a1cb80c2b9426890506b0e03d08aec4148b6de1a4d138372e4397e65fc96c"
+    },
+    {
+      "bytes": 1835,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_pack_remotefrac_b8_k8_torchprof/records/rank_013.jsonl",
+      "sha256": "1640140b7e6ae04e39edbad72d71da88a55427eacd25f56ddbfa5c223abc99bf"
+    },
+    {
+      "bytes": 1834,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_pack_remotefrac_b8_k8_torchprof/records/rank_014.jsonl",
+      "sha256": "e6ba1bc1fbf09e74622bf3d1c6aa13cd4254d842ebb4967cdbc7176225d30615"
+    },
+    {
+      "bytes": 1833,
+      "path": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_pack_remotefrac_b8_k8_torchprof/records/rank_015.jsonl",
+      "sha256": "69210dbd3690e7f6bd6adac4eabf5f1ce6eb0f600bf0a469893d01b02e681d1f"
+    }
+  ],
+  "capabilities": {
+    "FLUX_A2AV_PACK_OVERLAP": true,
+    "FLUX_A2AV_RELAY_IDENTITY": true,
+    "FLUX_A2AV_UNION_BCAST": true
+  },
+  "cells": [
+    {
+      "cell_id": "allgather_remotefrac_b8_k8_torchprof",
+      "staging": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/allgather_remotefrac_b8_k8_torchprof",
+      "status": "ok"
+    },
+    {
+      "cell_id": "a2av_remotefrac_b8_k8_torchprof",
+      "staging": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_remotefrac_b8_k8_torchprof",
+      "status": "ok"
+    },
+    {
+      "cell_id": "a2av_ring_remotefrac_b8_k8_torchprof",
+      "staging": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/a2av_ring_remotefrac_b8_k8_torchprof",
+      "status": "ok"
+    },
+    {
+      "cell_id": "hier_remotefrac_b8_k8_torchprof",
+      "staging": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_remotefrac_b8_k8_torchprof",
+      "status": "ok"
+    },
+    {
+      "cell_id": "hier_compress_remotefrac_b8_k8_torchprof",
+      "staging": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_remotefrac_b8_k8_torchprof",
+      "status": "ok"
+    },
+    {
+      "cell_id": "hier_compress_identity_remotefrac_b8_k8_torchprof",
+      "staging": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_identity_remotefrac_b8_k8_torchprof",
+      "status": "ok"
+    },
+    {
+      "cell_id": "hier_compress_union_remotefrac_b8_k8_torchprof",
+      "staging": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_union_remotefrac_b8_k8_torchprof",
+      "status": "ok"
+    },
+    {
+      "cell_id": "hier_compress_pack_remotefrac_b8_k8_torchprof",
+      "staging": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505/cells/hier_compress_pack_remotefrac_b8_k8_torchprof",
+      "status": "ok"
+    }
+  ],
+  "created": "2026-07-29T16:03:13Z",
+  "flux_libs": [
+    {
+      "path": "/home/ubuntu/workspace/flux/.claude/worktrees/consolidate-sweeps/python/flux/lib/libflux_cuda.so",
+      "sha256": "0ebf4b57599a7093017ce53362a659699128183e2c051a4f1390e5e3b3e22621"
+    },
+    {
+      "path": "/home/ubuntu/workspace/flux/.claude/worktrees/consolidate-sweeps/python/flux/lib/libflux_cuda_ths_op.so",
+      "sha256": "46010fd059229d3a7ca3461cc2454f7338d7f18bfda9006cdb91fc3a3f90cb20"
+    }
+  ],
+  "git": {
+    "dirty": true,
+    "sha": "18ebf888650015ea99165b4ed8731c54f6a54d12"
+  },
+  "host": "ip-10-20-3-140",
+  "platform": {
+    "fabric": "efa",
+    "name": "aws",
+    "ranks_per_node": 8
+  },
+  "run_id": "20260729-155656_aws_160ab505",
+  "staging_root": "/home/ubuntu/sweep_data/20260729-155656_aws_160ab505"
+}

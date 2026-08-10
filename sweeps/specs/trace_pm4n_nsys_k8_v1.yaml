@@ -1,0 +1,38 @@
+# Realistic-trace campaign R2a — nsys + tile-trace capture, NON-BLOCKING wire
+# (relay round-serialization is part of the mechanism under test, as in the
+# fanoutskew campaign C2a). ISOLATED discipline per the 2026-08-05 directive.
+# Instrumented configuration — never quote latency from these cells.
+# Families cut to the discriminating arms: uniform control, pernode (the bet),
+# its dealer=1 pair (token-overlap counterfactual), worst homog pool.
+# Deficit analysis: sweeps/plot_a2av_trace.py --scan-ranks / --compare;
+# prediction attribution: sweeps/predict_starvation.py --routing-file.
+platform: perlmutter
+nodes: 4
+variants:
+  - hier_compress_lb_union
+  - hier_compress_union
+families:
+  - "uniform"
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode;dealer=1"
+  - "trace:pools=mmlu_ZH_CN/high_school_world_history;layer=92;sem=homog"
+budgets_mib: [32]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [nsys]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env:
+  FLUX_A2AV_NVTX_PROXY: "1"
+  FLUX_A2AV_EARLY_LAUNCH: "1"
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+notes: "realistic-trace campaign R2a: nsys+tile-trace capture, lb_union vs union, Qwen3 trace arms b32 k8, isolated discipline, non-blocking wire"

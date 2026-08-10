@@ -47,6 +47,9 @@ class MoeMlp1Ctx:
         generator: torch.Generator = None,  # torch random generator
         stable: bool = True,
         gating_args: Optional[moe_gating_args] = None,  # prebuilt gating, overrides dist
+        skip_reference: bool = False,  # shrink the torch-reference scatter staging
+        # buffer to one row; only valid when the caller never runs the torch
+        # reference path (MoeAgScatterWithTorch scatter/gemm impls)
     ) -> None:
         self.b = b
         self.s = s
@@ -122,10 +125,11 @@ class MoeMlp1Ctx:
         else:
             scale_value = 0.01 * (self.tp_rank + 1)
 
+        scatter_rows = 1 if skip_reference else self.ntokens * topk
         data_config = [
             ((self.ntokens_shard, K), input_dtype, (scale_value, 0)),  # input_shard
             ((self.ntokens, K), input_dtype, (1, 0)),  # input_full
-            ((self.ntokens * topk, K), input_dtype, (1, 0)),  # scatter_inputs
+            ((scatter_rows, K), input_dtype, (1, 0)),  # scatter_inputs
         ]
         self.inputs_shard, self.inputs, self.scatter_inputs = next(generate_data(data_config))
 

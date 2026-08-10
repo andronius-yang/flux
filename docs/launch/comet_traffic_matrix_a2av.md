@@ -387,7 +387,222 @@ waits before the tail `barrier_all`, and iteration n+1 sends wait on
 intra-node slots with the same static schedule (cheap single-node validation
 of the branch).
 
-## 11. Layer1 hierarchical a2av combine (`GemmGroupedV2GatherRSOp`, `a2av_hier`)
+## 11. Token-dedup hierarchical a2av (`a2av_hier_compress`)
+
+`a2av_hier_compress=True` (ctor kwarg, requires `a2av_dispatch`, mutually
+exclusive with both `a2av_ring` and `a2av_hier`; `--comm_pattern
+a2av_hier_compress`) changes the WIRE contract of §10 while keeping everything
+logical untouched. The traffic matrix now represents **logical** bytes: the
+matrix → `choosed_experts` derivation, `splits`, `scatter_index`, the GEMM
+problem sizes and the static dense schedule are all exactly as before. The wire
+makes a binary send-once decision instead:
+
+- **Intra-node**: a token goes to a destination *rank* at most once, even when
+  that rank hosts several of the token's experts.
+- **Inter-node**: a token crosses a link at most once — each remote node
+  receives ONE union aggregate (tokens needed by *any* rank on that node) at
+  the same-local-rank gateway.
+- **Receivers handle duplication**, and it is free: the GEMM reads A rows
+  through `sorted_gather_index` and `gather_A` is read-only in the kernel
+  (it only feeds `IteratorA`), so multiple A rows simply alias one recv row.
+
+### Metadata input: `a2av_unique_counts`
+
+Dedup counts are NOT derivable from `cnt[s][e]` (§9) — they depend on which
+tokens overlap across experts/ranks. They ARE derivable locally, though: every
+rank already holds the global `choosed_experts`/`scatter_index` (the gateway
+forward-index build decodes remote sources' routing from it), so unlike
+`splits_per_source` a real system needs no extra exchange — just a local host
+computation (or a device kernel + ~1 KB D2H like the no-metadata counts path).
+The harness passes it as a second untimed host metadata tensor
+(`forward(..., a2av_unique_counts=...)`, same contract as
+`splits_per_source`): int32 CPU
+contiguous `[W, W + nnodes]`, identical on all ranks. Cols `[0, W)` hold
+`u[s][d]` (unique tokens source `s` must deliver to rank `d`), cols
+`[W, W + nnodes)` hold `U[s][n]` (unique tokens `s` must deliver to the node-`n`
+union). Compress mode FLUX_CHECKs both metadata tensors present; host sanity
+checks pin `u ≤ chunks`, `(u > 0) ⟺ (chunks > 0)`, `u[s][d] ≤ U[s][node(d)]`,
+and `U[s][n] ≤ Σ_d∈n u[s][d]`.
+
+### Layouts and the one-cumsum consumer identity
+
+All orders derive from the same global `scatter_index` every rank holds:
+
+- **Send buffer**: nodes ascending; my node expanded into `L` per-destination-
+  rank segments (ascending global rank), each remote node ONE union segment;
+  every segment interior is ascending token index. Intra-node put per rank and
+  inter-node aggregate per node each stay ONE contiguous put.
+- **Recv buffer**: source-major regions of `u[s][me]` rows, interior ascending
+  token index.
+- **Consumer index**: with `mine_token[t] ∈ {0,1}` (any copy of global token
+  `t` routes to my experts) and `C[t]` its exclusive prefix sum, every copy of
+  `t` reads recv row `C[t]` — tokens are source-contiguous, so
+  `recv_off_dedup[s] + rank-of-t-within-s == C[t]` exactly. Hence
+  `sorted_gather_index = C[copy // topk][perm_a]` with the existing single
+  `key_a` argsort; `sorted_scatter_index` and `sorted_splits_cumsum` keep their
+  logical semantics, and the per-tile signal waits and epilogue are untouched.
+  `FLUX_A2AV_CHECK_COMPRESS=1` (debug, may sync) inverts `C` and asserts every
+  A row maps to its own token, and additionally asserts the on-device pack /
+  gateway flag counts reproduce the `u`/`U` metadata (catching harness counts
+  that pass the host sanity bounds but disagree with the actual routing).
+
+All index builds (producer pack, consumer, gateway forward indices) are
+sync-free ATen: scatter-with-garbage-slot + cumsum + index_select, no
+`nonzero`/`masked_select`.
+
+### Gateway: exact per-rank subsets
+
+The gateway gathers each local destination's exact subset out of the staged
+union (`index_select` with a precomputed per-round index built on the main
+stream, gated by `fwd_index_event_`), then forwards `u[s][d]` rows per local
+peer — its own subset is gathered straight into the recv region. Two hazards
+and their resolutions:
+
+- **Scratch reuse under `nbi`**: forwarded subsets are staged in a local
+  scratch refilled every round, and `nbi` puts give no local-completion
+  guarantee — round `r+1`'s gather could overwrite scratch mid-put. Fix: the
+  scratch-sourced forwards use **non-`nbi`** `nvshmemx_putmem_signal_on_stream`
+  (rounds are serialized on `cp_stream` anyway). Double-buffered scratch is a
+  perf follow-up.
+- **SM-occupancy deadlock**: unlike §10's SM-free forwarding, the gather needs
+  SMs while GEMM tiles spin on signals only that gather can produce. Fix:
+  compress with `nnodes > 1` FLUX_CHECKs `sm_margin >= 1` (pass e.g.
+  `--sm_margin 8`); the ATen gathers run inside a `CUDAStreamGuard` on
+  `cp_stream`.
+
+Signal discipline is identical to §10 (per-source epoch signals, per-source-
+node arrival signals, empties still signal, single writer per slot per epoch);
+only the byte counts and offsets change (`u`/`U` instead of chunk sums), so the
+recv/staging overflow checks switch to the dedup sums — still evaluated
+identically on every rank. Existing `a2av_hier` remains byte-identical for A/B
+comparison.
+
+### Deferred alternatives to the SM gather (decision: strict wire bytes first)
+
+The exact-subset gather is the sole reason compress needs SMs on the forward
+path (the `sm_margin >= 1` rule, the scratch, the non-`nbi` puts). Two designs
+would remove some or all of that machinery, **deliberately deferred** until the
+current strict-wire-bytes design is validated and measured on Perlmutter — the
+A/B against `a2av_hier` should isolate the dedup win before any NVLink-byte
+trade-off muddies it:
+
+- **Union broadcast** (`a2av_hier_bcast` candidate): the gateway forwards the
+  WHOLE staged union contiguously to each local peer — pure CE, no gather, no
+  scratch, no `sm_margin` requirement. Receivers alias their subset out of the
+  union region via the same one-cumsum consumer identity (flag = "needed by my
+  node" for remote-node sources, "needed by me" for same-node ones). Cost:
+  intra-node forward bytes rise from `Σ_dl u[s][dl]` to `(L-1)·U[s][n]` and the
+  recv regions for remote sources grow to `U` rows; inter-node bytes (the
+  compression target) are identical. Mostly a *deletion* of the gateway
+  machinery.
+- **Receiver pull**: each local peer `index_select`s its own subset directly
+  out of the gateway's staging via `nvshmem_ptr` (NVLink read → local write).
+  Exact bytes, one hop instead of two (no scratch round-trip through gateway
+  HBM), parallel across L receivers instead of serialized on the gateway.
+  Needs the gateway to republish arrival to local peers (cheap `signal_op`
+  fan-out) and per-receiver subset indices (same one-cumsum machinery); still
+  needs `sm_margin` on every rank.
+
+## 12. Balanced inter-node relay (compress default; `FLUX_A2AV_RELAY_IDENTITY=1` restores §11)
+
+§10/§11 fix the inter-node schedule to "relay = self": in round `dn` every rank
+sends its own `U[rank][tn]` union rows to the same-local-rank gateway. Rounds
+are serialized (sender `cp_stream_inter_node`, gateway `CUStreamWaitValue64`),
+so **each round advances at the pace of the largest `U[s][tn]` on the node** —
+skewed routings idle the other NICs and concentrate gateway staging on hot
+source local ranks. The balanced relay generalizes the fixed assignment into
+
+```
+src rank -> local relay rank (NVLink) -> wire -> same-lr cross-node relay -> dst rank(s)
+```
+
+with §11's scheme as the degenerate `relay = self` case.
+
+### Partition: canonical stream + contiguous chunks
+
+Per round (source node `n` -> target node `tn`), the L union segments form ONE
+canonical stream: ascending source local rank, token-ascending interiors —
+exactly the §11 pack order, so no producer change. `chunk_bound()` cuts it into
+L near-equal contiguous chunks (`a_k = k*(total/L) + min(k, total mod L)`);
+relay local rank `k` owns chunk `[a_k, a_{k+1})` and wire-puts it to gateway
+`(tn, k)`. Everything derives from the **replicated** `U` matrix, so sender,
+relay, gateway and destination agree with zero new metadata; the helper is the
+single source of truth for every offset and capacity check. When the `U`
+values are equal, chunk `k == source k`'s segment (zero relocation); in
+general at most `2L-1` intra-node pieces move per node per round, and gateway
+staging becomes balanced as a side effect (the `FLUX_A2AV_MAX_STAGE_NTOKENS`
+hot-lr concentration of §11 disappears).
+
+### Send side: pieces first, then the wire
+
+Phase 1 pushes ALL rounds' pieces (send-buffer sub-ranges cut at chunk
+boundaries) into the relays' symmetric `a2av_relay_stage_` via intra-node
+`putmem_signal_nbi`, per-(round, src_lr) `a2av_relay_sig_` slots; the
+own-relay piece is a local `cudaMemcpyAsync`. **Deadlock rule**: every rank
+issues every piece put before its first wire wait — pieces depend only on the
+local pack, so the cross-rank wait graph stays acyclic (interleaving pieces
+with wire rounds would cycle). Phase 2 then walks the rounds in mirror node
+order: front-end waits on the actual contributors (host-known from `U`,
+zero-row pairs skip both signal and wait), then ONE contiguous
+`putmem_signal_nbi` of `~total/L` rows to the gateway; `node_sig` keeps its
+single-writer-per-slot discipline. A chunk fully inside the relay's own
+segment wire-puts straight from the send buffer (no staging hop) — the §11
+behavior falls out automatically for balanced routings and `L == 1`.
+
+### Receive side: window-generalized forward build + a tiny D2H
+
+Gateway `k` now stages an arbitrary window `[a_k, b_k)` of the canonical
+stream, spanning several source local ranks. The forward-index build drops its
+`.select(1, local_rank)` and flags `(round, src_lr, token, dst_lr)`; union
+positions plus host canonical starts give canonical positions, the window mask
+selects my slice, and the stored value is the window-relative staging row.
+
+A window cut inside a source's segment splits its `(s, d)` recv region across
+gateways. Each gateway's slice is contiguous (a window cut of token-sorted
+rows), but its offset — `cnt_before`, the count of `(s, d)` rows in earlier
+windows — is **token-level** information no aggregate metadata can provide.
+The build therefore D2Hs `cnt_in`/`cnt_before` (`2·(NN-1)·L²` int32, one
+pinned copy) and the host `cudaEventSynchronize`s on it **after** the wire
+issue, immediately before the gateway loop (its only consumer); the GEMM
+launch gates on `relay_send_event_` (pieces issued) instead of
+`fetch_remote_event`, which now contains cross-rank waits. Delivery reuses the
+§11 scratch + non-`nbi` machinery, packing scratch exact-sized from the D2H'd
+counts and fusing the per-round gateway signal onto the LAST piece per
+destination (intra-node on-stream puts to the same peer land in stream order).
+
+### Signal aggregation: per-source epoch signals keep one writer
+
+With slices arriving from several gateways, the per-source signals the GEMM
+spins on would have multiple writers. Fix on the destination, on a third
+stream `cp_stream_signal` (pure front-end memops, zero SMs): per round, wait
+on the L per-(round, gateway) `a2av_gw_round_sig_` slots, then
+`CUStreamWriteValue64 signal[s] = run_id` for every source of that node —
+zero-traffic sources included, exactly §11's empties-still-signal rule.
+`putmem_signal` orders payload before signal, so gateway-slot arrival implies
+full delivery. The GEMM kernel is untouched; rounds still complete in mirror
+order, so the dense schedule's readiness order is preserved. The stream is
+folded into the epoch via `signal_done_event_` before the closing barrier.
+
+### Knobs, capacity, validation
+
+New: `FLUX_A2AV_MAX_RELAY_NTOKENS` (relay staging holds ALL rounds at once,
+`~` the node's outbound/L; default mirrors the stage default) and
+`FLUX_A2AV_RELAY_IDENTITY=1` (compile the §11 branch verbatim — byte-identical
+wire, for A/B; it changes the wire layout, so set it on EVERY rank). Capacity
+checks switch to chunk sums, still evaluated identically on every rank
+(collective failure). All new signal slots follow the epoch discipline:
+init-zero, single writer per iteration, GEQ waits, never memset.
+
+`test/python/moe_ag_scatter/test_relay_balance_math.py` (CPU-only, no GPU/flux
+needed) simulates the exact host offset math and ATen index sequences of both
+wire modes across 6 topologies × seeds × skews (156 cases): recv buffers
+byte-identical to §11 and to a direct dedup reference, every recv row written
+exactly once, indices window-bounded, chunks balanced to ≤ 1 row, uniform-`U`
+routings relocate zero rows, and the three-stream schedule is deadlock-free
+over two epochs under an event-driven executor. Hardware validation on
+Perlmutter is still pending, as with §11.
+
+## 13. Layer1 hierarchical a2av combine (`GemmGroupedV2GatherRSOp`, `a2av_hier`)
 
 The combine direction is the transpose of §1-§10: each `(t, j)` copy was
 computed on expert-owner rank `s = owner(e(t,j))` and must reach token-home

@@ -217,7 +217,10 @@ fill_problem_info_a2av(
     }
   };
   auto bucket_of = [&](uint64_t mask) {
-    return __popcll(mask) == 1 ? (63 - __clzll(mask)) : tp_size;
+    // seg_end-lane bucketing: claim on the tile's LAST lane; earlier lanes
+    // are guaranteed by the per-tile spin (same gating cumsum). Empties the
+    // FIFO multi bucket, whose head-of-line blocking serialized release.
+    return mask == 0 ? tp_size : (63 - __clzll(mask));
   };
 
   // pass A: histogram bucket sizes
