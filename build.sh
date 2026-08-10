@@ -194,9 +194,17 @@ function build_flux_cuda() {
 
 function merge_compile_commands() {
     cd $SCRIPT_DIR
+    # pip editable builds (PEP 660) leave no ./build/temp.*/build.ninja; skip the
+    # ths_op compdb merge instead of failing the whole build on the empty glob
+    local ninja_file
+    ninja_file=$(ls ./build/temp.*/build.ninja 2>/dev/null | head -1)
+    if [ -z "${ninja_file}" ]; then
+        echo "no setup.py ninja build dir; skipping compile_commands merge"
+        return 0
+    fi
     if command -v ninja >/dev/null 2>&1; then
         # generate compile_commands.json
-        ninja -f $(ls ./build/temp.*/build.ninja) -t compdb >build/compile_commands_ths_op.json
+        ninja -f ${ninja_file} -t compdb >build/compile_commands_ths_op.json
         cat >build/merge_compile_commands.py <<EOF
 import json
 with open("build/compile_commands.json") as f:
