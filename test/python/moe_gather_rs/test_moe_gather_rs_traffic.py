@@ -57,6 +57,8 @@ from flux.testing import (
     traffic_matrix_to_choosed_experts,
 )
 from flux.testing.perf_db_helper import log_perf, set_global_args, should_log_to_rds
+from flux.testing.recorder import RECORDER
+from flux.testing.traffic_matrix import choosed_experts_to_matrix_chunks, load_routing_file
 from flux.util import get_arch
 
 
@@ -72,17 +74,40 @@ class PerfResult:
 
 
 def perf_gemm(iters: int, warmup_iters: int, name: str, fn: callable):
-    for _ in range(warmup_iters):
-        output = fn()
+    """Per-iteration CUDA-event timing, mirroring the layer0 harness: warmup
+    iterations run inside the same loop and are filtered at collection; NVTX
+    tags segment warmup vs timed for nsys captures without device syncs; the
+    sweeps isolated mode (FLUX_SWEEP_ISOLATED_ITERS) drains the device and
+    aligns all ranks before EVERY timed window, reporting the host wall time of
+    the sync pair separately (per-rank straggler indicator)."""
+    total_iters = warmup_iters + iters
+    start_events = [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
+    end_events = [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
     torch.cuda.synchronize()
-    total_time = 0
-    start = time.time()
-    for _ in range(iters):
-        output = fn()
-    torch.cuda.synchronize()
-    end = time.time()
-    total_time = end - start
-    return PerfResult(name=name, output=output, gemm_time_ms=total_time / iters * 1000)
+    torch.distributed.barrier()
+    isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))
+    iso_sync_times = []
+    for i in range(total_iters):
+        if isolated:
+            t_iso = time.perf_counter()
+            torch.cuda.synchronize()
+            torch.distributed.barrier()
+            iso_sync_times.append((time.perf_counter() - t_iso) * 1e3)
+        nvtx_tag = f"iter{i}_warmup" if i < warmup_iters else f"iter{i}"
+        start_events[i].record()
+        with torch.cuda.nvtx.range(nvtx_tag):
+            output = fn()
+        end_events[i].record()
+    times = []
+    for i in range(total_iters):
+        end_events[i].synchronize()
+        if i >= warmup_iters:
+            times.append(start_events[i].elapsed_time(end_events[i]))
+    result = PerfResult(name=name, output=output, gemm_time_ms=sum(times) / iters)
+    result.iter_times = {"e2e_ms": times}
+    if isolated:
+        result.iter_times["iso_sync_ms"] = iso_sync_times[warmup_iters:]
+    return result
 
 
 def perf_torch(
@@ -292,10 +317,12 @@ def perf_flux(
     do_all_reduce: bool = False,
     use_read_mode: bool = False,
     splits_per_source: Union[torch.Tensor, None] = None,
+    unique_counts: Union[torch.Tensor, None] = None,
 ):
     n_dim = args.N
     assert weight.size(1) == n_dim
-    use_a2av = args.comm_pattern == "a2av_hier"
+    use_compress = args.comm_pattern == "a2av_hier_compress"
+    use_a2av = args.comm_pattern == "a2av_hier" or use_compress
 
     input_dtype = input.dtype
     output_dtype = input_dtype
@@ -328,21 +355,33 @@ def perf_flux(
             n_split=args.n_split,
             do_all_reduce=do_all_reduce,
             use_read_mode=use_read_mode,
-            a2av_hier=use_a2av,
+            a2av_hier=use_a2av and not use_compress,
+            a2av_hier_compress=use_compress,
         )
 
     a2av_kwargs = {}
     if use_a2av:
         assert splits_per_source is not None
         a2av_kwargs["splits_per_source"] = splits_per_source
-        if args.precomputed_indices:
-            # count-the-index-latency-once mode: hand the routing plan in, as a
-            # fused layer0+layer1 pipeline would hand over layer0's tensors
+        if use_compress and NNODES > 1:
+            # untimed host metadata (like splits_per_source) in BOTH timing modes
+            assert unique_counts is not None
+            a2av_kwargs["a2av_unique_counts"] = unique_counts
+        if args.timing_mode == "amortized":
+            # layer0-amortized mode: hand the whole routing plan in precomputed,
+            # as a fused layer0+layer1 pipeline would hand over layer0's tensors;
+            # isolated mode leaves the index math on the timed critical path
             pack_index, reduce_index = build_a2av_combine_indices(
                 routing_idx, split_cpu, RANK, WORLD_SIZE, topk
             )
             a2av_kwargs["a2av_pack_index"] = pack_index
             a2av_kwargs["a2av_reduce_index"] = reduce_index
+            if use_compress and NNODES > 1:
+                wire_ptr, wire_copy, red_ptr, red_row = build_a2av_compress_indices(
+                    routing_idx, split_cpu, unique_counts, RANK, WORLD_SIZE, NNODES, topk
+                )
+                a2av_kwargs["a2av_wire_csr"] = [wire_ptr, wire_copy]
+                a2av_kwargs["a2av_reduce_csr"] = [red_ptr, red_row]
 
     def fn():
         is_v2 = get_arch() < 90
@@ -397,11 +436,14 @@ def parse_args():
     parser.add_argument(
         "--comm_pattern",
         default="dense",
-        choices=["dense", "a2av_hier"],
+        choices=["dense", "a2av_hier", "a2av_hier_compress"],
         help="dense: ring reduce-scatter (default). a2av_hier: hierarchical alltoallv"
         " combine -- every copy travels owner->home once (wire bytes = matrix transpose),"
         " one inter-node relay via same-local-rank gateways, per-split topk reduce at the"
-        " destination",
+        " destination. a2av_hier_compress: token-dedup combine -- the source node's"
+        " copies converge on the same-lr gateway, are pre-reduced per token, and ONE"
+        " partial per (token, source node) crosses the wire (degrades to a2av_hier on a"
+        " single node)",
     )
     parser.add_argument(
         "--n_split",
@@ -410,14 +452,31 @@ def parse_args():
         help="split-N pipeline depth (N/n_split must be a multiple of 1024)",
     )
     parser.add_argument(
+        "--timing_mode",
+        default="isolated",
+        choices=["isolated", "amortized"],
+        help="isolated: the op builds the routing plan (indices + compress CSRs)"
+        " in-forward, so schedule computation is on the timed critical path (layer1"
+        " alone must derive it). amortized: the harness precomputes everything a fused"
+        " layer0+layer1 pipeline would inherit from layer0 and passes it in untimed.",
+    )
+    parser.add_argument(
         "--precomputed_indices",
         default=False,
         action="store_true",
-        help="a2av_hier: pass the pack/reduce routing plan from the harness instead of"
-        " letting the op derive it per forward (models a fused layer0+layer1 pipeline"
-        " that pays the index math once)",
+        help="deprecated alias for --timing_mode amortized",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--routing_file",
+        type=str,
+        default=None,
+        help="real routing trace sidecar (ntokens topk G header + one token per line);"
+        " must realize --traffic_matrix exactly, mirroring the layer0 harness",
+    )
+    args = parser.parse_args()
+    if args.precomputed_indices:
+        args.timing_mode = "amortized"
+    return args
 
 
 ABSOLUTE_THRESHOLD_MAP = {
@@ -453,9 +512,25 @@ if __name__ == "__main__":
     assert matrix.shape[0] == WORLD_SIZE, (
         f"traffic matrix is for {matrix.shape[0]} ranks but world size is {WORLD_SIZE}"
     )
-    choosed_experts = traffic_matrix_to_choosed_experts(
-        matrix, args.G, args.topk, args.chunk_bytes
-    )
+    if args.routing_file:
+        # real routing trace (must realize the matrix), mirroring the layer0 harness
+        choosed_experts = load_routing_file(args.routing_file, args.G, args.topk)
+        assert choosed_experts.shape[0] % WORLD_SIZE == 0
+        got = choosed_experts_to_matrix_chunks(
+            choosed_experts, WORLD_SIZE, args.G // WORLD_SIZE
+        )
+        assert torch.equal(got * args.chunk_bytes, matrix), (
+            f"routing file {args.routing_file} does not realize --traffic_matrix"
+            f" {args.traffic_matrix}"
+        )
+        if torch.cuda.is_available():
+            choosed_experts = choosed_experts.cuda()
+        if RANK == 0:
+            print(f"routing: REAL trace file {args.routing_file}")
+    else:
+        choosed_experts = traffic_matrix_to_choosed_experts(
+            matrix, args.G, args.topk, args.chunk_bytes
+        )
     total_token_num = choosed_experts.shape[0]
     assert total_token_num % WORLD_SIZE == 0
     if NNODES > 1:
@@ -485,10 +560,13 @@ if __name__ == "__main__":
     M_cur_ep_rank = torch.sum(split_cpu[eid_start:eid_end]).item()
     ep_rank_m_end = ep_rank_m_start + M_cur_ep_rank
 
-    use_a2av = args.comm_pattern == "a2av_hier"
+    use_compress = args.comm_pattern == "a2av_hier_compress"
+    use_a2av = args.comm_pattern == "a2av_hier" or use_compress
     if use_a2av:
         assert not args.all_reduce, "a2av_hier does not support all_reduce"
         assert not args.use_read_mode, "a2av_hier does not support use_read_mode"
+    if use_compress and NNODES == 1 and RANK == 0:
+        print("a2av_hier_compress on a single node degrades to plain a2av_hier")
     assert args.N % args.n_split == 0 and (args.N // args.n_split) % 1024 == 0, (
         f"N ({args.N}) / n_split ({args.n_split}) must be a multiple of 1024"
     )
@@ -509,6 +587,13 @@ if __name__ == "__main__":
     assert torch.equal(
         splits_per_source_cpu.sum(0), split_cpu[: args.G].int()
     ), "splits_per_source column sums must equal splits"
+    # compress dedup counts (transposed U), untimed host metadata like
+    # splits_per_source; on a single node the degrade path never consumes them
+    unique_counts_cpu = None
+    if use_compress and NNODES > 1:
+        unique_counts_cpu = build_a2av_unique_counts(
+            choosed_experts, WORLD_SIZE, NNODES, args.G // args.E
+        )
 
     if RANK == 0:
         rows_per_rank = split_cpu.view(WORLD_SIZE, n_experts_per_rank).sum(dim=1)
@@ -573,6 +658,7 @@ if __name__ == "__main__":
             args.all_reduce,
             args.use_read_mode,
             splits_per_source_cpu if use_a2av else None,
+            unique_counts_cpu,
         )
         perf_result_torch = perf_torch(
             inputs,
@@ -602,6 +688,16 @@ if __name__ == "__main__":
         set_global_args("moe_gather_rs_traffic", args)
     flux.exec_in_rank_order(TP_GROUP, lambda: log_perf(perf_result_torch))
     flux.exec_in_rank_order(TP_GROUP, lambda: log_perf(perf_result_flux))
+    if RANK == 0:
+        RECORDER.emit_info(
+            ntokens=int(total_token_num),
+            topk=int(args.topk),
+            comm_pattern=args.comm_pattern,
+            timing_mode=args.timing_mode,
+            n_split=int(args.n_split),
+        )
+    RECORDER.emit_iters("torch", getattr(perf_result_torch, "iter_times", {}))
+    RECORDER.emit_iters("flux", getattr(perf_result_flux, "iter_times", {}))
     atol, rtol = ABSOLUTE_THRESHOLD_MAP[input_dtype], RELATIVE_THRESHOLD_MAP[input_dtype]
     TP_GROUP.barrier()
 
@@ -616,6 +712,8 @@ if __name__ == "__main__":
             torch.save(flux_output, f"flux_output_{TP_GROUP.rank()}.pt")
             torch.save(torch_output, f"torch_output_{TP_GROUP.rank()}.pt")
             print("❌ flux and torch not matches")
+            RECORDER.emit_correctness(bitwise=False, allclose=False)
+            RECORDER.flush()
             raise e
         else:
             print("✅ flux and torch matches")
@@ -623,3 +721,5 @@ if __name__ == "__main__":
     torch_output = perf_result_torch.output
     flux_output = perf_result_flux.output
     flux.exec_in_rank_order(TP_GROUP, check_result)
+    RECORDER.emit_correctness(bitwise=False, allclose=True)
+    RECORDER.flush()
