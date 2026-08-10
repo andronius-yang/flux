@@ -115,6 +115,11 @@ get_a2av_reduce_blocks() {
   static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_REDUCE_BLOCKS", 3);
   return v;
 }
+int
+get_a2av_prered_blocks() {
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_PRERED_BLOCKS", 2);
+  return v;
+}
 }  // namespace
 
 namespace bytedance::flux::ths_op {
@@ -176,21 +181,41 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   // one persistent arrival-order reduce kernel (variant-selection ctor boolean,
   // knob-off leaves the shipped schedule untouched)
   const bool a2av_eager_;
+  // a2av_hier_compress: one partial per (token, source node) crosses the wire.
+  // Source rank (n, lr) owns all wire rows to rank (tn, lr): the node's copies
+  // converge on it (conv panel, NVLink), a persistent pre-reduce kernel merges
+  // them per token into the wire panel, and the inter ladder puts straight into
+  // the destination's recv panel (C' image) -- no destination gateway hop.
+  // False when nnodes == 1 (degrades to plain a2av_hier: zero wire savings).
+  const bool a2av_compress_;
   int64_t a2av_send_rows_ = 0;   // send panel row capacity per split (routing-dependent load)
   int64_t a2av_recv_rows_ = 0;   // recv panel rows per split: exactly max_m / world_size
   int64_t a2av_stage_rows_ = 0;  // gateway staging row capacity per split
+  int64_t a2av_conv_rows_ = 0;   // compress: convergence panel row capacity per split
+  int64_t a2av_wire_rows_ = 0;   // compress: wire panel row capacity per split
   torch::Tensor a2av_send_panel_;       // [n_split, a2av_send_rows_, n_per] symmetric
   torch::Tensor a2av_recv_panel_;       // [n_split, a2av_recv_rows_, n_per] symmetric
   torch::Tensor a2av_stage_panel_;      // [n_split, a2av_stage_rows_, n_per] symmetric (nnodes>1)
+  torch::Tensor a2av_conv_panel_;       // compress: [n_split, conv_rows, n_per] symmetric
+  torch::Tensor a2av_wire_panel_;       // compress: [n_split, wire_rows, n_per] symmetric
   torch::Tensor a2av_recv_signals_;     // uint64 [world_size * n_split], epoch, never reset
   torch::Tensor a2av_arrival_signals_;  // uint64 [nnodes * n_split], epoch, never reset
+  torch::Tensor a2av_conv_signals_;     // compress: uint64 [L * NN * n_split], epoch, never reset
+  // compress: pre-reduce kernel -> host wire-ready flags, memset per run under
+  // the staging_reset_event discipline (same as group_flags)
+  cutlass::DeviceAllocation<int> wire_flags_;     // [nnodes * n_split]
+  cutlass::DeviceAllocation<int> wire_counters_;  // [nnodes * n_split]
   std::optional<c10::cuda::CUDAStream> a2av_intra_stream_;    // intra-node put ladder (CEs)
   std::optional<c10::cuda::CUDAStream> a2av_gateway_stream_;  // gateway forward ladder
   std::optional<c10::cuda::CUDAStream> a2av_reduce_stream_;   // signal waits + per-split reduce
+  std::optional<c10::cuda::CUDAStream> a2av_conv_stream_;     // compress: convergence put ladder
+  std::optional<c10::cuda::CUDAStream> a2av_prered_stream_;   // compress: resident pre-reduce kernel
   cudaEvent_t a2av_intra_done_ = nullptr;
   cudaEvent_t a2av_inter_done_ = nullptr;
   cudaEvent_t a2av_gateway_done_ = nullptr;
   cudaEvent_t a2av_reduce_done_ = nullptr;
+  cudaEvent_t a2av_conv_done_ = nullptr;
+  cudaEvent_t a2av_prered_done_ = nullptr;
 
   bool buffer_initialized = false;
 
@@ -215,7 +240,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           nvshmem_create_tensor({this->n_split, this->a2av_recv_rows_, n_per}, dtype);
       this->a2av_recv_signals_ = nvshmem_create_tensor(
           {(int64_t)this->world_size * this->n_split}, at::ScalarType::Long, true);
-      if (this->nnodes > 1) {
+      if (this->nnodes > 1 && !this->a2av_compress_) {
         this->a2av_stage_rows_ = get_int_from_env(
             "FLUX_A2AV_RS_MAX_STAGE_ROWS",
             std::min<int64_t>((int64_t)this->max_m, 2 * this->a2av_recv_rows_));
@@ -223,6 +248,31 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
             nvshmem_create_tensor({this->n_split, this->a2av_stage_rows_, n_per}, dtype);
         this->a2av_arrival_signals_ = nvshmem_create_tensor(
             {(int64_t)this->nnodes * this->n_split}, at::ScalarType::Long, true);
+      }
+      if (this->a2av_compress_) {
+        // compress replaces the destination-side staging/gateway machinery with
+        // source-side convergence + wire panels; the flag is a uniform ctor
+        // input so the collective allocation swap is consistent across ranks
+        this->a2av_conv_rows_ = get_int_from_env(
+            "FLUX_A2AV_RS_MAX_CONV_ROWS",
+            std::min<int64_t>((int64_t)this->max_m, 2 * this->a2av_recv_rows_));
+        this->a2av_wire_rows_ = get_int_from_env(
+            "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+            std::min<int64_t>((int64_t)this->max_m, 2 * this->a2av_recv_rows_));
+        this->a2av_conv_panel_ =
+            nvshmem_create_tensor({this->n_split, this->a2av_conv_rows_, n_per}, dtype);
+        this->a2av_wire_panel_ =
+            nvshmem_create_tensor({this->n_split, this->a2av_wire_rows_, n_per}, dtype);
+        this->a2av_conv_signals_ = nvshmem_create_tensor(
+            {(int64_t)this->local_world_size * this->nnodes * this->n_split},
+            at::ScalarType::Long,
+            true);
+        this->wire_flags_.reset(this->nnodes * this->n_split);
+        this->wire_counters_.reset(this->nnodes * this->n_split);
+        CUDA_CHECK(
+            cudaMemset(this->wire_flags_.get(), 0, sizeof(int) * this->nnodes * this->n_split));
+        CUDA_CHECK(cudaMemset(
+            this->wire_counters_.get(), 0, sizeof(int) * this->nnodes * this->n_split));
       }
       // chunk-ready flags per (dest_node, sid) -- allocated for nnodes == 1 too:
       // the intra-node ladder gates on the own-node flag
@@ -322,7 +372,8 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       bool do_all_reduce_ = false,
       bool use_read_mode_ = false,
       int nnodes_ = 1,
-      bool a2av_hier_ = false)
+      bool a2av_hier_ = false,
+      bool a2av_compress = false)
       : tp_group(tp_group_),
         rank(tp_group_->get_rank()),
         world_size(tp_group_->get_size()),
@@ -342,6 +393,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         internode_stream(create_internode_stream()),
         a2av_hier(a2av_hier_),
         a2av_eager_(a2av_hier_ && get_int_from_env("FLUX_A2AV_RS_EAGER", 0) != 0),
+        a2av_compress_(a2av_compress && nnodes_ > 1),
         barriers(barriers) {
     FLUX_CHECK_GE(nnodes, 1);
     FLUX_CHECK_DIV(world_size, nnodes);
@@ -352,6 +404,12 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       FLUX_CHECK(nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE) == local_rank)
           << "rank layout must be node-contiguous (rank = node_idx * local_world_size + "
              "local_rank)";
+    }
+    FLUX_CHECK(!a2av_compress || a2av_hier_) << "a2av_hier_compress implies the a2av data path";
+    if (a2av_compress && nnodes_ == 1 && this->rank == 0) {
+      FLUX_LOG_FIRST_N(INFO, 1)
+          << "a2av_hier_compress on a single node degrades to plain a2av_hier "
+             "(node-level dedup saves zero wire bytes)\n";
     }
     if (this->a2av_hier) {
       FLUX_CHECK(!do_all_reduce) << "do_all_reduce not supported with a2av_hier";
@@ -366,8 +424,14 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
              "local_rank)";
       this->a2av_intra_stream_ = create_internode_stream();
       this->a2av_reduce_stream_ = create_internode_stream();
-      if (nnodes > 1) {
+      if (nnodes > 1 && !this->a2av_compress_) {
         this->a2av_gateway_stream_ = create_internode_stream();
+      }
+      if (this->a2av_compress_) {
+        this->a2av_conv_stream_ = create_internode_stream();
+        this->a2av_prered_stream_ = create_internode_stream();
+        CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_conv_done_, cudaEventDisableTiming));
+        CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_prered_done_, cudaEventDisableTiming));
       }
       CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_intra_done_, cudaEventDisableTiming));
       CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_inter_done_, cudaEventDisableTiming));
@@ -398,13 +462,14 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   ~TopkReduceScatterOpImpl() {
     CUDA_CHECK(cudaEventDestroy(this->staging_reset_event));
     CUDA_CHECK(cudaStreamDestroy(this->internode_stream));
-    for (auto &s : {this->a2av_intra_stream_, this->a2av_gateway_stream_, this->a2av_reduce_stream_}) {
+    for (auto &s : {this->a2av_intra_stream_, this->a2av_gateway_stream_, this->a2av_reduce_stream_,
+                    this->a2av_conv_stream_, this->a2av_prered_stream_}) {
       if (s.has_value()) {
         CUDA_CHECK(cudaStreamDestroy(s.value()));
       }
     }
     for (auto e : {this->a2av_intra_done_, this->a2av_inter_done_, this->a2av_gateway_done_,
-                   this->a2av_reduce_done_}) {
+                   this->a2av_reduce_done_, this->a2av_conv_done_, this->a2av_prered_done_}) {
       if (e != nullptr) {
         CUDA_CHECK(cudaEventDestroy(e));
       }
@@ -430,6 +495,9 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       torch::Tensor const &splits_per_source,
       torch::Tensor const &pack_index,
       torch::Tensor const &reduce_index,
+      c10::optional<torch::Tensor> const &unique_counts,
+      c10::optional<std::vector<torch::Tensor>> const &wire_csr,
+      c10::optional<std::vector<torch::Tensor>> const &reduce_csr,
       c10::optional<std::vector<torch::Tensor>> const &output_vec_scales,
       int m_full,
       int num_thread_blocks,
@@ -528,7 +596,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       }
       return acc;
     };
-    if (NN > 1) {
+    if (NN > 1 && !this->a2av_compress_) {
       // gateway staging overflow, same collective-evaluation discipline
       int64_t max_stage_rows = 0;
       for (int gn = 0; gn < NN; gn++) {
@@ -552,18 +620,122 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       acc += chunk_at(this->rank, d);
     }
 
+    // ---- compress host tables: C' recv layout, conv/wire offsets, checks ----
+    const int32_t *U = nullptr;
+    if (this->a2av_compress_) {
+      FLUX_CHECK(unique_counts.has_value())
+          << "a2av_hier_compress requires a2av_unique_counts ([W, nnodes] int32 CPU)";
+      FLUX_CHECK(wire_csr.has_value() && reduce_csr.has_value())
+          << "a2av_hier_compress requires the wire/reduce CSRs (built by the gather-rs "
+             "op or passed as precomputed routing-plan inputs)";
+      U = unique_counts->data_ptr<int32_t>();
+    }
+    // C'[s][d]: own-node lanes keep per-rank chunks; the remote lane
+    // materializes only at the same-lr source rank with U[d][node(s)] rows
+    auto chunk_cp = [&](int s, int d) -> int64_t {
+      if (s / L == d / L) {
+        return chunk_at(s, d);
+      }
+      if (s % L == d % L) {
+        return U[d * NN + s / L];
+      }
+      return 0;
+    };
+    auto recv_off_cp = [&](int s, int d) -> int64_t {
+      int64_t acc = 0;
+      for (int s2 = 0; s2 < s; s2++) {
+        acc += chunk_cp(s2, d);
+      }
+      return acc;
+    };
+    // active recv layout: C' under compress, C otherwise (intra puts + eager
+    // lane prefixes must agree with what the wire actually delivers)
+    auto recv_off_active = [&](int s, int d) -> int64_t {
+      return this->a2av_compress_ ? recv_off_cp(s, d) : recv_off_of(s, d);
+    };
+    // conv panel offset at gateway (my_node, dl): segments (tn asc skip own,
+    // ls asc), each C[(my_node, ls)][(tn, dl)] rows in the peer's panel order
+    auto conv_off = [&](int dl, int tn, int ls) -> int64_t {
+      int64_t acc = 0;
+      for (int t2 = 0; t2 < NN; t2++) {
+        if (t2 == my_node) {
+          continue;
+        }
+        if (t2 == tn) {
+          break;
+        }
+        for (int l2 = 0; l2 < L; l2++) {
+          acc += chunk_at(my_node * L + l2, t2 * L + dl);
+        }
+      }
+      for (int l2 = 0; l2 < ls; l2++) {
+        acc += chunk_at(my_node * L + l2, tn * L + dl);
+      }
+      return acc;
+    };
+    // my wire panel: segments (tn asc skip own), U[(tn, my_lr)][my_node] rows
+    auto wire_seg_off = [&](int tn) -> int64_t {
+      int64_t acc = 0;
+      for (int t2 = 0; t2 < NN; t2++) {
+        if (t2 == my_node || t2 >= tn) {
+          continue;
+        }
+        acc += U[(t2 * L + my_lr) * NN + my_node];
+      }
+      return acc;
+    };
+    if (this->a2av_compress_) {
+      // conv/wire overflow, collective-evaluation discipline (identical
+      // expressions on every rank, so failure aborts everywhere, never hangs)
+      int64_t max_conv = 0, max_wire = 0;
+      for (int n2 = 0; n2 < NN; n2++) {
+        for (int dl = 0; dl < L; dl++) {
+          int64_t conv_rows = 0, wire_rows = 0;
+          for (int tn = 0; tn < NN; tn++) {
+            if (tn == n2) {
+              continue;
+            }
+            for (int ls = 0; ls < L; ls++) {
+              conv_rows += chunk_at(n2 * L + ls, tn * L + dl);
+            }
+            wire_rows += U[(tn * L + dl) * NN + n2];
+          }
+          max_conv = std::max(max_conv, conv_rows);
+          max_wire = std::max(max_wire, wire_rows);
+        }
+      }
+      FLUX_CHECK_LE(max_conv, this->a2av_conv_rows_)
+          << "a2av_hier_compress conv panel overflow; raise FLUX_A2AV_RS_MAX_CONV_ROWS";
+      FLUX_CHECK_LE(max_wire, this->a2av_wire_rows_)
+          << "a2av_hier_compress wire panel overflow; raise FLUX_A2AV_RS_MAX_WIRE_ROWS";
+      FLUX_CHECK_LE(recv_off_cp(W, this->rank), cpr) << "C' image exceeds recv panel";
+    }
+
     // per-run epoch + chunk-flag reset, published to the ladder streams before
     // their first CUStreamWaitValue can observe them
     this->run_id_ += 1;
     const size_t flag_bytes = sizeof(int) * NN * this->n_split;
     CUDA_CHECK(cudaMemsetAsync(this->group_flags.get(), 0, flag_bytes, stream_raw));
     CUDA_CHECK(cudaMemsetAsync(this->group_counters.get(), 0, flag_bytes, stream_raw));
+    if (this->a2av_compress_) {
+      // wire flags/counters join the same reset + event-publication discipline:
+      // any stream observing them must first wait staging_reset_event, so a
+      // stale 1 from the previous run can never release a wire put early
+      CUDA_CHECK(cudaMemsetAsync(this->wire_flags_.get(), 0, flag_bytes, stream_raw));
+      CUDA_CHECK(cudaMemsetAsync(this->wire_counters_.get(), 0, flag_bytes, stream_raw));
+    }
     CUDA_CHECK(cudaEventRecord(this->staging_reset_event, stream_raw));
     cudaStream_t intra_stream = this->a2av_intra_stream_.value();
     cudaStream_t reduce_stream = this->a2av_reduce_stream_.value();
     CUDA_CHECK(cudaStreamWaitEvent(intra_stream, this->staging_reset_event));
     if (NN > 1) {
       CUDA_CHECK(cudaStreamWaitEvent(this->internode_stream, this->staging_reset_event));
+    }
+    if (this->a2av_compress_) {
+      CUDA_CHECK(
+          cudaStreamWaitEvent(this->a2av_conv_stream_.value(), this->staging_reset_event));
+      CUDA_CHECK(
+          cudaStreamWaitEvent(this->a2av_prered_stream_.value(), this->staging_reset_event));
     }
 
     // pack kernel FIRST -- every host wait below is enqueued after it, so the
@@ -603,14 +775,68 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       return recv_base + ((int64_t)sid * this->a2av_recv_rows_ + row) * row_bytes;
     };
 
-    char *stage_base = NN > 1 ? (char *)this->a2av_stage_panel_.data_ptr() : nullptr;
+    const bool gw_path = NN > 1 && !this->a2av_compress_;
+    char *stage_base = gw_path ? (char *)this->a2av_stage_panel_.data_ptr() : nullptr;
     uint64_t *arrival_sig =
-        NN > 1 ? (uint64_t *)this->a2av_arrival_signals_.data_ptr() : nullptr;
+        gw_path ? (uint64_t *)this->a2av_arrival_signals_.data_ptr() : nullptr;
     auto stage_ptr = [&](int sid, int64_t row) -> char * {
       return stage_base + ((int64_t)sid * this->a2av_stage_rows_ + row) * row_bytes;
     };
-    cudaStream_t gateway_stream = NN > 1 ? (cudaStream_t)this->a2av_gateway_stream_.value()
-                                         : (cudaStream_t) nullptr;
+    cudaStream_t gateway_stream = gw_path ? (cudaStream_t)this->a2av_gateway_stream_.value()
+                                          : (cudaStream_t) nullptr;
+
+    // compress: launch the persistent pre-reduce kernel right after the pack
+    // kernel, before any host wait reaches the conn=1 channel (a blocked wait
+    // ahead of a kernel launch could park it forever). It spins on the conv
+    // signals per (tn, sid) and flips the wire flags the inter ladder gates on.
+    char *conv_base = nullptr, *wire_base = nullptr;
+    uint64_t *conv_sig = nullptr;
+    if (this->a2av_compress_) {
+      conv_base = (char *)this->a2av_conv_panel_.data_ptr();
+      wire_base = (char *)this->a2av_wire_panel_.data_ptr();
+      conv_sig = (uint64_t *)this->a2av_conv_signals_.data_ptr();
+      A2AVCombinePreReduceArguments prered_args{
+          .conv_panel = conv_base,
+          .wire_panel = wire_base,
+          .wire_ptr = wire_csr->at(0).data_ptr<int32_t>(),
+          .wire_copy = wire_csr->at(1).data_ptr<int32_t>(),
+          .conv_signals = conv_sig,
+          .run_id = this->run_id_,
+          .wire_flags = this->wire_flags_.get(),
+          .wire_counters = this->wire_counters_.get(),
+          .wire_seg_start = {},
+          .conv_rows = this->a2av_conv_rows_,
+          .wire_rows = this->a2av_wire_rows_,
+          .n_per = (int)n_per,
+          .n_split = this->n_split,
+          .nnodes = NN,
+          .node_idx = my_node,
+          .local_world_size = L,
+          .threadblock_count = get_a2av_prered_blocks()};
+      for (int tn = 0, seg = 0; tn < NN; tn++) {
+        if (tn == my_node) {
+          continue;
+        }
+        prered_args.wire_seg_start[seg] = wire_seg_off(tn);
+        seg++;
+      }
+      {
+        int64_t total_wire = 0;
+        for (int tn = 0; tn < NN; tn++) {
+          if (tn != my_node) {
+            total_wire += U[(tn * L + my_lr) * NN + my_node];
+          }
+        }
+        prered_args.wire_seg_start[NN - 1] = total_wire;  // segment-array end
+      }
+      a2av_combine_prereduce(prered_args, flux_dtype, this->a2av_prered_stream_.value());
+    }
+    auto conv_ptr = [&](int sid, int64_t row) -> char * {
+      return conv_base + ((int64_t)sid * this->a2av_conv_rows_ + row) * row_bytes;
+    };
+    auto wire_ptr_at = [&](int sid, int64_t row) -> char * {
+      return wire_base + ((int64_t)sid * this->a2av_wire_rows_ + row) * row_bytes;
+    };
     A2AVCombineReduceArguments reduce_args{
         .recv_panel = this->a2av_recv_panel_.data_ptr(),
         .reduce_index = reduce_index.data_ptr<int32_t>(),
@@ -632,6 +858,8 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       A2AVCombineEagerReduceArguments eager_args{
           .recv_panel = this->a2av_recv_panel_.data_ptr(),
           .reduce_index = reduce_index.data_ptr<int32_t>(),
+          .red_ptr = this->a2av_compress_ ? reduce_csr->at(0).data_ptr<int32_t>() : nullptr,
+          .red_row = this->a2av_compress_ ? reduce_csr->at(1).data_ptr<int32_t>() : nullptr,
           .output = output.data_ptr(),
           .recv_signals = recv_sig,
           .run_id = this->run_id_,
@@ -644,10 +872,15 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           .n_split = this->n_split,
           .topk = this->topk,
           .threadblock_count = get_a2av_reduce_blocks()};
-      for (int s = 0; s < W; s++) {
-        eager_args.recv_cum[s] = recv_off_of(s, this->rank);
+      if (this->a2av_compress_) {
+        // per-token contributions <= topk own-node copies + NN-1 merged rows
+        FLUX_CHECK_LE(this->topk + NN - 1, 31)
+            << "eager compress remaining-mask holds topk + nnodes - 1 in 31 bits";
       }
-      eager_args.recv_cum[W] = cpr;
+      for (int s = 0; s < W; s++) {
+        eager_args.recv_cum[s] = recv_off_active(s, this->rank);
+      }
+      eager_args.recv_cum[W] = recv_off_active(W, this->rank);
       a2av_combine_eager_reduce(eager_args, flux_dtype, reduce_stream);
     }
 
@@ -660,7 +893,88 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
     // sit ahead of the intra wait; the reduce waits depend on this rank's own
     // gateway forwards, which are enqueued just before them.
     for (int sid = 0; sid < this->n_split; sid++) {
-      if (NN > 1) {
+      if (this->a2av_compress_) {
+        // conv ladder: behind the pack chunk flag per target node (produced
+        // remote-first). My sub-chunk for dest (tn, dl) converges on local
+        // gateway (my_node, dl): self sub-chunk is a CE memcpy into my own
+        // conv panel, peers get one contiguous putmem_signal each (NVLink CE).
+        // Every (peer, tn) pair signals every split, payload or not.
+        cudaStream_t conv_stream = this->a2av_conv_stream_.value();
+        for (int gi = 0; gi < NN - 1; gi++) {
+          int tn = (my_node + 1 + gi) % NN;
+          CU_CHECK(CUStreamWaitValue(
+              conv_stream,
+              (CUdeviceptr)(this->group_flags.get() + tn * this->n_split + sid),
+              1,
+              CU_STREAM_WAIT_VALUE_GEQ));
+          for (int di = 0; di < L; di++) {
+            int dl = (my_lr + di) % L;  // self first, then rotation (no incast)
+            int d = tn * L + dl;
+            int gw = my_node * L + dl;
+            int64_t rows = chunk_at(this->rank, d);
+            int64_t coff = conv_off(dl, tn, my_lr);
+            uint64_t *slot =
+                conv_sig + ((int64_t)my_lr * NN + tn) * this->n_split + sid;
+            if (gw == this->rank) {
+              if (rows > 0) {
+                CUDA_CHECK(cudaMemcpyAsync(
+                    conv_ptr(sid, coff),
+                    send_ptr(sid, send_off[d]),
+                    rows * row_bytes,
+                    cudaMemcpyDeviceToDevice,
+                    conv_stream));
+              }
+              nvshmemx_signal_op_on_stream(
+                  slot, this->run_id_, NVSHMEM_SIGNAL_SET, gw, conv_stream);
+            } else if (rows > 0) {
+              nvshmemx_putmem_signal_nbi_on_stream(
+                  conv_ptr(sid, coff),
+                  send_ptr(sid, send_off[d]),
+                  rows * row_bytes,
+                  slot,
+                  this->run_id_,
+                  NVSHMEM_SIGNAL_SET,
+                  gw,
+                  conv_stream);
+            } else {
+              nvshmemx_signal_op_on_stream(
+                  slot, this->run_id_, NVSHMEM_SIGNAL_SET, gw, conv_stream);
+            }
+          }
+        }
+        // wire ladder: behind the pre-reduce kernel's (tn, sid) wire flag, one
+        // direct putmem_signal per remote node into the same-lr destination's
+        // recv panel (C' image) -- no destination gateway hop. The (rank, sid)
+        // slot at the destination keeps exactly one writer: me.
+        for (int gi = 0; gi < NN - 1; gi++) {
+          int tn = (my_node + 1 + gi) % NN;
+          int d = tn * L + my_lr;
+          CU_CHECK(CUStreamWaitValue(
+              this->internode_stream,
+              (CUdeviceptr)(this->wire_flags_.get() + tn * this->n_split + sid),
+              1,
+              CU_STREAM_WAIT_VALUE_GEQ));
+          int64_t rows = U[d * NN + my_node];
+          if (rows > 0) {
+            nvshmemx_putmem_signal_nbi_on_stream(
+                recv_ptr(sid, recv_off_cp(this->rank, d)),
+                wire_ptr_at(sid, wire_seg_off(tn)),
+                rows * row_bytes,
+                recv_sig + this->rank * this->n_split + sid,
+                this->run_id_,
+                NVSHMEM_SIGNAL_SET,
+                d,
+                this->internode_stream);
+          } else {
+            nvshmemx_signal_op_on_stream(
+                recv_sig + this->rank * this->n_split + sid,
+                this->run_id_,
+                NVSHMEM_SIGNAL_SET,
+                d,
+                this->internode_stream);
+          }
+        }
+      } else if (NN > 1) {
         // inter-node: ONE aggregated put per (remote node, split) to the
         // same-local-rank gateway there, consumed in the pack kernel's chunk
         // production order (node_idx+1 ascending -- no consumer schedule exists
@@ -705,7 +1019,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           CU_STREAM_WAIT_VALUE_GEQ));
       if (chunk_at(this->rank, this->rank) > 0) {
         CUDA_CHECK(cudaMemcpyAsync(
-            recv_ptr(sid, recv_off_of(this->rank, this->rank)),
+            recv_ptr(sid, recv_off_active(this->rank, this->rank)),
             send_ptr(sid, send_off[this->rank]),
             chunk_at(this->rank, this->rank) * row_bytes,
             cudaMemcpyDeviceToDevice,
@@ -722,7 +1036,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         int64_t rows = chunk_at(this->rank, d);
         if (rows > 0) {
           nvshmemx_putmem_signal_nbi_on_stream(
-              recv_ptr(sid, recv_off_of(this->rank, d)),
+              recv_ptr(sid, recv_off_active(this->rank, d)),
               send_ptr(sid, send_off[d]),
               rows * row_bytes,
               recv_sig + this->rank * this->n_split + sid,
@@ -739,7 +1053,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
               intra_stream);
         }
       }
-      if (NN > 1) {
+      if (gw_path) {
         // gateway forwards: per source node behind the arrival signal (zero-SM
         // front-end wait, cannot deadlock against the spinning GEMM); forwarded
         // sub-chunks are indistinguishable from direct puts at the destination.
@@ -796,21 +1110,41 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           }
         }
       }
-      // per-split reduce (legacy gate, a2av_eager_ off): gate on all W
-      // per-source recv signals of the split (a token's topk copies come from
-      // up to topk different owners), then one memory-bound kernel folds them
-      // into the output column window. With a2av_eager_ the persistent kernel
-      // launched above already consumes the signals in arrival order.
+      // per-split reduce (legacy gate, a2av_eager_ off): gate on the per-source
+      // recv signals of the split, then one memory-bound kernel folds them into
+      // the output column window. Under compress only the C' image's
+      // L + NN - 1 lanes materialize (own-node ranks + the same-lr rank of
+      // each remote node) -- waiting a lane that never signals would hang.
+      // With a2av_eager_ the persistent kernel launched above already consumes
+      // the signals in arrival order.
       if (!this->a2av_eager_) {
         for (int s = 0; s < W; s++) {
+          if (this->a2av_compress_ && s / L != my_node && s % L != my_lr) {
+            continue;  // lane never materializes under C'
+          }
           CU_CHECK(CUStreamWaitValue64(
               reduce_stream,
               (CUdeviceptr)(recv_sig + s * this->n_split + sid),
               this->run_id_,
               CU_STREAM_WAIT_VALUE_GEQ));
         }
-        reduce_args.sid = sid;
-        a2av_combine_reduce(reduce_args, flux_dtype, reduce_stream);
+        if (this->a2av_compress_) {
+          A2AVCombineCSRReduceArguments csr_args{
+              .recv_panel = this->a2av_recv_panel_.data_ptr(),
+              .red_ptr = reduce_csr->at(0).data_ptr<int32_t>(),
+              .red_row = reduce_csr->at(1).data_ptr<int32_t>(),
+              .output = output.data_ptr(),
+              .panel_rows = this->a2av_recv_rows_,
+              .ntokens_local = cpr / this->topk,
+              .n = this->n_dim,
+              .n_per = (int)n_per,
+              .sid = sid,
+              .threadblock_count = get_a2av_reduce_blocks()};
+          a2av_combine_csr_reduce(csr_args, flux_dtype, reduce_stream);
+        } else {
+          reduce_args.sid = sid;
+          a2av_combine_reduce(reduce_args, flux_dtype, reduce_stream);
+        }
       }
     }
 
@@ -822,8 +1156,16 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
     if (NN > 1) {
       CUDA_CHECK(cudaEventRecord(this->a2av_inter_done_, this->internode_stream));
       CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_inter_done_));
+    }
+    if (gw_path) {
       CUDA_CHECK(cudaEventRecord(this->a2av_gateway_done_, gateway_stream));
       CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_gateway_done_));
+    }
+    if (this->a2av_compress_) {
+      CUDA_CHECK(cudaEventRecord(this->a2av_conv_done_, this->a2av_conv_stream_.value()));
+      CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_conv_done_));
+      CUDA_CHECK(cudaEventRecord(this->a2av_prered_done_, this->a2av_prered_stream_.value()));
+      CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_prered_done_));
     }
     CUDA_CHECK(cudaEventRecord(this->a2av_reduce_done_, reduce_stream));
     CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_reduce_done_));
@@ -842,7 +1184,10 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       intptr_t cp_stream,
       c10::optional<torch::Tensor> splits_per_source = c10::nullopt,
       c10::optional<torch::Tensor> pack_index = c10::nullopt,
-      c10::optional<torch::Tensor> reduce_index = c10::nullopt) {
+      c10::optional<torch::Tensor> reduce_index = c10::nullopt,
+      c10::optional<torch::Tensor> unique_counts = c10::nullopt,
+      c10::optional<std::vector<torch::Tensor>> wire_csr = c10::nullopt,
+      c10::optional<std::vector<torch::Tensor>> reduce_csr = c10::nullopt) {
     at::cuda::CUDAStream stream =
         at::cuda::getStreamFromExternal((cudaStream_t)cp_stream, at::cuda::current_device());
     at::cuda::CUDAStreamGuard _(stream);
@@ -875,6 +1220,9 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           splits_per_source.value(),
           pack_index.value(),
           reduce_index.value(),
+          unique_counts,
+          wire_csr,
+          reduce_csr,
           output_vec_scales,
           m_full,
           num_thread_blocks,
@@ -1029,6 +1377,7 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
   int n_split;
   bool do_all_reduce;
   bool a2av_hier;
+  bool a2av_compress;  // a2av_hier_compress ctor flag; false when nnodes == 1
   torch::Tensor barrier;
   std::vector<torch::Tensor> barriers;  // [local_world_size], indexed by local rank
   std::unique_ptr<TopkReduceScatterOp> topk_reduce_scatter_op = nullptr;
@@ -1101,7 +1450,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       bool do_all_reduce_ = false,
       bool use_read_mode = false,
       int64_t nnodes_ = 1,
-      bool a2av_hier_ = false)
+      bool a2av_hier_ = false,
+      bool a2av_hier_compress_ = false)
       : tp_group(tp_group_),
         total_num_experts(total_num_experts),
         max_m(max_m),
@@ -1118,12 +1468,15 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         local_world_size(tp_group_->get_size() / nnodes_),
         n_split(n_split_fixed(n_split_, n_dim)),
         do_all_reduce(do_all_reduce_),
-        a2av_hier(a2av_hier_),
+        a2av_hier(a2av_hier_ || a2av_hier_compress_),
+        a2av_compress(a2av_hier_compress_ && nnodes_ > 1),
         group_barrier(tp_group_, false) {
     if (this->n_split != n_split_) {
       FLUX_LOG_FIRST_N(WARN, 1) << "warning: (n / split_n) % " << kTileSizeN
                                 << " != 0, set split_n=" << this->n_split << "\n";
     }
+    FLUX_CHECK(!(a2av_hier_ && a2av_hier_compress_))
+        << "pass a2av_hier or a2av_hier_compress, not both";
     FLUX_CHECK_EQ(this->tp_world_size * this->ep_world_size, this->world_size);
     FLUX_CHECK_DIV(this->total_num_experts, this->ep_world_size);
     FLUX_CHECK_LE(max_input_groups, kMaxNumGroups);
@@ -1158,7 +1511,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         do_all_reduce_,
         use_read_mode,
         nnodes_,
-        a2av_hier_);
+        this->a2av_hier,
+        this->a2av_compress);
   }
 
   // Builds the mirror-layout gather indices for the a2av_hier combine, sharing
@@ -1610,8 +1964,22 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         CHECK_2D(u_t, this->world_size, this->nnodes);
         FLUX_CHECK(u_t.scalar_type() == at::ScalarType::Int);
         FLUX_CHECK(u_t.is_contiguous());
-        FLUX_CHECK(false) << "a2av_hier_compress data path not yet enabled; "
-                             "do not pass compress plan tensors";
+      }
+      if (this->a2av_compress) {
+        FLUX_CHECK(a2av_unique_counts.has_value())
+            << "a2av_hier_compress requires a2av_unique_counts ([W, nnodes] int32 CPU) -- "
+               "untimed host metadata, like splits_per_source";
+        if (!a2av_wire_csr.has_value()) {
+          // isolated mode: compress CSR build on the timed critical path, same
+          // v1 placement as the pack/reduce index build below
+          auto [wp, wc, rp, rr] = build_a2av_compress_indices(
+              routing_idx, splits_gpu, cnt_t, a2av_unique_counts.value(), m_full);
+          a2av_wire_csr = std::vector<torch::Tensor>{wp, wc};
+          a2av_reduce_csr = std::vector<torch::Tensor>{rp, rr};
+        }
+      } else {
+        FLUX_CHECK(!a2av_unique_counts.has_value() && !a2av_wire_csr.has_value())
+            << "compress plan tensors require the a2av_hier_compress ctor flag";
       }
       if (a2av_pack_index.has_value() || a2av_reduce_index.has_value()) {
         FLUX_CHECK(a2av_pack_index.has_value() && a2av_reduce_index.has_value())
@@ -1746,7 +2114,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         .routing_idx = routing_idx.data_ptr<int32_t>(),
         .n_split = n_split,
         .sm_margin = sm_margin + (this->a2av_hier
-                                      ? get_a2av_pack_blocks() + get_a2av_reduce_blocks()
+                                      ? get_a2av_pack_blocks() + get_a2av_reduce_blocks() +
+                                            (this->a2av_compress ? get_a2av_prered_blocks() : 0)
                                       : get_rs_threadblock_count())};
 
     int64_t workspace_size = gemm_op->get_workspace_size(args);
@@ -1775,7 +2144,10 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         (intptr_t)gather_rs_stream,
         splits_per_source,
         this->a2av_hier ? c10::optional<torch::Tensor>(a2av_pack_idx_t) : c10::nullopt,
-        this->a2av_hier ? c10::optional<torch::Tensor>(a2av_reduce_idx_t) : c10::nullopt);
+        this->a2av_hier ? c10::optional<torch::Tensor>(a2av_reduce_idx_t) : c10::nullopt,
+        this->a2av_compress ? a2av_unique_counts : c10::nullopt,
+        this->a2av_compress ? a2av_wire_csr : c10::nullopt,
+        this->a2av_compress ? a2av_reduce_csr : c10::nullopt);
     CUDA_CHECK(cudaEventRecord(this->gather_rs_done_event, gather_rs_stream));
     CUDA_CHECK(cudaStreamWaitEvent(stream, this->gather_rs_done_event));
 
@@ -2180,7 +2552,8 @@ TopkReduceScatterOp::TopkReduceScatterOp(
     bool do_all_reduce,
     bool use_read_mode,
     int nnodes,
-    bool a2av_hier)
+    bool a2av_hier,
+    bool a2av_compress)
     : impl_(new TopkReduceScatterOpImpl(
           tp_group,
           max_m,
@@ -2194,7 +2567,8 @@ TopkReduceScatterOp::TopkReduceScatterOp(
           do_all_reduce,
           use_read_mode,
           nnodes,
-          a2av_hier)) {}
+          a2av_hier,
+          a2av_compress)) {}
 TopkReduceScatterOp::~TopkReduceScatterOp() { delete impl_; }
 void
 TopkReduceScatterOp::reset_buffer() {
@@ -2214,7 +2588,10 @@ TopkReduceScatterOp::run(
     intptr_t cp_stream,
     c10::optional<torch::Tensor> splits_per_source,
     c10::optional<torch::Tensor> pack_index,
-    c10::optional<torch::Tensor> reduce_index) {
+    c10::optional<torch::Tensor> reduce_index,
+    c10::optional<torch::Tensor> unique_counts,
+    c10::optional<std::vector<torch::Tensor>> wire_csr,
+    c10::optional<std::vector<torch::Tensor>> reduce_csr) {
   FLUX_CHECK(impl_ != nullptr) << "TopkReduceScatterOp not initialized";
   return impl_->run(
       std::move(gemm_outs),
@@ -2228,7 +2605,10 @@ TopkReduceScatterOp::run(
       cp_stream,
       std::move(splits_per_source),
       std::move(pack_index),
-      std::move(reduce_index));
+      std::move(reduce_index),
+      std::move(unique_counts),
+      std::move(wire_csr),
+      std::move(reduce_csr));
 }
 
 GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOp(
@@ -2245,7 +2625,8 @@ GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOp(
     bool do_all_reduce,
     bool use_read_mode,
     int64_t nnodes,
-    bool a2av_hier)
+    bool a2av_hier,
+    bool a2av_hier_compress)
     : impl_(new GemmGroupedV2GatherRSOpImpl(
           tp_group_,
           total_num_experts,
@@ -2260,7 +2641,8 @@ GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOp(
           do_all_reduce,
           use_read_mode,
           nnodes,
-          a2av_hier)) {}
+          a2av_hier,
+          a2av_hier_compress)) {}
 
 GemmGroupedV2GatherRSOp::~GemmGroupedV2GatherRSOp() { delete impl_; }
 torch::Tensor

@@ -675,3 +675,77 @@ Epoch safety needs nothing new: all four ladder/reduce streams are
 event-joined onto the gather-rs stream before `gather_rs_done_event`, so the
 existing `barrier_all` close covers panel and staging reuse, and `nnodes == 1`
 degenerates to the intra ladder + reduce (cheap single-node validation).
+
+## 14. Layer1 ports of the layer0 optimizations: eager reduce + compress
+
+The two layer0 lessons that survived the starvation and realistic-trace
+campaigns transpose onto §13's combine as follows.
+
+### 14.1 Eager (arrival-order) destination reduce — `FLUX_A2AV_RS_EAGER=1`
+
+§13's reduce is the last wait-on-specific-peers gate in the pipeline: per
+split, W back-to-back `cuStreamWaitValue64` on one serialized reduce stream,
+then a write-mode kernel — the exact shape layer0's H2/H2b starvation analysis
+attributed multi-ms spin to. The eager variant (a ctor-time boolean read from
+`FLUX_A2AV_RS_EAGER`; knob-off is byte-identical) deletes ALL of it: one
+persistent reduce kernel per forward, launched right after the pack kernel
+while the conn=1 channel holds no host wait, no front-end reduce waits at all.
+Per output element a remaining-mask loop folds in any of the token's topk recv
+rows whose source lane's per-split signal has fired (64-bit acquire poll +
+nanosleep backoff) — accumulation in arrival order, which is the minimal real
+dependency ("all contributions summed before the output row is written", not
+"all sources arrived before any addition starts"). The source lane of a recv
+row is recovered by binary search over `recv_cum[W+1]` (per-source rows are
+contiguous, and splits slice COLUMNS, so the prefix is split-invariant — one
+small host array in the args struct). Rides the reserved reduce-block SM
+budget. Cost: the sum order becomes arrival-dependent (the dense ring path
+already is); correctness checks are tolerance-based.
+
+### 14.2 Token-dedup compress — ctor `a2av_hier_compress`
+
+The transpose of §11's dispatch dedup with the roles flipped: in dispatch all
+copies of a token originate on ONE rank, so dedup is local; in the combine the
+k' copies of a token owned by one node are SPREAD across its ranks, so dedup
+requires convergence before the wire. Design: source rank `(n, lr)` owns all
+wire rows destined to rank `(tn, lr)` — same-lr end-to-end.
+
+1. **Convergence** (new NVLink hop): each rank `(n, ls)` puts, per remote node
+   `tn` and local peer `lr`, its send-panel sub-chunk destined to `(tn, lr)`
+   into peer `(n, lr)`'s conv panel (`putmem_signal`, per-(ls, tn, sid)
+   signal slots — nbi puts to one PE are unordered, so per-pair granularity is
+   mandatory).
+2. **Pre-reduce**: a persistent kernel (grid `FLUX_A2AV_RS_PRERED_BLOCKS`,
+   added to `sm_margin`) spins on the L conv signals per (tn, sid), merges
+   each wire row's contributing conv rows (CSR `wire_ptr`/`wire_copy`, one
+   row per distinct token, token-ascending per segment), and flips a
+   `wire_flags[tn * n_split + sid]` via the pack kernel's counter handshake.
+3. **Wire**: the inter ladder waits the wire flag and issues ONE
+   `putmem_signal` per (remote node, split) straight into the destination's
+   recv panel — the §13 destination gateway hop is gone. Wire rows
+   `(n,lr) → (tn,lr)` = `U[(tn,lr)][n]`, the layer0 U-matrix consumed
+   TRANSPOSED (`a2av_unique_counts`, untimed host metadata).
+4. **Destination**: the recv image follows the compress chunk matrix `C'`
+   (own-node lanes unchanged; one remote lane per node, at the same-lr rank),
+   so `recv_sig` keeps its `[W × n_split]` layout with one writer per slot and
+   only L + NN − 1 lanes materialize — §11's `nseg`, transposed. The reduce
+   walks the `red_ptr`/`red_row` CSR (own-node copies individually + one
+   merged row per contributing remote node, positioned by the transposed
+   one-cumsum); composes with 14.1 (CSR eager kernel) or the legacy per-split
+   gate restricted to materialized lanes.
+
+Byte accounting: NVLink moves the per-copy hop from the destination node
+(§13's gateway forward) to the source node (convergence) — roughly unchanged;
+the wire shrinks by the duplication factor `Σ chunk_remote / Σ U_remote`; one
+forwarding hop leaves the wire critical path. Arithmetic moves INTO the
+transport (pre-reduce costs SMs) — the inverse of dispatch dedup, whose fanout
+was free CE copies; whether the wire savings pay for the SM pressure at small
+budgets is the open measurement question.
+
+Executable specs, validated on CPU before any GPU run:
+`test_a2av_combine_sim.py` (`simulate_compress`: set-valued payloads through
+conv → pre-reduce → C' wire → CSR reduce; any double-counted or missing copy
+fails regardless of accumulation order) and `test_a2av_sched_sim.py` (the full
+enqueue order under pessimistic conn=1 semantics — per-rank single host FIFO,
+resident kernels on their own program counters — across {hier, compress} ×
+{eager, legacy} × n_split grids). On `nnodes == 1` compress degrades to plain
+§13 (node-level dedup saves zero wire bytes).

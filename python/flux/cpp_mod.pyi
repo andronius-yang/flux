@@ -890,6 +890,7 @@ class GemmGroupedV2GatherRSOp:
         do_all_reduce: bool = False,
         use_read_mode: bool = False,
         a2av_hier: bool = False,
+        a2av_hier_compress: bool = False,
     ):
         """
         such conditions expected:
@@ -899,6 +900,8 @@ class GemmGroupedV2GatherRSOp:
             a2av_hier requires tp_world_size == 1 (EP == world), max_input_groups == 1,
             fp16/bf16, do_all_reduce=False, use_read_mode=False; forward_gather_rs must
             then receive splits_per_source
+            a2av_hier_compress (mutually exclusive with a2av_hier) additionally needs
+            a2av_unique_counts per forward; on nnodes == 1 it degrades to plain a2av_hier
         """
         ...
 
@@ -1039,6 +1042,7 @@ class TopkReduceScatterOp:
         use_read_mode: bool = False,
         nnodes: int = 1,
         a2av_hier: bool = False,
+        a2av_compress: bool = False,
     ): ...
     def run(
         self,

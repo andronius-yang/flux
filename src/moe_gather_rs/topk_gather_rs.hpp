@@ -76,5 +76,13 @@ void a2av_combine_reduce(
 // replacing the per-split host wait-all-W gates (see A2AVCombineEagerReduceArguments)
 void a2av_combine_eager_reduce(
     A2AVCombineEagerReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream);
+
+// compress (a2av_hier_compress): source-side gateway pre-reduce (persistent) and
+// the legacy-gate CSR destination reduce
+void a2av_combine_prereduce(
+    A2AVCombinePreReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream);
+
+void a2av_combine_csr_reduce(
+    A2AVCombineCSRReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream);
 }  // namespace flux
 }  // namespace bytedance

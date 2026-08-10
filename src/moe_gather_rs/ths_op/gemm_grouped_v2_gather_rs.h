@@ -38,7 +38,8 @@ class TopkReduceScatterOp {
       bool do_all_reduce = false,
       bool use_read_mode = false,
       int nnodes = 1,
-      bool a2av_hier = false);
+      bool a2av_hier = false,
+      bool a2av_compress = false);
   ~TopkReduceScatterOp();
   void reset_buffer();
   torch::Tensor run(
@@ -52,10 +53,14 @@ class TopkReduceScatterOp {
       int num_thread_blocks,
       intptr_t cp_stream,
       // a2av_hier mode only: the [W, nexperts] splits_per_source metadata (int32
-      // CPU) and the mirror-layout pack/reduce gather indices (int32 CUDA)
+      // CPU) and the mirror-layout pack/reduce gather indices (int32 CUDA).
+      // Compress adds the transposed-U dedup counts and the wire/reduce CSRs.
       c10::optional<torch::Tensor> splits_per_source = c10::nullopt,
       c10::optional<torch::Tensor> pack_index = c10::nullopt,
-      c10::optional<torch::Tensor> reduce_index = c10::nullopt);
+      c10::optional<torch::Tensor> reduce_index = c10::nullopt,
+      c10::optional<torch::Tensor> unique_counts = c10::nullopt,
+      c10::optional<std::vector<torch::Tensor>> wire_csr = c10::nullopt,
+      c10::optional<std::vector<torch::Tensor>> reduce_csr = c10::nullopt);
 
  private:
   class TopkReduceScatterOpImpl;
@@ -78,7 +83,8 @@ class GemmGroupedV2GatherRSOp {
       bool do_all_reduce = false,
       bool use_read_mode = false,
       int64_t nnodes = 1,
-      bool a2av_hier = false);
+      bool a2av_hier = false,
+      bool a2av_hier_compress = false);
   ~GemmGroupedV2GatherRSOp();
   torch::Tensor forward_gather_rs(
       torch::Tensor input,
