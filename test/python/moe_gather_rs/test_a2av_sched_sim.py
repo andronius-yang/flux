@@ -38,14 +38,30 @@ Run: python3 test_a2av_sched_sim.py   (no GPU, no flux import)
 import itertools
 
 
-def build_programs(W, L, n_split, eager):
+def material_lanes(W, L, r, compress):
+    """Source lanes that actually signal destination r. Plain hier: all W.
+    Compress: own-node ranks + the same-lr rank of each remote node (the
+    L + NN - 1 lanes of the C' recv image)."""
+    NN = W // L
+    n, lr = r // L, r % L
+    if not compress:
+        return list(range(W))
+    lanes = [n * L + ls for ls in range(L)]
+    lanes += [m * L + lr for m in range(NN) if m != n]
+    return sorted(lanes)
+
+
+def build_programs(W, L, n_split, eager, compress=False):
     """Return (host_progs, kernel_progs): rank -> list of ('wait'|'set', key) ops.
 
     Signal keys (all monotone-epoch, GEQ semantics):
-      ('barrier', r, sid)      GEMM split-cascade flag on rank r (resident GEMM)
-      ('gflag', r, g, sid)     pack kernel (g, sid) chunk flag on rank r
-      ('arrival', r, ns, sid)  source node ns's aggregate landed at gateway r
-      ('recv', r, s, sid)      source s's chunk for split sid delivered to r
+      ('barrier', r, sid)        GEMM split-cascade flag on rank r (resident GEMM)
+      ('gflag', r, g, sid)       pack kernel (g, sid) chunk flag on rank r
+      ('arrival', r, ns, sid)    source node ns's aggregate landed at gateway r
+      ('recv', r, s, sid)        source s's chunk for split sid delivered to r
+      ('conv', gw, tn, ls, sid)  compress: peer ls's (tn, lr(gw)) sub-chunk landed
+                                 in gw's convergence panel
+      ('wflag', r, tn, sid)      compress: pre-reduce wrote r's (tn, sid) wire rows
     """
     NN = W // L
     host_progs, kernel_progs = {}, {}
@@ -63,11 +79,23 @@ def build_programs(W, L, n_split, eager):
                 pack.append(("set", ("gflag", r, g, sid)))
         kernels = [gemm, pack]
 
-        # resident eager reduce kernel: consumes every per-source signal, split-major
+        # compress: resident pre-reduce kernel — per (sid, tn) waits the L conv
+        # signals then flips the wire flag the host inter ladder gates on
+        if compress and NN > 1:
+            prered = []
+            for sid in range(n_split):
+                for gi in range(NN - 1):
+                    tn = (n + 1 + gi) % NN
+                    for ls in range(L):
+                        prered.append(("wait", ("conv", r, tn, ls, sid)))
+                    prered.append(("set", ("wflag", r, tn, sid)))
+            kernels.append(prered)
+
+        # resident eager reduce kernel: consumes the materialized lanes, split-major
         if eager:
             red = []
             for sid in range(n_split):
-                for s in range(W):
+                for s in material_lanes(W, L, r, compress):
                     red.append(("wait", ("recv", r, s, sid)))
             kernels.append(red)
         kernel_progs[r] = kernels
@@ -75,8 +103,23 @@ def build_programs(W, L, n_split, eager):
         # host FIFO: exact run_a2av_hier enqueue order (interleaved per split)
         ops = []
         for sid in range(n_split):
-            if NN > 1:
-                for gi in range(NN - 1):  # inter ladder
+            if compress and NN > 1:
+                # conv ladder: behind the pack chunk flag per target node, then
+                # one put per local peer (self sub-chunk is a local memcpy)
+                for gi in range(NN - 1):
+                    tn = (n + 1 + gi) % NN
+                    ops.append(("wait", ("gflag", r, tn, sid)))
+                    for dl in range(L):
+                        gw = n * L + dl
+                        ops.append(("set", ("conv", gw, tn, lr, sid)))
+                # inter wire: behind the pre-reduce wire flag, direct to the
+                # same-lr rank of each remote node
+                for gi in range(NN - 1):
+                    tn = (n + 1 + gi) % NN
+                    ops.append(("wait", ("wflag", r, tn, sid)))
+                    ops.append(("set", ("recv", tn * L + lr, r, sid)))
+            elif NN > 1:
+                for gi in range(NN - 1):  # inter ladder (plain hier)
                     tn = (n + 1 + gi) % NN
                     g = tn * L + lr
                     ops.append(("wait", ("gflag", r, tn, sid)))
@@ -85,29 +128,29 @@ def build_programs(W, L, n_split, eager):
             for dl in range(L):
                 d = n * L + (lr - dl + L) % L
                 ops.append(("set", ("recv", d, r, sid)))
-            if NN > 1:
-                for dn in range(1, NN):  # gateway forwards
+            if not compress and NN > 1:
+                for dn in range(1, NN):  # gateway forwards (plain hier only)
                     ns = (n + dn) % NN
                     s = ns * L + lr
                     ops.append(("wait", ("arrival", r, ns, sid)))
                     for dl in range(L):
                         d = n * L + (lr - dl + L) % L
                         ops.append(("set", ("recv", d, s, sid)))
-            if not eager:  # legacy reduce: wait-all-W then (non-blocking) launch
-                for s in range(W):
+            if not eager:  # legacy reduce: wait the materialized lanes, then launch
+                for s in material_lanes(W, L, r, compress):
                     ops.append(("wait", ("recv", r, s, sid)))
         host_progs[r] = ops
     return host_progs, kernel_progs
 
 
-def run_schedule(W, L, n_split, eager, epochs=2):
+def run_schedule(W, L, n_split, eager, compress=False, epochs=2):
     signals = {}
 
     def fired(key, run_id):
         return signals.get(key, 0) >= run_id
 
     for run_id in range(1, epochs + 1):
-        host_progs, kernel_progs = build_programs(W, L, n_split, eager)
+        host_progs, kernel_progs = build_programs(W, L, n_split, eager, compress)
         host_pc = {r: 0 for r in host_progs}
         kern_pc = {(r, i): 0 for r in kernel_progs for i in range(len(kernel_progs[r]))}
         while True:
@@ -140,10 +183,10 @@ def run_schedule(W, L, n_split, eager, epochs=2):
                            if host_pc[r] < len(host_progs[r])}
                 raise AssertionError(
                     f"deadlock (W={W} L={L} n_split={n_split} eager={eager} "
-                    f"epoch={run_id}): host stuck at {stuck_h}")
-        # completeness: every (dest, source, split) delivery signal fired
+                    f"compress={compress} epoch={run_id}): host stuck at {stuck_h}")
+        # completeness: every materialized (dest, source, split) delivery fired
         for d in range(W):
-            for s in range(W):
+            for s in material_lanes(W, L, d, compress):
                 for sid in range(n_split):
                     assert fired(("recv", d, s, sid), run_id), (d, s, sid)
 
@@ -153,9 +196,10 @@ if __name__ == "__main__":
         [(4, 4), (8, 4), (16, 4), (8, 2)],  # (W, L)
         [1, 4],                              # n_split
         [False, True],                       # eager
+        [False, True],                       # compress
     )
     count = 0
-    for (W, L), n_split, eager in grids:
-        run_schedule(W, L, n_split, eager)
+    for (W, L), n_split, eager, compress in grids:
+        run_schedule(W, L, n_split, eager, compress)
         count += 1
     print(f"PASS: {count} schedules terminate under pessimistic conn=1 semantics")

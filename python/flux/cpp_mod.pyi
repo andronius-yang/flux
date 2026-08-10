@@ -918,6 +918,9 @@ class GemmGroupedV2GatherRSOp:
         splits_per_source: Optional[torch.Tensor] = None,  # a2av_hier: [W, nexperts] int32 CPU
         a2av_pack_index: Optional[torch.Tensor] = None,  # a2av_hier: precomputed routing plan
         a2av_reduce_index: Optional[torch.Tensor] = None,
+        a2av_unique_counts: Optional[torch.Tensor] = None,  # compress: [W, nnodes] int32 CPU
+        a2av_wire_csr: Optional[List[torch.Tensor]] = None,  # compress: [wire_ptr, wire_copy]
+        a2av_reduce_csr: Optional[List[torch.Tensor]] = None,  # compress: [red_ptr, red_row]
     ) -> torch.Tensor:
         """
         support 3 modes: FP16/BF16 mode, or FP8(FP8E4M3FN/FP8E5M2) mode, or INT8 mode.

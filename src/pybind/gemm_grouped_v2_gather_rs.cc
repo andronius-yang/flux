@@ -127,7 +127,10 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("with_stream_sync") = false,
             py::arg("splits_per_source") = py::none(),
             py::arg("a2av_pack_index") = py::none(),
-            py::arg("a2av_reduce_index") = py::none())
+            py::arg("a2av_reduce_index") = py::none(),
+            py::arg("a2av_unique_counts") = py::none(),
+            py::arg("a2av_wire_csr") = py::none(),
+            py::arg("a2av_reduce_csr") = py::none())
         .def(
             "forward_gather_rs_triton_aot",
             &GemmGroupedV2GatherRSOpCls::forward_gather_rs_triton_aot,

@@ -94,10 +94,18 @@ class GemmGroupedV2GatherRSOp {
       bool with_stream_sync,
       // a2av_hier mode only: splits_per_source is REQUIRED ([W, nexperts] int32
       // CPU); the index tensors are optional precomputed routing-plan inputs (a
-      // fused layer0+layer1 pipeline passes layer0's, paying the index math once)
+      // fused layer0+layer1 pipeline passes layer0's, paying the index math once).
+      // Compress (dedup) plan: a2av_unique_counts is the transposed-U dedup count
+      // matrix ([W, nnodes] int32 CPU, required whenever compress is on);
+      // a2av_wire_csr = [wire_ptr, wire_copy] and a2av_reduce_csr =
+      // [red_ptr, red_row] are the optional precomputed compress CSRs
+      // (all-or-none as a pair; built in-forward when absent).
       c10::optional<torch::Tensor> splits_per_source = c10::nullopt,
       c10::optional<torch::Tensor> a2av_pack_index = c10::nullopt,
-      c10::optional<torch::Tensor> a2av_reduce_index = c10::nullopt);
+      c10::optional<torch::Tensor> a2av_reduce_index = c10::nullopt,
+      c10::optional<torch::Tensor> a2av_unique_counts = c10::nullopt,
+      c10::optional<std::vector<torch::Tensor>> a2av_wire_csr = c10::nullopt,
+      c10::optional<std::vector<torch::Tensor>> a2av_reduce_csr = c10::nullopt);
   torch::Tensor forward_gather_rs_triton_aot(
       torch::Tensor input,
       torch::Tensor weight,
