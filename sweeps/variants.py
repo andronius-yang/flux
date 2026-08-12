@@ -26,6 +26,11 @@ VARIANTS = {
     # vendored oracle under test/python/moe_ag_scatter/moonep_oracle/).
     # driver="moonep" swaps the test file in sweep.py. Pure NCCL + local
     # scatters + per-segment GemmOnly: no NVSHMEM heap, no FLUX_A2AV_* knobs.
+    # NOTE 2026-08-11: the driver's own --transport default flipped to
+    # nvshmem (fidelity-first — one-sided put-then-barrier is the authentic
+    # port of MoonEP's one-sided writes); the nccl arms below pin
+    # --transport nccl explicitly so their historical capsule meaning is
+    # byte-identical to pre-flip cells.
     # Phase metrics (plan_comm/pack/comm/scatter/prefetch/gemm) arrive free in
     # every mode via the recorder, so there is no separate phases cell.
     # CAN consume trace routing files (real token-overlap dedup semantics).
@@ -41,6 +46,7 @@ VARIANTS = {
     "moonep": dict(
         comm_pattern="moonep_balanced_a2av",  # cells.csv label only, never a CLI flag
         driver="moonep",
+        test_args=["--transport", "nccl"],
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),
@@ -51,7 +57,7 @@ VARIANTS = {
     "moonep_overlap": dict(
         comm_pattern="moonep_balanced_a2av",
         driver="moonep",
-        test_args=["--overlap_prefetch"],
+        test_args=["--transport", "nccl", "--overlap_prefetch"],
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),
@@ -65,7 +71,8 @@ VARIANTS = {
     "moonep_overlap_shared": dict(
         comm_pattern="moonep_balanced_a2av",
         driver="moonep",
-        test_args=["--overlap_prefetch", "--shared_comm_stream"],
+        test_args=["--transport", "nccl", "--overlap_prefetch",
+                   "--shared_comm_stream"],
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),

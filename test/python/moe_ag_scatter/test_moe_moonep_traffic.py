@@ -315,11 +315,14 @@ def parse_args():
     parser.add_argument("--profile", default=False, action="store_true")
     parser.add_argument("--token_padding", type=int, default=128,
                         help="MoonEP segment padding (segments pad to this)")
-    parser.add_argument("--transport", default="nccl",
+    parser.add_argument("--transport", default="nvshmem",
                         choices=["nccl", "nvshmem"],
-                        help="dispatch a2av transport: NCCL grouped P2P or"
-                        " flux's one-sided NVSHMEM All2AllSingle (M4a — the"
-                        " honest port of MoonEP's one-sided writes)")
+                        help="dispatch a2av transport. Default nvshmem: flux's"
+                        " one-sided NVSHMEM All2AllSingle (M4a — the authentic"
+                        " port of MoonEP's one-sided writes; the port's goal is"
+                        " semantic fidelity, not speed). nccl: two-sided grouped"
+                        " P2P — faster on Slingshot but least like upstream;"
+                        " the historical sweep arms pin it explicitly")
     parser.add_argument("--num_comm_sm", type=int, default=8,
                         help="SMs for the NVSHMEM a2av kernel (nvshmem only)")
     parser.add_argument("--overlap_prefetch", default=False, action="store_true",
