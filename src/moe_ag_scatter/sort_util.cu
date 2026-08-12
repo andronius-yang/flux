@@ -568,6 +568,16 @@ a2av_stage1_kernel(A2AVStage1Arguments args) {
     args.s_all[p] = s;
     args.flat_dst[p] = d;
     args.not_mine[p] = owner != args.rank;
+    if (args.mine_token != nullptr) {
+      const int L = args.local_world_size;
+      const bool keep = ((int)(s / L) == args.node_idx || !args.union_bcast)
+                            ? owner == args.rank
+                            : owner / L == args.node_idx;
+      if (keep) {
+        // idempotent: every kept copy of a token stores the same 1
+        args.mine_token[p / args.topk] = 1;
+      }
+    }
     if (count_chunks) {
       atomicAdd(&hist[(int)s * args.world_size + owner], 1);
     }
@@ -646,6 +656,72 @@ a2av_pack_scan_impl(A2AVPackScanArguments const &args, cudaStream_t stream) {
     return;
   }
   a2av_pack_scan_kernel<<<args.nseg, 256, 0, stream>>>(args);
+  CUDA_CHECK(cudaGetLastError());
+}
+
+// fused compress consumer build: A row = offA[group] + atomic rank within the
+// group. Plain gmem atomics — E * W counters over <= a few hundred thousand
+// copies is uncontended enough that a smem pre-histogram (stage-1 style) has
+// not been needed.
+__global__ void
+a2av_consumer_build_kernel(A2AVConsumerBuildArguments args) {
+  const int W = args.world_size;
+  for (int64_t p = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; p < args.n_copies;
+       p += (int64_t)gridDim.x * blockDim.x) {
+    if (args.not_mine[p]) {
+      continue;
+    }
+    const int64_t e = args.e_all[p];
+    const int64_t g = (e - args.ep_start) * W + args.s_all[p];
+    const int64_t row = args.offA[g] + atomicAdd(&args.blk_cnt[g], 1);
+    const int64_t recv_row = args.c_excl[p / args.topk];
+    args.gather[row] = (int32_t)recv_row;
+    args.scatter[row] = (int32_t)(args.flat_dst[p] - args.expert_base[e]);
+    if (args.lane_end != nullptr) {
+      // gating lane = first w with recv_row < lane_end[w] (rows always fall
+      // below the last lane end == total dedup recv rows)
+      int lo = 0, hi = W - 1;
+      while (lo < hi) {
+        int mid = (lo + hi) >> 1;
+        if (args.lane_end[mid] > recv_row) {
+          hi = mid;
+        } else {
+          lo = mid + 1;
+        }
+      }
+      atomicAdd(&args.gate_hist[(e - args.ep_start) * W + lo], 1);
+    }
+  }
+}
+
+void
+a2av_consumer_build_impl(A2AVConsumerBuildArguments const &args, cudaStream_t stream) {
+  constexpr int kThreads = 256;
+  int blocks = (int)std::min<int64_t>((args.n_copies + kThreads - 1) / kThreads, 432);
+  blocks = std::max(blocks, 1);
+  a2av_consumer_build_kernel<<<blocks, kThreads, 0, stream>>>(args);
+  CUDA_CHECK(cudaGetLastError());
+}
+
+// one thread per expert row: W is tiny (= world size), the serial lane scan is
+// nothing next to the launch latency
+__global__ void
+a2av_gating_cumsum_kernel(A2AVGatingCumsumArguments args) {
+  for (int e = blockIdx.x * blockDim.x + threadIdx.x; e < args.ep_nexperts;
+       e += gridDim.x * blockDim.x) {
+    int32_t acc = 0;
+    for (int w = 0; w < args.world_size; w++) {
+      acc += args.gate_hist[e * args.world_size + w];
+      args.gating_cumsum[e * args.world_size + w] = acc;
+    }
+  }
+}
+
+void
+a2av_gating_cumsum_impl(A2AVGatingCumsumArguments const &args, cudaStream_t stream) {
+  constexpr int kThreads = 128;
+  int blocks = (args.ep_nexperts + kThreads - 1) / kThreads;
+  a2av_gating_cumsum_kernel<<<blocks, kThreads, 0, stream>>>(args);
   CUDA_CHECK(cudaGetLastError());
 }
 

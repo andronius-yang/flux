@@ -351,6 +351,14 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   const bool fanout_eager_;
   std::vector<c10::cuda::CUDAStream> fanout_streams_;  // NN-1, knob on && nnodes > 1
   std::vector<cudaEvent_t> fanout_events_;             // NN-1, DisableTiming
+  // FLUX_A2AV_FUSED_STAGE2=1 (compress only): replace the ATen consumer-build
+  // chain (key/argsort/index_select + Tier B gating searchsorted) with the
+  // fused kernels in sort_util — A rows assigned per (expert, source) group
+  // via the host offA table + an atomic in-group rank (interior order is
+  // arbitrary; no consumer observes it), gather = dedup recv row from the
+  // mine-token cumsum, gating lanes histogrammed sort-free. Cuts the
+  // launch-blocking stage-2 chain to ~3 kernels + 1 cumsum.
+  const bool fused_stage2_;
   uint64_t run_id_ = 0;              // epoch value carried by the NVSHMEM signals
   int64_t max_recv_ntokens_ = 0;     // rows of the symmetric recv buffer
   int64_t max_stage_ntokens_ = 0;    // rows of the symmetric gateway staging buffer
@@ -422,6 +430,11 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // Fed to args.accum_per_rank_ptr so the bucket build and the per-tile spin
   // ballot are window-keyed with zero kernel changes.
   torch::Tensor a2av_gating_cumsum_;
+  // fused_stage2_ only: persistent consumer-build outputs and the per-group
+  // atomic rank counters (+ gating histogram in the second half)
+  torch::Tensor a2av_sorted_gather_;   // i32 [n_copies_max]
+  torch::Tensor a2av_sorted_scatter_;  // i32 [n_copies_max]
+  torch::Tensor a2av_blk_cnt_;         // i32 [2 * E * W]: blk_cnt | gate_hist
   // Tier B sidecar ground truth: per-slot window rows (remote slots only),
   // filled in the meta block where the chunk lambdas are in scope
   std::vector<uint32_t> nvtx_window_rows_;
@@ -615,6 +628,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         early_launch_(get_int_from_env("FLUX_A2AV_EARLY_LAUNCH", 0) != 0 && a2av_dispatch),
         blocking_wire_(get_int_from_env("FLUX_A2AV_BLOCKING_WIRE", 0) != 0),
         fanout_eager_(get_int_from_env("FLUX_A2AV_FANOUT", 0) != 0),
+        fused_stage2_(get_int_from_env("FLUX_A2AV_FUSED_STAGE2", 0) != 0 && a2av_hier_compress),
         // ring_mode barriers are CUDA-IPC based and intra-node only; multi-node
         // must take the NVSHMEM barrier (ring_mode = false)
         group_barrier(this->tp_group, nnodes == 1 && this->tp_group->get_size() > 8) {
@@ -778,6 +792,11 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         auto opt_cuda_i32 = torch::TensorOptions(torch::kCUDA).dtype(torch::kInt);
         this->a2av_mine_token_ = torch::empty({(int64_t)max_ntokens + 1}, opt_cuda_i32);
         this->a2av_pack_flag_ = torch::empty({tokens_per_rank_max * nseg}, opt_cuda_i32);
+        if (this->fused_stage2_) {
+          this->a2av_sorted_gather_ = torch::empty({n_copies_max}, opt_cuda_i32);
+          this->a2av_sorted_scatter_ = torch::empty({n_copies_max}, opt_cuda_i32);
+          this->a2av_blk_cnt_ = torch::empty({2 * meta_groups}, opt_cuda_i32);
+        }
         this->a2av_pack_gather_ =
             torch::empty({tokens_per_rank_max * (int64_t)topk + 1}, opt_cuda_i64);
         if (nnodes > 1 && !this->union_bcast_) {
@@ -1444,6 +1463,15 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           0,
           (size_t)(nseg_c * tokens_per_rank) * sizeof(int32_t),
           pack_str));
+      if (this->fused_stage2_) {
+        // fused consumer build: stage 1 writes the per-token keep flags (the
+        // legacy chain's mine_n scatter), incl. the +1 garbage slot
+        CUDA_CHECK(cudaMemsetAsync(
+            this->a2av_mine_token_.data_ptr(),
+            0,
+            (size_t)((int64_t)tokens_per_rank * W + 1) * sizeof(int32_t),
+            pack_str));
+      }
     }
     a2av_stage1_impl(
         A2AVStage1Arguments{
@@ -1466,7 +1494,11 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             .pack_flag = compress ? this->a2av_pack_flag_.data_ptr<int32_t>() : nullptr,
             .topk = (int)topk,
             .local_world_size = dist_env.local_world_size,
-            .node_idx = dist_env.node_idx},
+            .node_idx = dist_env.node_idx,
+            .mine_token = (compress && this->fused_stage2_)
+                              ? this->a2av_mine_token_.data_ptr<int32_t>()
+                              : nullptr,
+            .union_bcast = this->union_bcast_ && dist_env.nnodes > 1},
         pack_str);
     if (!use_meta) {
       this->a2av_chunks_cpu_.copy_(chunks_full, /*non_blocking=*/true);  // 1 KB into pinned
@@ -1706,9 +1738,112 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         }
       };
       mark(0);
-      auto e_loc = e_all.sub((int64_t)ep_start);  // negative for foreign copies (masked below)
+      torch::Tensor e_loc;  // negative for foreign copies (masked below)
+      if (!(compress && this->fused_stage2_)) {
+        e_loc = e_all.sub((int64_t)ep_start);
+      }
       mark(1);
       constexpr int64_t kMax64 = std::numeric_limits<int64_t>::max();
+      if (compress && this->fused_stage2_) {
+        // ---- fused consumer build (FLUX_A2AV_FUSED_STAGE2): the ATen
+        // key/argsort/index_select chain and the Tier B gating searchsorted
+        // collapse into one cumsum + two kernels. Stage 1 already wrote the
+        // per-token keep flags; A rows are assigned per (expert, source)
+        // group from the host offA table plus an atomic in-group rank —
+        // interior order is arbitrary, which no consumer observes (gather /
+        // scatter are per-row indirections, the tile gating compares only
+        // group boundaries). Timing-mark remap under this path:
+        //   keyA = scratch memset, sortA = mine cumsum,
+        //   keyR = consumer build kernel, sortR = Tier B gating cumsum.
+        const int64_t ntokens = (int64_t)tokens_per_rank * W;
+        auto mine_n = this->a2av_mine_token_.narrow(0, 0, ntokens + 1);
+        CUDA_CHECK(cudaMemsetAsync(
+            this->a2av_blk_cnt_.data_ptr(), 0, this->a2av_blk_cnt_.nbytes(), stream));
+        mark(2);
+        auto c_excl = mine_n.cumsum(0) - mine_n;  // C[t], i64 [ntokens + 1]
+        mark(3);
+        const bool tier_b = this->union_bcast_ && !this->relay_identity_ && dist_env.nnodes > 1;
+        int32_t *blk_cnt = this->a2av_blk_cnt_.data_ptr<int32_t>();
+        a2av_consumer_build_impl(
+            A2AVConsumerBuildArguments{
+                .n_copies = n_copies,
+                .topk = (int)topk,
+                .ep_start = (int)ep_start,
+                .ep_nexperts = (int)E,
+                .world_size = W,
+                .e_all = e_all.data_ptr<int64_t>(),
+                .s_all = s_all.data_ptr<int64_t>(),
+                .flat_dst = flat_dst.data_ptr<int64_t>(),
+                .not_mine = not_mine.data_ptr<bool>(),
+                .c_excl = c_excl.data_ptr<int64_t>(),
+                .offA = offA_dev.data_ptr<int64_t>(),
+                .expert_base = expert_base_dev.data_ptr<int64_t>(),
+                .blk_cnt = blk_cnt,
+                .gather = this->a2av_sorted_gather_.data_ptr<int32_t>(),
+                .scatter = this->a2av_sorted_scatter_.data_ptr<int32_t>(),
+                // gate_q row 0 is [0, end(0), ..., end(W-1)]: skip the base
+                .lane_end = tier_b ? gate_q_dev.data_ptr<int64_t>() + 1 : nullptr,
+                .gate_hist = tier_b ? blk_cnt + nexG : nullptr},
+            stream);
+        mark(4);
+        if (tier_b) {
+          if (!this->a2av_gating_cumsum_.defined()) {
+            this->a2av_gating_cumsum_ = torch::empty(
+                {(int64_t)E, (int64_t)W}, torch::TensorOptions(torch::kCUDA).dtype(torch::kInt));
+          }
+          a2av_gating_cumsum_impl(
+              A2AVGatingCumsumArguments{
+                  .ep_nexperts = (int)E,
+                  .world_size = W,
+                  .gate_hist = blk_cnt + nexG,
+                  .gating_cumsum = this->a2av_gating_cumsum_.data_ptr<int32_t>()},
+              stream);
+        }
+        mark(5);
+        sorted_gather_index = this->a2av_sorted_gather_.narrow(0, 0, n_copies);
+        sorted_scatter_index = this->a2av_sorted_scatter_.narrow(0, 0, n_copies);
+        sorted_splits_cumsum = ssc_dev;  // uploaded, exact LOGICAL [E, W] semantics
+        for (int i = 6; i <= 10; i++) {
+          mark(i);
+        }
+        static const bool kCheckFused = get_int_from_env("FLUX_A2AV_CHECK_COMPRESS", 0) != 0;
+        if (kCheckFused && M_this_ep > 0) {
+          // debug only (may sync): order-free inversion. scatter uniquely
+          // identifies each row's copy (flat_dst is a global permutation), so
+          // recover p per A-row and assert (a) group membership matches the
+          // offA nesting, (b) gather is that copy's dedup recv row, (c) the
+          // keep-flag total matches the host recv layout (legacy check #2).
+          auto iota_m = iota.narrow(0, 0, M_this_ep);
+          auto inv = torch::empty({n_copies}, opt_i64).scatter_(0, flat_dst, iota);
+          auto g_of = torch::searchsorted(cumA_dev, iota_m, /*out_int32=*/false, /*right=*/true);
+          auto e_row = g_of.div((int64_t)W, "floor").add((int64_t)ep_start);
+          auto s_row = g_of.remainder((int64_t)W);
+          auto flat_of_row = sorted_scatter_index.narrow(0, 0, M_this_ep).to(torch::kLong) +
+                             expert_base_dev.index_select(0, e_row);
+          auto p_of_row = inv.index_select(0, flat_of_row);
+          FLUX_CHECK(torch::equal(e_all.index_select(0, p_of_row), e_row))
+              << "a2av fused consumer: expert-group membership mismatch";
+          FLUX_CHECK(torch::equal(s_all.index_select(0, p_of_row), s_row))
+              << "a2av fused consumer: source-group membership mismatch";
+          // row_of_tok[t] = the dedup recv row of kept token t (a row's copy is
+          // always kept, so the dropped-token fill never reaches `want`)
+          auto row_of_tok = c_excl.narrow(0, 0, ntokens)
+                                .masked_fill(mine_n.narrow(0, 0, ntokens).eq(0), ntokens);
+          auto want = row_of_tok.index_select(0, p_of_row.div((int64_t)topk, "floor"));
+          auto got = sorted_gather_index.narrow(0, 0, M_this_ep).to(torch::kLong);
+          FLUX_CHECK(torch::equal(got, want)) << "a2av fused consumer: gather/recv-row mismatch";
+          if (this->union_bcast_ && dist_env.nnodes > 1 && !u_mat.empty()) {
+            const int64_t Lb = dist_env.local_world_size;
+            const int64_t last = W - 1;
+            const int64_t last_rows = (last / Lb != rank / Lb)
+                                          ? U_mat[last * dist_env.nnodes + rank / Lb]
+                                          : u_mat[last * W + rank];
+            FLUX_CHECK_EQ(c_excl.index({ntokens}).item<int64_t>(), recv_off_u[last] + last_rows)
+                << "a2av fused consumer flag total != host recv layout";
+          }
+        }
+        return;
+      }
       if (compress) {
         // dedup consumer: my recv buffer holds each token ONCE per source
         // region (interior ascending token index). One-cumsum identity: with

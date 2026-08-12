@@ -122,8 +122,60 @@ struct A2AVStage1Arguments {
   int topk;
   int local_world_size;
   int node_idx;
+  // fused consumer build: per-global-token keep flag (dedup recv rows are its
+  // exclusive cumsum), pre-zeroed incl. the +1 garbage slot; nullptr = skip.
+  // Keep rule mirrors the compress consumer: same-node source -> owner == rank;
+  // remote source -> union_bcast ? dst node == my node : owner == rank.
+  int32_t *mine_token;
+  bool union_bcast;
 };
 void a2av_stage1_impl(A2AVStage1Arguments const &args, cudaStream_t stream);
+
+// a2av compress consumer build, fused (replaces the ATen key/argsort/
+// index_select chain): one grid-stride pass over all copies assigns each kept
+// copy its A row via the host block-start table offA (A-order groups
+// g = e_loc * W + s) plus a per-group atomic rank — interior order within a
+// group is arbitrary, which no consumer observes (gather/scatter are per-row
+// indirections and the tile gating compares only group boundaries; same
+// design as AgScatterSortOpV2). Writes gather_A[row] = c_excl[token] (the
+// dedup recv row) and scatter_D[row] = flat_dst - expert_base[e]. Rows past
+// M_this_ep are never read by the GEMM and stay untouched. When lane_end !=
+// nullptr (Tier B / lb_union) it also histograms rows into gating lanes by
+// upper-bounding the recv row in lane_end[0..W-1]; a second tiny kernel turns
+// the histogram into the inclusive per-expert lane cumsum the claimer reads.
+// blk_cnt and gate_hist are [E * W] i32 scratch, pre-zeroed.
+struct A2AVConsumerBuildArguments {
+  int64_t n_copies;
+  int topk;
+  int ep_start;
+  int ep_nexperts;            // E
+  int world_size;             // W
+  int64_t const *e_all;       // [n_copies] global expert id
+  int64_t const *s_all;       // [n_copies] source rank
+  int64_t const *flat_dst;    // [n_copies]
+  bool const *not_mine;       // [n_copies]
+  int64_t const *c_excl;      // [ntokens + 1] exclusive cumsum of mine_token
+  int64_t const *offA;        // [E * W] A-order group starts (meta arena)
+  int64_t const *expert_base; // [nexperts] (meta arena)
+  int32_t *blk_cnt;           // [E * W], pre-zeroed
+  int32_t *gather;            // [>= M_this_ep] out: A row -> dedup recv row
+  int32_t *scatter;           // [>= M_this_ep] out: A row -> per-expert D row
+  // Tier B gating (nullptr = skip): lane_end = gate_q row 0 shifted by one
+  // (i.e. end(0..W-1)); gate_hist accumulates per-(e_loc, lane) row counts
+  int64_t const *lane_end;    // [W]
+  int32_t *gate_hist;         // [E * W], pre-zeroed
+};
+void a2av_consumer_build_impl(A2AVConsumerBuildArguments const &args, cudaStream_t stream);
+
+// Tier B finalize: gating_cumsum[e][w] = sum_{w' <= w} gate_hist[e][w']
+// (inclusive over lanes; empty lanes repeat the previous value)
+struct A2AVGatingCumsumArguments {
+  int ep_nexperts;             // E
+  int world_size;              // W
+  int32_t const *gate_hist;    // [E * W]
+  int32_t *gating_cumsum;      // [E * W] out
+};
+void a2av_gating_cumsum_impl(A2AVGatingCumsumArguments const &args, cudaStream_t stream);
 
 // compress pack fusion stage 2: one block per send segment; a multi-tile
 // block-wide exclusive scan over the segment's flag row assigns each flagged

@@ -1,0 +1,32 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 2
+  - 8
+  - 32
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env: {}
+families:
+  - remotefrac
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+nodes: 4
+notes: "fused stage-2 A/B (FLUX_A2AV_FUSED_STAGE2): isolated latency verdict"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+skip_correctness: false
+sm_margin: 8
+timeout_s: 900
+topk: 8
+variants:
+  - hier_compress_union
+  - hier_compress_union_fused
+  - hier_compress_lb_union
+  - hier_compress_lb_union_fused
+warmup_iters: 5
