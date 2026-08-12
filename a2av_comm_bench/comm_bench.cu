@@ -299,9 +299,18 @@ main(int argc, char **argv) {
     long long nchunks = (msg + chunk - 1) / chunk;
     if (nblocks > nchunks) nblocks = (int)nchunks;
 
+    int dst_sym = env_int("PREFETCH_DST_SYM", 1);
     char *weight_home = (char *)nvshmem_malloc(msg);  // symmetric source
     char *dst;
-    CUCHECK(cudaMalloc(&dst, msg));  // ordinary destination, as in the op
+    if (dst_sym) {
+      // proxy-mediated (cross-node) gets need the LOCAL destination
+      // registered with the provider too — ordinary cudaMalloc dst
+      // segfaults on CXI (found 2026-08-11; intra-node P2P gets don't
+      // care). Upstream's prefetch slots are mapped memory as well.
+      dst = (char *)nvshmem_malloc(msg);
+    } else {
+      CUCHECK(cudaMalloc(&dst, msg));  // the crashing config, kept for A/B
+    }
     CUCHECK(cudaMemset(weight_home, 1, msg));
     if (rank == 0)
       fprintf(stderr,

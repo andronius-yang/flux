@@ -659,10 +659,17 @@ class MoonEPLayer0Runner:
         cfg = self.cfg
         assert self.ffn_size_shard > 0, "getmem prefetch needs weight shapes"
         self._prefetch_op = flux.WeightPrefetchGetmem(
-            self.group, cfg.epn, self.ffn_size_shard, cfg.H, self.dtype,
+            self.group, cfg.epn, cfg.B, self.ffn_size_shard, cfg.H, self.dtype,
         )
         self.weight_home = self._prefetch_op.weight_home()
         self.weight_home.copy_(local_weights)
+        # The op owns the prefetch slots ON the symmetric heap: a
+        # proxy-mediated (cross-node) get segfaults into an ordinary
+        # cudaMalloc destination (CXI needs the local buffer registered;
+        # found 2026-08-11 by the a2av_comm_bench prefetch mode). Upstream's
+        # slots are rows [E, E+B) of the same mapped weight tensor, so this
+        # is the faithful layout anyway. Replaces the ordinary prefetch_w.
+        self.prefetch_w = self._prefetch_op.prefetch_slots()
         # All of MY incoming pulls, local pairs included (getmem from the
         # own PE is a local SM copy — one uniform path, like upstream).
         pairs = [

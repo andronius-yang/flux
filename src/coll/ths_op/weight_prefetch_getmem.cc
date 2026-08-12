@@ -48,6 +48,7 @@ class WeightPrefetchGetmem::WeightPrefetchGetmemImpl {
   at::ScalarType dtype_;
 
   torch::Tensor weight_home_;
+  torch::Tensor prefetch_slots_;
   torch::Tensor pairs_dev_;
   std::vector<int32_t> pairs_host_;
 
@@ -55,6 +56,7 @@ class WeightPrefetchGetmem::WeightPrefetchGetmemImpl {
   WeightPrefetchGetmemImpl(
       std::shared_ptr<Group> pg,
       int64_t n_experts_local,
+      int64_t n_slots,
       int64_t row_dim0,
       int64_t row_dim1,
       at::ScalarType dtype)
@@ -62,17 +64,26 @@ class WeightPrefetchGetmem::WeightPrefetchGetmemImpl {
         n_experts_local_(n_experts_local),
         world_size_(pg->get_size()),
         dtype_(dtype) {
-    FLUX_CHECK(n_experts_local > 0 && row_dim0 > 0 && row_dim1 > 0);
+    FLUX_CHECK(n_experts_local > 0 && n_slots > 0 && row_dim0 > 0 && row_dim1 > 0);
     // Collective, uniform across ranks by construction (every rank homes
-    // n_experts_local experts of identical shape).
+    // n_experts_local experts and holds n_slots prefetch slots of identical
+    // shape). The slots are symmetric because a proxy-mediated get's local
+    // destination must be provider-registered (see header).
     this->weight_home_ =
         nvshmem_create_tensor({n_experts_local, row_dim0, row_dim1}, dtype, false);
+    this->prefetch_slots_ =
+        nvshmem_create_tensor({n_slots, row_dim0, row_dim1}, dtype, true);
     this->expert_bytes_ = row_dim0 * row_dim1 * this->weight_home_.element_size();
   }
 
   torch::Tensor
   weight_home() {
     return this->weight_home_;
+  }
+
+  torch::Tensor
+  prefetch_slots() {
+    return this->prefetch_slots_;
   }
 
   void
@@ -142,10 +153,12 @@ class WeightPrefetchGetmem::WeightPrefetchGetmemImpl {
 WeightPrefetchGetmem::WeightPrefetchGetmem(
     std::shared_ptr<Group> pg,
     int64_t n_experts_local,
+    int64_t n_slots,
     int64_t row_dim0,
     int64_t row_dim1,
     at::ScalarType dtype)
-    : impl_(new WeightPrefetchGetmemImpl(pg, n_experts_local, row_dim0, row_dim1, dtype)) {}
+    : impl_(new WeightPrefetchGetmemImpl(
+          pg, n_experts_local, n_slots, row_dim0, row_dim1, dtype)) {}
 
 WeightPrefetchGetmem::~WeightPrefetchGetmem() { delete impl_; }
 
@@ -153,6 +166,12 @@ torch::Tensor
 WeightPrefetchGetmem::weight_home() {
   FLUX_CHECK(impl_ != nullptr) << "WeightPrefetchGetmem is not initialized!";
   return impl_->weight_home();
+}
+
+torch::Tensor
+WeightPrefetchGetmem::prefetch_slots() {
+  FLUX_CHECK(impl_ != nullptr) << "WeightPrefetchGetmem is not initialized!";
+  return impl_->prefetch_slots();
 }
 
 void

@@ -32,6 +32,7 @@ class WeightPrefetchGetmem {
   WeightPrefetchGetmem(
       std::shared_ptr<Group> pg,
       int64_t n_experts_local,
+      int64_t n_slots,
       int64_t row_dim0,
       int64_t row_dim1,
       at::ScalarType dtype);
@@ -42,6 +43,13 @@ class WeightPrefetchGetmem {
   // as the local-expert GEMM operand — symmetric memory is ordinary device
   // memory to local kernels).
   torch::Tensor weight_home();
+
+  // The op-owned [n_slots, row_dim0, row_dim1] prefetch destination.
+  // Symmetric because proxy-mediated (cross-node) gets require the LOCAL
+  // destination registered with the provider — an ordinary cudaMalloc dst
+  // segfaults on libfabric/CXI (found 2026-08-11). Mirrors upstream, whose
+  // prefetch slots are rows [E, E+B) of the mapped weight tensor.
+  torch::Tensor prefetch_slots();
 
   // pairs_cpu: [n_pairs, 3] int32 CPU tensor of (dst_slot, home_pe, src_row)
   // for THIS rank's incoming pulls, derived from the replicated plan. Stored

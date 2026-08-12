@@ -456,20 +456,23 @@ def moonep_sym_size(matrix_path, plat):
 
 def moonep_getmem_sym_size(matrix_path, plat, spec, variant):
     """Symmetric-heap sizing for moonep arms with the getmem weight path.
-    The [epn, ffn_shard, H] weight home lives PERMANENTLY on the heap
-    (upstream's memory model: weights always remotely readable — residency
-    moves there, it does not grow; the prefetch destination slots stay
-    ordinary memory, only the get SOURCE must be symmetric). Token staging
-    is added only when the token transport is also nvshmem, using
-    moonep_sym_size's All2AllSingle terms verbatim (incl. its frozen
-    //1024 caveat) so mixed arms stay comparable. 2x headroom, floor 2G,
-    plat cap."""
+    The [epn, ffn_shard, H] weight home AND the [B, ffn_shard, H] prefetch
+    slots (B = epn default) both live PERMANENTLY on the heap — the home
+    because remote gets read it, the slots because a proxy-mediated get's
+    LOCAL destination must be provider-registered on CXI (ordinary
+    cudaMalloc dst segfaults; found 2026-08-11). Residency moves, it does
+    not grow: both replace ordinary-memory tensors, mirroring upstream's
+    [E+B, H, H'] mapped weight tensor. Token staging is added only when the
+    token transport is also nvshmem, using moonep_sym_size's All2AllSingle
+    terms verbatim (incl. its frozen //1024 caveat) so mixed arms stay
+    comparable. 2x headroom, floor 2G, plat cap."""
     with open(matrix_path) as f:
         toks = f.read().split()
     w = int(toks[0])
     chunk = int(spec["chunk_bytes"])  # = H * itemsize (bf16 row bytes)
     epn = int(spec["G"]) // w
-    home = epn * int(spec["ffn_hidden"]) * chunk  # ffn_shard rows of H*2B
+    # epn home rows + B (= epn) prefetch slots, each ffn_shard rows of H*2B
+    home = 2 * epn * int(spec["ffn_hidden"]) * chunk
     staging = 0
     if "nvshmem" in (variant.get("test_args") or []):
         vals = [int(x) for x in toks[1 : 1 + w * w]]
