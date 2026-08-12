@@ -210,4 +210,126 @@ struct TopKReduceGatherRSV2Arguments {
   int *group_counters = nullptr;  // [nnodes * n_split] per-block completion counters
 };
 
+// ---- a2av_hier combine (layer1 alltoallv): pack + reduce kernel arguments ----
+
+constexpr int kA2AVMaxNodes = 16;
+
+// Persistent pack kernel: split-major outer loop gated on the GEMM's per-split
+// ready flag; per split it gathers each outgoing copy's n_per column window from
+// gemm_out into the symmetric send panel in (home_rank, expert, copy) order
+// (== layer0 a2av's recv layout), applying output_vec_scale per source row.
+// Chunk completion per (dest_node, sid) is published to the host put ladders via
+// the group_counters/group_flags handshake -- including the OWN node's chunk
+// (the intra-node ladder gates on it), unlike the dense ring kernel.
+struct A2AVCombinePackArguments {
+  void const *gemm_out;         // [m_this_ep, n] of dtype, expert-major rows
+  float const *vec_scale;       // [m_this_ep] per-row topk weight, nullptr if absent
+  int32_t const *pack_index;    // [m_this_ep]: send-panel row -> gemm_out row
+  void *send_panel;             // [n_split, panel_rows, n_per] symmetric
+  int *barrier;                 // local per-split GEMM ready flags (cascade output)
+  int *group_flags;             // [nnodes * n_split] kernel -> host chunk-ready flags
+  int *group_counters;          // [nnodes * n_split] per-block completion counters
+  int64_t node_row_start[kA2AVMaxNodes + 1];  // dest-node row ranges in the send panel
+  int64_t panel_rows;           // send panel row capacity per split
+  int n;
+  int n_per;                    // n / n_split
+  int n_split;
+  int nnodes;
+  int node_idx;
+  int threadblock_count;
+};
+
+// Per-split topk reduce at the destination: launched once per split after all W
+// per-source recv signals for that split have fired; sums each local token's topk
+// recv-panel rows in fp32 and writes the [:, sid*n_per : (sid+1)*n_per] window of
+// the output shard.
+struct A2AVCombineReduceArguments {
+  void const *recv_panel;       // [n_split, panel_rows, n_per] symmetric
+  int32_t const *reduce_index;  // [ntokens_local * topk]: local copy -> recv-panel row
+  void *output;                 // [ntokens_local, n]
+  int64_t panel_rows;           // recv panel row capacity per split
+  int64_t ntokens_local;
+  int n;
+  int n_per;
+  int topk;
+  int sid;
+  int threadblock_count;
+};
+
+constexpr int kA2AVMaxWorld = 64;
+
+// Eager (arrival-order) destination reduce: ONE persistent kernel per forward,
+// launched with no front-end waits. Per output element it keeps a remaining-mask
+// over the token's topk recv rows and folds in any row whose source lane's
+// per-split recv signal has already fired (64-bit acquire poll), spinning only
+// when no remaining lane has arrived — the minimal real dependency, replacing
+// the host-side wait-all-W gate per split. The source lane of a recv row is
+// recovered by binary search over recv_cum (per-source rows are contiguous in
+// the recv panel, and split slices columns, so the prefix is split-invariant).
+// ---- compress (dedup) combine: pre-reduce + CSR reduce kernel arguments ----
+
+// Source-side gateway pre-reduce (persistent, one launch per forward): per
+// (split, target node in inter-ladder rotation order) it spins on the L
+// per-peer convergence signals, merges each wire row's contributing conv-panel
+// rows (CSR) in fp32, writes the wire panel, and flips the (tn, sid) wire flag
+// the host inter ladder gates on -- the pack kernel's counter/flag handshake.
+struct A2AVCombinePreReduceArguments {
+  void const *conv_panel;        // [n_split, conv_rows, n_per] symmetric
+  void *wire_panel;              // [n_split, wire_rows, n_per] symmetric
+  int32_t const *wire_ptr;       // [wire_rows_local + 1] CSR offsets
+  int32_t const *wire_copy;      // [conv_rows_local] wire row -> conv-panel rows
+  uint64_t const *conv_signals;  // [(L * nnodes) * n_split], slot (ls*NN+tn)*n_split+sid
+  uint64_t run_id;
+  int *wire_flags;               // [nnodes * n_split] kernel -> host wire-ready flags
+  int *wire_counters;            // [nnodes * n_split] per-block completion counters
+  int64_t wire_seg_start[kA2AVMaxNodes + 1];  // wire-row start per segment (tn asc skip own)
+  int64_t conv_rows;             // conv panel row capacity per split
+  int64_t wire_rows;             // wire panel row capacity per split
+  int n_per;
+  int n_split;
+  int nnodes;
+  int node_idx;
+  int local_world_size;
+  int threadblock_count;
+};
+
+// Legacy-gate destination reduce under compress: per-token contribution count
+// varies (own-node copies + one merged row per contributing remote node), so
+// the fixed-topk reduce_index becomes the red_ptr/red_row CSR.
+struct A2AVCombineCSRReduceArguments {
+  void const *recv_panel;    // [n_split, panel_rows, n_per] symmetric (C' image)
+  int32_t const *red_ptr;    // [ntokens_local + 1]
+  int32_t const *red_row;    // [red_total]: token contributions, recv-panel rows
+  void *output;              // [ntokens_local, n]
+  int64_t panel_rows;
+  int64_t ntokens_local;
+  int n;
+  int n_per;
+  int sid;
+  int threadblock_count;
+};
+
+struct A2AVCombineEagerReduceArguments {
+  void const *recv_panel;        // [n_split, panel_rows, n_per] symmetric
+  int32_t const *reduce_index;   // [ntokens_local * topk]: local copy -> recv-panel row
+  // compress: variable per-token contributions replace the fixed-topk stride;
+  // when red_ptr != nullptr the kernel walks red_ptr/red_row and reduce_index
+  // is ignored. recv_cum then describes the C' image (zero-width lanes for
+  // non-materialized remote ranks -- they can never contain a row).
+  int32_t const *red_ptr = nullptr;  // [ntokens_local + 1]
+  int32_t const *red_row = nullptr;  // [red_total]
+  void *output;                  // [ntokens_local, n]
+  uint64_t const *recv_signals;  // [world_size * n_split] epoch signals, never reset
+  uint64_t run_id;               // this epoch's expected signal value (GEQ)
+  int64_t recv_cum[kA2AVMaxWorld + 1];  // recv-row prefix by source rank; [W] = image rows
+  int64_t panel_rows;            // recv panel row capacity per split
+  int64_t ntokens_local;
+  int world_size;
+  int n;
+  int n_per;
+  int n_split;
+  int topk;
+  int threadblock_count;
+};
+
 }  // namespace bytedance::flux

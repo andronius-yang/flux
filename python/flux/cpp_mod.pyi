@@ -889,12 +889,19 @@ class GemmGroupedV2GatherRSOp:
         n_split: int = 4,
         do_all_reduce: bool = False,
         use_read_mode: bool = False,
+        a2av_hier: bool = False,
+        a2av_hier_compress: bool = False,
     ):
         """
         such conditions expected:
             max_input_groups <= 2
             tp_world_size * ep_world_size == tp_group.size
             nnodes > 1 requires do_all_reduce=False and use_read_mode=False
+            a2av_hier requires tp_world_size == 1 (EP == world), max_input_groups == 1,
+            fp16/bf16, do_all_reduce=False, use_read_mode=False; forward_gather_rs must
+            then receive splits_per_source
+            a2av_hier_compress (mutually exclusive with a2av_hier) additionally needs
+            a2av_unique_counts per forward; on nnodes == 1 it degrades to plain a2av_hier
         """
         ...
 
@@ -911,6 +918,12 @@ class GemmGroupedV2GatherRSOp:
         fast_accum: bool = True,
         sm_margin: int = 0,
         with_stream_sync: bool = False,  # NOTE: not used. to align with V3
+        splits_per_source: Optional[torch.Tensor] = None,  # a2av_hier: [W, nexperts] int32 CPU
+        a2av_pack_index: Optional[torch.Tensor] = None,  # a2av_hier: precomputed routing plan
+        a2av_reduce_index: Optional[torch.Tensor] = None,
+        a2av_unique_counts: Optional[torch.Tensor] = None,  # compress: [W, nnodes] int32 CPU
+        a2av_wire_csr: Optional[List[torch.Tensor]] = None,  # compress: [wire_ptr, wire_copy]
+        a2av_reduce_csr: Optional[List[torch.Tensor]] = None,  # compress: [red_ptr, red_row]
     ) -> torch.Tensor:
         """
         support 3 modes: FP16/BF16 mode, or FP8(FP8E4M3FN/FP8E5M2) mode, or INT8 mode.
@@ -1027,6 +1040,9 @@ class TopkReduceScatterOp:
         n_split: int = 4,
         do_all_reduce: bool = False,
         use_read_mode: bool = False,
+        nnodes: int = 1,
+        a2av_hier: bool = False,
+        a2av_compress: bool = False,
     ): ...
     def run(
         self,
@@ -1039,6 +1055,9 @@ class TopkReduceScatterOp:
         output_vec_scales: List[torch.Tensor],
         num_thread_blocks: int,
         stream: torch.cuda.Stream,
+        splits_per_source: Optional[torch.Tensor] = None,
+        pack_index: Optional[torch.Tensor] = None,
+        reduce_index: Optional[torch.Tensor] = None,
     ) -> torch.Tensor: ...
     def reset_buffer(self) -> None: ...
 

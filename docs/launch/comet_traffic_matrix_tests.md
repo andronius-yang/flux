@@ -377,3 +377,89 @@ numbers at 64mib for reference (a2av_hier ~9.9, dedup bcast+overlap 8.69):
   Occasional EFA wire transients inflate a whole run (one 8mib run measured
   4.25 ms mean wire vs 1.22 on rerun) — rerun before reading too much into a
   single point.
+
+## Layer1 hierarchical a2av combine (`--comm_pattern a2av_hier`, sm80/V2 only)
+
+Design: `comet_traffic_matrix_a2av.md` §13. The combine mirror of the layer0
+dispatch: after the split-major grouped GEMM, each `(token, topk-slot)` copy
+travels ONCE from its expert-owner rank back to its token-home rank (wire bytes
+= the transpose of the traffic matrix), inter-node as one aggregated
+`putmem_signal` per remote node via the same-local-rank gateway, and the topk
+reduction runs per split at the destination once that split's `W` per-source
+signals have fired. All transport is host-issued on copy engines / NIC (zero
+SMs); the pipeline depth is `n_split`.
+
+```bash
+# single node (intra ladder + per-split reduce; validates everything but the gateway)
+srun --nodes=1 --ntasks-per-node=1 ./launch.sh \
+  test/python/moe_gather_rs/test_moe_gather_rs_traffic.py \
+  --traffic_matrix <matrix> --comm_pattern a2av_hier
+
+# 4 nodes x 4 GPUs
+NVSHMEM_SYMMETRIC_SIZE=4G srun --nodes=4 --ntasks-per-node=1 ./launch.sh \
+  test/python/moe_gather_rs/test_moe_gather_rs_traffic.py \
+  --traffic_matrix <matrices>/4n_16r/16mib/..._dist_001.txt --comm_pattern a2av_hier
+```
+
+- v1 scope (FLUX_CHECK-guarded): `T=1, E=world_size` (complete GEMM rows — no
+  K-partials), single weight group, bf16/fp16, no `--all_reduce` /
+  `--use_read_mode`; `splits_per_source` is REQUIRED (the harness builds it in
+  untimed setup, exactly like the layer0 harness).
+- Knobs: `FLUX_A2AV_RS_MAX_SEND_ROWS` (send panel rows per split; the hot
+  expert-owner rank's outbound load, default `2 * max_m / W`),
+  `FLUX_A2AV_RS_MAX_STAGE_ROWS` (gateway staging rows per split, same default).
+  Both overflow checks are collective (computed identically on all ranks from
+  `splits_per_source` before any wire). The recv panel needs no knob — every
+  home rank receives exactly `ntokens_local * topk` copies.
+  `FLUX_A2AV_RS_PACK_BLOCKS` / `FLUX_A2AV_RS_REDUCE_BLOCKS` (default 3 each)
+  set the pack/reduce SM budget; both are added to the GEMM's `sm_margin`.
+- `FLUX_A2AV_RS_CHECK_IDENTITY=1` rebuilds the pack index by brute-force sort
+  and asserts it equals the arithmetic-identity path (bring-up guard).
+- `--precomputed_indices` passes the pack/reduce routing plan from the harness
+  (the count-the-index-latency-once mode a fused layer0+layer1 pipeline gets by
+  handing over layer0's index tensors); `--n_split` sweeps the pipeline depth
+  (`N / n_split` must be a multiple of 1024).
+- `test/python/moe_gather_rs/test_a2av_combine_sim.py` (CPU-only, no GPU/flux)
+  validates the full layout contract — pack -> direct/hier transport (must be
+  bit-identical) -> reduce — for random routings incl. zero chunks and
+  zero-row owner ranks.
+- Validated 2026-07-21 (chunk 8192B, N=K=4096, G=32, topk=4, bf16 unless noted):
+  1 node / 4 ranks (`matrix_4r_{uniform,skewed}`): dense + a2av_hier x
+  {identity-check on, n_split in {1,4}, fp16, --precomputed_indices}, 24/24
+  rank-checks allclose; the skewed matrix intentionally trips the send-panel
+  overflow first (hot owner 270 rows vs default cap 192) and aborts collectively
+  on all ranks — rerun with FLUX_A2AV_RS_MAX_SEND_ROWS=384. 2 nodes / 8 ranks
+  (`l1_2n_8r_{uniform,skewed}`, incl. diagonal/self traffic and a hot-owner
+  column): dense + a2av_hier x {identity-check, skew, --precomputed_indices
+  20-iter, n_split=2 fp16}, 40/40 rank-checks allclose — first exercise of the
+  inter-node ladder, gateway forwarding and arrival signals. Timing snapshot
+  (rank-0 mean ms, tiny M=512 so index math dominates): 2n skewed a2av_hier
+  1.72 with per-forward index build + identity check vs 0.868 with
+  --precomputed_indices (dense 0.784 on uniform) — the routing-plan handoff is
+  the standing next optimization, exactly as layer0 §6 predicted. 4-node
+  (`4n_16r` suite) and large-M sweeps not yet run.
+- 4-node / 16-rank budget sweep 2026-07-21 (`4n_16r/*_dist_001` staged with W
+  header at `$PSCRATCH/a2av_test_matrices/4n_16r/`, chunk 8192B, N=K=4096, G=32,
+  topk=4, bf16, n_split=4, iters=10, send/stage caps = 4x average rows;
+  288/288 rank-checks allclose). Mean ms over 16 ranks; "torch" = unoverlapped
+  per-expert GEMM loop + NCCL reduce-scatter, "dense" = flux multi-node ring,
+  "hier" = a2av_hier with per-forward index build, "hier-pre" =
+  `--precomputed_indices` (the production shape: the routing plan comes from
+  layer0); sched = hier - hier-pre, the index-math component:
+
+  | budget | torch | dense flux | hier | hier-pre | sched | hier-pre/dense | hier-pre/torch |
+  |--------|-------|-----------|------|----------|-------|----------------|----------------|
+  | 2mib   | 0.98  | 2.12      | 1.82 | 1.56     | 0.26  | 0.73x          | 1.59x          |
+  | 4mib   | 1.38  | 3.83      | 1.93 | 1.65     | 0.28  | 0.43x          | 1.20x          |
+  | 8mib   | 2.10  | 4.36      | 2.18 | 1.87     | 0.32  | 0.43x          | 0.89x          |
+  | 16mib  | 3.81  | 7.71      | 3.00 | 2.71     | 0.29  | 0.35x          | 0.71x          |
+  | 32mib  | 7.35  | 12.06     | 5.10 | 4.82     | 0.28  | 0.40x          | 0.65x          |
+  | 64mib  | 14.17 | 22.94     | 9.80 | 9.29     | 0.51  | 0.41x          | 0.66x          |
+
+  Takeaways: a2av_hier beats the dense flux ring at EVERY budget (2.3-2.9x from
+  4mib up -- the ring moves (L-1)-hop partial-sum traffic while a2av moves each
+  copy once); the unoverlapped torch baseline wins below ~8mib (pure NCCL RS,
+  no handshake constants), crossover at 8mib, then hier-pre is 1.4-1.5x faster
+  than torch at 16-64mib. The sched (index) component is a near-constant
+  ~0.3 ms (0.5 at 64mib): 17% of the pipeline at 2mib but only 5% at 64mib --
+  handing the routing plan over from layer0 matters most at small budgets.

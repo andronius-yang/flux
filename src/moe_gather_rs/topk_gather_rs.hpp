@@ -63,5 +63,26 @@ void internode_reduce_gather_rs(
     int64_t out_n,
     int64_t staging_rows,
     cudaStream_t stream);
+
+// a2av_hier combine (implemented in a2av_combine.cu): persistent split-major pack
+// kernel behind the GEMM cascade flags, and the per-split destination topk reduce
+void a2av_combine_pack(
+    A2AVCombinePackArguments const &args, DataTypeEnum dtype, cudaStream_t stream);
+
+void a2av_combine_reduce(
+    A2AVCombineReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream);
+
+// FLUX_A2AV_RS_EAGER=1: one persistent arrival-order reduce kernel per forward
+// replacing the per-split host wait-all-W gates (see A2AVCombineEagerReduceArguments)
+void a2av_combine_eager_reduce(
+    A2AVCombineEagerReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream);
+
+// compress (a2av_hier_compress): source-side gateway pre-reduce (persistent) and
+// the legacy-gate CSR destination reduce
+void a2av_combine_prereduce(
+    A2AVCombinePreReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream);
+
+void a2av_combine_csr_reduce(
+    A2AVCombineCSRReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream);
 }  // namespace flux
 }  // namespace bytedance

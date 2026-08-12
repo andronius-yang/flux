@@ -601,3 +601,151 @@ exactly once, indices window-bounded, chunks balanced to ≤ 1 row, uniform-`U`
 routings relocate zero rows, and the three-stream schedule is deadlock-free
 over two epochs under an event-driven executor. Hardware validation on
 Perlmutter is still pending, as with §11.
+
+## 13. Layer1 hierarchical a2av combine (`GemmGroupedV2GatherRSOp`, `a2av_hier`)
+
+The combine direction is the transpose of §1-§10: each `(t, j)` copy was
+computed on expert-owner rank `s = owner(e(t,j))` and must reach token-home
+rank `d = t / tokens_per_rank`, where the only remaining reduction (in the
+`T=1, E=W` regime the GEMM rows are complete — no K-partials) is the per-token
+topk sum. `a2av_hier=True` on `GemmGroupedV2GatherRSOp` replaces the dense
+ring reduce-scatter with a split-pipelined a2av built almost entirely from
+machinery this file already had.
+
+**Pipeline per split `sid`** (`n_split` column windows; the split-major GEMM +
+tile→problem→split counter cascade are reused byte-for-byte, zero changes to
+`cutlass_impls`):
+
+1. **Pack** (`a2av_combine.cu`, persistent kernel on the margin blocks,
+   `FLUX_A2AV_RS_PACK_BLOCKS`): waits the split flag — the minimal correct gate,
+   since any destination's rows interleave across every local expert — then
+   gathers each outgoing copy's `n_per` column window from `gemm_outs` into the
+   symmetric send panel, destination-major in global rank order, applying
+   `output_vec_scale` per source row during the copy (one extra bf16 rounding vs
+   the dense path's fused fp32 accumulation; the destination reduce still
+   accumulates fp32). Chunk completion per `(dest_node, sid)` uses the existing
+   `group_counters`/`group_flags` handshake — including the OWN node's chunk,
+   which the dense ring kernel never flags. Remote-node chunks are packed first
+   so NIC-bound flags flip earliest.
+2. **Transport** (host-pre-enqueued ladders, zero SMs, all epoch `run_id_`
+   signals, never reset, every pair signals every split): intra-node direct
+   `putmem_signal` per local peer (CE over NVLink) + self memcpy; inter-node ONE
+   aggregated put per `(remote node, sid)` into the same-local-rank gateway's
+   staging panel (the send panel's node slice is contiguous — no repacking);
+   the gateway ladder paces per `(sid, source node)` on a zero-SM
+   `cuStreamWaitValue64(GEQ, run_id)` over the arrival signal and forwards each
+   local destination's sub-chunk with the per-source recv signal — forwarded
+   sub-chunks land bit-identically to direct puts. Unlike §10's mirror node
+   order, the inter-node ladder consumes flags in the pack kernel's production
+   order (`node_idx+1` ascending): there is no consumer schedule to satisfy in
+   the combine, and matching production order avoids head-of-line blocking under
+   `CUDA_DEVICE_MAX_CONNECTIONS=1` (enqueue order across the shared front-end
+   channel must be an executable schedule; the pack kernel is always launched
+   before any ladder wait, and the reduce waits are enqueued after the gateway
+   ladder they depend on).
+3. **Reduce** (per split, on its own stream, `FLUX_A2AV_RS_REDUCE_BLOCKS`):
+   `W` front-end `cuStreamWaitValue64` waits on the split's per-source recv
+   signals (a token's topk copies come from up to topk owners), then one
+   memory-bound kernel folds each local token's topk recv rows (fp32) into
+   `output[:, sid*n_per : (sid+1)*n_per]`. Deterministic j-order summation —
+   bit-stable across runs, unlike the dense ring's arrival-order sums.
+
+**The mirror-layout contract** is what makes the index math nearly free: the
+send panel on owner `r` is `(home_rank, expert, dst_row)`-ordered — exactly
+§4's recv layout on `r` — so the pack index is the inverse of
+`sorted_gather_index`'s arithmetic identity, derived from the SAME
+`offA/cumA/offR_of_A` host tables (§9) with no sort; and the recv panel on home
+`d` is `(owner_rank, expert, dst_row)`-ordered — exactly §3's send-buffer
+layout on `d` — so every copy lands back at its layer0 pack position and the
+reduce index is the inverse of the ONE pack-key sort rank `d` already runs as a
+layer0 sender. Standalone layer1 therefore pays layer0's index cost (one sort +
+identities); a fused layer0+layer1 pipeline passes layer0's tensors via the
+`a2av_pack_index`/`a2av_reduce_index` forward kwargs and pays it once.
+`FLUX_A2AV_RS_CHECK_IDENTITY=1` asserts identity-path == brute-force-sort;
+`test_a2av_combine_sim.py` validates the whole contract on CPU.
+
+**Buffers** (symmetric heap; dense-only buffers — ring reduce buffers, tile
+barriers, dense staging, internode signals — are skipped in this mode): send
+panel `[n_split, FLUX_A2AV_RS_MAX_SEND_ROWS, n_per]` (routing-dependent hot
+owner, collective overflow check), recv panel `[n_split, max_m/W, n_per]`
+(EXACT — every token comes home with topk copies, no knob), gateway staging
+`[n_split, FLUX_A2AV_RS_MAX_STAGE_ROWS, n_per]` (collective check), recv
+signals `uint64[W * n_split]`, arrival signals `uint64[nnodes * n_split]`.
+Epoch safety needs nothing new: all four ladder/reduce streams are
+event-joined onto the gather-rs stream before `gather_rs_done_event`, so the
+existing `barrier_all` close covers panel and staging reuse, and `nnodes == 1`
+degenerates to the intra ladder + reduce (cheap single-node validation).
+
+## 14. Layer1 ports of the layer0 optimizations: eager reduce + compress
+
+The two layer0 lessons that survived the starvation and realistic-trace
+campaigns transpose onto §13's combine as follows.
+
+### 14.1 Eager (arrival-order) destination reduce — `FLUX_A2AV_RS_EAGER=1`
+
+§13's reduce is the last wait-on-specific-peers gate in the pipeline: per
+split, W back-to-back `cuStreamWaitValue64` on one serialized reduce stream,
+then a write-mode kernel — the exact shape layer0's H2/H2b starvation analysis
+attributed multi-ms spin to. The eager variant (a ctor-time boolean read from
+`FLUX_A2AV_RS_EAGER`; knob-off is byte-identical) deletes ALL of it: one
+persistent reduce kernel per forward, launched right after the pack kernel
+while the conn=1 channel holds no host wait, no front-end reduce waits at all.
+Per output element a remaining-mask loop folds in any of the token's topk recv
+rows whose source lane's per-split signal has fired (64-bit acquire poll +
+nanosleep backoff) — accumulation in arrival order, which is the minimal real
+dependency ("all contributions summed before the output row is written", not
+"all sources arrived before any addition starts"). The source lane of a recv
+row is recovered by binary search over `recv_cum[W+1]` (per-source rows are
+contiguous, and splits slice COLUMNS, so the prefix is split-invariant — one
+small host array in the args struct). Rides the reserved reduce-block SM
+budget. Cost: the sum order becomes arrival-dependent (the dense ring path
+already is); correctness checks are tolerance-based.
+
+### 14.2 Token-dedup compress — ctor `a2av_hier_compress`
+
+The transpose of §11's dispatch dedup with the roles flipped: in dispatch all
+copies of a token originate on ONE rank, so dedup is local; in the combine the
+k' copies of a token owned by one node are SPREAD across its ranks, so dedup
+requires convergence before the wire. Design: source rank `(n, lr)` owns all
+wire rows destined to rank `(tn, lr)` — same-lr end-to-end.
+
+1. **Convergence** (new NVLink hop): each rank `(n, ls)` puts, per remote node
+   `tn` and local peer `lr`, its send-panel sub-chunk destined to `(tn, lr)`
+   into peer `(n, lr)`'s conv panel (`putmem_signal`, per-(ls, tn, sid)
+   signal slots — nbi puts to one PE are unordered, so per-pair granularity is
+   mandatory).
+2. **Pre-reduce**: a persistent kernel (grid `FLUX_A2AV_RS_PRERED_BLOCKS`,
+   added to `sm_margin`) spins on the L conv signals per (tn, sid), merges
+   each wire row's contributing conv rows (CSR `wire_ptr`/`wire_copy`, one
+   row per distinct token, token-ascending per segment), and flips a
+   `wire_flags[tn * n_split + sid]` via the pack kernel's counter handshake.
+3. **Wire**: the inter ladder waits the wire flag and issues ONE
+   `putmem_signal` per (remote node, split) straight into the destination's
+   recv panel — the §13 destination gateway hop is gone. Wire rows
+   `(n,lr) → (tn,lr)` = `U[(tn,lr)][n]`, the layer0 U-matrix consumed
+   TRANSPOSED (`a2av_unique_counts`, untimed host metadata).
+4. **Destination**: the recv image follows the compress chunk matrix `C'`
+   (own-node lanes unchanged; one remote lane per node, at the same-lr rank),
+   so `recv_sig` keeps its `[W × n_split]` layout with one writer per slot and
+   only L + NN − 1 lanes materialize — §11's `nseg`, transposed. The reduce
+   walks the `red_ptr`/`red_row` CSR (own-node copies individually + one
+   merged row per contributing remote node, positioned by the transposed
+   one-cumsum); composes with 14.1 (CSR eager kernel) or the legacy per-split
+   gate restricted to materialized lanes.
+
+Byte accounting: NVLink moves the per-copy hop from the destination node
+(§13's gateway forward) to the source node (convergence) — roughly unchanged;
+the wire shrinks by the duplication factor `Σ chunk_remote / Σ U_remote`; one
+forwarding hop leaves the wire critical path. Arithmetic moves INTO the
+transport (pre-reduce costs SMs) — the inverse of dispatch dedup, whose fanout
+was free CE copies; whether the wire savings pay for the SM pressure at small
+budgets is the open measurement question.
+
+Executable specs, validated on CPU before any GPU run:
+`test_a2av_combine_sim.py` (`simulate_compress`: set-valued payloads through
+conv → pre-reduce → C' wire → CSR reduce; any double-counted or missing copy
+fails regardless of accumulation order) and `test_a2av_sched_sim.py` (the full
+enqueue order under pessimistic conn=1 semantics — per-rank single host FIFO,
+resident kernels on their own program counters — across {hier, compress} ×
+{eager, legacy} × n_split grids). On `nnodes == 1` compress degrades to plain
+§13 (node-level dedup saves zero wire bytes).

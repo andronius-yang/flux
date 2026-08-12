@@ -11,6 +11,7 @@ execute_process(
 file(GLOB OP_REGS ${CMAKE_CURRENT_BINARY_DIR}/registers/*.cu)
 file(GLOB TUNING_CONFIGS tuning_config/*.cu)
 set(CU_FILES
+  a2av_combine.cu
   moe_utils.cu
   topk_gather_rs.cu
   topk_gather_rs_v2.cu
