@@ -1,0 +1,34 @@
+# Starvation campaign C2a — nsys + tile-trace capture, k8 arms.
+# ISOLATED discipline per the 2026-08-05 user directive (ebb9d5c). NO
+# BLOCKING_WIRE: the relay's non-blocking round-serialized wire IS the
+# mechanism under test (H2b); round/window attribution comes from matching
+# predict_starvation.py per-window row counts against the sidecar rows[].
+# Instrumented configuration — never quote latency from these cells.
+platform: perlmutter
+nodes: 4
+variants:
+  - hier_compress_lb_union
+  - hier_compress_union
+families:
+  - "uniform"
+  - "fanoutskew"
+budgets_mib: [32]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [nsys]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env:
+  FLUX_A2AV_NVTX_PROXY: "1"
+  FLUX_A2AV_EARLY_LAUNCH: "1"
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+notes: "starvation campaign C2a: nsys+tile-trace capture, lb_union vs union, uniform + fanoutskew(0.9,0.1,0.9,0.1), b32 k8, isolated discipline, non-blocking wire"
