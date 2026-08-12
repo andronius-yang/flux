@@ -1,0 +1,32 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 8
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+  - e2e
+nodes: 4
+notes: "MoonEP M4 conn=8 A/B: overlap vs serialized rerun at CUDA_DEVICE_MAX_CONNECTIONS=8 (prior capsule 20260808-015920 ran conn=1), real Qwen3 trace b8/k8, correctness on"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+skip_correctness: false
+sm_margin: 8
+timeout_s: 900
+topk: 8
+variants:
+  - moonep
+  - moonep_overlap
+  - moonep_nvshmem
+  - moonep_nvshmem_overlap
+warmup_iters: 5

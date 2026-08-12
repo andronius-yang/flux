@@ -1,0 +1,31 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 2
+  - 8
+  - 32
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env: {}
+families:
+  - uniform
+  - "remotefrac:fracs=0.01,0.05,0.30,0.99"
+  - "fanoutskew:nodefracs=0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1"
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "001"
+modes:
+  - e2e
+nodes: 16
+notes: l0algos v1 16n64r fast baseline e2e; G=128; topk via --topk override
+platform: perlmutter
+profile_iters: 3
+retries: 1
+skip_correctness: false
+sm_margin: 8
+timeout_s: 900
+topk: 4
+variants:
+  - fast
+warmup_iters: 5

@@ -1,0 +1,31 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 8
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+  - e2e
+nodes: 4
+notes: "UltraEP arm debut: moonep vs ultraep (NVL4-faithful) vs ultraep_domain16 (rack-scale counterfactual), real Qwen3 trace layer 92 b8/k8, correctness on"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+skip_correctness: false
+sm_margin: 8
+timeout_s: 900
+topk: 8
+variants:
+  - moonep
+  - ultraep
+  - ultraep_domain16
+warmup_iters: 5

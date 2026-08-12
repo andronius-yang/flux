@@ -1,0 +1,80 @@
+{
+  "artifacts": [],
+  "capabilities": {
+    "3rdparty/FAST/nvidia/libflash.so": true
+  },
+  "cells": [
+    {
+      "cell_id": "fast_uniform_b2_k8_e2e",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260805-144344_perlmutter_db245058/cells/fast_uniform_b2_k8_e2e",
+      "status": "failed"
+    },
+    {
+      "cell_id": "fast_uniform_b8_k8_e2e",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260805-144344_perlmutter_db245058/cells/fast_uniform_b8_k8_e2e",
+      "status": "failed"
+    },
+    {
+      "cell_id": "fast_uniform_b32_k8_e2e",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260805-144344_perlmutter_db245058/cells/fast_uniform_b32_k8_e2e",
+      "status": "failed"
+    },
+    {
+      "cell_id": "fast_remotefrac-2ac591_b2_k8_e2e",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260805-144344_perlmutter_db245058/cells/fast_remotefrac-2ac591_b2_k8_e2e",
+      "status": "failed"
+    },
+    {
+      "cell_id": "fast_remotefrac-2ac591_b8_k8_e2e",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260805-144344_perlmutter_db245058/cells/fast_remotefrac-2ac591_b8_k8_e2e",
+      "status": "failed"
+    },
+    {
+      "cell_id": "fast_remotefrac-2ac591_b32_k8_e2e",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260805-144344_perlmutter_db245058/cells/fast_remotefrac-2ac591_b32_k8_e2e",
+      "status": "failed"
+    },
+    {
+      "cell_id": "fast_fanoutskew-f73c0e_b2_k8_e2e",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260805-144344_perlmutter_db245058/cells/fast_fanoutskew-f73c0e_b2_k8_e2e",
+      "status": "failed"
+    },
+    {
+      "cell_id": "fast_fanoutskew-f73c0e_b8_k8_e2e",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260805-144344_perlmutter_db245058/cells/fast_fanoutskew-f73c0e_b8_k8_e2e",
+      "status": "failed"
+    },
+    {
+      "cell_id": "fast_fanoutskew-f73c0e_b32_k8_e2e",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260805-144344_perlmutter_db245058/cells/fast_fanoutskew-f73c0e_b32_k8_e2e",
+      "status": "failed"
+    }
+  ],
+  "created": "2026-08-05T14:48:22Z",
+  "flux_libs": [
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib64/libflux_cuda.so",
+      "sha256": "23035ab8f8f3b53b225d49a2dfc4641a64b46437b6d1a7e772194f85a9f9043b"
+    },
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib64/libflux_cuda_ths_op.so",
+      "sha256": "f7807afb2ace6cd83f4255ca83657568498c03eea69bbf3ee166f67ef391c44f"
+    },
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/FAST/nvidia/libflash.so",
+      "sha256": "8667f9a5a8986eee301a9b46de515f18f379bae75fc6d2823a6ba036e8e57bcf"
+    }
+  ],
+  "git": {
+    "dirty": true,
+    "sha": "a25eda6e5f5988aef898ac05eadc989d96273b17"
+  },
+  "host": "login26",
+  "platform": {
+    "fabric": "cxi",
+    "name": "perlmutter",
+    "ranks_per_node": 4
+  },
+  "run_id": "20260805-144344_perlmutter_db245058",
+  "staging_root": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260805-144344_perlmutter_db245058"
+}
