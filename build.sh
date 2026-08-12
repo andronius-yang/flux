@@ -232,9 +232,17 @@ function build_flux_py {
     fi
     popd
     ##### build flux torch bindings #####
-    MAX_JOBS=${JOBS} python3 -m pip install \
-      --no-build-isolation \
-      --editable .
+    if [ -n "${FLUX_BUILD_PY_INPLACE}" ]; then
+        # worktree builds: compile the pybind ext in-tree (lands at
+        # python/flux_ths_pybind*.so) WITHOUT touching the environment's
+        # editable install, which may point at another checkout. Run with
+        # PYTHONPATH=<this tree>/python to use this build.
+        MAX_JOBS=${JOBS} python3 setup.py build_ext --inplace
+    else
+        MAX_JOBS=${JOBS} python3 -m pip install \
+          --no-build-isolation \
+          --editable .
+    fi
     if [ $BDIST_WHEEL == "ON" ]; then
         MAX_JOBS=${JOBS} python3 setup.py bdist_wheel
     fi
