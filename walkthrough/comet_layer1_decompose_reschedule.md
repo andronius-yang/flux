@@ -22,6 +22,15 @@ On SM80 the layer-1 op is the **V2** code path (`GemmGroupedV2GatherRS*`; the
 | Arguments structs | `include/flux/args/moe_gather_rs.h` |
 | Test | `./launch.sh test/python/moe_gather_rs/test_moe_gather_rs.py` |
 
+**Conceptual companion**:
+[`comet_layer1_worked_example_pure_ep.md`](comet_layer1_worked_example_pure_ep.md) traces this
+whole pipeline by hand on 2 nodes × 4 GPUs in the pure-EP config (one expert per rank,
+`ffn_tp_size=1`, `topk=2`), with a real routing table, byte counts, and a dedicated scheduling
+section. Read it first if you want to know *what* each mechanism below is for before reading
+*how* it is coded. Its
+[§5 Scheduling](comet_layer1_worked_example_pure_ep.md#5-scheduling) is the direct counterpart
+of §3–§4 here.
+
 ---
 
 ## 1. The pipeline and its shared tensor
@@ -127,6 +136,10 @@ int get_barrier_size() const {
 > computations."*
 
 ### 3.1 Problem order = split-major
+
+> Why *columns* and not rows is forced by the consumer's data dependencies, and what this
+> reschedule degenerates to when a rank owns a single expert (`problem_per_split == 1`):
+> [worked example §5.1](comet_layer1_worked_example_pure_ep.md#51-the-gemm-reschedule-and-its-degeneracy-at-one-expert-per-rank).
 
 The reschedule is encoded in one line of the workspace builder above: `sid = i /
 problem_per_split`. Problems `0 … problem_per_split-1` are *all experts'* slice 0, then all
@@ -247,6 +260,14 @@ The argument struct that carries all of this is `TopKReduceGatherRSV2Arguments`
 ---
 
 ## 4. Horizontal fusion: how producer and consumer share the GPU
+
+> The three-stream / 105-vs-3-SM partition and why a floating partition would cause
+> *distributed* stalls:
+> [worked example §5.2](comet_layer1_worked_example_pure_ep.md#52-the-resource-partition).
+> The consumer's loop nest, level by level, with the reason for each ordering choice:
+> [§5.3](comet_layer1_worked_example_pure_ep.md#53-the-consumer-loop-nest).
+> Tuning knobs (`n_split` clamping to multiples of `kTileSizeN=1024`, `FLUX_RS_BLOCKS`):
+> [§5.6](comet_layer1_worked_example_pure_ep.md#56-tuning-knobs).
 
 On SM80, Flux runs the two sides as **two concurrent kernels on two streams** ("horizontal
 fusion" — the V2 analogue of the paper's §3.2 adaptive workload assignment). The driver

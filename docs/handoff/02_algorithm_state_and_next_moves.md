@@ -315,3 +315,81 @@ Known, harmless, worth cleaning when you next touch the file:
 combine with per-split topk reduce, for **layer1**). Safe on GitHub, deliberately not
 covered by this handoff. If layer1 becomes live again, decide merge order against the Tier B
 changes now on `main` before starting.
+
+---
+
+## 10. MoonEP-semantics arm (added 2026-08-07)
+
+A new measurable variant `moonep`: a semantic port of MoonshotAI/MoonEP's
+redundant-expert dispatch (planning rebalances hot experts onto under-loaded
+ranks so every rank GEMMs exactly S*K rows; dedup'd representative rows only
+on the wire; static expert-grouped [NvS, H] layout; per-iteration weight
+prefetch for the B = E/R redundant expert slots). MoonEP's own kernels are
+Hopper/NVLink-domain-only (TMA + NVSwitch multicast, no RDMA path), so the
+port re-implements the algorithm on NCCL + local scatters + per-segment
+GemmOnly; A100/Slingshot-safe, no NVSHMEM heap.
+
+- Semantics anchor: the planner is bit-identical to MoonEP's own executable
+  oracle (vendored at `test/python/moe_ag_scatter/moonep_oracle/`), enforced
+  by `test/python/moe_ag_scatter/test_moonep_planner.py` over MoonEP's 18
+  planning cases (imported from the sibling MoonEP checkout when present),
+  R=16 Perlmutter-shaped cases, and lognormal fuzz. Runs on a login node,
+  no GPU.
+- Implementation: `python/flux/testing/moonep_semantics.py` (replicated
+  vectorized planner + `MoonEPLayer0Runner`), driver
+  `test/python/moe_ag_scatter/test_moe_moonep_traffic.py` (phase-evented:
+  plan_comm/pack/comm/scatter/prefetch/gemm; dispatch content checked
+  bitwise vs the plan, prefetch vs an independent broadcast, GEMM vs
+  torch.matmul). Sweep plumbing mirrors the `fast` driver precedent
+  (`driver="moonep"` in `sweeps/variants.py` / `sweep.py`); metric and
+  cell-fact meanings in `sweeps/SCHEMA.md`.
+- Known deviations (disclosed, unavoidable off-NVLink): two-sided staged
+  a2av + local placement instead of one-sided direct-into-slot writes (the
+  two port-added local copies are their own metrics, `pack_ms` +
+  inside `scatter_ms`, so `comm_ms` stays pure wire); replicated planning
+  instead of rank-0 + hardware multicast (wire cost `plan_comm_ms`);
+  prefetch serialized in the timed window (MoonEP overlaps it on a comm
+  stream — bias is AGAINST the port); layer0 prefetches 1 weight matrix vs
+  MoonEP training's 3.
+- First capsule spec: `sweeps/specs/moonep_pm4n_trace_iso.yaml` (moonep vs
+  allgather vs lb_union, real Qwen3 decode trace b8/k8 G=128, isolated +
+  e2e, correctness on). The balance fingerprint to look for:
+  `gemm_rows_per_rank` constant for moonep, skewed for the baselines.
+
+**M4 addendum (2026-08-08).** Two mechanism-fidelity arms landed after user
+review (plan-reuse was dropped: inference re-plans per activation):
+
+- `moonep_nvshmem[_overlap]` — dispatch a2av over flux's one-sided
+  `All2AllSingle` (`nvshmemx_putmem_nbi_block` per destination + 2 team
+  stream barriers — the live `a2a_single_kernel_v2` path; correction
+  2026-08-11: this entry previously described the file's dead
+  `putmem_signal` kernel, see NR-12 fact 8; still sender-driven,
+  receiver-passive), replacing NCCL grouped send/recv, which was a
+  dishonest stand-in for MoonEP's one-sided writes. Same plan, pack order,
+  placement indices, correctness gates — bitwise-exact on first bring-up,
+  proving semantic invariance across transports.
+- `moonep_overlap` / `moonep_nvshmem_overlap` — prefetch on a dedicated
+  high-priority stream + separate NCCL communicator, event-joined before
+  GEMM: MoonEP's `async_finish` comm-stream overlap, which the serialized
+  port deliberately pessimized. New metric `prefetch_wait_ms` = exposed
+  stall at the join; 1-node bring-up showed prefetch fully hidden
+  (~0.002 ms exposed) with contention honestly visible in pack/comm.
+- Spec: `sweeps/specs/moonep_m4_pm4n_trace_iso.yaml` (2x2 transport/overlap
+  grid, real trace b8/k8, isolated + e2e, correctness on).
+
+**M4 conn=8 correction (2026-08-08, capsule 20260808-032217).** The first M4
+capsule (20260808-015920) ran the moonep arms at launch.sh's default
+CUDA_DEVICE_MAX_CONNECTIONS=1, and its "overlap buys nothing on NCCL"
+reading was a QUEUE ARTIFACT: with one hardware connection the prefetch
+stream's work serialized into the main stream's windows (prefetch_wait ~0
+was an attribution illusion — the cost sat inside pack_ms at 6.4 ms). The
+conn=8 rerun (same arms, same trace, only the connections knob) shows the
+honest picture, isolated max-rank: moonep_overlap 8.89 ms vs moonep
+serialized 10.48 ms — MoonEP's async_finish-style overlap genuinely hides
+most of the ~4.7 ms prefetch (1.46 ms stays exposed at the join and ~1.3 ms
+reappears as comm contention). Best lawful configuration is now
+moonep_overlap (NCCL + overlapped prefetch). nvshmem arms: serialized
+13.96 ms unchanged (one-sided putmem comm ~7.1 ms is conn-insensitive),
+nvshmem_overlap improves to 10.02 ms but still trails NCCL. All four moonep
+variants now pin CUDA_DEVICE_MAX_CONNECTIONS=8 in variants.py; pre-pin
+cells ran conn=1 — audit env_json, never compare across the boundary.

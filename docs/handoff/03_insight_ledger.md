@@ -295,3 +295,110 @@ its connection count.** Inheriting an unsupported claim as fact is the most expe
 knowledge loss — it does not vanish, it misleads.
 
 **Confidence: hunch (the original claim).** **Cost to re-test:** 2 cells.
+
+---
+
+## NR-12 — What the moonep/ultraep arms may and may not claim about upstream overlap
+
+**Relitigation risk: high.** A fresh agent reading `moonep_overlap` will propose the same
+flag for ultraep and call it "faithful"; a writeup agent reading the serialized `ultraep`
+arm will report "UltraEP does not overlap anything" as if it were an upstream property.
+Both are wrong in opposite directions. The port-fidelity taxonomy is canonicalized in
+`sweeps/SCHEMA.md` (§ "Overlap and transport fidelity"); this entry exists so nobody
+re-derives or mis-cites it.
+
+**The four facts.**
+
+1. **Overlap machinery is authentic in BOTH upstreams.** UltraEP launches `weight_sync` on
+   a dedicated high-priority comm stream with `async_finish=True` and returns an event
+   (`ultra_ep.cpp:253, 1095-1211`); MoonEP prefetches redundant-expert weights
+   asynchronously during dispatch. Our *serialized* arms (`moonep`, `ultraep`) are
+   deliberately-pessimistic ports, not upstream behavior.
+2. **The join point differs between upstreams, and it is not symmetric.** MoonEP's prefetch
+   is consumed at GEMM — `moonep_overlap`'s join-before-GEMM is authentic. UltraEP's
+   reference integration joins weight_sync **before token dispatch** (overlap window =
+   reroute only, ~40 µs under a 200-300 µs sync; the paper itself books weight_sync as
+   exposed critical path, <300 µs). So for a future `ultraep_overlap`:
+   `--ws_join dispatch` = authentic; `--ws_join gemm` = **counterfactual** (legal under the
+   data dependency, but it prices Perlmutter's split fabrics — weight_sync on NVLink,
+   dispatch on Slingshot — a tradeoff upstream never faced because both shared NVLink).
+   Label it like `ultraep_domain16`, never quote it as UltraEP's behavior.
+3. **The second NCCL communicator is port machinery, full stop.** Neither upstream has any
+   communicator in its weight path: UltraEP is raw NVLink ld/st through `nvshmem_ptr` peer
+   VAs from its own SM kernel (+ `__threadfence_system` epoch flags); MoonEP is TMA bulk
+   copies / NVSwitch multicast into NVLink symmetric buffers. The separate communicator
+   exists only because our ports move weights over NCCL P2P, and NCCL serializes ops per
+   communicator (would otherwise serialize against the dispatch a2a).
+4. **Transport authenticity ladder** (weight/prefetch movement, most→least authentic):
+   CUDA-IPC peer copies on a comm stream (intra-node only; residual gap = CE-vs-SM
+   contention, upstream copies burn SMs) > NVSHMEM `putmem_signal` (one-sided push + flag
+   = the exact upstream signaling shape; cross-node on Perlmutter is proxy-mediated CXI,
+   an extra caveat) > NCCL P2P send/recv (two-sided rendezvous, own protocol/chunking
+   optimizations — least like upstream, but capsule-comparable with the moonep arms).
+   `NVSHMEM_DISABLE_NCCL` in UltraEP's README governs ONLY the plan-metadata fcollect,
+   never weight_sync — it is not evidence of an upstream NCCL weight path.
+
+**Falsifier.** Upstream UltraEP moving its reference join after dispatch, or shipping a
+cross-node weight_sync (today it hard-asserts `nvshmem_ptr != nullptr`, i.e. cannot).
+
+**Confidence: mechanism** (read from both upstream sources; overlap deltas not yet measured
+here — the first `ultraep_overlap` capsule turns the join-point cost into a number).
+
+### NR-12 Amendment (2026-08-11) — four findings from the deep-dives that preceded the overlap/nvshmem arms
+
+Facts 1-4 above stand, with fact 1 sharpened and fact 4 superseded as follows.
+
+**(5) UltraEP direct mode has NO receiver-side signaling — the join IS the publication
+mechanism.** `build_weight_sync_task_lists` keeps a task only if `master_rank == rank_idx`
+(weight_sync.cu:259): the master's rank pushes into peer VAs with `wait_ready_slot = -1`,
+`num_ready_signals = 0`; every flag/epoch/`__threadfence_system` path is relay-only. The
+returned `EventHandle(comm_stream)` covers only the local rank's own outgoing pushes — nothing
+anywhere waits for a rank's incoming replica weights. Cross-rank happens-before comes solely
+from the reference integration's join-before-dispatch: each sender's pushes complete before it
+enters the dispatch collective, and no receiver's dispatch completes before every sender
+entered. **Corollary:** `ultraep_overlap_joingemm` is sound in our port ONLY because NCCL is
+two-sided (irecv completion rides the ws-stream event); under upstream's unsignaled pushes the
+same join point would be a correctness bug, which is presumably why upstream doesn't offer it.
+
+**(6) MoonEP prefetch is a destination-side PULL, not a push.** `launch_prefetch`
+(moonep/prefetch.py:317-385) remote-READS the home rank's mapped weight rows via TMA G2S and
+stores locally into its own prefetch slots — zero cross-rank signaling (the source is immutable
+parameter memory; tests/test_prefetch.py:16-18 states this explicitly). The NVSHMEM analog is
+`getmem`, not put. Our NCCL isend/irecv prefetch is therefore DOUBLY a port artifact: wrong
+initiator direction and a two-sided protocol. (MoonEP's pull is also a considered bandwidth
+decision — grad_reduce.py:21-27 rejects remote writes because reads+writes split the NVLink
+budget.)
+
+**(7) MoonEP serializes dispatch+prefetch on ONE shared comm stream** (api.py:487-499: a
+single `_comm_stream` per Buffer serves dispatch/prefetch/combine; with async_finish they
+serialize with each other and overlap only main-stream compute; the upstream benchmark runs
+`dispatch(); prefetch()` back-to-back on that stream). `moonep_overlap` (prefetch concurrent
+with dispatch on a separate stream + separate communicator) is FINER-grained than upstream;
+`moonep_overlap_shared` is the authentic-serialization counterpart (prefetch enqueued after
+the a2av on the SAME communicator; overlap window = scatter only). Also for the record: MoonEP
+has no inter-node path at all — its multi-node answer is NVLink-fabric domain extension
+(nvl_shared_buffer.cuh fabric handles), never a network. Any inter-node transport in these
+ports is extrapolation, judged by preservation of intra-domain semantics.
+
+**(8) flux All2AllSingle's putmem_signal path is DEAD CODE, and the op is rejected for weight
+movement.** The live path is `a2a_single_kernel_v2` (all2all_single_2d_impl.cu:191-211):
+full-buffer memcpy into symmetric staging, one `nvshmemx_putmem_nbi_block` per destination
+into fixed per-source slots, scalar copy-out, and TWO `nvshmemx_barrier_on_stream` per forward.
+The `putmem_signal`+`signal_wait` kernel (:84-189) is never launched, and its signal slots are
+never reset (single-shot if ever enabled). Put-then-barrier is actually CLOSER to MoonEP's
+real dispatch (push + one system-scope exit barrier) than put+signal would be — the 2026-08-11
+doc corrections fixed five sites that described the dead kernel. Weight-movement fit verdict:
+REJECTED — dense per-(src,dst) staging (~1.5 GiB symmetric heap to move <=48 MiB of actual
+replica weights at W=16), two extra full-payload local copies, and NVSHMEM_TEAM_WORLD barriers
+that forbid a second instance on a side stream beside the token a2av (team-barrier collision +
+NR-02 Class-B channel hazard). Weight movement stays NCCL `batch_isend_irecv` (declared port
+artifact). The authentic upgrade, if weight-path transport fidelity ever becomes the question
+under test: a custom kernel doing bare `putmem_nbi` pushes published by the subsequent
+collective join (UltraEP direct) / `getmem` pulls (MoonEP prefetch) — future work only.
+
+**Falsifier updates.** Fact 5: an upstream commit adding receiver-side flags to the direct
+path. Fact 7: upstream giving prefetch its own stream. Fact 8: upstream flux switching the
+live launch back to the signal kernel (with a reset).
+
+**Confidence: mechanism** (all four read from source; the overlap deltas become measured
+numbers in the ultraep M4 capsule).

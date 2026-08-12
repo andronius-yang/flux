@@ -9,6 +9,11 @@ describe the multi-node hops in detail) and
 [`comet_layer0_communication_patterns.md`](comet_layer0_communication_patterns.md)
 (layer 0, whose §4.4 documents the multi-node all-gather this design partially mirrors).
 
+For a hand-traced instance of the design described here — 2 nodes × 4 GPUs, one expert per
+rank, with the segment rotation, the cross-node hop and the byte counts worked out
+explicitly — see
+[`comet_layer1_worked_example_pure_ep.md`](comet_layer1_worked_example_pure_ep.md).
+
 This doc answers a different question than the companions: **not "how does it work" but
 "where did each piece come from."** Upstream Flux/Comet shipped *no* multi-node
 implementation of the MoE layer-1 reduce-scatter — on any architecture. The design that
@@ -174,6 +179,11 @@ pair, segment)" is the property both designs share.
 
 ### 5.3 Node-rotation outer loop and same-local-rank pairing — *mirrored from the layer-0 V3 all-gather (already ported to layer-0 V2)*
 
+> Worked instance showing *why* the rotation formula and the pairing rule must be chosen
+> together — at the last ring stage, rank `l` holds the node's total for exactly the segment
+> owned by its same-local-rank peer `g·L + l`:
+> [worked example §3](comet_layer1_worked_example_pure_ep.md#3-the-hierarchical-ring).
+
 The loop `g = (node_idx + 1 + g_iter) % nnodes` and the peer choice
 `pe = g·L + local_rank` are the layer-0 multi-node AG's signature moves
 (`gemm_grouped_v3_ag_scatter.cc:172`; V2 port documented in the layer-0 walkthrough
@@ -264,6 +274,13 @@ multi-node port (`gemm_grouped_v2_ag_scatter.cc:248-252`) and applied here direc
 ---
 
 ## 6. Roads not taken
+
+> One road *not yet* taken, and the strongest candidate for future work: a **sparse a2av
+> combine** replacing the dense ring. In pure EP with `topk ≪ world_size` the dense design
+> moves `world_size/topk` times more bytes than necessary (75% zeros at `W=8, topk=2`) and
+> pays `L−1` hops to avoid an incast of depth `topk`. Analysis, and why the metadata problem
+> is *easier* here than it was for the layer-0 dispatch:
+> [worked example §6](comet_layer1_worked_example_pure_ep.md#6-why-the-ring-is-the-wrong-shape-here).
 
 - **Flat `world_size` ring across nodes.** The single-node ring generalizes syntactically
   (just keep `% world_size`), but every hop crossing the node boundary would need a

@@ -56,6 +56,11 @@ Get an interactive GPU allocation first — jobs must run on compute nodes, not 
 salloc --qos interactive -C gpu --account m4243_g
 ```
 
+**Immediately `scancel` the allocation as soon as the intended jobs have
+completed** — do not let it sit idle until the time limit (idle GPU nodes
+burn the allocation's node-hours and block other users of the interactive
+QOS). Check with `squeue --me`; release with `scancel <jobid>`.
+
 Keep all test logs under `/tmp` (e.g. a per-session scratch dir), never inside the
 repository tree. Redirect job output at the login-side shell (the one running
 `salloc`/`srun`), since a compute node's `/tmp` is node-local and discarded when

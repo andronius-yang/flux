@@ -6,6 +6,12 @@ V2/SM80 path on Perlmutter's 4×A100 nodes, including the multi-node port. Compa
 [`comet_layer1_multinode_design_provenance.md`](comet_layer1_multinode_design_provenance.md)
 for where each piece of the multi-node design came from (upstream shipped none for this layer).
 
+**Want the shape before the mechanics?** Read
+[`comet_layer1_worked_example_pure_ep.md`](comet_layer1_worked_example_pure_ep.md) first — a
+hand-traced 2-node × 4-GPU example in the pure-EP config (one expert per rank,
+`ffn_tp_size=1`, `topk=2`) with concrete routing tables and byte counts. Section pointers into
+it appear throughout this doc.
+
 Layer 0's communication was on the *input* side: gather tokens, then compute. Layer 1 is
 the mirror image — compute first, then a chain of reductions and a scatter of ownership —
 and the mirror flips every design decision. The shared tensor is now the **GEMM output**;
@@ -45,6 +51,14 @@ So:
 - **In between**: a sum-reduction across ranks fused with a permutation (gather) and a fold
   (topk), delivered scattered. In collective vocabulary: a **reduce-scatter whose reduction
   operator includes a per-rank gather+topk preprocess**.
+
+> **Conceptual anchor.** The cleanest way to see why this is *exactly* a reduce-scatter is the
+> "local fold" framing: each rank builds a notional `[ntokens, N]` matrix of its own
+> contribution per token (zero where it holds no expert), and the answer is the elementwise
+> sum with row blocks scattered to owners. Worked out with a real routing table in
+> [worked example §1–§2](comet_layer1_worked_example_pure_ep.md#1-where-the-rows-are).
+> Note the reduction over K described above **vanishes entirely when `ffn_tp_size = 1`** — see
+> [worked example §0](comet_layer1_worked_example_pure_ep.md#0-the-configuration).
 
 ```
 rank r:  grouped GEMM ──► gemm_outs (local, expert-order, partial over K)
@@ -220,6 +234,11 @@ Three loads-bearing details:
 
 ### 4.2 Completion detection: tile → problem → split, in three atomics
 
+> This three-level cascade **collapses to two levels when `ep_nexperts == 1`** (one expert per
+> rank), and the zero-token-expert case escalates from "one empty subproblem" to "an entire
+> idle GPU". See
+> [worked example §5.1](comet_layer1_worked_example_pure_ep.md#51-the-gemm-reschedule-and-its-degeneracy-at-one-expert-per-rank).
+
 The GEMM cannot "send" anything — it just writes local memory. What it *can* do is prove,
 cheaply, that a whole column slice is complete. Each threadblock's epilogue ends with
 `set_barrier_ptr` (`src/moe_gather_rs/cutlass_impls/gather_rs_gemm_grouped_with_absmax.h:543,550-576`):
@@ -283,6 +302,13 @@ for (int sid = 0; sid < params.n_split; sid++) {
 ```
 
 ### 5.1 Why a ring, and why this segment rotation
+
+> Stage-by-stage trace of this rotation on 2 nodes × 4 GPUs, including why the last stage
+> lands each rank on the segment its same-local-rank network peer owns:
+> [worked example §3](comet_layer1_worked_example_pure_ep.md#3-the-hierarchical-ring).
+> For when the ring's premise (deep incast, many additions) *fails* — pure EP with
+> `topk ≪ world_size` — see
+> [worked example §6](comet_layer1_worked_example_pure_ep.md#6-why-the-ring-is-the-wrong-shape-here).
 
 Within a node, the reduction is an **L-stage ring** (L = `local_world_size` = 4). At each
 stage, each rank processes segment `g·L + (stage + local_rank + 1) % L`
@@ -361,6 +387,12 @@ stage-ordered tiles.
 ---
 
 ## 6. Multi-node: reduce locally, ship once, sum remotely
+
+> Hand-traced cross-node hop with a real token (both its experts on the far node, so node 0
+> ships a half-zero chunk), plus per-rank NVLink/network byte counts:
+> [worked example §4](comet_layer1_worked_example_pure_ep.md#4-the-cross-node-hop-and-final-assembly).
+> The ordering invariant that makes the pre-enqueued ladder safe is spelled out in
+> [worked example §5.4](comet_layer1_worked_example_pure_ep.md#54-the-pre-enqueued-network-ladder).
 
 Across nodes the same bandwidth cliff as layer 0 applies, plus a subtlety: NVSHMEM puts to
 a remote PE on Slingshot are proxied — best issued as few, large, contiguous transfers.
@@ -450,6 +482,10 @@ configs). `do_all_reduce`/`use_read_mode` are single-node-only (FLUX_CHECK at `:
 ---
 
 ## 7. The complete timeline (2 nodes × 4 GPUs)
+
+> Same timeline annotated with the three stacked overlaps it achieves, the tuning knobs
+> (`n_split` clamping, `FLUX_RS_BLOCKS`) and how routing skew perturbs it:
+> [worked example §5.5–§5.7](comet_layer1_worked_example_pure_ep.md#55-the-complete-timeline).
 
 ```
 main stream (105 SMs)        gather_rs_stream (3 SMs)             internode_stream (host ladder)
