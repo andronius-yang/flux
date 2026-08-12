@@ -1,0 +1,36 @@
+# First UltraEP-arm capsule: UltraEP-semantics replicated-expert balancing
+# vs the MoonEP arm on the same real Qwen3 trace (layer 92, the canonical
+# skew case). Three arms in ONE capsule so the A/B/C is build-clean:
+#   moonep            every rank GEMMs exactly S*K rows (global rebalance)
+#   ultraep           faithful NVL4 semantics — per-node solves, residual
+#                     cross-node imbalance floor (ultraep_lb_floor cell fact)
+#   ultraep_domain16  rack-scale counterfactual — whole EP16 as one domain,
+#                     weight_sync crosses nodes, LB floor -> 1.0
+# Compare gemm_rows_per_rank spread, comm_ms, prefetch_ms (= weight_sync for
+# ultraep), and total_ms WITHIN this capsule only.
+platform: perlmutter
+nodes: 4
+variants:
+  - moonep
+  - ultraep
+  - ultraep_domain16
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib: [8]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated, e2e]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+notes: "UltraEP arm debut: moonep vs ultraep (NVL4-faithful) vs ultraep_domain16 (rack-scale counterfactual), real Qwen3 trace layer 92 b8/k8, correctness on"

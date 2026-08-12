@@ -102,6 +102,130 @@ hygiene OUTSIDE the window — never add it to e2e), `host_e2e_ms` (host-wall
 cross-check). Metric meaning is scoped by `impl` — `gemm_ms` under torch, fast,
 and (phases) flux are three different measurements by design.
 
+MoonEP-semantics arm (`impl=moonep`, variant `moonep`, driver-swapped test
+`test_moe_moonep_traffic.py` — a semantic port of MoonshotAI/MoonEP
+redundant-expert dispatch; plan bit-equality vs the vendored MoonEP oracle is
+enforced by `test_moonep_planner.py`): per iteration, in every mode,
+`plan_comm_ms` (topk allgather — the replicated-planning wire; excluded from
+`comm_ms`), `pack_ms` (dest-sorted send-buffer gather — a port-added local
+copy MoonEP's one-sided writes don't have), `comm_ms` (NCCL alltoallv of
+dedup'd representative rows + per-entry fp32 route weights — the pure wire
+number; wire rows/bytes equal MoonEP's dedup semantics), `scatter_ms`
+(placement scatter + zero-fill + local duplicate expansion; contains the
+second port-added copy), `prefetch_ms` (redundant expert-weight movement,
+home rank -> prefetch slots — weight traffic, reported separately so token
+comparisons vs other arms stay apples-to-apples; layer0 moves 1 weight
+matrix where MoonEP training moves 3), `gemm_ms` (per-segment GemmOnly over
+`cu_seqlens[E+B]`, padded rows computed per the MoonEP contract), `total_ms`.
+The plan itself is deterministic integer host math computed identically on
+every rank at setup (untimed-metadata contract, like `splits_per_source`;
+reported as cell_info `moonep_plan_host_ms`).
+
+M4 arms (same driver, same plan and correctness gates — the grid isolates
+transport and overlap with semantics held fixed; cell facts
+`moonep_transport` / `moonep_overlap_prefetch` / `moonep_shared_comm_stream`
+audit which ran):
+`moonep_nvshmem[_overlap]` swaps the dispatch a2av for flux's one-sided
+NVSHMEM `All2AllSingle`. Live path (correction 2026-08-11): `putmem_nbi`
+per destination into fixed per-source slots of symmetric staging + two
+team stream barriers per call — put-then-barrier, the same publication
+shape as MoonEP's real dispatch (TMA push + one system-scope exit
+barrier); the file's `putmem_signal` kernel is dead code, never launched
+(NR-12 fact 8). Still sender-driven and receiver-passive on the wire;
+needs `NVSHMEM_SYMMETRIC_SIZE`, sized by the runner from the matrix.
+`moonep_overlap` / `moonep_nvshmem_overlap` run prefetch on a dedicated
+high-priority stream + separate NCCL communicator, event-joined before GEMM
+(MoonEP `async_finish` comm-stream semantics): `prefetch_ms` becomes the
+prefetch STREAM duration (fork after plan_comm -> done) and a new
+`prefetch_wait_ms` is the exposed stall the main stream paid at the join —
+the overlap-adjusted layer time is `total_ms`; never sum phase columns on
+overlap arms (phases run concurrently, and contention legitimately inflates
+`pack_ms`/`comm_ms` there). Cell facts: `moonep_z_matrix`
+(home-group -> dest migrations), `moonep_wire_bytes` (realized dedup'd wire
+matrix — differs from the input matrix BY DESIGN, MoonEP rebalances),
+`moonep_nvs`, `moonep_prefetch_recv_bytes`, and `gemm_rows_per_rank`, which
+is constant (S*K + padding) across ranks — the balance fingerprint.
+No `phases` cells (the breakdown arrives free in every mode); no NVSHMEM
+heap and no FLUX_A2AV_* knobs (pure NCCL + local scatters).
+
+UltraEP-semantics arm (`impl=ultraep`, variants `ultraep` /
+`ultraep_domain16`, driver-swapped test `test_moe_ultraep_traffic.py` — a
+semantic port of Dots-Infra/UltraEP replicated-expert balancing; solver +
+reroute BIT-equality vs UltraEP's real kernels is enforced by
+`test_ultraep_planner.py` against the SM80 oracle build and the vendored
+goldens under `ultraep_oracle/`). Same six phase names as moonep so arms
+compare inside one capsule, with aliased meanings: `plan_comm_ms` is the
+[W, G] int32 LOADS allgather (UltraEP's metadata fcollect, ~8 KiB — NOT
+moonep's [S, K] topk allgather; `ultraep_plan_comm_bytes` audits the
+asymmetry), `comm_ms` carries NO dedup (one wire row per (token, physical
+expert), faithful to UltraEP/Megatron dispatch; `ultraep_dup_rows` counts
+what dedup would save), `prefetch_ms` is UltraEP `weight_sync` (`direct`
+plan; master -> replica-slot copies, intra-NVLink-domain by construction at
+D=4; fc1 feeds the GEMM, fc2 rides along bitwise-verified so bytes match
+UltraEP's full-expert sync — `--weight_sync fc1` gives moonep-comparable
+bytes, `ultraep_weight_sync` audits), and `gemm_ms` runs UNPADDED
+per-physical-expert segments. CRITICAL contrast to moonep:
+`gemm_rows_per_rank` is NOT constant — replication is confined to the
+NVLink domain (one independent solve per node), so cross-node imbalance is
+untouched by design and the residual spread IS the measurement. Cell facts:
+`ultraep_imbalance_before/after` (rank max/mean), `ultraep_lb_floor` (max
+domain-mean / global-mean — the reachable floor), `ultraep_threshold_T` +
+`ultraep_solver_path` per domain (fast/precheck/bisect audit),
+`ultraep_replicas_total/_max_per_expert`, `ultraep_remote_frac_with/
+without_locality`, `ultraep_wire_bytes`, `ultraep_weight_sync_recv_bytes`,
+`ultraep_nvl_domain_size`, `ultraep_plan_host_ms` (untimed-metadata
+contract). `ultraep_domain16` treats the whole EP16 group as one domain
+(rack-scale counterfactual: weight_sync crosses nodes, LB floor -> 1.0);
+it prices the fabric assumption and is NOT a faithful Perlmutter
+deployment. `ultraep_overlap[_joingemm]` run weight_sync on a dedicated
+high-priority stream + separate NCCL communicator forked after plan_comm
+(facts `ultraep_overlap_ws`, `ultraep_ws_join`; join semantics and the
+prefetch_ms/prefetch_wait_ms rule in the fidelity paragraph below).
+`ultraep_nvshmem[_overlap]` swaps the token a2av for the one-sided
+All2AllSingle (putmem_nbi + 2 team barriers; fact `ultraep_transport`;
+nvshmem overlap is join=dispatch ONLY — nvshmem+joingemm is forbidden,
+NR-02 Class-B surface); weight_sync stays NCCL P2P in every arm (declared
+port artifact, NR-12 fact 8). No `phases` cells; no FLUX_A2AV_* knobs;
+NVSHMEM heap only for the nvshmem arms (`ultraep_sym_size`: no-dedup,
+domain-bounded — reroute confines redirection to the logical target's NVL
+domain).
+
+Overlap and transport fidelity (moonep + ultraep arms — canonical; cited by
+insight-ledger NR-12, read that entry before proposing overlap work): the
+serialized arms are deliberately-pessimistic ports — BOTH upstreams overlap
+their weight movement (UltraEP: async weight_sync on a dedicated
+high-priority comm stream, event-joined by the integration; MoonEP: async
+dispatch+prefetch on ONE shared comm stream, serialized with each other,
+overlapping only main-stream compute — so `moonep_overlap` is FINER than
+upstream and `moonep_overlap_shared` is the authentic-serialization
+counterpart). Join points are NOT symmetric: MoonEP consumes prefetch at
+GEMM, so joining before GEMM is authentic for moonep; UltraEP's reference
+integration joins weight_sync BEFORE token dispatch, and that join is the
+PUBLICATION MECHANISM, not a preference — UltraEP's direct mode pushes to
+peer VAs with no receiver-side signaling at all, so the dispatch
+collective's completion is the only cross-rank happens-before (NR-12 fact
+5). The ultraep overlap arms expose this via `--ws_join`: `dispatch` =
+authentic (window = pack only; weight_sync mostly exposed, matching the
+paper's own accounting), `gemm` = counterfactual (window =
+pack+comm+scatter; sound ONLY because this NCCL port is two-sided — irecv
+completion rides the ws event; label like `ultraep_domain16`).
+Overlap-arm metric rule (all overlap arms, both drivers): `prefetch_ms` =
+ws/prefetch STREAM duration fork→done (off-chain; never sum phase columns
+on overlap arms), `prefetch_wait_ms` = exposed stall from the event
+preceding the join to `join`, and the phase after the join measures from
+`join`, so the six phase columns always partition [start, gemm].
+The separate NCCL communicator the concurrent-overlap arms need is PORT
+MACHINERY (NCCL serializes per communicator) — neither upstream has a
+communicator in its weight path (UltraEP: raw NVLink ld/st via
+`nvshmem_ptr` peer VAs from its own SM kernel; MoonEP: destination-side
+TMA remote-read PULL). Transport authenticity ladder for weight movement
+(corrected 2026-08-11 — put+signal is NOT what either upstream does):
+custom NVSHMEM kernel matching the real upstream shape (bare `putmem_nbi`
+push published by the subsequent collective join for UltraEP direct /
+`getmem` pull for MoonEP prefetch) > CUDA-IPC peer copies > NCCL P2P
+(two-sided rendezvous + own protocol optimizations; what the arms use
+today for capsule comparability — declared port artifact, NR-12 fact 8).
+
 Metrics parsed from stderr in `phases` mode (per iteration, per rank):
 `stage1_ms, stage2_ms, gemmgate_ms, a2av_gemm_ms, barrier_ms` ([a2av-timing]),
 `stage2_*_ms` ([a2av-stage2] sub-marks), `host_enq_stage1_ms,

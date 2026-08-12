@@ -37,6 +37,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RESULTS_ROOT = os.path.join(REPO_ROOT, "sweeps", "results", "runs")
 TEST = "test/python/moe_ag_scatter/test_moe_ag_traffic.py"
 TEST_FAST = "test/python/moe_ag_scatter/test_moe_ag_fast_baseline.py"
+TEST_MOONEP = "test/python/moe_ag_scatter/test_moe_moonep_traffic.py"
+TEST_ULTRAEP = "test/python/moe_ag_scatter/test_moe_ultraep_traffic.py"
 
 MODES = ("e2e", "isolated", "phases", "torchprof", "nsys")
 MODE_ORDER = {m: i for i, m in enumerate(MODES)}  # clean numbers before perturbed
@@ -322,6 +324,16 @@ def expand_cells(spec, plat):
                                 " alltoallv); --profile/nsys unsupported"
                             )
                             continue
+                    if (
+                        VARIANTS[vname].get("driver", "flux") in ("moonep", "ultraep")
+                        and mode == "phases"
+                    ):
+                        print(
+                            f"NOTE: {vname} x phases not generated — its phase"
+                            " metrics (plan_comm/pack/comm/scatter/prefetch/gemm)"
+                            " arrive free in every mode via the recorder"
+                        )
+                        continue
                     fslug = family_slug(fam, fparams)
                     cells.append(
                         {
@@ -416,6 +428,68 @@ def fast_sym_size(matrix_path, plat):
     return f"{sym_g}G"
 
 
+def moonep_sym_size(matrix_path, plat):
+    """Symmetric-heap sizing for the moonep nvshmem arms. All2AllSingle
+    allocates in+out staging of max_split*W rows each, twice (hidden rows +
+    per-entry fp32 weights). max_split is the plan's largest per-(src,dst)
+    representative-row count, bounded above by the largest matrix entry in
+    chunks (dedup only shrinks it); weights staging is bounded by the same
+    entry count at 4 bytes. 2x headroom, floor 2G.
+
+    CAVEAT: the //1024 below hard-wires chunk_bytes = 8192 (H=4096 bf16):
+    it is (entries = bytes/8192) * 4B written as bytes/1024. Kept as-is so
+    existing moonep capsules' NVSHMEM_SYMMETRIC_SIZE stays byte-stable in
+    env_json; ultraep_sym_size below does it chunk-aware."""
+    with open(matrix_path) as f:
+        toks = f.read().split()
+    w = int(toks[0])
+    vals = [int(x) for x in toks[1 : 1 + w * w]]
+    max_pair_bytes = max(vals)  # = max_split_rows * chunk_bytes upper bound
+    hidden = 2 * w * max_pair_bytes          # in + out staging, bf16 rows
+    weights = 2 * w * (max_pair_bytes // 1024)  # entries * 4B << hidden
+    sym_g = max(2, math.ceil(2 * (hidden + weights) / (1 << 30)))
+    sym_max = plat.get("sym_size_max_g")
+    if sym_max:
+        sym_g = min(sym_g, int(sym_max))
+    return f"{sym_g}G"
+
+
+def ultraep_sym_size(matrix_path, plat, spec, variant):
+    """Symmetric-heap sizing for the ultraep nvshmem arms. Two All2AllSingle
+    ops (hidden rows n_dim=H; per-row fp32 probs n_dim=1 — NO dedup, so the
+    probs splits equal the row splits), each allocating in+out staging of
+    max_split*W rows at construction.
+
+    Bound: the reroute can redirect a token only among instances of its
+    logical target expert, and replicas live strictly inside that expert's
+    NVL domain — so post-reroute rows src->dst are bounded by src's LOGICAL
+    traffic to dst's whole domain: max over (src, domain) of the
+    domain-summed matrix row slice. Chunk-aware (no H=4096 hard-wiring).
+    2x headroom, floor 2G, capped by plat sym_size_max_g."""
+    with open(matrix_path) as f:
+        toks = f.read().split()
+    w = int(toks[0])
+    vals = [int(x) for x in toks[1 : 1 + w * w]]
+    ta = variant.get("test_args") or []
+    if "--nvl_domain_size" in ta:
+        d = int(ta[ta.index("--nvl_domain_size") + 1])
+    else:
+        d = w // int(spec["nodes"])
+    max_pair_bytes = max(
+        sum(vals[src * w + dst] for dst in range(g * d, (g + 1) * d))
+        for src in range(w)
+        for g in range(w // d)
+    )
+    chunk = int(spec["chunk_bytes"])
+    hidden = 2 * w * max_pair_bytes                   # in+out staging, row bytes
+    probs = 2 * w * (max_pair_bytes // chunk) * 4     # one fp32 per row (no dedup)
+    sym_g = max(2, math.ceil(2 * (hidden + probs) / (1 << 30)))
+    sym_max = plat.get("sym_size_max_g")
+    if sym_max:
+        sym_g = min(sym_g, int(sym_max))
+    return f"{sym_g}G"
+
+
 def build_cell_env(spec, plat, cell, staging, matrix_path):
     v = VARIANTS[cell["variant"]]
     env = {}
@@ -423,6 +497,20 @@ def build_cell_env(spec, plat, cell, staging, matrix_path):
     if v.get("driver", "flux") == "fast":
         # FLUX_A2AV_* knobs are meaningless for FAST; its heap follows capacity
         env["NVSHMEM_SYMMETRIC_SIZE"] = fast_sym_size(matrix_path, plat)
+    elif v.get("driver", "flux") in ("moonep", "ultraep"):
+        # no FLUX_A2AV_* scale knobs ever; NVSHMEM heap only for the
+        # one-sided-transport arms (All2AllSingle symmetric staging is
+        # 2 ops x 2 bufs of max_split*W rows). moonep bounds max_split by
+        # the largest per-pair matrix entry (dedup only shrinks it);
+        # ultraep is no-dedup and reroute-redirected, so its bound is the
+        # domain-summed slice (see ultraep_sym_size).
+        if "nvshmem" in (v.get("test_args") or []):
+            if v.get("driver") == "ultraep":
+                env["NVSHMEM_SYMMETRIC_SIZE"] = ultraep_sym_size(
+                    matrix_path, plat, spec, v
+                )
+            else:
+                env["NVSHMEM_SYMMETRIC_SIZE"] = moonep_sym_size(matrix_path, plat)
     else:
         env.update(scale_knobs(cell["budget_mib"], spec["topk"], spec["chunk_bytes"]))
         sym_max = plat.get("sym_size_max_g")
@@ -490,12 +578,22 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         # gather-gateway paths need a free SM for the index_selects; the two
         # union-broadcast modes forward with pure CE puts and are exempt
         sm_margin = max(1, sm_margin)
-    test_args = [
-        TEST,
-        "--traffic_matrix",
-        matrix_path,
-        "--comm_pattern",
-        v["comm_pattern"],
+    if v.get("driver", "flux") in ("moonep", "ultraep"):
+        # same CLI as the flux driver minus --comm_pattern; variant-specific
+        # flags (--transport nvshmem / --overlap_prefetch / --nvl_domain_size)
+        # ride test_args
+        test = TEST_MOONEP if v["driver"] == "moonep" else TEST_ULTRAEP
+        test_args = [test, "--traffic_matrix", matrix_path]
+        test_args += list(v.get("test_args") or [])
+    else:
+        test_args = [
+            TEST,
+            "--traffic_matrix",
+            matrix_path,
+            "--comm_pattern",
+            v["comm_pattern"],
+        ]
+    test_args += [
         "--topk",
         str(spec["topk"]),
         "--G",

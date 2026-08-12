@@ -1,0 +1,35 @@
+# Conn=8 A/B of the M4 overlap question: the 20260808-015920 capsule ran the
+# moonep arms at launch.sh's default CUDA_DEVICE_MAX_CONNECTIONS=1, where a
+# single hardware queue could serialize cross-stream kernels and understate
+# the overlap arms. Same four arms, same trace, only conn=8 (the a2av-family
+# pin) — if "overlap buys nothing on NCCL" was a queue artifact, it flips
+# here; if it holds, the NIC-bound conclusion stands. Compare overlap vs
+# serialized WITHIN this capsule; the conn=1 capsule is the paired
+# counterfactual, not a baseline.
+platform: perlmutter
+nodes: 4
+variants:
+  - moonep
+  - moonep_overlap
+  - moonep_nvshmem
+  - moonep_nvshmem_overlap
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib: [8]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated, e2e]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+notes: "MoonEP M4 conn=8 A/B: overlap vs serialized rerun at CUDA_DEVICE_MAX_CONNECTIONS=8 (prior capsule 20260808-015920 ran conn=1), real Qwen3 trace b8/k8, correctness on"

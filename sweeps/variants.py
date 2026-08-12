@@ -21,6 +21,163 @@ VARIANTS = {
         requires=[],
         requires_file="3rdparty/FAST/nvidia/libflash.so",
     ),
+    # MoonEP-semantics redundant-expert dispatch (semantic port of
+    # MoonshotAI/MoonEP; see python/flux/testing/moonep_semantics.py and the
+    # vendored oracle under test/python/moe_ag_scatter/moonep_oracle/).
+    # driver="moonep" swaps the test file in sweep.py. Pure NCCL + local
+    # scatters + per-segment GemmOnly: no NVSHMEM heap, no FLUX_A2AV_* knobs.
+    # Phase metrics (plan_comm/pack/comm/scatter/prefetch/gemm) arrive free in
+    # every mode via the recorder, so there is no separate phases cell.
+    # CAN consume trace routing files (real token-overlap dedup semantics).
+    # All moonep arms pin CUDA_DEVICE_MAX_CONNECTIONS=8 (2026-08-08 A/B,
+    # capsules 20260808-015920 conn=1 vs 20260808-032217 conn=8): at conn=1
+    # the single hardware queue serialized the overlap arms' cross-stream
+    # work — prefetch_wait read ~0 while the cost hid inside pack_ms (6.4 ms)
+    # and overlap showed no net win; at conn=8 the overlap genuinely runs
+    # (pack 0.6 ms, overlap total 8.89 vs serialized 10.48 isolated). The
+    # serialized arm also improved slightly (11.04 -> 10.48). Cells before
+    # the pin ran conn=1 — env_json audits which is which; do not compare
+    # across the boundary.
+    "moonep": dict(
+        comm_pattern="moonep_balanced_a2av",  # cells.csv label only, never a CLI flag
+        driver="moonep",
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    # M4c: weight prefetch on a dedicated high-priority stream + separate
+    # NCCL communicator, event-joined before GEMM — MoonEP's async_finish
+    # comm-stream semantics. Emits prefetch_wait_ms (exposed stall) alongside
+    # prefetch_ms (stream duration). Compare against `moonep` (serialized).
+    "moonep_overlap": dict(
+        comm_pattern="moonep_balanced_a2av",
+        driver="moonep",
+        test_args=["--overlap_prefetch"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    # AUTHENTIC-serialization counterpart of moonep_overlap (NR-12 fact 7):
+    # upstream MoonEP shares ONE comm stream between dispatch and prefetch
+    # (api.py:487-499) — they serialize with each other and overlap only
+    # main-stream compute. This arm enqueues prefetch after the dispatch
+    # a2av on the SAME communicator (overlap window = scatter only).
+    # moonep_overlap (prefetch concurrent with dispatch, separate
+    # communicator) is the finer-than-upstream counterpart.
+    "moonep_overlap_shared": dict(
+        comm_pattern="moonep_balanced_a2av",
+        driver="moonep",
+        test_args=["--overlap_prefetch", "--shared_comm_stream"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    # M4a: dispatch a2av over flux's one-sided NVSHMEM All2AllSingle.
+    # Live path (a2a_single_kernel_v2): putmem_nbi per destination into
+    # fixed per-source slots of symmetric staging + 2 team stream barriers
+    # per call — put-then-barrier, which is actually CLOSER to MoonEP's
+    # real dispatch (TMA push + single system-scope exit barrier) than
+    # put+signal would be. (The putmem_signal kernel in
+    # all2all_single_2d_impl.cu is dead code, never launched — NR-12.)
+    # Same plan, pack order, placement, and correctness checks as `moonep`;
+    # only the transport differs. Needs the NVSHMEM heap (runner sizes
+    # symmetric bufs from the plan; sweep sets NVSHMEM_SYMMETRIC_SIZE).
+    "moonep_nvshmem": dict(
+        comm_pattern="moonep_balanced_a2av",
+        driver="moonep",
+        test_args=["--transport", "nvshmem"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    # M4a + M4c combined: one-sided wire and overlapped prefetch.
+    "moonep_nvshmem_overlap": dict(
+        comm_pattern="moonep_balanced_a2av",
+        driver="moonep",
+        test_args=["--transport", "nvshmem", "--overlap_prefetch"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    # UltraEP-semantics replicated-expert balancing (semantic port of
+    # Dots-Infra/UltraEP; see python/flux/testing/ultraep_semantics.py, bit-
+    # equality-tested vs the real kernels + vendored goldens under
+    # test/python/moe_ag_scatter/ultraep_oracle/). driver="ultraep" swaps the
+    # test file in sweep.py. Pure NCCL + local scatters + per-segment
+    # GemmOnly (moonep pattern): no NVSHMEM heap, no FLUX_A2AV_* knobs.
+    # Phase metrics (plan_comm/pack/comm/scatter/prefetch=weight_sync/gemm)
+    # arrive free in every mode via the recorder. CAN consume trace routing
+    # files. Key semantic contrasts vs moonep: replication confined to the
+    # NVLink domain (per-node solves; gemm_rows_per_rank NOT constant —
+    # residual imbalance floor ultraep_lb_floor is a cell fact), and NO wire
+    # dedup (ultraep_dup_rows audits the delta). conn=8 pin inherited from
+    # the moonep-family A/B (same NCCL + cross-stream shape).
+    "ultraep": dict(
+        comm_pattern="ultraep_quota_a2av",  # cells.csv label only, never a CLI flag
+        driver="ultraep",
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    # Rack-scale-single-node counterfactual: the whole EP group treated as
+    # one 16-GPU "NVLink domain" (what UltraEP's algorithm would do if the
+    # scale-up fabric spanned all 4 nodes). Replicas and weight_sync then
+    # cross nodes over Slingshot; LB floor -> 1.0. Prices the fabric
+    # assumption; NOT a faithful Perlmutter deployment.
+    "ultraep_domain16": dict(
+        comm_pattern="ultraep_quota_a2av",
+        driver="ultraep",
+        test_args=["--nvl_domain_size", "16"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    # Overlapped weight_sync, AUTHENTIC join point (NR-12 fact 5): upstream
+    # launches weight_sync async on a dedicated comm stream and joins BEFORE
+    # token dispatch — the join is the publication mechanism for its
+    # unsignaled peer-VA pushes (direct mode has no receiver-side
+    # signaling), not a tuning choice. Overlap window = pack only;
+    # weight_sync stays mostly exposed, matching the paper's own exposed-
+    # critical-path accounting. Emits prefetch_wait_ms.
+    "ultraep_overlap": dict(
+        comm_pattern="ultraep_quota_a2av",
+        driver="ultraep",
+        test_args=["--overlap_ws"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    # COUNTERFACTUAL join point (label like ultraep_domain16, never quote as
+    # UltraEP behavior): joins weight_sync before the GEMM instead — legal
+    # under the data dependency and sound ONLY because this NCCL port is
+    # two-sided (irecv completion rides the ws event; upstream's unsignaled
+    # pushes would be unsound here). Prices Perlmutter's split fabrics
+    # (weight_sync on NVLink, dispatch on Slingshot — a tradeoff upstream
+    # never faced). Window = pack+comm+scatter.
+    "ultraep_overlap_joingemm": dict(
+        comm_pattern="ultraep_quota_a2av",
+        driver="ultraep",
+        test_args=["--overlap_ws", "--ws_join", "gemm"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    # One-sided NVSHMEM token transport (All2AllSingle live path: putmem_nbi
+    # + 2 team barriers per call — the transport class of UltraEP's own
+    # external dispatchers, DeepEP/HybridEP). Weight_sync stays NCCL P2P
+    # (declared port artifact, NR-12 fact 8). Sweep sets
+    # NVSHMEM_SYMMETRIC_SIZE via ultraep_sym_size (no-dedup, domain-bounded).
+    "ultraep_nvshmem": dict(
+        comm_pattern="ultraep_quota_a2av",
+        driver="ultraep",
+        test_args=["--transport", "nvshmem"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    # nvshmem transport x overlapped weight_sync, join=dispatch ONLY: the ws
+    # NCCL work is absorbed by the main stream before the first team-barrier
+    # kernel launches, so no NVSHMEM team collision. DO NOT create a
+    # nvshmem + "--ws_join gemm" variant: that overlaps ws NCCL kernels with
+    # team-barrier kernels on multiplexed hardware channels — NR-02 Class-B
+    # surface, untested by design.
+    "ultraep_nvshmem_overlap": dict(
+        comm_pattern="ultraep_quota_a2av",
+        driver="ultraep",
+        test_args=["--transport", "nvshmem", "--overlap_ws"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
     # dense baseline and raw a2av modes
     "allgather": dict(comm_pattern="allgather", env={}, requires=[]),
     # a2av family pins CUDA_DEVICE_MAX_CONNECTIONS=8 (2026-08-01 A/B: -2..-8%
