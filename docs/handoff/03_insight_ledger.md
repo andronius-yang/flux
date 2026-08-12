@@ -402,3 +402,43 @@ live launch back to the signal kernel (with a reset).
 
 **Confidence: mechanism** (all four read from source; the overlap deltas become measured
 numbers in the ultraep M4 capsule).
+
+### NR-12 Amendment (2026-08-11b) — the getmem pull is IMPLEMENTED; fact 8's "future work" clause is void
+
+**(9) `flux.WeightPrefetchGetmem` (branch moonep-nvshmem-default) is the authentic weight
+path fact 8 named.** SM device kernel issuing `nvshmemx_getmem_nbi_block` chunks per
+(pair, chunk) work item, one host `nvshmemx_quiet_on_stream` as the join — destination
+initiates, source ranks passive, zero signaling, no communicator, no barriers (host
+`getmem_nbi_on_stream` fallback kept for A/B; measured identical). The [epn, ffn_shard, H]
+weight home AND the [B, ...] prefetch slots live permanently on the symmetric heap —
+residency moves, it does not grow (mirrors upstream's [E+B, H, H'] mapped tensor, and
+enables a future B=3-4 read-through arm). Arms: `moonep_getmem`, `moonep_getmem_overlap`
+(no second communicator — the fact-3 port machinery disappears on this path),
+`moonep_nvshmem_getmem` (fully one-sided). Validated 2026-08-11 (jobs 56726073/56726303):
+1n kernel/stream/nvshmem+getmem and 2n cross-node kernel/overlap/nvshmem+getmem all
+bitwise-exact incl. the per-slot broadcast check; overlap `prefetch_wait` 0.003 ms.
+CPU planner suite untouched (101 passed). The 4n16r trace capsule
+(`sweeps/specs/moonep_getmem_pm4n_trace_iso.yaml`) is pending node-hours.
+
+**(10) CXI proxy gets require a provider-registered LOCAL destination — ordinary
+cudaMalloc memory segfaults.** Found by the a2av_comm_bench `prefetch` mode: 8/8 ranks
+segfault on cross-node pulls into cudaMalloc dst (both impls; reproducible on demand via
+`PREFETCH_DST_SYM=0`), while intra-node P2P gets don't care and the bench's older ag mode
+(symmetric dst) always worked. Any future one-sided-read design on this fabric must put
+the local buffer on the symmetric heap or register it.
+
+**(11) Measured cross-node pull bandwidth (2n, per-GPU NIC): 16.5–17.5 GB/s/rank —
+~70% of Slingshot line rate and ~40% faster than the NCCL isend/irecv prefetch it
+replaces** (32 MiB worst-rank med 1.93 ms vs ~2.7 ms / ~12 GB/s in capsule
+20260808-032217). Insensitive to chunking (1–64 chunks) and issue path (kernel vs
+stream) — the proxy pipeline is the limiter; nothing to tune, 4 MiB default chunk
+stands. This also answers NR-04's reopener for the get direction on CXI: no landing
+ladder. Numbers + method: `a2av_comm_bench/docs/methodology.md` (prefetch section).
+
+**Falsifier updates.** Fact 10: an NVSHMEM release note or test showing unregistered-dst
+gets are supported on libfabric/CXI (would recast the segfault as a 3.2.5 bug). Fact 11:
+the 4n capsule's prefetch_ms disagreeing materially with the bench-derived expectation
+(~1.9-2.3 ms serialized).
+
+**Confidence: measured** (facts 10-11 from the committed bench transcripts; fact 9's
+end-to-end perf story becomes measured when the pending capsule lands).

@@ -103,6 +103,48 @@ Takeaways:
    NVLink-scatter to its expert owners), which would be a new comm_pattern
    since it changes the wire-bytes-equal-matrix harness contract.
 
+## prefetch mode (2026-08-11, 2 nodes x 4 A100, jobs 56726073/56726303)
+
+MoonEP-style weight pull (mirror of flux `WeightPrefetchGetmem`): every rank
+getmem-pulls one expert matrix from the next node's same-local rank (1
+ingress + 1 egress per NIC), symmetric source, quiet_on_stream join, zero
+signaling. Worst-rank medians over 20 iters:
+
+| msg | impl / chunks | med_ms | GB/s/rank |
+|---|---|---|---|
+| 32 MiB | kernel / 1 | 1.931 | **17.4** |
+| 32 MiB | kernel / 4 | 1.943 | 17.3 |
+| 32 MiB | kernel / 16 | 2.034 | 16.5 |
+| 32 MiB | kernel / 64 | 2.006 | 16.7 |
+| 32 MiB | stream / 1 | 1.940 | 17.3 |
+| 32 MiB | stream / 16 | 1.954 | 17.2 |
+| 4 MiB | kernel / 4 | 0.265 | 15.8 |
+| 64 MiB | kernel / 16 | 3.843 | 17.5 |
+| 32 MiB intra-node | kernel / 16 | 0.415 | ~81 (NVLink) |
+
+Findings:
+1. **Cross-node getmem sustains 16.5–17.5 GB/s per rank — ~70% of the
+   ~25 GB/s Slingshot NIC line rate, and ~40% faster than the NCCL
+   `batch_isend_irecv` prefetch it replaces** (32 MiB in ~1.93 ms vs
+   ~2.7 ms / ~12 GB/s, capsule 20260808-032217). This answers NR-04's
+   reopener for the get direction on CXI: no landing ladder, the proxy get
+   path is a real RMA read at healthy fraction of line rate.
+2. **Bandwidth is insensitive to chunking (1–64 chunks) and to issue path
+   (SM kernel vs host on-stream)** at these sizes — the CXI proxy pipeline
+   is the limiter, not issue granularity. The flux op's 4 MiB default chunk
+   is fine; nothing to tune.
+3. **A proxy-mediated get's LOCAL destination must be provider-registered:
+   pulling into ordinary cudaMalloc memory segfaults** (reproduced 8/8
+   ranks, both impls, and on demand via `PREFETCH_DST_SYM=0`; intra-node
+   P2P gets don't care). Fix: destination on the symmetric heap — which is
+   also upstream-faithful (MoonEP's prefetch slots are rows [E, E+B) of the
+   mapped weight tensor).
+
+```bash
+salloc --qos interactive -C gpu --account m4243_g -N 2 --gpus-per-node=4 \
+  bash a2av_comm_bench/run_prefetch.sh
+```
+
 ## Usage
 
 ```bash
