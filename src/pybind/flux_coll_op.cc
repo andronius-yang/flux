@@ -23,6 +23,7 @@
 #include "coll/ths_op/dis_scatter_backward.h"
 #include "coll/ths_op/dis_scatter_forward.h"
 #include "coll/ths_op/isendrecv.h"
+#include "coll/ths_op/weight_prefetch_getmem.h"
 #include "flux/ths_op/flux_shm.h"
 #include "flux/ths_op/ths_pybind.h"
 
@@ -435,6 +436,43 @@ static int reg_async_send_recv_single [[maybe_unused]] = []() {
             py::arg("comm_buff_id"),
             py::arg("value"));
   });
+  return 0;
+}();
+
+using WeightPrefetchGetmemCls = ths_op::TorchClassWrapper<WeightPrefetchGetmem>;
+
+static int reg_weight_prefetch_getmem [[maybe_unused]] = []() {
+  ths_op::ThsOpsInitRegistry::instance().register_one(
+      "weight_prefetch_getmem", [](py::module &m) {
+        py::class_<WeightPrefetchGetmemCls>(m, "WeightPrefetchGetmem")
+            .def(
+                py::init([](c10::intrusive_ptr<c10d::ProcessGroup> pg,
+                            int64_t n_experts_local,
+                            int64_t row_dim0,
+                            int64_t row_dim1,
+                            at::ScalarType dtype) {
+                  return new WeightPrefetchGetmemCls(
+                      std::make_shared<C10dProcessGroup>("", pg),
+                      n_experts_local,
+                      row_dim0,
+                      row_dim1,
+                      dtype);
+                }),
+                py::arg("pg"),
+                py::arg("n_experts_local"),
+                py::arg("row_dim0"),
+                py::arg("row_dim1"),
+                py::arg("dtype"))
+            .def("weight_home", &WeightPrefetchGetmemCls::weight_home)
+            .def("set_pairs", &WeightPrefetchGetmemCls::set_pairs, py::arg("pairs_cpu"))
+            .def(
+                "forward",
+                &WeightPrefetchGetmemCls::forward,
+                py::arg("dst"),
+                py::arg("num_comm_sm"),
+                py::arg("chunk_bytes"),
+                py::arg("device_kernel") = true);
+      });
   return 0;
 }();
 

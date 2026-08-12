@@ -101,6 +101,44 @@ VARIANTS = {
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),
+    # M4d: getmem weight prefetch — the authentic recreation of MoonEP's
+    # destination-side pull (NR-12 fact 6: receiver remote-READS the home
+    # rank's immutable weight rows; zero signaling; the NVSHMEM analog is
+    # getmem, not put). Weights live permanently on the symmetric heap
+    # (upstream memory model; enables the future B=3-4 read-through arm);
+    # the SM kernel issues nvshmemx_getmem_nbi_block chunks + one
+    # quiet_on_stream — no barriers, no communicator. Cross-node pulls are
+    # proxy-mediated CXI (extrapolation per NR-12 fact 7). Token wire kept
+    # NCCL here to isolate the weight-path change against the historical
+    # `moonep` arm inside one capsule.
+    "moonep_getmem": dict(
+        comm_pattern="moonep_balanced_a2av",
+        driver="moonep",
+        test_args=["--transport", "nccl", "--prefetch_transport", "getmem"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    # M4d + M4c: getmem pull on the overlap side stream. Unlike the NCCL
+    # overlap arm this needs NO second communicator (one-sided) and NO team
+    # barrier coexists with the token a2av (the NR-02/fact-8 hazard that
+    # rejected All2AllSingle for weights does not apply to bare gets).
+    "moonep_getmem_overlap": dict(
+        comm_pattern="moonep_balanced_a2av",
+        driver="moonep",
+        test_args=["--transport", "nccl", "--prefetch_transport", "getmem",
+                   "--overlap_prefetch"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    # M4a + M4d: fully one-sided configuration — nvshmem token wire AND
+    # getmem weight pull; the most transport-faithful moonep arm.
+    "moonep_nvshmem_getmem": dict(
+        comm_pattern="moonep_balanced_a2av",
+        driver="moonep",
+        test_args=["--transport", "nvshmem", "--prefetch_transport", "getmem"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
     # UltraEP-semantics replicated-expert balancing (semantic port of
     # Dots-Infra/UltraEP; see python/flux/testing/ultraep_semantics.py, bit-
     # equality-tested vs the real kernels + vendored goldens under

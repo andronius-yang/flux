@@ -454,6 +454,34 @@ def moonep_sym_size(matrix_path, plat):
     return f"{sym_g}G"
 
 
+def moonep_getmem_sym_size(matrix_path, plat, spec, variant):
+    """Symmetric-heap sizing for moonep arms with the getmem weight path.
+    The [epn, ffn_shard, H] weight home lives PERMANENTLY on the heap
+    (upstream's memory model: weights always remotely readable — residency
+    moves there, it does not grow; the prefetch destination slots stay
+    ordinary memory, only the get SOURCE must be symmetric). Token staging
+    is added only when the token transport is also nvshmem, using
+    moonep_sym_size's All2AllSingle terms verbatim (incl. its frozen
+    //1024 caveat) so mixed arms stay comparable. 2x headroom, floor 2G,
+    plat cap."""
+    with open(matrix_path) as f:
+        toks = f.read().split()
+    w = int(toks[0])
+    chunk = int(spec["chunk_bytes"])  # = H * itemsize (bf16 row bytes)
+    epn = int(spec["G"]) // w
+    home = epn * int(spec["ffn_hidden"]) * chunk  # ffn_shard rows of H*2B
+    staging = 0
+    if "nvshmem" in (variant.get("test_args") or []):
+        vals = [int(x) for x in toks[1 : 1 + w * w]]
+        max_pair_bytes = max(vals)
+        staging = 2 * w * max_pair_bytes + 2 * w * (max_pair_bytes // 1024)
+    sym_g = max(2, math.ceil(2 * (staging + home) / (1 << 30)))
+    sym_max = plat.get("sym_size_max_g")
+    if sym_max:
+        sym_g = min(sym_g, int(sym_max))
+    return f"{sym_g}G"
+
+
 def ultraep_sym_size(matrix_path, plat, spec, variant):
     """Symmetric-heap sizing for the ultraep nvshmem arms. Two All2AllSingle
     ops (hidden rows n_dim=H; per-row fp32 probs n_dim=1 — NO dedup, so the
@@ -504,7 +532,14 @@ def build_cell_env(spec, plat, cell, staging, matrix_path):
         # the largest per-pair matrix entry (dedup only shrinks it);
         # ultraep is no-dedup and reroute-redirected, so its bound is the
         # domain-summed slice (see ultraep_sym_size).
-        if "nvshmem" in (v.get("test_args") or []):
+        ta = v.get("test_args") or []
+        if "getmem" in ta and v.get("driver") == "moonep":
+            # getmem weight path: heap must also hold the permanent weight
+            # home (plus token staging when the token transport is nvshmem)
+            env["NVSHMEM_SYMMETRIC_SIZE"] = moonep_getmem_sym_size(
+                matrix_path, plat, spec, v
+            )
+        elif "nvshmem" in ta:
             if v.get("driver") == "ultraep":
                 env["NVSHMEM_SYMMETRIC_SIZE"] = ultraep_sym_size(
                     matrix_path, plat, spec, v
