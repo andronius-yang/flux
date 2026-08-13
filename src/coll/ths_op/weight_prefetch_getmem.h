@@ -29,15 +29,26 @@ namespace bytedance::flux::ths_op {
 // immutability is why no signaling or barrier exists anywhere in this op).
 class WeightPrefetchGetmem {
  public:
+  // contiguous_layout=true allocates home + slots as ONE symmetric
+  // [n_experts_local + n_slots, row_dim0, row_dim1] tensor (weight_full());
+  // weight_home()/prefetch_slots() become dim-0 views of it. This is
+  // upstream MoonEP's own [E+B] mapped-tensor layout, and the single
+  // contiguous weights operand the fused a2av GEMM requires (its a2av mode
+  // supports exactly one weight group).
   WeightPrefetchGetmem(
       std::shared_ptr<Group> pg,
       int64_t n_experts_local,
       int64_t n_slots,
       int64_t row_dim0,
       int64_t row_dim1,
-      at::ScalarType dtype);
+      at::ScalarType dtype,
+      bool contiguous_layout = false);
 
   ~WeightPrefetchGetmem();
+
+  // The [n_experts_local + n_slots, row_dim0, row_dim1] symmetric tensor
+  // (contiguous_layout ctors only).
+  torch::Tensor weight_full();
 
   // My rank's symmetric weight-home shard (read by remote gets; also valid
   // as the local-expert GEMM operand — symmetric memory is ordinary device

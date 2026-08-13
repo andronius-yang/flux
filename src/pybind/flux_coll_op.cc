@@ -451,21 +451,25 @@ static int reg_weight_prefetch_getmem [[maybe_unused]] = []() {
                             int64_t n_slots,
                             int64_t row_dim0,
                             int64_t row_dim1,
-                            at::ScalarType dtype) {
+                            at::ScalarType dtype,
+                            bool contiguous_layout) {
                   return new WeightPrefetchGetmemCls(
                       std::make_shared<C10dProcessGroup>("", pg),
                       n_experts_local,
                       n_slots,
                       row_dim0,
                       row_dim1,
-                      dtype);
+                      dtype,
+                      contiguous_layout);
                 }),
                 py::arg("pg"),
                 py::arg("n_experts_local"),
                 py::arg("n_slots"),
                 py::arg("row_dim0"),
                 py::arg("row_dim1"),
-                py::arg("dtype"))
+                py::arg("dtype"),
+                py::arg("contiguous_layout") = false)
+            .def("weight_full", &WeightPrefetchGetmemCls::weight_full)
             .def("weight_home", &WeightPrefetchGetmemCls::weight_home)
             .def("prefetch_slots", &WeightPrefetchGetmemCls::prefetch_slots)
             .def("set_pairs", &WeightPrefetchGetmemCls::set_pairs, py::arg("pairs_cpu"))

@@ -47,6 +47,8 @@ class WeightPrefetchGetmem::WeightPrefetchGetmemImpl {
   int32_t world_size_;
   at::ScalarType dtype_;
 
+  bool contiguous_layout_;
+  torch::Tensor weight_full_;
   torch::Tensor weight_home_;
   torch::Tensor prefetch_slots_;
   torch::Tensor pairs_dev_;
@@ -59,21 +61,41 @@ class WeightPrefetchGetmem::WeightPrefetchGetmemImpl {
       int64_t n_slots,
       int64_t row_dim0,
       int64_t row_dim1,
-      at::ScalarType dtype)
+      at::ScalarType dtype,
+      bool contiguous_layout)
       : pg_(pg),
         n_experts_local_(n_experts_local),
         world_size_(pg->get_size()),
-        dtype_(dtype) {
+        dtype_(dtype),
+        contiguous_layout_(contiguous_layout) {
     FLUX_CHECK(n_experts_local > 0 && n_slots > 0 && row_dim0 > 0 && row_dim1 > 0);
     // Collective, uniform across ranks by construction (every rank homes
     // n_experts_local experts and holds n_slots prefetch slots of identical
     // shape). The slots are symmetric because a proxy-mediated get's local
     // destination must be provider-registered (see header).
-    this->weight_home_ =
-        nvshmem_create_tensor({n_experts_local, row_dim0, row_dim1}, dtype, false);
-    this->prefetch_slots_ =
-        nvshmem_create_tensor({n_slots, row_dim0, row_dim1}, dtype, true);
+    if (contiguous_layout) {
+      // One allocation, upstream's [E+B] mapped layout: home = rows
+      // [0, epn), slots = rows [epn, epn+B). dim-0 narrow keeps contiguity
+      // and the symmetric base, so every existing addressing/check below
+      // works unchanged. init_zero so empty slots read deterministic zeros.
+      this->weight_full_ =
+          nvshmem_create_tensor({n_experts_local + n_slots, row_dim0, row_dim1}, dtype, true);
+      this->weight_home_ = this->weight_full_.narrow(0, 0, n_experts_local);
+      this->prefetch_slots_ = this->weight_full_.narrow(0, n_experts_local, n_slots);
+    } else {
+      this->weight_home_ =
+          nvshmem_create_tensor({n_experts_local, row_dim0, row_dim1}, dtype, false);
+      this->prefetch_slots_ =
+          nvshmem_create_tensor({n_slots, row_dim0, row_dim1}, dtype, true);
+    }
     this->expert_bytes_ = row_dim0 * row_dim1 * this->weight_home_.element_size();
+  }
+
+  torch::Tensor
+  weight_full() {
+    FLUX_CHECK(this->contiguous_layout_)
+        << "weight_full() requires a contiguous_layout ctor";
+    return this->weight_full_;
   }
 
   torch::Tensor
@@ -156,11 +178,18 @@ WeightPrefetchGetmem::WeightPrefetchGetmem(
     int64_t n_slots,
     int64_t row_dim0,
     int64_t row_dim1,
-    at::ScalarType dtype)
+    at::ScalarType dtype,
+    bool contiguous_layout)
     : impl_(new WeightPrefetchGetmemImpl(
-          pg, n_experts_local, n_slots, row_dim0, row_dim1, dtype)) {}
+          pg, n_experts_local, n_slots, row_dim0, row_dim1, dtype, contiguous_layout)) {}
 
 WeightPrefetchGetmem::~WeightPrefetchGetmem() { delete impl_; }
+
+torch::Tensor
+WeightPrefetchGetmem::weight_full() {
+  FLUX_CHECK(impl_ != nullptr) << "WeightPrefetchGetmem is not initialized!";
+  return impl_->weight_full();
+}
 
 torch::Tensor
 WeightPrefetchGetmem::weight_home() {
