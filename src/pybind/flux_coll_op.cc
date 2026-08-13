@@ -24,6 +24,7 @@
 #include "coll/ths_op/dis_scatter_forward.h"
 #include "coll/ths_op/isendrecv.h"
 #include "coll/ths_op/weight_prefetch_getmem.h"
+#include "coll/ths_op/weight_push_multicast.h"
 #include "flux/ths_op/flux_shm.h"
 #include "flux/ths_op/ths_pybind.h"
 
@@ -440,6 +441,47 @@ static int reg_async_send_recv_single [[maybe_unused]] = []() {
 }();
 
 using WeightPrefetchGetmemCls = ths_op::TorchClassWrapper<WeightPrefetchGetmem>;
+using WeightPushMulticastCls = ths_op::TorchClassWrapper<WeightPushMulticast>;
+
+static int reg_weight_push_multicast [[maybe_unused]] = []() {
+  ths_op::ThsOpsInitRegistry::instance().register_one(
+      "weight_push_multicast", [](py::module &m) {
+        py::class_<WeightPushMulticastCls>(m, "WeightPushMulticast")
+            .def(
+                py::init([](c10::intrusive_ptr<c10d::ProcessGroup> pg,
+                            int64_t n_experts_local,
+                            int64_t n_slots,
+                            int64_t row_dim0,
+                            int64_t row_dim1,
+                            at::ScalarType dtype) {
+                  return new WeightPushMulticastCls(
+                      std::make_shared<C10dProcessGroup>("", pg),
+                      n_experts_local,
+                      n_slots,
+                      row_dim0,
+                      row_dim1,
+                      dtype);
+                }),
+                py::arg("pg"),
+                py::arg("n_experts_local"),
+                py::arg("n_slots"),
+                py::arg("row_dim0"),
+                py::arg("row_dim1"),
+                py::arg("dtype"))
+            .def("weight_full", &WeightPushMulticastCls::weight_full)
+            .def("weight_home", &WeightPushMulticastCls::weight_home)
+            .def("prefetch_slots", &WeightPushMulticastCls::prefetch_slots)
+            .def("signals", &WeightPushMulticastCls::signals)
+            .def("set_plan", &WeightPushMulticastCls::set_plan, py::arg("pairs_cpu"))
+            .def(
+                "forward",
+                &WeightPushMulticastCls::forward,
+                py::arg("multicast") = false)
+            .def("join", &WeightPushMulticastCls::join)
+            .def("epoch", &WeightPushMulticastCls::epoch);
+      });
+  return 0;
+}();
 
 static int reg_weight_prefetch_getmem [[maybe_unused]] = []() {
   ths_op::ThsOpsInitRegistry::instance().register_one(
