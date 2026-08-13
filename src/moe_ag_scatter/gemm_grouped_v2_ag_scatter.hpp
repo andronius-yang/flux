@@ -295,6 +295,9 @@ class GemmGroupedV2AGScatter_Device
       gemm_args.progress_slots = reinterpret_cast<A2AVProgressSlots *>(args.progress_slots);
       gemm_args.tile_trace = reinterpret_cast<A2AVTileRecord *>(args.tile_trace);
       gemm_args.tile_trace_capacity = args.tile_trace_capacity;
+      gemm_args.weight_signal_ptr = args.weight_signal_ptr;
+      gemm_args.weight_signal_expected = args.weight_signal_expected;
+      gemm_args.weight_gate_group_start = args.weight_gate_group_start;
     }
     return gemm_args;
   }

@@ -84,7 +84,15 @@ class GemmGroupedV2AGScatterOp {
       // dedup counts — cols [0, W) = unique tokens source s -> rank d, cols
       // [W, W + nnodes) = unique tokens source s -> node-n union. Identical on
       // all ranks; required (with splits_per_source) in compress mode.
-      c10::optional<torch::Tensor> a2av_unique_counts = c10::nullopt);
+      c10::optional<torch::Tensor> a2av_unique_counts = c10::nullopt,
+      // weight-gated tiles (moonep_fused scenario 2): CUDA u64/int64 epoch
+      // signals (>= n_slots elements, e.g. WeightPushMulticast.signals());
+      // problems with local group >= weight_gate_group_start spin on
+      // weight_signal[group - start] >= weight_signal_epoch. a2av static-
+      // schedule modes only. nullopt/-1 = no weight gating.
+      c10::optional<torch::Tensor> weight_signal = c10::nullopt,
+      int64_t weight_signal_epoch = 0,
+      int64_t weight_gate_group_start = -1);
   torch::Tensor forward_triton_aot(
       torch::Tensor inputs_shard,
       torch::Tensor weights,

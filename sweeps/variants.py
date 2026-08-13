@@ -164,6 +164,32 @@ VARIANTS = {
         env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_LB_UNION"],
     ),
+    # moonep_fused with the weight PUSH (WeightPushMulticast, direct per-pair
+    # CE putmem_signal from the home ranks; zero-SM join before forward =
+    # the ungated A/B baseline for the M5 tile-gated arm). Same wire bytes
+    # as getmem in the opposite direction; the initiator/dependency flip is
+    # the measured variable (a straggler HOME now stalls the destination).
+    "moonep_fused_push": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push"],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION"],
+    ),
+    # THE concurrency arm (scenario 2 proper): no destination-side join —
+    # only prefetch-slot tiles spin on their slot's weight epoch signal
+    # (weight-gated tiles), so token dispatch, weight push, and GEMM are all
+    # in flight together and the two wire flows share the CXI proxy. A/B
+    # against moonep_fused_push (same wire, gate moved to the stream
+    # front-end): outputs should be torch.equal; the delta is pure
+    # scheduling.
+    "moonep_fused_push_gated": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_gate", "tiles"],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION"],
+    ),
     # UltraEP-semantics replicated-expert balancing (semantic port of
     # Dots-Infra/UltraEP; see python/flux/testing/ultraep_semantics.py, bit-
     # equality-tested vs the real kernels + vendored goldens under

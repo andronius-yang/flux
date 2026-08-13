@@ -58,6 +58,7 @@ from flux.testing import (
     traffic_matrix_to_choosed_experts,
 )
 from flux.testing.moonep_fused_map import (
+    assign_gateways,
     build_fused_metadata,
     build_virtual_map,
     fused_row_map,
@@ -123,9 +124,25 @@ def parse_args():
     parser.add_argument("--prefetch_impl", default="kernel",
                         choices=["kernel", "stream"])
     parser.add_argument("--weight_path", default="getmem",
-                        choices=["getmem"],
-                        help="weight-movement transport (scenario 1: getmem"
-                        " pull, joined before forward)")
+                        choices=["getmem", "push"],
+                        help="weight-movement transport. getmem (scenario"
+                        " 1): one-sided pull, joined before forward. push"
+                        " (scenario 2): one-sided CE putmem_signal from the"
+                        " home ranks (WeightPushMulticast), the concurrent-"
+                        "flow arm")
+    parser.add_argument("--weight_push_mode", default="direct",
+                        choices=["direct", "mcast"],
+                        help="push wire shape: direct = one put per"
+                        " (home, dest) pair; mcast = one inter-node put per"
+                        " (expert, dest node) + NVLink gateway fan-out (M4)")
+    parser.add_argument("--weight_gate", default="join",
+                        choices=["join", "tiles"],
+                        help="how the GEMM observes weight landing. join:"
+                        " zero-SM stream waits on my slots before forward"
+                        " (serialized wire, the ungated A/B baseline)."
+                        " tiles: per-tile signal spin on prefetch-slot"
+                        " problems only — dispatch, weights, and GEMM all"
+                        " concurrent (M5)")
     parser.add_argument("--check_staged", default=False, action="store_true",
                         help="also run one staged MoonEPLayer0Runner"
                         " iteration on the same plan and compare outputs"
@@ -136,15 +153,18 @@ def parse_args():
 
 @torch.no_grad()
 def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
-                      meta, out_buf):
+                      meta, out_buf, epn):
     total_iters = args.warmup_iters + args.iters
     ev = {
         name: [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
-        for name in ("start", "pref_start", "pref_end", "end")
+        for name in ("start", "pref_start", "pref_end", "gate", "end")
     }
     w_stream = torch.cuda.Stream(priority=-1)
     isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))
     iso_sync_times = []
+    push = args.weight_path == "push"
+    mcast = args.weight_push_mode == "mcast"
+    tiles = push and args.weight_gate == "tiles"
     torch.cuda.synchronize()
     torch.distributed.barrier()
     for i in range(total_iters):
@@ -157,20 +177,45 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
         nvtx_tag = f"iter{i}_warmup" if i < args.warmup_iters else f"iter{i}"
         with torch.cuda.nvtx.range(nvtx_tag):
             ev["start"][i].record()
-            # weight movement: one-sided getmem pull on a side stream (source
-            # ranks passive), event-joined into the main stream BEFORE
-            # forward -- the fused GEMM reads the weight tensor ungated.
+            # weight movement on a side stream: getmem = destination pull
+            # (source ranks passive, quiet join); push = home-rank CE
+            # putmem_signal into destination slots (nbi issue -- pref events
+            # bracket the ISSUE, the landing shows up in gate_ms)
+            epoch = 0
             with torch.cuda.stream(w_stream):
                 w_stream.wait_event(ev["start"][i])
                 ev["pref_start"][i].record()
-                op_w.forward(
-                    op_w.prefetch_slots(),
-                    args.num_comm_sm,
-                    args.prefetch_chunk_bytes,
-                    args.prefetch_impl == "kernel",
-                )
+                if push:
+                    epoch = op_w.forward(multicast=mcast)
+                else:
+                    op_w.forward(
+                        op_w.prefetch_slots(),
+                        args.num_comm_sm,
+                        args.prefetch_chunk_bytes,
+                        args.prefetch_impl == "kernel",
+                    )
                 ev["pref_end"][i].record()
+            # nbi-issue ordering: the fused forward's end-of-iteration
+            # barrier_all only quiets puts already issued in stream order
             torch.cuda.current_stream().wait_event(ev["pref_end"][i])
+            if push:
+                assert epoch == i + 1, f"epoch skew: {epoch} != {i + 1}"
+            if push and args.weight_gate == "join":
+                # destination landing gate: zero-SM waits on my slots
+                op_w.join()
+            # getmem path: quiet ran on w_stream; the event join above IS the
+            # landing proof (completion is locally observable)
+            ev["gate"][i].record()
+            gate_kwargs = {}
+            if tiles:
+                # M5 concurrency: no destination-side join — only prefetch-
+                # slot tiles spin on their slot's weight epoch signal, so
+                # dispatch wire, weight wire, and GEMM are all in flight
+                gate_kwargs = dict(
+                    weight_signal=op_w.signals(),
+                    weight_signal_epoch=epoch,
+                    weight_gate_group_start=epn,
+                )
             op.forward(
                 inputs_shard=moe_ctx.inputs_shard,
                 weights=wfull,
@@ -181,17 +226,19 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
                 sm_margin=args.sm_margin,
                 splits_per_source=meta.splits_per_source,
                 a2av_unique_counts=meta.a2av_unique_counts,
+                **gate_kwargs,
             )
             ev["end"][i].record()
 
-    times = {"e2e_ms": [], "prefetch_ms": [], "fused_ms": []}
+    times = {"e2e_ms": [], "prefetch_ms": [], "gate_ms": [], "fused_ms": []}
     for i in range(total_iters):
         ev["end"][i].synchronize()
         if i < args.warmup_iters:
             continue
         times["e2e_ms"].append(ev["start"][i].elapsed_time(ev["end"][i]))
         times["prefetch_ms"].append(ev["pref_start"][i].elapsed_time(ev["pref_end"][i]))
-        times["fused_ms"].append(ev["pref_end"][i].elapsed_time(ev["end"][i]))
+        times["gate_ms"].append(ev["pref_end"][i].elapsed_time(ev["gate"][i]))
+        times["fused_ms"].append(ev["gate"][i].elapsed_time(ev["end"][i]))
     if isolated:
         times["iso_sync_ms"] = iso_sync_times[args.warmup_iters :]
     return times
@@ -357,19 +404,29 @@ if __name__ == "__main__":
     epn, B, gpe = cfg.epn, cfg.B, vmap.gpe
 
     # contiguous [epn+B] weight tensor on the symmetric heap (home rows +
-    # prefetch slots) -- the op's single weight group AND the getmem home
-    op_w = flux.WeightPrefetchGetmem(
-        TP_GROUP, epn, B, ffn_shard, args.H, input_dtype,
-        contiguous_layout=True,
-    )
+    # prefetch slots) -- the op's single weight group AND the weight-movement
+    # source/destination. Exactly one weight op is live per run.
+    if args.weight_path == "push":
+        if args.weight_push_mode == "mcast":
+            raise SystemExit("--weight_push_mode mcast lands with M4 (gateway fan-out)")
+        op_w = flux.WeightPushMulticast(
+            TP_GROUP, epn, B, ffn_shard, args.H, input_dtype,
+        )
+        op_w.set_plan(assign_gateways(plan, DIST_ENV.LOCAL_WORLD_SIZE))
+    else:
+        assert args.weight_push_mode == "direct", "--weight_push_mode needs --weight_path push"
+        op_w = flux.WeightPrefetchGetmem(
+            TP_GROUP, epn, B, ffn_shard, args.H, input_dtype,
+            contiguous_layout=True,
+        )
+        my_pairs = [
+            (b, int(plan.experts_to_copy[rank, b]) // epn,
+             int(plan.experts_to_copy[rank, b]) % epn)
+            for b in range(B)
+            if int(plan.experts_to_copy[rank, b]) >= 0
+        ]
+        op_w.set_pairs(torch.tensor(my_pairs, dtype=torch.int32).reshape(-1, 3))
     op_w.weight_home().copy_(moe_ctx.weights[0])
-    my_pairs = [
-        (b, int(plan.experts_to_copy[rank, b]) // epn,
-         int(plan.experts_to_copy[rank, b]) % epn)
-        for b in range(B)
-        if int(plan.experts_to_copy[rank, b]) >= 0
-    ]
-    op_w.set_pairs(torch.tensor(my_pairs, dtype=torch.int32).reshape(-1, 3))
     wfull = op_w.weight_full()
 
     tp_env = flux.DistEnvTPWithEP(
@@ -415,11 +472,13 @@ if __name__ == "__main__":
             moonep_wire_bytes=int(sum(sum(r) for r in wire_rows)) * args.chunk_bytes,
             moonep_z_matrix=plan.z.tolist(),
             weight_path=args.weight_path,
+            weight_push_mode=args.weight_push_mode,
+            weight_gate=args.weight_gate,
             **{f"knob_{k}": v for k, v in knobs.items()},
         )
 
     times = perf_moonep_fused(
-        args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu, meta, out_buf
+        args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu, meta, out_buf, epn
     )
     RECORDER.emit_iters("flux", times)
     e2e = sum(times["e2e_ms"]) / len(times["e2e_ms"])
