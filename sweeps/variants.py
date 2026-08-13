@@ -190,6 +190,31 @@ VARIANTS = {
         env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_LB_UNION"],
     ),
+    # M4: weight multicast — ONE inter-node put per (expert, dest node) into
+    # a plan-chosen gateway's own slot, NVLink CE fan-out to the other needy
+    # ranks (paced by a zero-SM wait on the gateway's slot signal). Expert
+    # replication is naturally a node-level multicast; the bench argues node
+    # ingress is the binding resource (a2av_comm_bench methodology §prefetch),
+    # so this is the wire-shape ablation vs _push. The capsule's
+    # wpush_internode_bytes_{direct,mcast} record the dedup factor.
+    "moonep_fused_push_mcast": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_push_mode", "mcast"],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION"],
+    ),
+    # M4 + M5: multicast weight wire AND weight-gated tiles — the full
+    # scenario-2 configuration (dispatch, multicast weights, GEMM all
+    # concurrent).
+    "moonep_fused_push_mcast_gated": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_push_mode", "mcast",
+                   "--weight_gate", "tiles"],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION"],
+    ),
     # UltraEP-semantics replicated-expert balancing (semantic port of
     # Dots-Infra/UltraEP; see python/flux/testing/ultraep_semantics.py, bit-
     # equality-tested vs the real kernels + vendored goldens under

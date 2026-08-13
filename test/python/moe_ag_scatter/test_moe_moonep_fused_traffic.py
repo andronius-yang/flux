@@ -407,12 +407,23 @@ if __name__ == "__main__":
     # prefetch slots) -- the op's single weight group AND the weight-movement
     # source/destination. Exactly one weight op is live per run.
     if args.weight_path == "push":
-        if args.weight_push_mode == "mcast":
-            raise SystemExit("--weight_push_mode mcast lands with M4 (gateway fan-out)")
         op_w = flux.WeightPushMulticast(
             TP_GROUP, epn, B, ffn_shard, args.H, input_dtype,
         )
-        op_w.set_plan(assign_gateways(plan, DIST_ENV.LOCAL_WORLD_SIZE))
+        push_pairs = assign_gateways(plan, DIST_ENV.LOCAL_WORLD_SIZE)
+        op_w.set_plan(push_pairs)
+        if rank == 0:
+            # wire accounting: inter-node weight legs under each shape
+            L = DIST_ENV.LOCAL_WORLD_SIZE
+            cross = [p for p in push_pairs.tolist() if p[2] // L != p[0] // L]
+            n_direct = len(cross)
+            n_mcast = len({(int(plan.experts_to_copy[d, b]), d // L)
+                           for d, b, *_ in cross})
+            ebytes = ffn_shard * args.H * input_dtype.itemsize
+            RECORDER.emit_info(
+                wpush_internode_bytes_direct=n_direct * ebytes,
+                wpush_internode_bytes_mcast=n_mcast * ebytes,
+            )
     else:
         assert args.weight_push_mode == "direct", "--weight_push_mode needs --weight_path push"
         op_w = flux.WeightPrefetchGetmem(

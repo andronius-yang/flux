@@ -23,6 +23,7 @@
 #include <nvshmemx.h>
 #include <torch/all.h>
 
+#include <algorithm>
 #include <vector>
 
 #include "flux/cuda/cuda_common.h"
@@ -153,20 +154,22 @@ class WeightPushMulticast::WeightPushMulticastImpl {
         this->my_in_slots_.push_back(b);
       }
     }
+    // one CUStreamWaitValue64 per gateway slot serves all its forwards
+    std::stable_sort(
+        this->mcast_fwd_.begin(),
+        this->mcast_fwd_.end(),
+        [](const FwdLeg &a, const FwdLeg &b) { return a.gw_slot < b.gw_slot; });
   }
 
   int64_t
   forward(bool multicast) {
-    // Multicast fan-out (gateway forwards) lands with M4; the direct wire is
-    // the M3 baseline.
-    FLUX_CHECK(!multicast) << "multicast mode not implemented yet (M4)";
     cudaStream_t stream = c10::cuda::getCurrentCUDAStream();
     this->run_id_ += 1;
     const uint64_t epoch = static_cast<uint64_t>(this->run_id_);
     char *home_base = static_cast<char *>(this->weight_home_.data_ptr());
     char *slots_base = static_cast<char *>(this->prefetch_slots_.data_ptr());
     uint64_t *sig_base = reinterpret_cast<uint64_t *>(this->signals_.data_ptr());
-    for (const auto &leg : this->direct_all_) {
+    auto emit_home_leg = [&](const PushLeg &leg) {
       char *dst = slots_base + static_cast<int64_t>(leg.dst_slot) * this->expert_bytes_;
       char *src = home_base + static_cast<int64_t>(leg.src_row) * this->expert_bytes_;
       if (leg.dst_rank == this->rank_) {
@@ -190,6 +193,48 @@ class WeightPushMulticast::WeightPushMulticastImpl {
             leg.dst_rank,
             stream);
       }
+    };
+    if (!multicast) {
+      for (const auto &leg : this->direct_all_) {
+        emit_home_leg(leg);
+      }
+      return this->run_id_;
+    }
+    // M4 multicast. HOME role: mcast_out_ = the gw<0 pairs — intra-home-node
+    // destinations, singleton groups, and each cross-node group's single
+    // inter-node leg (into the gateway's own slot).
+    for (const auto &leg : this->mcast_out_) {
+      emit_home_leg(leg);
+    }
+    // GATEWAY role: one zero-SM wait on my landed slot per gateway slot,
+    // then one NVLink CE putmem_signal per needy same-node peer, sourced
+    // from the slot row. Every wait's satisfying writer is a REMOTE home
+    // rank (NR-02 Class B safe: nothing later on my own channels releases
+    // it); waits are issued in ascending gw_slot order, an executable order
+    // on one stream since each depends only on remote arrivals. Every leg
+    // carries a full expert row — this op has no zero-payload destinations
+    // by construction (a prefetch pair exists only for alloc > 0).
+    int32_t cur_slot = -1;
+    for (const auto &f : this->mcast_fwd_) {
+      if (f.gw_slot != cur_slot) {
+        CU_CHECK(CUStreamWaitValue64(
+            stream,
+            reinterpret_cast<CUdeviceptr>(sig_base + f.gw_slot),
+            epoch,
+            CU_STREAM_WAIT_VALUE_GEQ));
+        cur_slot = f.gw_slot;
+      }
+      char *dst = slots_base + static_cast<int64_t>(f.dst_slot) * this->expert_bytes_;
+      char *src = slots_base + static_cast<int64_t>(f.gw_slot) * this->expert_bytes_;
+      nvshmemx_putmem_signal_nbi_on_stream(
+          dst,
+          src,
+          this->expert_bytes_,
+          sig_base + f.dst_slot,
+          epoch,
+          NVSHMEM_SIGNAL_SET,
+          f.dst_rank,
+          stream);
     }
     return this->run_id_;
   }
