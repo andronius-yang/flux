@@ -39,6 +39,7 @@ TEST = "test/python/moe_ag_scatter/test_moe_ag_traffic.py"
 TEST_FAST = "test/python/moe_ag_scatter/test_moe_ag_fast_baseline.py"
 TEST_MOONEP = "test/python/moe_ag_scatter/test_moe_moonep_traffic.py"
 TEST_ULTRAEP = "test/python/moe_ag_scatter/test_moe_ultraep_traffic.py"
+TEST_MOONEP_FUSED = "test/python/moe_ag_scatter/test_moe_moonep_fused_traffic.py"
 
 MODES = ("e2e", "isolated", "phases", "torchprof", "nsys")
 MODE_ORDER = {m: i for i, m in enumerate(MODES)}  # clean numbers before perturbed
@@ -521,6 +522,32 @@ def ultraep_sym_size(matrix_path, plat, spec, variant):
     return f"{sym_g}G"
 
 
+def moonep_fused_sym_size(matrix_path, plat, spec):
+    """Symmetric-heap sizing for the moonep_fused arm: the fused op's a2av
+    buffers (send S*K rows; recv/stage/relay bounded by W*S, (NN-1)*S and
+    (NN-1)*S rows respectively -- union regions never exceed S unique tokens
+    per (source, dest) and the driver sets the EXACT FLUX_A2AV_MAX_* knobs
+    from the plan, always <= these bounds) plus the permanent contiguous
+    [epn+B, ffn_shard, H] weight tensor (B = epn default => 2*epn rows of
+    ffn*chunk bytes). 2x headroom, floor 2G, plat cap."""
+    with open(matrix_path) as f:
+        toks = f.read().split()
+    w = int(toks[0])
+    vals = [int(x) for x in toks[1 : 1 + w * w]]
+    chunk = int(spec["chunk_bytes"])
+    topk = int(spec["topk"])
+    n_entries = max(sum(vals[s * w : (s + 1) * w]) for s in range(w)) // chunk  # S*K
+    s_tokens = n_entries // topk
+    nn = int(spec["nodes"])
+    a2av_rows = n_entries + w * s_tokens + 2 * max(nn - 1, 0) * s_tokens
+    weights = 2 * (int(spec["G"]) // w) * int(spec["ffn_hidden"]) * chunk
+    sym_g = max(2, math.ceil(2 * (a2av_rows * chunk + weights) / (1 << 30)))
+    sym_max = plat.get("sym_size_max_g")
+    if sym_max:
+        sym_g = min(sym_g, int(sym_max))
+    return f"{sym_g}G"
+
+
 def build_cell_env(spec, plat, cell, staging, matrix_path):
     v = VARIANTS[cell["variant"]]
     env = {}
@@ -528,6 +555,11 @@ def build_cell_env(spec, plat, cell, staging, matrix_path):
     if v.get("driver", "flux") == "fast":
         # FLUX_A2AV_* knobs are meaningless for FAST; its heap follows capacity
         env["NVSHMEM_SYMMETRIC_SIZE"] = fast_sym_size(matrix_path, plat)
+    elif v.get("driver", "flux") == "moonep_fused":
+        # the driver computes the EXACT FLUX_A2AV_MAX_* knobs from the plan
+        # (setdefault -- never pre-set them here); heap must hold the fused
+        # a2av buffers plus the permanent weight tensor
+        env["NVSHMEM_SYMMETRIC_SIZE"] = moonep_fused_sym_size(matrix_path, plat, spec)
     elif v.get("driver", "flux") in ("moonep", "ultraep"):
         # no FLUX_A2AV_* scale knobs ever; NVSHMEM heap only for the
         # one-sided-transport arms (All2AllSingle symmetric staging is
@@ -616,11 +648,15 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         # gather-gateway paths need a free SM for the index_selects; the two
         # union-broadcast modes forward with pure CE puts and are exempt
         sm_margin = max(1, sm_margin)
-    if v.get("driver", "flux") in ("moonep", "ultraep"):
+    if v.get("driver", "flux") in ("moonep", "ultraep", "moonep_fused"):
         # same CLI as the flux driver minus --comm_pattern; variant-specific
-        # flags (--transport nvshmem / --overlap_prefetch / --nvl_domain_size)
-        # ride test_args
-        test = TEST_MOONEP if v["driver"] == "moonep" else TEST_ULTRAEP
+        # flags (--transport nvshmem / --overlap_prefetch / --nvl_domain_size
+        # / --weight_path) ride test_args
+        test = {
+            "moonep": TEST_MOONEP,
+            "ultraep": TEST_ULTRAEP,
+            "moonep_fused": TEST_MOONEP_FUSED,
+        }[v["driver"]]
         test_args = [test, "--traffic_matrix", matrix_path]
         test_args += list(v.get("test_args") or [])
     else:

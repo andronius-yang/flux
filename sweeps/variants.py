@@ -145,6 +145,25 @@ VARIANTS = {
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),
+    # MERGED ARM (our-optimization ablation, never quotable as MoonEP
+    # behavior): the MoonEP plan drives the FUSED GemmGroupedV2AGScatterOp
+    # through the virtual expert space (flux.testing.moonep_fused_map) —
+    # flux lb_union compress wire + tile-level comm/GEMM overlap executing
+    # MoonEP's exact placement (plan bit-identical to the staged arms).
+    # Weights: getmem pull event-joined before forward (scenario 1). The
+    # driver computes the EXACT FLUX_A2AV_MAX_* knobs from the plan
+    # (sweep.py deliberately does not scale_knobs this driver; the ctor
+    # defaults overflow under lb_union union-sized recv regions at low
+    # topk). Compare against `moonep`/`moonep_nvshmem_getmem` (staged,
+    # faithful) and `hier_compress_lb_union` (flux-native placement)
+    # inside one capsule.
+    "moonep_fused": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=[],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION"],
+    ),
     # UltraEP-semantics replicated-expert balancing (semantic port of
     # Dots-Infra/UltraEP; see python/flux/testing/ultraep_semantics.py, bit-
     # equality-tested vs the real kernels + vendored goldens under
