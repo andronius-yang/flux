@@ -505,8 +505,9 @@ class MoonEPLayer0Runner:
         self.ffn_size_shard = ffn_size_shard
         # Constructor state only, not the port's default: the traffic driver
         # defaults to --transport nvshmem (fidelity-first, 2026-08-11) and
-        # calls enable_nvshmem() after construction; NCCL is the explicit
-        # opt-out the historical sweep arms pin.
+        # --prefetch_transport getmem (2026-08-12), calling enable_nvshmem()
+        # / enable_getmem_prefetch() after construction; NCCL on either path
+        # is the explicit opt-out the historical sweep arms pin.
         self.transport = "nccl"
         # Weight-movement path: "nccl" (batch_isend_irecv, declared port
         # artifact) until enable_getmem_prefetch() swaps in the one-sided

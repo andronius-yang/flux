@@ -31,6 +31,10 @@ VARIANTS = {
     # port of MoonEP's one-sided writes); the nccl arms below pin
     # --transport nccl explicitly so their historical capsule meaning is
     # byte-identical to pre-flip cells.
+    # NOTE 2026-08-12: --prefetch_transport default flipped to getmem the
+    # same way (faithful baseline = nvshmem dispatch + getmem weight pull);
+    # every NCCL-prefetch arm below pins --prefetch_transport nccl
+    # explicitly for the same historical-meaning reason.
     # Phase metrics (plan_comm/pack/comm/scatter/prefetch/gemm) arrive free in
     # every mode via the recorder, so there is no separate phases cell.
     # CAN consume trace routing files (real token-overlap dedup semantics).
@@ -46,7 +50,7 @@ VARIANTS = {
     "moonep": dict(
         comm_pattern="moonep_balanced_a2av",  # cells.csv label only, never a CLI flag
         driver="moonep",
-        test_args=["--transport", "nccl"],
+        test_args=["--transport", "nccl", "--prefetch_transport", "nccl"],
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),
@@ -57,7 +61,8 @@ VARIANTS = {
     "moonep_overlap": dict(
         comm_pattern="moonep_balanced_a2av",
         driver="moonep",
-        test_args=["--transport", "nccl", "--overlap_prefetch"],
+        test_args=["--transport", "nccl", "--prefetch_transport", "nccl",
+                   "--overlap_prefetch"],
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),
@@ -71,8 +76,8 @@ VARIANTS = {
     "moonep_overlap_shared": dict(
         comm_pattern="moonep_balanced_a2av",
         driver="moonep",
-        test_args=["--transport", "nccl", "--overlap_prefetch",
-                   "--shared_comm_stream"],
+        test_args=["--transport", "nccl", "--prefetch_transport", "nccl",
+                   "--overlap_prefetch", "--shared_comm_stream"],
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),
@@ -89,7 +94,7 @@ VARIANTS = {
     "moonep_nvshmem": dict(
         comm_pattern="moonep_balanced_a2av",
         driver="moonep",
-        test_args=["--transport", "nvshmem"],
+        test_args=["--transport", "nvshmem", "--prefetch_transport", "nccl"],
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),
@@ -97,7 +102,8 @@ VARIANTS = {
     "moonep_nvshmem_overlap": dict(
         comm_pattern="moonep_balanced_a2av",
         driver="moonep",
-        test_args=["--transport", "nvshmem", "--overlap_prefetch"],
+        test_args=["--transport", "nvshmem", "--prefetch_transport", "nccl",
+                   "--overlap_prefetch"],
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),

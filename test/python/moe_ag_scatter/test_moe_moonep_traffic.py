@@ -326,16 +326,18 @@ def parse_args():
     parser.add_argument("--num_comm_sm", type=int, default=8,
                         help="SMs for the NVSHMEM a2av kernel and the getmem"
                         " prefetch kernel (nvshmem/getmem paths only)")
-    parser.add_argument("--prefetch_transport", default="nccl",
+    parser.add_argument("--prefetch_transport", default="getmem",
                         choices=["nccl", "getmem"],
-                        help="weight-movement transport. nccl: two-sided"
-                        " batch_isend_irecv (declared port artifact — wrong"
-                        " initiator direction AND protocol class, NR-12 fact"
-                        " 6). getmem: one-sided destination-initiated pull"
-                        " from the symmetric weight home"
-                        " (flux.WeightPrefetchGetmem — the authentic analog"
-                        " of MoonEP's prefetch; source ranks passive, zero"
-                        " signaling, no communicator)")
+                        help="weight-movement transport. Default getmem"
+                        " (faithful-baseline flip 2026-08-12): one-sided"
+                        " destination-initiated pull from the symmetric"
+                        " weight home (flux.WeightPrefetchGetmem — the"
+                        " authentic analog of MoonEP's prefetch; source"
+                        " ranks passive, zero signaling, no communicator)."
+                        " nccl: two-sided batch_isend_irecv (declared port"
+                        " artifact — wrong initiator direction AND protocol"
+                        " class, NR-12 fact 6); the historical sweep arms"
+                        " pin it explicitly")
     parser.add_argument("--prefetch_chunk_bytes", type=int, default=4 << 20,
                         help="getmem pull chunk size per block (getmem only;"
                         " tuned by the a2av_comm_bench prefetch mode)")
