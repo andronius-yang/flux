@@ -215,6 +215,25 @@ VARIANTS = {
         env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_LB_UNION"],
     ),
+    # F-C (NR-13): plan-aware push — the driver engages the gateway
+    # machinery only when the replicated census finds a real fan-out group
+    # (n_multi_groups > 0), else runs pure direct. The resolved mode +
+    # census land in the capsule info (wpush_mode_resolved, wpush_*).
+    "moonep_fused_push_auto": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_push_mode", "auto"],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION"],
+    ),
+    "moonep_fused_push_auto_gated": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_push_mode", "auto",
+                   "--weight_gate", "tiles"],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION"],
+    ),
     # UltraEP-semantics replicated-expert balancing (semantic port of
     # Dots-Infra/UltraEP; see python/flux/testing/ultraep_semantics.py, bit-
     # equality-tested vs the real kernels + vendored goldens under

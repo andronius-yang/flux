@@ -200,12 +200,18 @@ class WeightPushMulticast::WeightPushMulticastImpl {
       }
       return this->run_id_;
     }
-    // M4 multicast. HOME role: mcast_out_ = the gw<0 pairs — intra-home-node
-    // destinations, singleton groups, and each cross-node group's single
-    // inter-node leg (into the gateway's own slot).
+    // M4 multicast HOME role only: mcast_out_ = the gw<0 pairs —
+    // intra-home-node destinations, singleton groups, and each cross-node
+    // group's single inter-node leg (into the gateway's own slot). The
+    // gateway fan-out moved to forward_gateway() (NR-13 F-B): no waits here.
     for (const auto &leg : this->mcast_out_) {
       emit_home_leg(leg);
     }
+    return this->run_id_;
+  }
+
+  void
+  forward_gateway() {
     // GATEWAY role: one zero-SM wait on my landed slot per gateway slot,
     // then one NVLink CE putmem_signal per needy same-node peer, sourced
     // from the slot row. Every wait's satisfying writer is a REMOTE home
@@ -213,7 +219,15 @@ class WeightPushMulticast::WeightPushMulticastImpl {
     // it); waits are issued in ascending gw_slot order, an executable order
     // on one stream since each depends only on remote arrivals. Every leg
     // carries a full expert row — this op has no zero-payload destinations
-    // by construction (a prefetch pair exists only for alloc > 0).
+    // by construction (a prefetch pair exists only for alloc > 0). Uses the
+    // CURRENT epoch (call after forward() in the same iteration).
+    if (this->mcast_fwd_.empty()) {
+      return;
+    }
+    cudaStream_t stream = c10::cuda::getCurrentCUDAStream();
+    const uint64_t epoch = static_cast<uint64_t>(this->run_id_);
+    char *slots_base = static_cast<char *>(this->prefetch_slots_.data_ptr());
+    uint64_t *sig_base = reinterpret_cast<uint64_t *>(this->signals_.data_ptr());
     int32_t cur_slot = -1;
     for (const auto &f : this->mcast_fwd_) {
       if (f.gw_slot != cur_slot) {
@@ -236,7 +250,6 @@ class WeightPushMulticast::WeightPushMulticastImpl {
           f.dst_rank,
           stream);
     }
-    return this->run_id_;
   }
 
   void
@@ -304,6 +317,12 @@ int64_t
 WeightPushMulticast::forward(bool multicast) {
   FLUX_CHECK(impl_ != nullptr) << "WeightPushMulticast is not initialized!";
   return impl_->forward(multicast);
+}
+
+void
+WeightPushMulticast::forward_gateway() {
+  FLUX_CHECK(impl_ != nullptr) << "WeightPushMulticast is not initialized!";
+  impl_->forward_gateway();
 }
 
 void

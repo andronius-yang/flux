@@ -68,12 +68,27 @@ class WeightPushMulticast {
   // member's own inter-node leg). Direct-mode forward ignores gw fields.
   void set_plan(torch::Tensor pairs_cpu);
 
-  // Issue this rank's pushes (and, in multicast mode, gateway forwards) on
-  // the current torch stream. Increments and returns the epoch. All puts
-  // are nbi CE puts from symmetric memory; completion is observed via the
-  // per-slot signals (join()/the fused GEMM's weight gate), and the token
-  // a2av's end-of-iteration barrier_all quiets the nbi tails.
+  // Issue this rank's HOME-role pushes on the current torch stream (direct
+  // mode: every pair; multicast mode: the gw<0 legs — intra-home-node
+  // dests, singletons, and each cross-node group's single inter-node leg
+  // into the gateway's own slot). Increments and returns the epoch. NO
+  // waits of any kind (NR-13 F-B: an event recorded after this call means
+  // "issued", never "arrived", so it can gate a forward launch safely).
+  // All puts are nbi CE puts from symmetric memory; completion is observed
+  // via the per-slot signals (join()/the fused GEMM's weight gate), and the
+  // token a2av's end-of-iteration barrier_all quiets the nbi tails.
   int64_t forward(bool multicast);
+
+  // GATEWAY role, issued separately so its slot-arrival wait NEVER sits in
+  // the launch path (NR-13 fact 3: the wait in the issue window held the
+  // gateway's token wire hostage): per gateway slot one zero-SM
+  // CUStreamWaitValue64 (GEQ current epoch; writer is a remote home rank —
+  // NR-02 Class-B safe), then NVLink CE putmem_signal fan-out to the needy
+  // same-node peers. No-op for non-gateway ranks and in direct mode. Run it
+  // on a stream whose completion is event-joined into the iteration only
+  // AFTER the fused forward launch (the fan-out then overlaps the forward;
+  // receivers' weight-gated tiles absorb any residual arrival latency).
+  void forward_gateway();
 
   // Destination-side landing gate: zero-SM stream waits (GEQ current epoch)
   // on each of MY incoming slots, on the current torch stream.

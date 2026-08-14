@@ -477,6 +477,7 @@ static int reg_weight_push_multicast [[maybe_unused]] = []() {
                 "forward",
                 &WeightPushMulticastCls::forward,
                 py::arg("multicast") = false)
+            .def("forward_gateway", &WeightPushMulticastCls::forward_gateway)
             .def("join", &WeightPushMulticastCls::join)
             .def("epoch", &WeightPushMulticastCls::epoch);
       });

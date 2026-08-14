@@ -65,6 +65,7 @@ __all__ = [
     "required_a2av_knobs",
     "fused_row_map",
     "assign_gateways",
+    "push_plan_stats",
 ]
 
 
@@ -328,7 +329,7 @@ def assign_gateways(plan: MoonEPPlan, local_world_size: int) -> torch.Tensor:
             groups.setdefault((e, d // L), []).append((d, b))
     fwd_load = [0] * R  # forwarded-expert count per gateway candidate
     pairs = []
-    for (e, node), members in sorted(groups.items()):
+    for (e, node), members in sorted(groups.items()):  # deterministic order
         home = e // epn
         src_row = e % epn
         if node == home // L or len(members) == 1:
@@ -344,3 +345,30 @@ def assign_gateways(plan: MoonEPPlan, local_world_size: int) -> torch.Tensor:
             else:
                 pairs.append((d, b, home, src_row, gw_rank, gw_slot))
     return torch.tensor(pairs, dtype=torch.int32).reshape(-1, 6)
+
+
+def push_plan_stats(pairs: torch.Tensor, local_world_size: int) -> dict:
+    """Replicated wire-shape census of a weight-push plan (assign_gateways
+    output): cross-node legs, multi-member (expert, dest-node) groups, max
+    fan-out, and the multicast dedup factor. NR-13 fact 1: under MoonEP's
+    planner these groups are almost always singletons, so gateway machinery
+    usually has nothing to dedup — the driver's --weight_push_mode auto uses
+    this census to engage mcast only when the fan-out actually exists, and
+    every run RECORDER-audits the numbers."""
+    L = local_world_size
+    groups: dict = {}
+    n_cross = 0
+    for d, b, home, src, gw, gws in pairs.tolist():
+        if home // L != d // L:
+            n_cross += 1
+            key = (home, src, d // L)  # (expert identity via home shard row, node)
+            groups[key] = groups.get(key, 0) + 1
+    n_groups = len(groups)
+    n_multi = sum(1 for v in groups.values() if v > 1)
+    return {
+        "n_cross_legs": n_cross,
+        "n_cross_groups": n_groups,
+        "n_multi_groups": n_multi,
+        "max_fan": max(groups.values()) if groups else 0,
+        "mcast_dedup": (n_cross / n_groups) if n_groups else 1.0,
+    }

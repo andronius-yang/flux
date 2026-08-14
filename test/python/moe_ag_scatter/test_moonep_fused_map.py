@@ -333,3 +333,36 @@ def test_gateway_assignment(case, R):
             assert all(int(q[4]) == d for q in others), (
                 "cross-node group must have exactly one direct member (the gateway)"
             )
+
+
+@pytest.mark.parametrize(
+    "case,R",
+    [(c, r) for c, r in GRID if r >= 4],
+    ids=[f"{c.name}-R{r}" for c, r in GRID if r >= 4],
+)
+def test_push_plan_stats(case, R):
+    from flux.testing.moonep_fused_map import push_plan_stats
+
+    cfg, topk_all, plan, vmap, _ = _build(case, R)
+    L = _L(R)
+    pairs = assign_gateways(plan, L)
+    stats = push_plan_stats(pairs, L)
+    assert stats == push_plan_stats(pairs, L)  # deterministic
+    # independent recomputation from the plan itself
+    cross = [
+        (d, int(plan.experts_to_copy[d, b]))
+        for d in range(R)
+        for b in range(cfg.B)
+        if int(plan.experts_to_copy[d, b]) >= 0
+        and (int(plan.experts_to_copy[d, b]) // cfg.epn) // L != d // L
+    ]
+    groups = {}
+    for d, e in cross:
+        groups[(e, d // L)] = groups.get((e, d // L), 0) + 1
+    assert stats["n_cross_legs"] == len(cross)
+    assert stats["n_cross_groups"] == len(groups)
+    assert stats["n_multi_groups"] == sum(1 for v in groups.values() if v > 1)
+    assert stats["max_fan"] == (max(groups.values()) if groups else 0)
+    # gateway legs exist exactly when a multi group exists (the F-C auto rule)
+    has_gw = any(int(p[4]) >= 0 for p in pairs.tolist())
+    assert has_gw == (stats["n_multi_groups"] > 0)

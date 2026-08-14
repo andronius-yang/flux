@@ -63,6 +63,7 @@ from flux.testing.moonep_fused_map import (
     build_virtual_map,
     fused_row_map,
     preflight_metadata_checks,
+    push_plan_stats,
     required_a2av_knobs,
 )
 from flux.testing.moonep_semantics import MoonEPConfig, compute_moonep_plan
@@ -131,10 +132,13 @@ def parse_args():
                         " home ranks (WeightPushMulticast), the concurrent-"
                         "flow arm")
     parser.add_argument("--weight_push_mode", default="direct",
-                        choices=["direct", "mcast"],
+                        choices=["direct", "mcast", "auto"],
                         help="push wire shape: direct = one put per"
                         " (home, dest) pair; mcast = one inter-node put per"
-                        " (expert, dest node) + NVLink gateway fan-out (M4)")
+                        " (expert, dest node) + NVLink gateway fan-out (M4);"
+                        " auto (F-C) = mcast iff the plan census finds a"
+                        " real fan-out group, else direct (NR-13 fact 1:"
+                        " MoonEP-planner plans are usually fan-out-free)")
     parser.add_argument("--weight_gate", default="join",
                         choices=["join", "tiles"],
                         help="how the GEMM observes weight landing. join:"
@@ -157,7 +161,7 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
     total_iters = args.warmup_iters + args.iters
     ev = {
         name: [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
-        for name in ("start", "pref_start", "pref_end", "gate", "end")
+        for name in ("start", "pref_start", "pref_end", "gw_end", "gate", "end")
     }
     w_stream = torch.cuda.Stream(priority=-1)
     isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))
@@ -195,6 +199,14 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
                         args.prefetch_impl == "kernel",
                     )
                 ev["pref_end"][i].record()
+                if push:
+                    # NR-13 F-B: the gateway's slot-arrival wait + NVLink
+                    # fan-out run AFTER pref_end, so the forward launch never
+                    # waits on weight ARRIVAL — pref_end now means "home puts
+                    # issued" on every rank. The fan-out overlaps the fused
+                    # forward; gw_end is joined back in after it (below).
+                    op_w.forward_gateway()
+                    ev["gw_end"][i].record()
             # nbi-issue ordering: the fused forward's end-of-iteration
             # barrier_all only quiets puts already issued in stream order
             torch.cuda.current_stream().wait_event(ev["pref_end"][i])
@@ -228,6 +240,11 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
                 a2av_unique_counts=meta.a2av_unique_counts,
                 **gate_kwargs,
             )
+            if push:
+                # drain the concurrent gateway fan-out inside the iteration
+                # (keeps next iteration's slot rewrites happens-after, and
+                # the timing bracket honest)
+                torch.cuda.current_stream().wait_event(ev["gw_end"][i])
             ev["end"][i].record()
 
     times = {"e2e_ms": [], "prefetch_ms": [], "gate_ms": [], "fused_ms": []}
@@ -406,23 +423,33 @@ if __name__ == "__main__":
     # contiguous [epn+B] weight tensor on the symmetric heap (home rows +
     # prefetch slots) -- the op's single weight group AND the weight-movement
     # source/destination. Exactly one weight op is live per run.
+    push_mode_requested = args.weight_push_mode
     if args.weight_path == "push":
         op_w = flux.WeightPushMulticast(
             TP_GROUP, epn, B, ffn_shard, args.H, input_dtype,
         )
         push_pairs = assign_gateways(plan, DIST_ENV.LOCAL_WORLD_SIZE)
         op_w.set_plan(push_pairs)
+        pstats = push_plan_stats(push_pairs, DIST_ENV.LOCAL_WORLD_SIZE)
+        if args.weight_push_mode == "auto":
+            # F-C: engage the gateway machinery only when the plan actually
+            # has something to multicast (replicated census -> identical
+            # resolution on every rank)
+            args.weight_push_mode = "mcast" if pstats["n_multi_groups"] > 0 else "direct"
         if rank == 0:
-            # wire accounting: inter-node weight legs under each shape
-            L = DIST_ENV.LOCAL_WORLD_SIZE
-            cross = [p for p in push_pairs.tolist() if p[2] // L != p[0] // L]
-            n_direct = len(cross)
-            n_mcast = len({(int(plan.experts_to_copy[d, b]), d // L)
-                           for d, b, *_ in cross})
+            print(f"push plan census: {pstats} -> mode {args.weight_push_mode}"
+                  f" (requested {push_mode_requested})")
+            RECORDER.emit_info(
+                wpush_mode_requested=push_mode_requested,
+                wpush_mode_resolved=args.weight_push_mode,
+                **{f"wpush_{k}": v for k, v in pstats.items()},
+            )
+        if rank == 0:
+            # wire accounting in bytes (derived from the census)
             ebytes = ffn_shard * args.H * input_dtype.itemsize
             RECORDER.emit_info(
-                wpush_internode_bytes_direct=n_direct * ebytes,
-                wpush_internode_bytes_mcast=n_mcast * ebytes,
+                wpush_internode_bytes_direct=pstats["n_cross_legs"] * ebytes,
+                wpush_internode_bytes_mcast=pstats["n_cross_groups"] * ebytes,
             )
     else:
         assert args.weight_push_mode == "direct", "--weight_push_mode needs --weight_path push"
