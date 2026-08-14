@@ -3367,6 +3367,13 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       args.weight_signal_ptr = reinterpret_cast<uint64_t *>(weight_signal->data_ptr());
       args.weight_signal_expected = static_cast<uint64_t>(weight_signal_epoch);
       args.weight_gate_group_start = static_cast<int>(weight_gate_group_start);
+      // F-D (NR-13 / NR-14): schedule every prefetch-slot problem after every
+      // resident problem so the weight spin lands at the tail of the
+      // wavefront, overlapped with resident compute. Scoped to the weight-gate
+      // branch: without a gate boundary there is no class to reorder.
+      static const bool kSchedPrefetchLast =
+          get_int_from_env("FLUX_A2AV_SCHED_PREFETCH_LAST", 0) != 0;
+      args.sched_prefetch_last = kSchedPrefetchLast;
     }
     for (int gid = 0; gid < num_weights_group; gid++) {
       args.weight[gid] = weights[gid].data_ptr();

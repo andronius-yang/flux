@@ -147,6 +147,16 @@ def parse_args():
                         " tiles: per-tile signal spin on prefetch-slot"
                         " problems only — dispatch, weights, and GEMM all"
                         " concurrent (M5)")
+    parser.add_argument("--weight_issue_order", default="weights_first",
+                        choices=["weights_first", "tokens_first"],
+                        help="host enqueue order of the two wire flows."
+                        " weights_first (legacy): weight movement issued on"
+                        " w_stream first, forward launch waits pref_end"
+                        " (issue serialization). tokens_first (E1, NR-14):"
+                        " the fused forward (token a2av + GEMM) is enqueued"
+                        " FIRST and the weight push after -- pure"
+                        " fire-ordering, no completion waits between the"
+                        " flows; requires push + tiles gate")
     parser.add_argument("--check_staged", default=False, action="store_true",
                         help="also run one staged MoonEPLayer0Runner"
                         " iteration on the same plan and compare outputs"
@@ -169,6 +179,7 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
     push = args.weight_path == "push"
     mcast = args.weight_push_mode == "mcast"
     tiles = push and args.weight_gate == "tiles"
+    tokens_first = args.weight_issue_order == "tokens_first"  # implies push+tiles
     torch.cuda.synchronize()
     torch.distributed.barrier()
     for i in range(total_iters):
@@ -180,6 +191,53 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
             iso_sync_times.append((time.perf_counter() - t_iso) * 1e3)
         nvtx_tag = f"iter{i}_warmup" if i < args.warmup_iters else f"iter{i}"
         with torch.cuda.nvtx.range(nvtx_tag):
+            if tokens_first:
+                # E1 (NR-14): tokens-first issue order — the fused forward's
+                # token puts are host-issued before any weight leg, so the
+                # latency-critical token windows own the NIC first and the
+                # bulk weight legs ride behind them. Pure FIRE-ordering: the
+                # epoch is peeked (epoch()+1), the weight side is enqueued
+                # after op.forward returns, and NO stream waits are added
+                # between the flows.
+                ev["start"][i].record()
+                epoch = op_w.epoch() + 1
+                ev["gate"][i].record()  # gate_ms is 0 by definition here
+                op.forward(
+                    inputs_shard=moe_ctx.inputs_shard,
+                    weights=wfull,
+                    splits_gpu=splits_gpu,
+                    scatter_index=scatter_gpu,
+                    outputs_buf=out_buf,
+                    fast_accum=False,
+                    sm_margin=args.sm_margin,
+                    splits_per_source=meta.splits_per_source,
+                    a2av_unique_counts=meta.a2av_unique_counts,
+                    weight_signal=op_w.signals(),
+                    weight_signal_epoch=epoch,
+                    weight_gate_group_start=epn,
+                )
+                # DEADLOCK RULE: w_stream may wait ONLY on ev["start"] — any
+                # event recorded after op.forward would order the weight
+                # ISSUE after completion of the GEMM, whose prefetch-slot
+                # tiles spin on these very signals (cycle).
+                # QUIET DEFERRAL: iteration i's weight nbi tail is now only
+                # quieted by iteration i+1's a2av barrier_all. Benign in this
+                # benchmark (immutable weight_home rows, monotonic GEQ epoch
+                # signals, same-value slot rewrites, main stream ends behind
+                # gw_end) but NOT free for a real model whose weights change
+                # between layers — see the NR-14 ledger caveat.
+                with torch.cuda.stream(w_stream):
+                    w_stream.wait_event(ev["start"][i])
+                    ev["pref_start"][i].record()
+                    got = op_w.forward(multicast=mcast)
+                    assert got == epoch == i + 1, \
+                        f"epoch skew: {got} vs peeked {epoch} vs iter {i + 1}"
+                    ev["pref_end"][i].record()
+                    op_w.forward_gateway()
+                    ev["gw_end"][i].record()
+                torch.cuda.current_stream().wait_event(ev["gw_end"][i])
+                ev["end"][i].record()
+                continue
             ev["start"][i].record()
             # weight movement on a side stream: getmem = destination pull
             # (source ranks passive, quiet join); push = home-rank CE
@@ -252,9 +310,15 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
         ev["end"][i].synchronize()
         if i < args.warmup_iters:
             continue
+        # bracket semantics under tokens_first (E1): prefetch_ms = the weight
+        # ISSUE window, now concurrent with the fused window; gate_ms = 0 by
+        # definition (no serialization point exists); fused_ms spans the whole
+        # forward+drain. Only e2e_ms is comparable across issue orders.
         times["e2e_ms"].append(ev["start"][i].elapsed_time(ev["end"][i]))
         times["prefetch_ms"].append(ev["pref_start"][i].elapsed_time(ev["pref_end"][i]))
-        times["gate_ms"].append(ev["pref_end"][i].elapsed_time(ev["gate"][i]))
+        times["gate_ms"].append(
+            0.0 if tokens_first else ev["pref_end"][i].elapsed_time(ev["gate"][i])
+        )
         times["fused_ms"].append(ev["gate"][i].elapsed_time(ev["end"][i]))
     if isolated:
         times["iso_sync_ms"] = iso_sync_times[args.warmup_iters :]
@@ -361,6 +425,15 @@ if __name__ == "__main__":
     assert args.H * input_dtype.itemsize == args.chunk_bytes
     assert args.G % W == 0
     assert W <= 32, "fused gating ballot is single-warp (W <= 32)"
+
+    if args.weight_issue_order == "tokens_first":
+        # join's destination gate and getmem's landing join must precede
+        # op.forward on-stream — tokens-first is definitionally impossible
+        # for them; only the tile-gated push path can start compute first.
+        assert args.weight_path == "push" and args.weight_gate == "tiles", (
+            "--weight_issue_order tokens_first requires --weight_path push "
+            "--weight_gate tiles"
+        )
 
     matrix = parse_traffic_matrix(args.traffic_matrix)
     assert matrix.shape[0] == W
@@ -512,6 +585,7 @@ if __name__ == "__main__":
             weight_path=args.weight_path,
             weight_push_mode=args.weight_push_mode,
             weight_gate=args.weight_gate,
+            weight_issue_order=args.weight_issue_order,
             **{f"knob_{k}": v for k, v in knobs.items()},
         )
 

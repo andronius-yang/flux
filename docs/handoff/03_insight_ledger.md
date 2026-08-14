@@ -537,5 +537,91 @@ headline rests on an outlier cell.
 regressing vs mcast join with a gateway leg present. Fact 8: any post-F-B capsule
 where conn=32 vs conn=8 differs beyond cell noise.
 
-**Confidence: measured** (both grids committed-pending; F-D remains open by user
-decision).
+**Confidence: measured** (both grids committed-pending; F-D implemented 2026-08-14 as
+`FLUX_A2AV_SCHED_PREFETCH_LAST` — see NR-14; capsule id recorded there once the ladder
+grid lands).
+
+## NR-14 — Phase-ordered wire (E0–E2): resident tokens first, weights second, slot-last wavefront
+
+**Design (user-settled, 2026-08-14).** Target wire order on the fused MoonEP path:
+(1) resident-destined token rows fire first, (2) prefetch weight legs second, (3)
+prefetch-only token rows last. Phase policy: a union row needed by BOTH a resident
+expert and a prefetch slot on the same destination node travels in phase 1 — phases 1
+and 3 are a DISJOINT PARTITION of the lb_union node union (no re-send tax). Ladder:
+E0 offline census → E1 issue-order flip → E2 slot-last schedule (= NR-13's F-D) → E3
+true two-round dispatch only if E0 shows payload and E1/E2 leave interference.
+
+**E0 census (sweeps/predict_phase_split.py, offline, partition-asserted against
+build_fused_metadata's U_mat).** Real Qwen3 layer-92 pernode trace, 4n16r k8 G=128
+(matrices 737b5c/0971f3/2d7aee/f10c79):
+
+| budget | phase1 (res+shared) | phase3 (pref-only) | pref frac | phase2 direct | w:t ratio | p3 slivers |
+|---|---|---|---|---|---|---|
+| b1  |   39.5 MiB |   3.9 MiB | 0.089 | 352 MiB | 8.12 | 19 |
+| b8  |  310.6 MiB |  41.9 MiB | 0.119 | 320 MiB | 0.91 |  8 |
+| b32 | 1253.5 MiB | 156.8 MiB | 0.111 | 320 MiB | 0.23 | 12 |
+| b64 | 2498.1 MiB | 319.4 MiB | 0.113 | 384 MiB | 0.14 |  4 |
+
+Synthetics: fanoutskew pref frac 0.19–0.25 (the heaviest), nodeskew 0.04–0.08,
+remotefrac 0.04–0.05 (40+ sliver chunks at low budgets). Two structural reads:
+
+1. **~89% of real-trace union rows are resident-needed and travel phase 1 under the
+   policy regardless** — the deferrable phase-3 payload is thin (≈42 MiB at b8), and
+   at b1 (the weight-dominated regime where ordering matters most) it is 3.9 MiB
+   spread over mostly sub-256KiB relay slivers. E3's two-round machinery therefore
+   buys little on this trace: E1+E2 carry the ordering value. Falsifier for this
+   demotion: a routing family with pref frac ≳ 0.3 and non-sliver phase-3 chunks
+   (fanoutskew b8/b64 is the closest, 0.25 with 8 MiB-scale chunks — the place to
+   test E3 if it is ever built).
+2. **Weight legs out-bytes the token wire 8:1 at b1, cross over near b8** — issue
+   order is exactly the lever NR-13 fact 6(b) implicates, and the census also finds
+   real multi-member fan-out groups on the trace (multi=1, max_fan 2–3), so mcast
+   auto-resolution stays live.
+
+Per-rank prefetch-slot GEMM-row fractions on the trace reach 0.53 (ranks 7/12/13),
+so E2's tail effect (deferring slot problems also defers their output tiles) is a
+real exposure — measured by the in-capsule A/B, predicted per-rank by the census
+JSON (`pref_rows_per_rank`).
+
+**E1 (driver-only, test_moe_moonep_fused_traffic.py `--weight_issue_order
+tokens_first`; requires push + tiles gate).** The fused forward (token a2av + GEMM)
+is host-enqueued BEFORE the weight push; the epoch is peeked
+(`WeightPushMulticast::epoch()+1`, double-asserted after the fact). Pure
+FIRE-ordering — no completion waits between the flows (the NR-13 lesson). Two coded
+invariants: (a) DEADLOCK RULE — w_stream may wait only on the iteration-start event;
+any later main-stream event would order the weight issue after the GEMM whose slot
+tiles spin on those signals; (b) QUIET DEFERRAL — iteration i's weight nbi tail is
+now quieted only by iteration i+1's a2av barrier_all. Benign in this benchmark
+(immutable home rows, monotonic GEQ epochs, same-value rewrites, gw_end drain), NOT
+free for a real multi-layer model with changing weights: an integration needs an
+explicit wire-issued event or quiet. Under tokens_first, prefetch_ms is a concurrent
+issue window and gate_ms ≡ 0 — only e2e_ms compares across issue orders. Residual
+softness: host order ≈ NIC order is not a hardware guarantee; if nsys shows weight
+puts overtaking, the follow-up is a `tokens_first_strict` wait on an op-exposed
+wire-ISSUED event (still not a completion wait).
+
+**E2 (= NR-13 F-D, `FLUX_A2AV_SCHED_PREFETCH_LAST=1`).** Bijective output-index
+remap in `calc_sorted_problem_schedule_v2` (workspace_util.cu): all resident
+problems precede all prefetch-slot problems, stage-major within each class; scoped
+to the weight-gate branch (join mode and non-moonep arms are bit-identical no-ops).
+Order-independence audit: problem_idx travels inside each schedule entry; gating
+cumsum, weight gate, and output scatter key off problem_idx, not schedule position.
+
+**Arms** (variants.py): `moonep_fused_push_auto_gated_{tokfirst,slotlast,
+tokfirst_slotlast}`; spec `sweeps/specs/moonep_fused_ladder_pm4n_trace_iso.yaml`
+(4 arms in-capsule vs auto_gated, trace b1/b8/b64 k8, isolated+e2e). Capsule id:
+PENDING (recorded here when the grid lands).
+
+**TODO-extension (user-flagged): the E3 lane cap.** A two-round dispatch needs
+per-round gating lanes — `a2av_signal_buffer` [2W] and a [E, 2W] gating cumsum —
+but the tile gate's ballot is a single warp: 2W ≤ 32 → **W ≤ 16**. Fits 4n16r with
+zero headroom; before any E3 work at larger W the gate needs a second ballot warp
+(or two-pass lane scan). Flagged 2026-08-14, revisit when node count grows.
+
+**Falsifiers.** E1: a capsule where tokens_first regresses b1 (weight-dominated —
+where the head start should matter most). E2: a capsule where slotlast regresses a
+budget whose per-rank pref-row fraction is ≤ 0.1 (tail effect should be invisible
+there). Census: any trace slice with pref frac ≳ 0.3 revives E3.
+
+**Confidence:** census **measured** (offline, partition-asserted); E1/E2 mechanisms
+**implemented, capsule pending**.

@@ -234,6 +234,46 @@ VARIANTS = {
         env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_LB_UNION"],
     ),
+    # E1 (NR-14): tokens-first issue order — the fused forward (token a2av +
+    # GEMM) is host-enqueued BEFORE the weight push, so the latency-critical
+    # token windows own the NIC first and the bulk weight legs ride behind
+    # them (pure fire-ordering, no completion waits). Driver-level flag, same
+    # binary as auto_gated; A/B within one capsule.
+    "moonep_fused_push_auto_gated_tokfirst": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_push_mode", "auto",
+                   "--weight_gate", "tiles",
+                   "--weight_issue_order", "tokens_first"],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION"],
+    ),
+    # E2 = NR-13 F-D: FLUX_A2AV_SCHED_PREFETCH_LAST reorders the static tile
+    # schedule so ALL resident problems precede ALL prefetch-slot problems
+    # (stage-major within each class) — the weight spin moves to the tail of
+    # the wavefront where it overlaps resident compute instead of idling the
+    # persistent fleet (NR-13 fact 5: 2.4-5x slot-tile spin).
+    "moonep_fused_push_auto_gated_slotlast": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_push_mode", "auto",
+                   "--weight_gate", "tiles"],
+        env={"FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_SCHED_PREFETCH_LAST": "1",
+             "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_SCHED_PREFETCH_LAST"],
+    ),
+    # E1 + E2 combined: the NR-14 headline arm (phase-ordered wire AND
+    # slot-last wavefront).
+    "moonep_fused_push_auto_gated_tokfirst_slotlast": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_push_mode", "auto",
+                   "--weight_gate", "tiles",
+                   "--weight_issue_order", "tokens_first"],
+        env={"FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_SCHED_PREFETCH_LAST": "1",
+             "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_SCHED_PREFETCH_LAST"],
+    ),
     # UltraEP-semantics replicated-expert balancing (semantic port of
     # Dots-Infra/UltraEP; see python/flux/testing/ultraep_semantics.py, bit-
     # equality-tested vs the real kernels + vendored goldens under

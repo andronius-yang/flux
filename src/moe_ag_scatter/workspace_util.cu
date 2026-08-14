@@ -94,7 +94,20 @@ calc_sorted_problem_schedule_v2(
     }
     is_valid_sched &= (tiled_m_start <= tiled_m_end);
 
-    ProblemSchedV2 &sched = problem_schedules[i];
+    // F-D: bijective output remap — residents (eid < gate) fill
+    // [0, tp*groups*gate) and prefetch slots follow, both stage-major, so
+    // fill_problem_info's linear consumption yields residents-then-slots.
+    int out = i;
+    const int gate = args.weight_gate_group_start;  // INT32_MAX when ungated
+    if (args.sched_prefetch_last && gate < ep_nexperts) {
+      if (eid < gate) {
+        out = (stage * num_groups + gid) * gate + eid;
+      } else {
+        out = tp_size * num_groups * gate +
+              (stage * num_groups + gid) * (ep_nexperts - gate) + (eid - gate);
+      }
+    }
+    ProblemSchedV2 &sched = problem_schedules[out];
     sched.problem_idx = eid + ep_nexperts * gid;
     sched.tile_m_start = tiled_m_start;
     sched.tile_m_size = is_valid_sched ? (tiled_m_end - tiled_m_start + 1) : -1;
