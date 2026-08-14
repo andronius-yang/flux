@@ -442,3 +442,100 @@ the 4n capsule's prefetch_ms disagreeing materially with the bench-derived expec
 
 **Confidence: measured** (facts 10-11 from the committed bench transcripts; fact 9's
 end-to-end perf story becomes measured when the pending capsule lands).
+
+## NR-13 — The mcast+gated regression: gateway legs must never sit in the issue window (and multicast is structurally starved under the MoonEP planner)
+
+**Relitigation risk: high.** A fresh agent will read `moonep_fused_push_mcast_gated`'s
+regression (capsules 20260813-024417: 7.50 vs 6.64 join; 20260814-082834 b64: 25.04 vs
+22.23) and conclude "tile-gating doesn't work" or "multicast doesn't work". Both wrong.
+Root-cause campaign 2026-08-14 (plan: curious-frolicking-clover; capsules
+20260814-080654/-082834/-083715/-083903 + session-log fanoutskew evidence).
+
+**The facts.**
+
+1. **Multicast is structurally starved under MoonEP's planner.** Census over the real
+   trace matrices AND synthetic families (b1..b64, 4n16r, G=128 k8): (expert, dest-node)
+   prefetch groups are almost always singletons (0-2 multi-member groups, max fan 2, wire
+   dedup 1.00-1.09x). Cause: the constructive planner's "each dest imports from at most
+   one home group" + hottest-first shedding minimize distinct migrated experts. So the
+   gateway machinery moves at most 1-2 legs — but even ONE saved 32 MiB inter-node leg is
+   worth -1.4 ms when weights dominate (b1: mcast 4.76 vs direct 6.15, tight over 10
+   iters, capsule 20260814-080654).
+2. **The regression's causal trigger is the gateway leg, not the tile gate.** fanoutskew
+   plans have ZERO gateway legs (all singleton -> all-direct even in mcast mode): there
+   mcast_gated shows NO regression (7.56-7.73 vs join 7.64-8.01; two independent runs,
+   session log only — partial capsules lost to an external scancel, rerun
+   rc_controls for a capsule-grade copy). Every cell WITH a gateway leg regresses.
+3. **Mechanism (phase-0 rank forensics + driver code): the gateway's
+   CUStreamWaitValue64 sits in the weight-issue window, and the driver's pref_end
+   event-join makes the gateway's forward launch — hence its token puts — hostage to its
+   weight ingress.** In mcast_gated the sole gateway's prefetch_ms jumps 0.12 -> 2.49 ms
+   and EVERY rank's fused window inflates ~+0.75 ms (one late token source stretches all
+   windows). Under join the same wait is cheap because no rank's token wire starts before
+   weights land (quiet NIC).
+4. **Channel pressure is the dominant amplifier at b8: CUDA_DEVICE_MAX_CONNECTIONS=32
+   eliminates the regression entirely** (capsule 20260814-083903: mcast 6.25, mcast_gated
+   6.33) and makes both arms ~0.8 ms faster than their conn=8 twins — an NR-02 Class-B
+   LATENCY coupling (wait + fan-out puts head-of-line on shared channels), not a hang.
+5. **The weight-gate tile spin itself is real but secondary**: tile-trace sidecars
+   (capsule 20260814-083715) show prefetch-slot problems' spin at 2.4x direct-gated and
+   5x mcast-join — yet fact 2 shows gating without a gateway costs nothing, and
+   direct-gated == direct-join at every budget incl. b64 (21.97 vs 22.23 — gated slightly
+   better). "Not enough compute to hide" is REFUTED as the explanation (regression grows
+   with budget instead of shrinking).
+6. Open anomalies logged for follow-up: (a) the getmem pull costs 5.4-5.9 ms at EVERY
+   budget including quiet-wire b1 — intrinsic, not contention; new lead on the NR-12
+   fact-11 discrepancy; (b) push join gate_ms reads 0.4 ms at b1 vs 3.0 ms at b8 for
+   identical weight legs — physically tight for 32 MiB cross-node transfers; possibly a
+   value-benign early release (weights identical every iteration, so correctness cannot
+   see it) — the nsys reps of 20260814-083715 are the place to check.
+
+**Fix ranking (implementation is follow-up work):** (F-A) raise
+CUDA_DEVICE_MAX_CONNECTIONS for the fused push arms — env-only, eliminates the
+regression and is faster outright, needs a clean one-capsule A/B before canonicalizing;
+(F-B) decouple gateway fan-out from the issue window (record pref_end before the gateway
+wait section, or a dedicated fan-out stream / deferred-wire-style issue); (F-C)
+plan-aware mcast (emit gateway legs only when the census finds multi-member groups; keep
+them for weight-dominated budgets where the b1-style win lives); (F-D) schedule
+prefetch-slot problems last in the static tile order.
+
+**Falsifiers.** Fact 2: a fanoutskew-family capsule showing the regression with zero
+gateway legs. Fact 4: a conn=32 capsule where the regression persists. Fact 1: a routing
+family + planner config producing fan >= 3 groups at 4n16r (would revive multicast's
+dedup case).
+
+**Confidence: measured** for facts 1, 4, 5 (committed capsules/census); **mechanism**
+for facts 2-3 (two session-log runs + rank forensics; capsule-grade fanoutskew copy
+pending a calm queue).
+
+### NR-13 Amendment (2026-08-14b) — F-B lands and resolves the regression at source; F-A demoted to "not needed"
+
+**(7) The F-B choreography fix (WeightPushMulticast::forward_gateway split; driver
+records pref_end after the wait-free home puts, gateway wait + NVLink fan-out run
+concurrently with the fused forward, drained via a gw_end join before iteration end)
+eliminates the mcast_gated regression within-capsule** (post-fix grid
+20260814-123215, conn=8, one binary): b8 all four push arms 6.35-6.43 ms (pre-fix
+mcast_gated was +0.76 over mcast join in 20260814-121208); b1 mcast_gated becomes the
+BEST arm (4.82 vs mcast join 5.29 vs direct 6.2 — the multicast dedup win plus
+gating). Ladder + all 30 grid cells correctness-green incl. the real 4n16r gateway
+fan-out (V3a bitwise slots).
+
+**(8) Post-F-B, conn=32 no longer changes the picture** (twin capsule
+20260814-123721: b8 6.27-6.42, matching conn=8 within noise) — fact 4's channel
+amplifier was only live while the F-B hazard existed. DECISION: keep the historical
+CUDA_DEVICE_MAX_CONNECTIONS=8 pin on the fused arms (comparability), F-A closed as
+"fixed by F-B; conn flip unnecessary".
+
+**(9) F-C (--weight_push_mode auto + push_plan_stats census, arms
+moonep_fused_push_auto[_gated])** resolves per-plan exactly as designed (mcast iff
+n_multi_groups > 0; capsule info carries wpush_mode_resolved + census) and matches
+the resolved arm's perf. Isolated b32 cells in both grids show +-3-5 ms single-cell
+transients on random arms (the rerun-outliers gotcha, now observed on CXI too) — no
+headline rests on an outlier cell.
+
+**Falsifier updates.** Fact 7: a capsule on the post-F-B binary showing mcast_gated
+regressing vs mcast join with a gateway leg present. Fact 8: any post-F-B capsule
+where conn=32 vs conn=8 differs beyond cell noise.
+
+**Confidence: measured** (both grids committed-pending; F-D remains open by user
+decision).
