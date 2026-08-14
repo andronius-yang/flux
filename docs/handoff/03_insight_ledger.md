@@ -609,8 +609,40 @@ cumsum, weight gate, and output scatter key off problem_idx, not schedule positi
 
 **Arms** (variants.py): `moonep_fused_push_auto_gated_{tokfirst,slotlast,
 tokfirst_slotlast}`; spec `sweeps/specs/moonep_fused_ladder_pm4n_trace_iso.yaml`
-(4 arms in-capsule vs auto_gated, trace b1/b8/b64 k8, isolated+e2e). Capsule id:
-PENDING (recorded here when the grid lands).
+(4 arms in-capsule vs auto_gated, trace b1/b8/b64 k8, isolated+e2e).
+
+**Ladder capsule 20260814-145605 (one binary, 24/24 ok, correctness green,
+deterministic=0).** Isolated max-rank e2e_ms means (and e2e-mode in parens):
+
+| budget | auto_gated | tokfirst | slotlast | tokfirst_slotlast |
+|---|---|---|---|---|
+| b1  |  4.75 (4.98) | 5.46 (4.77) | 4.80 (4.76) | 5.35 (4.87) |
+| b8  |  6.48 (6.82) | 7.00 (6.85) | 6.40 (6.99) | 7.05 (6.84) |
+| b64 | 26.11 (26.55) | 22.19 (22.10) | 22.24 (22.13) | 22.24 (21.95) |
+
+Three findings:
+
+1. **The E1 falsifier FIRED**: tokens_first regresses isolated b1 by +15% and b8
+   by +8% — precisely the weight-dominated regime the head-start argument targeted.
+   Mechanism reading: in isolated (cold-wire, inference semantics) the legacy order
+   issues the dominant weight legs while the token side is still in stage-1/2 host
+   work, i.e. weights-first already IS the right priority when weights are the
+   critical path; tokens_first delays weight landing behind the forward call's
+   ~0.35 ms put-issuance window and the slot-tile spins pay for it. In pipelined
+   e2e mode the regression vanishes (b1 4.77 vs 4.98 — mildly positive) because
+   adjacent iterations already overlap the flows. tokfirst stays a non-default
+   ablation arm.
+2. **E2 slotlast is the strict-win knob**: isolated b1/b8 within noise (−1.3% at
+   b8), −14.9% at b64 (26.11 → 22.24), and it needs no driver change. At b64 the
+   token wire dominates (E0: w:t = 0.14) and the baseline's loss is slot tiles
+   blocking the wavefront while their weights/rows are in flight — moving them
+   last recovers ~3.9 ms.
+3. **The two fixes are NON-ADDITIVE at b64** (all three treated arms land at
+   ~22.2) — they recover the same stall from two sides (wire order vs consumption
+   order), consistent with NR-13's "the pathology is ordering, not bytes".
+   Combined also inherits tokfirst's small-budget regression → the recommended
+   default is **slotlast alone** (`FLUX_A2AV_SCHED_PREFETCH_LAST=1` on the gated
+   arms); canonicalization (flipping the knob default) left to a user decision.
 
 **TODO-extension (user-flagged): the E3 lane cap.** A two-round dispatch needs
 per-round gating lanes — `a2av_signal_buffer` [2W] and a [E, 2W] gating cumsum —
@@ -618,10 +650,15 @@ but the tile gate's ballot is a single warp: 2W ≤ 32 → **W ≤ 16**. Fits 4n
 zero headroom; before any E3 work at larger W the gate needs a second ballot warp
 (or two-pass lane scan). Flagged 2026-08-14, revisit when node count grows.
 
-**Falsifiers.** E1: a capsule where tokens_first regresses b1 (weight-dominated —
-where the head start should matter most). E2: a capsule where slotlast regresses a
-budget whose per-rank pref-row fraction is ≤ 0.1 (tail effect should be invisible
-there). Census: any trace slice with pref frac ≳ 0.3 revives E3.
+**Falsifiers.** E1: a capsule where tokens_first regresses b1 — **FIRED in
+20260814-145605 (isolated mode)**; the surviving claim is only the pipelined-e2e
+neutrality and the b64 win. E2: a capsule where slotlast regresses a budget whose
+per-rank pref-row fraction is ≤ 0.1 (tail effect should be invisible there) — not
+observed. Census: any trace slice with pref frac ≳ 0.3 revives E3 (also demoted by
+the capsule: tokfirst ≈ slotlast at b64 shows ordering, not a second round, was the
+lever).
 
-**Confidence:** census **measured** (offline, partition-asserted); E1/E2 mechanisms
-**implemented, capsule pending**.
+**Confidence:** census **measured** (offline, partition-asserted); E1/E2
+**measured** (capsule 20260814-145605, one binary, correctness green). Open: nsys
+confirmation that slotlast's b64 win is slot-tile spin relocation (tile-trace
+sidecar rerun), and the b8 e2e +2.5% slotlast wiggle (single-capsule noise scale).
