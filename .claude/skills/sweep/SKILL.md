@@ -39,7 +39,14 @@ root (leave them).
   expands in `e2e` mode only (its phase breakdown — pack/schedule/fill/wire/
   unpack/gemm — is captured structurally, no phases cell), and its `e2e_ms`
   includes the flat BvN `schedule_ms` recompute (~4.4 ms/iter on p4d) — call
-  that out in small-budget comparisons.
+  that out in small-budget comparisons. EP-semantics arms (driver-swapped
+  tests, six aliased phase names, no phases cells — SCHEMA.md is the
+  authority): `moonep[_overlap|_nvshmem|...]` (per-batch global token
+  migration), `ultraep[_domain16|_overlap|_nvshmem|...]` (per-batch
+  NVL-confined expert replication), and `eplb` (STATIC placement from the
+  full-pool predicted load — trace-family cells only for headline numbers;
+  the runner auto-generates the `<mid>.eplb_load.json` prediction sidecar
+  from the cell's exact pools).
 - `--families` — traffic distribution: `uniform`, `hotcol[:frac=..]`,
   `nodeskew[:frac=..]`, `remotefrac` (per-rank inter-node skew, the relay's
   target case), `fanoutskew[:nodefracs=..]` (per-NODE exporter skew, the

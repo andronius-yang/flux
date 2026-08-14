@@ -31,6 +31,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gen_matrix  # noqa: E402
+import gen_trace_routing  # noqa: E402
 from variants import VARIANTS  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -39,6 +40,7 @@ TEST = "test/python/moe_ag_scatter/test_moe_ag_traffic.py"
 TEST_FAST = "test/python/moe_ag_scatter/test_moe_ag_fast_baseline.py"
 TEST_MOONEP = "test/python/moe_ag_scatter/test_moe_moonep_traffic.py"
 TEST_ULTRAEP = "test/python/moe_ag_scatter/test_moe_ultraep_traffic.py"
+TEST_EPLB = "test/python/moe_ag_scatter/test_moe_eplb_traffic.py"
 
 MODES = ("e2e", "isolated", "phases", "torchprof", "nsys")
 MODE_ORDER = {m: i for i, m in enumerate(MODES)}  # clean numbers before perturbed
@@ -325,7 +327,8 @@ def expand_cells(spec, plat):
                             )
                             continue
                     if (
-                        VARIANTS[vname].get("driver", "flux") in ("moonep", "ultraep")
+                        VARIANTS[vname].get("driver", "flux")
+                        in ("moonep", "ultraep", "eplb")
                         and mode == "phases"
                     ):
                         print(
@@ -490,6 +493,33 @@ def ultraep_sym_size(matrix_path, plat, spec, variant):
     return f"{sym_g}G"
 
 
+def eplb_sym_size(matrix_path, plat, spec):
+    """Symmetric-heap sizing for the eplb nvshmem arm. Same two
+    All2AllSingle ops as ultraep (no dedup: probs splits == row splits), but
+    ultraep's domain-slice bound is UNSAFE here: EPLB's global policy
+    re-homes experts to ANY rank, so a source's rows toward one dest are not
+    bounded by its logical traffic to that dest's domain. Use the trivially
+    safe row-sum bound instead: a source can send at most its whole
+    post-topk emission (= T*topk rows = the matrix row sum) to one dest.
+    2x headroom, floor 2G, capped by plat sym_size_max_g (same policy as the
+    other sizers)."""
+    with open(matrix_path) as f:
+        toks = f.read().split()
+    w = int(toks[0])
+    vals = [int(x) for x in toks[1 : 1 + w * w]]
+    max_pair_bytes = max(
+        sum(vals[src * w : (src + 1) * w]) for src in range(w)
+    )
+    chunk = int(spec["chunk_bytes"])
+    hidden = 2 * w * max_pair_bytes                   # in+out staging, row bytes
+    probs = 2 * w * (max_pair_bytes // chunk) * 4     # one fp32 per row (no dedup)
+    sym_g = max(2, math.ceil(2 * (hidden + probs) / (1 << 30)))
+    sym_max = plat.get("sym_size_max_g")
+    if sym_max:
+        sym_g = min(sym_g, int(sym_max))
+    return f"{sym_g}G"
+
+
 def build_cell_env(spec, plat, cell, staging, matrix_path):
     v = VARIANTS[cell["variant"]]
     env = {}
@@ -497,17 +527,22 @@ def build_cell_env(spec, plat, cell, staging, matrix_path):
     if v.get("driver", "flux") == "fast":
         # FLUX_A2AV_* knobs are meaningless for FAST; its heap follows capacity
         env["NVSHMEM_SYMMETRIC_SIZE"] = fast_sym_size(matrix_path, plat)
-    elif v.get("driver", "flux") in ("moonep", "ultraep"):
+    elif v.get("driver", "flux") in ("moonep", "ultraep", "eplb"):
         # no FLUX_A2AV_* scale knobs ever; NVSHMEM heap only for the
         # one-sided-transport arms (All2AllSingle symmetric staging is
         # 2 ops x 2 bufs of max_split*W rows). moonep bounds max_split by
         # the largest per-pair matrix entry (dedup only shrinks it);
         # ultraep is no-dedup and reroute-redirected, so its bound is the
-        # domain-summed slice (see ultraep_sym_size).
+        # domain-summed slice (see ultraep_sym_size); eplb re-homes
+        # globally, so only the full row-sum bound is safe (eplb_sym_size).
         if "nvshmem" in (v.get("test_args") or []):
             if v.get("driver") == "ultraep":
                 env["NVSHMEM_SYMMETRIC_SIZE"] = ultraep_sym_size(
                     matrix_path, plat, spec, v
+                )
+            elif v.get("driver") == "eplb":
+                env["NVSHMEM_SYMMETRIC_SIZE"] = eplb_sym_size(
+                    matrix_path, plat, spec
                 )
             else:
                 env["NVSHMEM_SYMMETRIC_SIZE"] = moonep_sym_size(matrix_path, plat)
@@ -530,7 +565,8 @@ def build_cell_env(spec, plat, cell, staging, matrix_path):
     return env
 
 
-def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=None):
+def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=None,
+                   eplb_load_path=None):
     v = VARIANTS[cell["variant"]]
     profiling = cell["mode"] in ("torchprof", "nsys")
     iters = spec["profile_iters"] if profiling else spec["iters"]
@@ -578,13 +614,16 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         # gather-gateway paths need a free SM for the index_selects; the two
         # union-broadcast modes forward with pure CE puts and are exempt
         sm_margin = max(1, sm_margin)
-    if v.get("driver", "flux") in ("moonep", "ultraep"):
+    if v.get("driver", "flux") in ("moonep", "ultraep", "eplb"):
         # same CLI as the flux driver minus --comm_pattern; variant-specific
         # flags (--transport nvshmem / --overlap_prefetch / --nvl_domain_size)
         # ride test_args
-        test = TEST_MOONEP if v["driver"] == "moonep" else TEST_ULTRAEP
+        test = {"moonep": TEST_MOONEP, "ultraep": TEST_ULTRAEP,
+                "eplb": TEST_EPLB}[v["driver"]]
         test_args = [test, "--traffic_matrix", matrix_path]
         test_args += list(v.get("test_args") or [])
+        if v["driver"] == "eplb" and eplb_load_path:
+            test_args += ["--eplb_load_file", eplb_load_path]
     else:
         test_args = [
             TEST,
@@ -658,6 +697,7 @@ def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
         matrix["path"],
         staging,
         routing_path=matrix.get("routing") if cell.get("routing_mode") == "real" else None,
+        eplb_load_path=matrix.get("eplb_load"),
     )
     env_delta = build_cell_env(spec, plat, cell, staging, matrix["path"])
     if dry:
@@ -1068,6 +1108,33 @@ def cmd_run(spec, jobid_arg, dry):
                 with open(os.path.join(plat["matrices_root"], f"{mid}.meta.json")) as f:
                     rsha = json.load(f)["routing_sha256"]
                 matrices[cell["cell_id"]].update({"routing": rpath, "routing_sha": rsha})
+            if VARIANTS[cell["variant"]].get("driver") == "eplb":
+                # predicted-load sidecar: the cell's exact full pools (the
+                # oracle-ceiling prediction). Placement input only — matrix
+                # identity is unchanged; the driver records the sha as a
+                # cell fact.
+                if cell["family"] == "trace":
+                    lpath, lsha = gen_trace_routing.ensure_eplb_load(
+                        dict(gen_matrix.FAMILY_DEFAULT_PARAMS["trace"], **mparams),
+                        cell["world_size"],
+                        plat["ranks_per_node"],
+                        cell["budget_mib"],
+                        spec["topk"],
+                        spec["chunk_bytes"],
+                        spec["matrix_instance"],
+                        plat["matrices_root"],
+                        traces_root=plat.get("traces_root"),
+                        nexperts=spec["G"],
+                    )
+                    matrices[cell["cell_id"]].update(
+                        {"eplb_load": lpath, "eplb_load_sha": lsha}
+                    )
+                else:
+                    print(
+                        f"NOTE: {cell['cell_id']}: eplb on a non-trace family"
+                        " has no pool prediction — the driver falls back to"
+                        " the batch's own load (self-oracle)"
+                    )
 
     needed = sorted({k for v in spec["variants"] for k in VARIANTS[v]["requires"]})
     try:

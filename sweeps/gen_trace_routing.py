@@ -450,6 +450,106 @@ def ensure_trace_matrix(
     return mid, path, sha, rpath, rsha
 
 
+EPLB_LOAD_VERSION = 1
+
+
+def pool_histogram(rows, G):
+    """[G] topk-entry counts over one pool's rows."""
+    freq = [0] * G
+    for row in rows:
+        for e in row:
+            freq[e] += 1
+    return freq
+
+
+def combine_pool_loads(counts, nrows, sem):
+    """Combine per-pool [G] histograms into one predicted load vector,
+    mirroring the sampler's expected batch mix (see ensure_eplb_load).
+    Returns (load [G] floats, weighting label)."""
+    G = len(counts[0])
+    if sem == "homog":
+        assert len(counts) == 1
+        return [float(c) for c in counts[0]], "homog"
+    if sem == "pernode":
+        load = [0.0] * G
+        for hist, n in zip(counts, nrows):
+            for e in range(G):
+                load[e] += hist[e] / n / len(counts)
+        return load, "pernode_equal_mix"
+    assert sem == "mixed", sem
+    return [float(sum(h[e] for h in counts)) for e in range(G)], "mixed_concat"
+
+
+def ensure_eplb_load(
+    params,
+    W,
+    L,
+    budget_mib,
+    topk,
+    chunk_bytes,
+    matrix_instance,
+    out_root,
+    traces_root=None,
+    nexperts=None,
+):
+    """Predicted-load sidecar for the eplb arm: the FULL pool per-expert
+    histogram of the cell's exact pools (the oracle-ceiling prediction; the
+    sampled batch is drawn from these same pools). Writes
+    <out_root>/<mid>.eplb_load.json and returns (path, sha256).
+
+    Weighting mirrors the sampler's expected batch mix (sample_routing draws
+    T tokens per rank):
+      homog   — the single pool's raw counts;
+      pernode — each pool's histogram normalized by its row count, then
+                averaged (every node contributes L*T tokens regardless of
+                pool size);
+      mixed   — raw counts of the concatenation (every rank samples it).
+
+    The load file is PLACEMENT INPUT, not routing: matrix identity is
+    unchanged; the driver records the file sha as a cell fact instead.
+    """
+    mid, params, specs, pools_rows, T = prepare_trace(
+        params, W, L, topk, matrix_instance, traces_root, nexperts, budget_mib, chunk_bytes
+    )
+    counts = [pool_histogram(rows, nexperts) for rows in pools_rows]
+    load, weighting = combine_pool_loads(counts, [len(p) for p in pools_rows],
+                                         params["sem"])
+
+    blob = {
+        "version": EPLB_LOAD_VERSION,
+        "matrix_id": mid,
+        "poolsha": params["poolsha"],
+        "model": params["model"],
+        "layer": int(params["layer"]),
+        "pool": params["pool"],
+        "sem": params["sem"],
+        "pools": [f"{b}/{s}" for b, s in specs],
+        "G": nexperts,
+        "weighting": weighting,
+        "pool_rows": [len(p) for p in pools_rows],
+        "counts_per_pool": counts,
+        "load": load,
+    }
+    body = json.dumps(blob, indent=1, sort_keys=True) + "\n"
+    path = os.path.join(out_root, f"{mid}.eplb_load.json")
+    if os.path.exists(path):
+        with open(path) as f:
+            existing = f.read()
+        if existing != body:
+            raise RuntimeError(
+                f"eplb load sidecar {path} does not match a regeneration from"
+                " the current pools — refusing to overwrite; delete it to"
+                " regenerate"
+            )
+        return path, hashlib.sha256(existing.encode()).hexdigest()
+    os.makedirs(out_root, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(body)
+    os.rename(tmp, path)
+    return path, hashlib.sha256(body.encode()).hexdigest()
+
+
 def print_stats(routing, chunks, W, L, T, G, topk):
     """--print-only body for the trace family: real vs dealer-closed-form."""
     nn = W // L
