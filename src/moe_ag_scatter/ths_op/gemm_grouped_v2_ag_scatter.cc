@@ -3061,6 +3061,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       const AllGatherOption &opt,
       c10::optional<torch::Tensor> splits_per_source,
       c10::optional<torch::Tensor> a2av_unique_counts,
+      c10::optional<torch::Tensor> weight_signal,
+      int64_t weight_signal_epoch,
+      int64_t weight_gate_group_start,
       c10::optional<UnifiedGemmHParams> const &hparams) {
     FLUX_CHECK(
 #if TORCH_SUPPORT_FP8
@@ -3345,6 +3348,25 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       if (this->nvtx_proxy_enabled_) {
         args.progress_slots = this->progress_slots_dev_;
       }
+    }
+    if (weight_signal.has_value() && weight_gate_group_start >= 0) {
+      // weight-gated tiles (moonep_fused scenario 2): prefetch-slot problems
+      // (local group >= start) spin on their slot's weight epoch signal;
+      // local-expert problems never wait. Requires the a2av static schedule
+      // (the dynamic claimer's buckets are token-keyed only).
+      FLUX_CHECK(a2av_dispatch_ && args.a2av_ring_schedule)
+          << "weight-gated tiles require an a2av static-schedule mode";
+      FLUX_CHECK(weight_signal->is_cuda());
+      FLUX_CHECK(weight_signal->scalar_type() == at::ScalarType::Long)
+          << "weight_signal must be int64 (u64 epoch signals)";
+      FLUX_CHECK(weight_gate_group_start > 0 && weight_gate_group_start < ep_nexperts)
+          << "weight_gate_group_start " << weight_gate_group_start << " out of (0, "
+          << ep_nexperts << ")";
+      FLUX_CHECK(weight_signal->numel() >= ep_nexperts - weight_gate_group_start)
+          << "weight_signal too small for the prefetch-slot groups";
+      args.weight_signal_ptr = reinterpret_cast<uint64_t *>(weight_signal->data_ptr());
+      args.weight_signal_expected = static_cast<uint64_t>(weight_signal_epoch);
+      args.weight_gate_group_start = static_cast<int>(weight_gate_group_start);
     }
     for (int gid = 0; gid < num_weights_group; gid++) {
       args.weight[gid] = weights[gid].data_ptr();
@@ -3906,6 +3928,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         option,
         std::move(splits_per_source),
         std::move(a2av_unique_counts),
+        c10::nullopt,
+        0,
+        -1,
         c10::nullopt);
   }
 
@@ -3937,7 +3962,10 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       int sm_margin,
       AllGatherOptionWithOptional ag_option,
       c10::optional<torch::Tensor> splits_per_source,
-      c10::optional<torch::Tensor> a2av_unique_counts) {
+      c10::optional<torch::Tensor> a2av_unique_counts,
+      c10::optional<torch::Tensor> weight_signal,
+      int64_t weight_signal_epoch,
+      int64_t weight_gate_group_start) {
     if (inputs_shard.scalar_type() == torch::kInt8) {
       return forward_triton_aot(
           inputs_shard,
@@ -3972,6 +4000,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         option,
         std::move(splits_per_source),
         std::move(a2av_unique_counts),
+        std::move(weight_signal),
+        weight_signal_epoch,
+        weight_gate_group_start,
         c10::nullopt);
     return outputs[0];
   }
@@ -4064,6 +4095,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                 option,
                 c10::nullopt,
                 c10::nullopt,
+                c10::nullopt,
+                0,
+                -1,
                 cp_hparams);
             timer.stop();
             if (iter >= warm_iters) {
@@ -4097,6 +4131,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         option,
         c10::nullopt,
         c10::nullopt,
+        c10::nullopt,
+        0,
+        -1,
         std::move(best_hparams));
   }
 };
@@ -4154,7 +4191,10 @@ GemmGroupedV2AGScatterOp::forward(
     int sm_margin,
     AllGatherOptionWithOptional ag_option,
     c10::optional<torch::Tensor> splits_per_source,
-    c10::optional<torch::Tensor> a2av_unique_counts) {
+    c10::optional<torch::Tensor> a2av_unique_counts,
+    c10::optional<torch::Tensor> weight_signal,
+    int64_t weight_signal_epoch,
+    int64_t weight_gate_group_start) {
   FLUX_CHECK(impl_ != nullptr) << "GemmGroupedV2AGScatterOp is not initialized";
   return impl_->forward(
       std::move(inputs_shard),
@@ -4171,7 +4211,10 @@ GemmGroupedV2AGScatterOp::forward(
       sm_margin,
       ag_option,
       std::move(splits_per_source),
-      std::move(a2av_unique_counts));
+      std::move(a2av_unique_counts),
+      std::move(weight_signal),
+      weight_signal_epoch,
+      weight_gate_group_start);
 }
 torch::Tensor
 GemmGroupedV2AGScatterOp::forward_triton_aot(

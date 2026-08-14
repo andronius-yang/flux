@@ -194,6 +194,15 @@ compare inside one capsule/build; `deterministic = 0` on every quoted cell (veri
 - **Overlap for UltraEP**: weight_sync is un-overlapped in the port; upstream hides
   reroute under weight distribution and overlaps sync with `async_finish`
   (`UltraEP/README.md:138-142`) — the `moonep_overlap` precedent applies directly.
+- ~~The NCCL weight prefetch is a double port artifact~~ **RESOLVED 2026-08-11**: the
+  authentic getmem pull now exists (`flux.WeightPrefetchGetmem`, arms `moonep_getmem*`;
+  NR-12 facts 9-11). Symmetric weight home + symmetric prefetch slots, SM-kernel
+  `getmem_nbi_block`, quiet-on-stream join, no signaling/communicator. Cross-node pulls
+  measured at 16.5-17.5 GB/s/rank (~40% faster than the NCCL prefetch's ~12 GB/s);
+  bitwise-exact through 2 nodes. Still pending: the 4n16r trace capsule
+  (`sweeps/specs/moonep_getmem_pm4n_trace_iso.yaml`) to restate §3's tables with the
+  authentic weight path — expect the serialized prefetch line to drop from ~4.7 ms
+  toward ~2 ms at the capsule shape if the bench transfer rate holds.
 - **Hybrid question the toy already poses**: flux's overlap and EP's balance attack
   different terms of the same sum; nothing forbids a balanced *and* fused arm — MoonEP
   semantics feeding a Comet-style fused GEMM instead of staged `GemmOnly` is the obvious

@@ -1,0 +1,39 @@
+# MoonEP x flux merge validation grid (M2-M5), one binary: the staged
+# faithful baseline (moonep_nvshmem_getmem) vs the fused virtual-expert arm
+# (moonep_fused, scenario 1) vs the concurrent weight-push arms (scenario 2:
+# direct/mcast x join/tile-gated) vs flux-native placement
+# (hier_compress_lb_union). Key reads: isolated totals vs the staged
+# baseline; prefetch_ms/gate_ms across weight paths; the gate A/B pairs
+# (push vs push_gated, mcast vs mcast_gated -- same wire, gate moved);
+# wpush_internode_bytes_{direct,mcast} for the multicast dedup factor.
+# All fused arms are our-optimization ablations, never quotable as MoonEP
+# behavior; the plan (alloc/experts_to_copy) is bit-identical across all
+# moonep-family arms by construction.
+platform: perlmutter
+nodes: 4
+variants:
+  - moonep_nvshmem_getmem
+  - moonep_fused
+  - moonep_fused_push
+  - moonep_fused_push_gated
+  - moonep_fused_push_mcast
+  - moonep_fused_push_mcast_gated
+  - hier_compress_lb_union
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib: [8]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated, e2e]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+notes: "moonep-fused merge grid: staged faithful vs fused virtual-expert vs concurrent push (direct/mcast x join/tiles) vs flux-native lb_union, real Qwen3 layer-92 trace b8/k8, 4n16r, correctness on"

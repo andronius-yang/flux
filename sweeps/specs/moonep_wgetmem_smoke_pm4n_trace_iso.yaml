@@ -1,0 +1,32 @@
+# Faithful-baseline smoke (2026-08-12, account m5350_g): weight-path A/B under
+# the fixed faithful dispatch (nvshmem All2AllSingle put-then-barrier).
+# moonep_nvshmem = dispatch nvshmem + weights NCCL batch_isend_irecv (port
+# artifact); moonep_nvshmem_getmem = dispatch nvshmem + weights getmem pull
+# (WeightPrefetchGetmem, the authentic MoonEP analog — NR-12 facts 6/9) = the
+# new faithful-baseline default. Key reads: prefetch_ms nccl vs getmem, e2e/
+# isolated totals, correctness gates (per-slot broadcast check validates the
+# pull bit-exactly). Same trace family + matrix instance as capsules
+# 20260811-162546 / the pending moonep_getmem_pm4n_trace_iso spec.
+platform: perlmutter
+nodes: 4
+variants:
+  - moonep_nvshmem
+  - moonep_nvshmem_getmem
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib: [8]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated, e2e]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+notes: "Faithful-baseline smoke: weights getmem (new default) vs NCCL under nvshmem dispatch, real Qwen3 layer-92 trace b8/k8, 4n16r, correctness on"

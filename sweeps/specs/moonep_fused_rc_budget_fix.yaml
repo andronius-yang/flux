@@ -1,0 +1,22 @@
+# RC campaign E1: gated-vs-join regression vs budget on real traces, one
+# binary. Reads: D(gated-join) per budget on direct and mcast axes (H3 vs
+# H1), per-rank gateway signature, pull-vs-push prefetch asymmetry.
+platform: perlmutter
+nodes: 4
+variants: [moonep_fused, moonep_fused_push, moonep_fused_push_gated, moonep_fused_push_mcast, moonep_fused_push_mcast_gated]
+families: ["trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"]
+budgets_mib: [8, 32]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+notes: "RC E1c: completion b8+b32 trace, 5 fused arms, isolated (first two runs were scancelled mid-flight)"

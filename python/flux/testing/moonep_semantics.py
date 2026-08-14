@@ -503,7 +503,18 @@ class MoonEPLayer0Runner:
         self.device = device
         self.dtype = dtype
         self.ffn_size_shard = ffn_size_shard
+        # Constructor state only, not the port's default: the traffic driver
+        # defaults to --transport nvshmem (fidelity-first, 2026-08-11) and
+        # --prefetch_transport getmem (2026-08-12), calling enable_nvshmem()
+        # / enable_getmem_prefetch() after construction; NCCL on either path
+        # is the explicit opt-out the historical sweep arms pin.
         self.transport = "nccl"
+        # Weight-movement path: "nccl" (batch_isend_irecv, declared port
+        # artifact) until enable_getmem_prefetch() swaps in the one-sided
+        # pull. weight_home is the symmetric-heap shard once enabled; the
+        # GEMM's local-expert branch reads it in place of local_weights.
+        self.prefetch_impl = "nccl"
+        self.weight_home = None
         cfg = self.cfg
 
         lay = build_comm_layout(plan, rank)
@@ -624,6 +635,56 @@ class MoonEPLayer0Runner:
         self._num_comm_sm = num_comm_sm
         self.transport = "nvshmem"
 
+    def enable_getmem_prefetch(self, local_weights: torch.Tensor,
+                               num_comm_sm: int = 8,
+                               chunk_bytes: int = 4 << 20,
+                               device_kernel: bool = True):
+        """Swap the NCCL isend/irecv weight movement for the one-sided
+        NVSHMEM getmem pull (flux.WeightPrefetchGetmem) — the authentic
+        analog of MoonEP's destination-side prefetch (NR-12 fact 6: the
+        receiver remote-READS the home rank's immutable weight rows; zero
+        cross-rank signaling, so completion is locally observable and an
+        event after prefetch() is a sufficient join). This rank's [epn,
+        ffn_shard, H] home shard moves onto the symmetric heap ONCE here
+        (upstream's memory model: weights always remotely readable);
+        gemm()'s local branch reads it thereafter — residency moves, it
+        does not grow. Cross-node pulls are proxy-mediated CXI on this
+        fabric (extrapolation per NR-12 fact 7: MoonEP has no inter-node
+        path; judged by preservation of intra-domain semantics). No team
+        barriers anywhere, so this op is safe on an overlap side stream
+        beside the token a2av and needs NO dedicated communicator.
+        Requires flux.init_flux_shm(group); collective (all ranks must
+        call, identical shapes)."""
+        import flux  # GPU-side only
+
+        cfg = self.cfg
+        assert self.ffn_size_shard > 0, "getmem prefetch needs weight shapes"
+        self._prefetch_op = flux.WeightPrefetchGetmem(
+            self.group, cfg.epn, cfg.B, self.ffn_size_shard, cfg.H, self.dtype,
+        )
+        self.weight_home = self._prefetch_op.weight_home()
+        self.weight_home.copy_(local_weights)
+        # The op owns the prefetch slots ON the symmetric heap: a
+        # proxy-mediated (cross-node) get segfaults into an ordinary
+        # cudaMalloc destination (CXI needs the local buffer registered;
+        # found 2026-08-11 by the a2av_comm_bench prefetch mode). Upstream's
+        # slots are rows [E, E+B) of the same mapped weight tensor, so this
+        # is the faithful layout anyway. Replaces the ordinary prefetch_w.
+        self.prefetch_w = self._prefetch_op.prefetch_slots()
+        # All of MY incoming pulls, local pairs included (getmem from the
+        # own PE is a local SM copy — one uniform path, like upstream).
+        pairs = [
+            (b, home, e % cfg.epn)
+            for d, b, e, home in self.prefetch_pairs
+            if d == self.rank
+        ]
+        pairs_cpu = torch.tensor(pairs, dtype=torch.int32).reshape(-1, 3)
+        self._prefetch_op.set_pairs(pairs_cpu)
+        self._prefetch_num_comm_sm = num_comm_sm
+        self._prefetch_chunk_bytes = chunk_bytes
+        self._prefetch_device_kernel = device_kernel
+        self.prefetch_impl = "getmem"
+
     # -- timed phases -----------------------------------------------------
 
     def pack(self, inputs_shard: torch.Tensor, route_weights: torch.Tensor):
@@ -676,7 +737,18 @@ class MoonEPLayer0Runner:
         local_weights is this rank's [epn, ffn_shard, H] home shard. Pass a
         dedicated ProcessGroup (separate NCCL communicator) when running on
         an overlap stream, so these P2Ps run concurrently with the dispatch
-        collectives instead of serializing on the same communicator."""
+        collectives instead of serializing on the same communicator. On the
+        getmem path (enable_getmem_prefetch) local_weights and group are
+        ignored: the pull reads the symmetric weight home, source ranks are
+        passive, and no communicator exists to serialize on."""
+        if self.prefetch_impl == "getmem":
+            self._prefetch_op.forward(
+                self.prefetch_w,
+                self._prefetch_num_comm_sm,
+                self._prefetch_chunk_bytes,
+                self._prefetch_device_kernel,
+            )
+            return
         group = group if group is not None else self.group
         ops = []
         P2POp = self.dist.P2POp
@@ -697,12 +769,15 @@ class MoonEPLayer0Runner:
     def gemm(self, gemm_only_op, local_weights: torch.Tensor):
         """Per-segment GEMM over cu_seqlens (padded rows computed, MoonEP
         contract). Local expert segments use the home shard, prefetch slots
-        the prefetched weights."""
+        the prefetched weights. When the getmem path homed the weights on
+        the symmetric heap, the local branch reads that tensor (symmetric
+        memory is ordinary device memory to local kernels)."""
         cfg = self.cfg
         lo = cfg.epn * self.rank
+        home = self.weight_home if self.weight_home is not None else local_weights
         for g, start, end, expert_id in self.lay.gemm_segments:
             w = (
-                local_weights[expert_id - lo]
+                home[expert_id - lo]
                 if g < cfg.E
                 else self.prefetch_w[g - cfg.E]
             )

@@ -26,6 +26,15 @@ VARIANTS = {
     # vendored oracle under test/python/moe_ag_scatter/moonep_oracle/).
     # driver="moonep" swaps the test file in sweep.py. Pure NCCL + local
     # scatters + per-segment GemmOnly: no NVSHMEM heap, no FLUX_A2AV_* knobs.
+    # NOTE 2026-08-11: the driver's own --transport default flipped to
+    # nvshmem (fidelity-first — one-sided put-then-barrier is the authentic
+    # port of MoonEP's one-sided writes); the nccl arms below pin
+    # --transport nccl explicitly so their historical capsule meaning is
+    # byte-identical to pre-flip cells.
+    # NOTE 2026-08-12: --prefetch_transport default flipped to getmem the
+    # same way (faithful baseline = nvshmem dispatch + getmem weight pull);
+    # every NCCL-prefetch arm below pins --prefetch_transport nccl
+    # explicitly for the same historical-meaning reason.
     # Phase metrics (plan_comm/pack/comm/scatter/prefetch/gemm) arrive free in
     # every mode via the recorder, so there is no separate phases cell.
     # CAN consume trace routing files (real token-overlap dedup semantics).
@@ -41,6 +50,7 @@ VARIANTS = {
     "moonep": dict(
         comm_pattern="moonep_balanced_a2av",  # cells.csv label only, never a CLI flag
         driver="moonep",
+        test_args=["--transport", "nccl", "--prefetch_transport", "nccl"],
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),
@@ -51,7 +61,8 @@ VARIANTS = {
     "moonep_overlap": dict(
         comm_pattern="moonep_balanced_a2av",
         driver="moonep",
-        test_args=["--overlap_prefetch"],
+        test_args=["--transport", "nccl", "--prefetch_transport", "nccl",
+                   "--overlap_prefetch"],
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),
@@ -65,7 +76,8 @@ VARIANTS = {
     "moonep_overlap_shared": dict(
         comm_pattern="moonep_balanced_a2av",
         driver="moonep",
-        test_args=["--overlap_prefetch", "--shared_comm_stream"],
+        test_args=["--transport", "nccl", "--prefetch_transport", "nccl",
+                   "--overlap_prefetch", "--shared_comm_stream"],
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),
@@ -82,7 +94,7 @@ VARIANTS = {
     "moonep_nvshmem": dict(
         comm_pattern="moonep_balanced_a2av",
         driver="moonep",
-        test_args=["--transport", "nvshmem"],
+        test_args=["--transport", "nvshmem", "--prefetch_transport", "nccl"],
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),
@@ -90,9 +102,137 @@ VARIANTS = {
     "moonep_nvshmem_overlap": dict(
         comm_pattern="moonep_balanced_a2av",
         driver="moonep",
-        test_args=["--transport", "nvshmem", "--overlap_prefetch"],
+        test_args=["--transport", "nvshmem", "--prefetch_transport", "nccl",
+                   "--overlap_prefetch"],
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
+    ),
+    # M4d: getmem weight prefetch — the authentic recreation of MoonEP's
+    # destination-side pull (NR-12 fact 6: receiver remote-READS the home
+    # rank's immutable weight rows; zero signaling; the NVSHMEM analog is
+    # getmem, not put). Weights live permanently on the symmetric heap
+    # (upstream memory model; enables the future B=3-4 read-through arm);
+    # the SM kernel issues nvshmemx_getmem_nbi_block chunks + one
+    # quiet_on_stream — no barriers, no communicator. Cross-node pulls are
+    # proxy-mediated CXI (extrapolation per NR-12 fact 7). Token wire kept
+    # NCCL here to isolate the weight-path change against the historical
+    # `moonep` arm inside one capsule.
+    "moonep_getmem": dict(
+        comm_pattern="moonep_balanced_a2av",
+        driver="moonep",
+        test_args=["--transport", "nccl", "--prefetch_transport", "getmem"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    # M4d + M4c: getmem pull on the overlap side stream. Unlike the NCCL
+    # overlap arm this needs NO second communicator (one-sided) and NO team
+    # barrier coexists with the token a2av (the NR-02/fact-8 hazard that
+    # rejected All2AllSingle for weights does not apply to bare gets).
+    "moonep_getmem_overlap": dict(
+        comm_pattern="moonep_balanced_a2av",
+        driver="moonep",
+        test_args=["--transport", "nccl", "--prefetch_transport", "getmem",
+                   "--overlap_prefetch"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    # M4a + M4d: fully one-sided configuration — nvshmem token wire AND
+    # getmem weight pull; the most transport-faithful moonep arm.
+    "moonep_nvshmem_getmem": dict(
+        comm_pattern="moonep_balanced_a2av",
+        driver="moonep",
+        test_args=["--transport", "nvshmem", "--prefetch_transport", "getmem"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    # MERGED ARM (our-optimization ablation, never quotable as MoonEP
+    # behavior): the MoonEP plan drives the FUSED GemmGroupedV2AGScatterOp
+    # through the virtual expert space (flux.testing.moonep_fused_map) —
+    # flux lb_union compress wire + tile-level comm/GEMM overlap executing
+    # MoonEP's exact placement (plan bit-identical to the staged arms).
+    # Weights: getmem pull event-joined before forward (scenario 1). The
+    # driver computes the EXACT FLUX_A2AV_MAX_* knobs from the plan
+    # (sweep.py deliberately does not scale_knobs this driver; the ctor
+    # defaults overflow under lb_union union-sized recv regions at low
+    # topk). Compare against `moonep`/`moonep_nvshmem_getmem` (staged,
+    # faithful) and `hier_compress_lb_union` (flux-native placement)
+    # inside one capsule.
+    "moonep_fused": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=[],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION"],
+    ),
+    # moonep_fused with the weight PUSH (WeightPushMulticast, direct per-pair
+    # CE putmem_signal from the home ranks; zero-SM join before forward =
+    # the ungated A/B baseline for the M5 tile-gated arm). Same wire bytes
+    # as getmem in the opposite direction; the initiator/dependency flip is
+    # the measured variable (a straggler HOME now stalls the destination).
+    "moonep_fused_push": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push"],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION"],
+    ),
+    # THE concurrency arm (scenario 2 proper): no destination-side join —
+    # only prefetch-slot tiles spin on their slot's weight epoch signal
+    # (weight-gated tiles), so token dispatch, weight push, and GEMM are all
+    # in flight together and the two wire flows share the CXI proxy. A/B
+    # against moonep_fused_push (same wire, gate moved to the stream
+    # front-end): outputs should be torch.equal; the delta is pure
+    # scheduling.
+    "moonep_fused_push_gated": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_gate", "tiles"],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION"],
+    ),
+    # M4: weight multicast — ONE inter-node put per (expert, dest node) into
+    # a plan-chosen gateway's own slot, NVLink CE fan-out to the other needy
+    # ranks (paced by a zero-SM wait on the gateway's slot signal). Expert
+    # replication is naturally a node-level multicast; the bench argues node
+    # ingress is the binding resource (a2av_comm_bench methodology §prefetch),
+    # so this is the wire-shape ablation vs _push. The capsule's
+    # wpush_internode_bytes_{direct,mcast} record the dedup factor.
+    "moonep_fused_push_mcast": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_push_mode", "mcast"],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION"],
+    ),
+    # M4 + M5: multicast weight wire AND weight-gated tiles — the full
+    # scenario-2 configuration (dispatch, multicast weights, GEMM all
+    # concurrent).
+    "moonep_fused_push_mcast_gated": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_push_mode", "mcast",
+                   "--weight_gate", "tiles"],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION"],
+    ),
+    # F-C (NR-13): plan-aware push — the driver engages the gateway
+    # machinery only when the replicated census finds a real fan-out group
+    # (n_multi_groups > 0), else runs pure direct. The resolved mode +
+    # census land in the capsule info (wpush_mode_resolved, wpush_*).
+    "moonep_fused_push_auto": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_push_mode", "auto"],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION"],
+    ),
+    "moonep_fused_push_auto_gated": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_push_mode", "auto",
+                   "--weight_gate", "tiles"],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION"],
     ),
     # UltraEP-semantics replicated-expert balancing (semantic port of
     # Dots-Infra/UltraEP; see python/flux/testing/ultraep_semantics.py, bit-

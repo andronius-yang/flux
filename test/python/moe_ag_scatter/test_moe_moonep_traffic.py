@@ -315,13 +315,37 @@ def parse_args():
     parser.add_argument("--profile", default=False, action="store_true")
     parser.add_argument("--token_padding", type=int, default=128,
                         help="MoonEP segment padding (segments pad to this)")
-    parser.add_argument("--transport", default="nccl",
+    parser.add_argument("--transport", default="nvshmem",
                         choices=["nccl", "nvshmem"],
-                        help="dispatch a2av transport: NCCL grouped P2P or"
-                        " flux's one-sided NVSHMEM All2AllSingle (M4a — the"
-                        " honest port of MoonEP's one-sided writes)")
+                        help="dispatch a2av transport. Default nvshmem: flux's"
+                        " one-sided NVSHMEM All2AllSingle (M4a — the authentic"
+                        " port of MoonEP's one-sided writes; the port's goal is"
+                        " semantic fidelity, not speed). nccl: two-sided grouped"
+                        " P2P — faster on Slingshot but least like upstream;"
+                        " the historical sweep arms pin it explicitly")
     parser.add_argument("--num_comm_sm", type=int, default=8,
-                        help="SMs for the NVSHMEM a2av kernel (nvshmem only)")
+                        help="SMs for the NVSHMEM a2av kernel and the getmem"
+                        " prefetch kernel (nvshmem/getmem paths only)")
+    parser.add_argument("--prefetch_transport", default="getmem",
+                        choices=["nccl", "getmem"],
+                        help="weight-movement transport. Default getmem"
+                        " (faithful-baseline flip 2026-08-12): one-sided"
+                        " destination-initiated pull from the symmetric"
+                        " weight home (flux.WeightPrefetchGetmem — the"
+                        " authentic analog of MoonEP's prefetch; source"
+                        " ranks passive, zero signaling, no communicator)."
+                        " nccl: two-sided batch_isend_irecv (declared port"
+                        " artifact — wrong initiator direction AND protocol"
+                        " class, NR-12 fact 6); the historical sweep arms"
+                        " pin it explicitly")
+    parser.add_argument("--prefetch_chunk_bytes", type=int, default=4 << 20,
+                        help="getmem pull chunk size per block (getmem only;"
+                        " tuned by the a2av_comm_bench prefetch mode)")
+    parser.add_argument("--prefetch_impl", default="kernel",
+                        choices=["kernel", "stream"],
+                        help="getmem issue path: SM device kernel (authentic"
+                        " — upstream burns SMs via TMA) or host"
+                        " getmem_nbi_on_stream (A/B fallback)")
     parser.add_argument("--overlap_prefetch", default=False, action="store_true",
                         help="run weight prefetch on a dedicated high-priority"
                         " stream + separate NCCL communicator, event-joined"
@@ -346,10 +370,11 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     init_ep_group(DIST_ENV.WORLD_SIZE)
-    if args.transport == "nvshmem":
-        # the one-sided All2AllSingle needs the flux shm / NVSHMEM heap
+    if args.transport == "nvshmem" or args.prefetch_transport == "getmem":
+        # the one-sided All2AllSingle / getmem weight home need the flux
+        # shm / NVSHMEM heap
         flux.init_flux_shm(TP_GROUP)
-    # (nccl transport needs no NVSHMEM symmetric heap or flux shm groups)
+    # (all-nccl configuration needs no NVSHMEM symmetric heap or flux shm)
     torch.cuda.synchronize()
 
     input_dtype = DTYPE_MAP[args.dtype]
@@ -417,12 +442,22 @@ if __name__ == "__main__":
     )
     if args.transport == "nvshmem":
         runner.enable_nvshmem(DIST_ENV.LOCAL_WORLD_SIZE, args.num_comm_sm)
+    if args.prefetch_transport == "getmem":
+        # collective (symmetric weight-home alloc); runs after enable_nvshmem
+        # so all ranks perform the same symmetric allocations in the same
+        # order. Copies this rank's weights onto the heap once (untimed).
+        runner.enable_getmem_prefetch(
+            moe_ctx.weights[0],
+            num_comm_sm=args.num_comm_sm,
+            chunk_bytes=args.prefetch_chunk_bytes,
+            device_kernel=args.prefetch_impl == "kernel",
+        )
 
     prefetch_group = None
     prefetch_stream = None
     if args.overlap_prefetch:
         prefetch_stream = torch.cuda.Stream(priority=-1)
-        if not args.shared_comm_stream:
+        if not args.shared_comm_stream and args.prefetch_transport == "nccl":
             # separate NCCL communicator: prefetch P2Ps must not serialize on
             # the dispatch collectives' communicator; every rank enqueues
             # prefetch first (right after plan_comm), so cross-communicator
@@ -438,7 +473,10 @@ if __name__ == "__main__":
             torch.distributed.barrier(group=prefetch_group)
         # shared_comm_stream: no second communicator — authentic to MoonEP's
         # single comm path; safe because every rank enqueues a2av before
-        # prefetch on the shared communicator
+        # prefetch on the shared communicator. getmem prefetch also needs no
+        # communicator in ANY mode (one-sided, no rendezvous — the second
+        # NCCL communicator was itself port machinery, NR-12 fact 3), so
+        # prefetch_group stays None there too.
 
     # Per-entry route weights, replicated deterministically so receivers can
     # verify without an extra exchange (values still travel the wire).
@@ -489,6 +527,9 @@ if __name__ == "__main__":
             moonep_wire_bytes=wire_bytes,
             moonep_prefetch=not args.no_prefetch,
             moonep_transport=args.transport,
+            moonep_prefetch_transport=args.prefetch_transport,
+            moonep_prefetch_chunk_bytes=args.prefetch_chunk_bytes,
+            moonep_prefetch_impl=args.prefetch_impl,
             moonep_overlap_prefetch=bool(args.overlap_prefetch),
             moonep_shared_comm_stream=bool(args.shared_comm_stream),
         )

@@ -264,8 +264,16 @@ TMA remote-read PULL). Transport authenticity ladder for weight movement
 custom NVSHMEM kernel matching the real upstream shape (bare `putmem_nbi`
 push published by the subsequent collective join for UltraEP direct /
 `getmem` pull for MoonEP prefetch) > CUDA-IPC peer copies > NCCL P2P
-(two-sided rendezvous + own protocol optimizations; what the arms use
-today for capsule comparability — declared port artifact, NR-12 fact 8).
+(two-sided rendezvous + own protocol optimizations — declared port
+artifact, NR-12 fact 8). The MoonEP rung at the top of that ladder is
+IMPLEMENTED as of 2026-08-11 (`flux.WeightPrefetchGetmem`; arms
+`moonep_getmem`, `moonep_getmem_overlap`, `moonep_nvshmem_getmem` — NR-12
+facts 9-11): SM-kernel getmem_nbi_block pulls from a symmetric weight
+home into symmetric prefetch slots (BOTH must be symmetric — CXI proxy
+gets segfault into unregistered local memory, fact 10), joined by one
+quiet_on_stream; the getmem overlap arm needs NO second communicator.
+The `moonep`/`moonep_overlap`/`moonep_nvshmem` arms keep NCCL weights for
+capsule comparability with pre-M4d history.
 
 Metrics parsed from stderr in `phases` mode (per iteration, per rank):
 `stage1_ms, stage2_ms, gemmgate_ms, a2av_gemm_ms, barrier_ms` ([a2av-timing]),

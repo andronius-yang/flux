@@ -190,6 +190,11 @@ public:
     // layer C per-tile trace buffer (device memory), same gate
     bytedance::flux::A2AVTileRecord *tile_trace = nullptr;
     uint32_t tile_trace_capacity = 0;
+    // weight-gated tiles: prefetch-slot problems (local group >= start) spin
+    // on their slot's weight signal; nullptr disables (see args header)
+    uint64_t *weight_signal_ptr = nullptr;
+    uint64_t weight_signal_expected = 0;
+    int weight_gate_group_start = INT32_MAX;
 
     //
     // Methods
@@ -305,6 +310,9 @@ public:
     bytedance::flux::A2AVProgressSlots *progress_slots = nullptr;
     bytedance::flux::A2AVTileRecord *tile_trace = nullptr;
     uint32_t tile_trace_capacity = 0;
+    uint64_t *weight_signal_ptr = nullptr;
+    uint64_t weight_signal_expected = 0;
+    int weight_gate_group_start = INT32_MAX;
     //// added by flux /////
 
     //
@@ -352,6 +360,9 @@ public:
       progress_slots = args.progress_slots;
       tile_trace = args.tile_trace;
       tile_trace_capacity = args.tile_trace_capacity;
+      weight_signal_ptr = args.weight_signal_ptr;
+      weight_signal_expected = args.weight_signal_expected;
+      weight_gate_group_start = args.weight_gate_group_start;
     }
 
     CUTLASS_HOST_DEVICE
@@ -396,6 +407,9 @@ public:
       progress_slots = args.progress_slots;
       tile_trace = args.tile_trace;
       tile_trace_capacity = args.tile_trace_capacity;
+      weight_signal_ptr = args.weight_signal_ptr;
+      weight_signal_expected = args.weight_signal_expected;
+      weight_gate_group_start = args.weight_gate_group_start;
     }
   };
 
@@ -619,6 +633,23 @@ public:
         else {
           cuda::atomic_ref<int32_t, cuda::thread_scope_device> barrier(params.barrier_ptr[lane_idx]);
           while (barrier.load(cuda::memory_order_acquire) != 1) {
+          }
+        }
+      }
+      // weight-gated tiles (moonep_fused scenario 2): prefetch-slot problems
+      // (local group >= weight_gate_group_start) additionally wait for their
+      // expert's weight landing — the per-slot putmem_signal epoch written by
+      // WeightPushMulticast. Local-expert problems never touch this; empty
+      // slots schedule no tiles (splits 0), so an unsignaled empty slot can
+      // never hang. Writers are remote NIC/CE puts -> system-scope acquire,
+      // the same contract as the token spin above; the trailing
+      // __syncthreads() publishes to the block.
+      if (params.weight_signal_ptr != nullptr && threadIdx.x == 0) {
+        int wg_local_group = problem_idx % params.nexperts_ep;
+        if (wg_local_group >= params.weight_gate_group_start) {
+          cuda::atomic_ref<uint64_t, cuda::thread_scope_system> wsig(
+              params.weight_signal_ptr[wg_local_group - params.weight_gate_group_start]);
+          while (wsig.load(cuda::memory_order_acquire) < params.weight_signal_expected) {
           }
         }
       }

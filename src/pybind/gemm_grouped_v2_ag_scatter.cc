@@ -76,7 +76,10 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("sm_margin") = 0,
             py::arg("ag_option") = AllGatherOptionWithOptional(),
             py::arg("splits_per_source") = py::none(),
-            py::arg("a2av_unique_counts") = py::none())
+            py::arg("a2av_unique_counts") = py::none(),
+            py::arg("weight_signal") = py::none(),
+            py::arg("weight_signal_epoch") = 0,
+            py::arg("weight_gate_group_start") = -1)
         .def(
             "forward_triton_aot",
             &GemmGroupedV2AGScatterOpCls::forward_triton_aot,

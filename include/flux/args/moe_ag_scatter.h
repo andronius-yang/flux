@@ -64,6 +64,14 @@ struct GemmGroupedV2AGScatterArguments {
   // barrier_ptr, compared against the run-id epoch. nullptr == legacy dense mode.
   uint64_t *signal_ptr = nullptr;
   uint64_t signal_expected = 0;
+  // weight-gated tiles (moonep_fused scenario 2): problems whose LOCAL group
+  // index is >= weight_gate_group_start (prefetch slots) additionally spin on
+  // weight_signal_ptr[group - start] >= weight_signal_expected before
+  // computing (WeightPushMulticast per-slot epoch signals). nullptr == no
+  // weight gating; local-expert problems never wait.
+  uint64_t *weight_signal_ptr = nullptr;
+  uint64_t weight_signal_expected = 0;
+  int weight_gate_group_start = INT32_MAX;
   // a2av_ring mode: sends follow the reverse hierarchical ring, so the dense
   // static problem schedule is used instead of the dynamic tile-claimer buckets.
   bool a2av_ring_schedule = false;

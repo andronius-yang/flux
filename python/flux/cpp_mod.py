@@ -198,6 +198,8 @@ DisScatterBackward = _get_flux_member("DisScatterBackward")
 All2AllInference = _get_flux_member("All2AllInference")
 All2AllSingle = _get_flux_member("All2AllSingle")
 AsyncSendRecv = _get_flux_member("AsyncSendRecv")
+WeightPrefetchGetmem = _get_flux_member("WeightPrefetchGetmem")
+WeightPushMulticast = _get_flux_member("WeightPushMulticast")
 
 __all__ = [
     "bsr_reduce",
@@ -250,6 +252,8 @@ __all__ = [
     "PreAttnAllToAllCommOp",
     "All2AllSingle",
     "AsyncSendRecv",
+    "WeightPrefetchGetmem",
+    "WeightPushMulticast",
     "_nvshmem_team_split_strided",
     "_nvshmem_team_split_2d",
     "_nvshmem_team_destroy",
