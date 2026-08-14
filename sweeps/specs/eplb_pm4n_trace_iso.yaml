@@ -1,0 +1,43 @@
+# First EPLB-arm capsule: static predicted-load placement (vendored
+# deepseek-ai/EPLB, global policy) vs the two online EP arms on the same real
+# Qwen3 trace (layer 92, the canonical skew case). Three arms in ONE capsule,
+# all on the one-sided NVSHMEM All2AllSingle transport, so the A/B/C is both
+# build-clean and transport-clean:
+#   eplb             ONE placement per cell from the FULL pool histogram
+#                    (oracle-ceiling prediction); zero per-batch solver and
+#                    weight movement (prefetch ~0; one-time placement
+#                    book-kept as eplb_weight_place_bytes/_ms_oneshot)
+#   ultraep_nvshmem  per-batch NVL4-confined re-solve; prefetch = weight_sync
+#                    every iteration; residual floor ultraep_lb_floor
+#   moonep_nvshmem   per-batch global token migration; every rank GEMMs
+#                    exactly S*K rows; prefetch = weight prefetch every iter
+# Compare gemm_rows_per_rank spread (eplb lands between moonep's constant
+# S*K and ultraep's ~1.209 floor iff the pool predicts the batch), the ~0
+# eplb prefetch column vs the other arms' recurring weight cost, and
+# total_ms WITHIN this capsule only.
+platform: perlmutter
+nodes: 4
+variants:
+  - eplb
+  - ultraep_nvshmem
+  - moonep_nvshmem
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib: [8]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated, e2e]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+notes: "EPLB arm debut: static pool-oracle placement (global policy) vs ultraep_nvshmem vs moonep_nvshmem, all on All2AllSingle, real Qwen3 trace layer 92 b8/k8, correctness on"

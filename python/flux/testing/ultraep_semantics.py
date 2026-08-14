@@ -748,7 +748,8 @@ class RankCommLayout:
 
 
 def build_comm_layout(plan: UltraEPPlan, rank: int,
-                      topk_all: torch.Tensor) -> RankCommLayout:
+                      topk_all: torch.Tensor,
+                      pinned_masters: bool = True) -> RankCommLayout:
     cfg = plan.cfg
     R, nlp = cfg.R, cfg.nlp
 
@@ -808,18 +809,23 @@ def build_comm_layout(plan: UltraEPPlan, rank: int,
 
     # Weight sync (direct plan): every replica instance pulls its master's
     # weights home_rank -> host rank. All pairs intra-domain by construction.
+    # Only meaningful under UltraEP's pinned-master invariant (masters at
+    # rank*nlp+local, replicas in the redundant slots); plans with full
+    # re-placement (eplb arm) pass pinned_masters=False and manage their own
+    # one-time weight placement instead.
     l2p = plan.l2p.long()
     pairs = []
-    for l in range(cfg.G):
-        C = int(plan.lcnts[l])
-        home = int(l2p[l, 0]) // nlp
-        for j in range(1, C):
-            phys = int(l2p[l, j])
-            dest = phys // nlp
-            b = phys % nlp - cfg.epn
-            assert dest != home, "replica co-located with master"
-            assert dest // cfg.D == home // cfg.D, "replica escaped NVL domain"
-            pairs.append((dest, b, l, home))
+    if pinned_masters:
+        for l in range(cfg.G):
+            C = int(plan.lcnts[l])
+            home = int(l2p[l, 0]) // nlp
+            for j in range(1, C):
+                phys = int(l2p[l, j])
+                dest = phys // nlp
+                b = phys % nlp - cfg.epn
+                assert dest != home, "replica co-located with master"
+                assert dest // cfg.D == home // cfg.D, "replica escaped NVL domain"
+                pairs.append((dest, b, l, home))
 
     return RankCommLayout(
         rank=rank,
@@ -842,6 +848,10 @@ class UltraEPLayer0Runner:
     CUDA events: pack() / a2av() / place() / weight_sync() / gemm().
     """
 
+    # Subclasses for plans without UltraEP's pinned-master invariant (eplb
+    # arm) set this False so the layout skips weight_sync_pairs derivation.
+    PINNED_MASTERS = True
+
     def __init__(self, plan: UltraEPPlan, rank: int, group, device,
                  topk_all: torch.Tensor, dtype=torch.bfloat16,
                  ffn_size_shard: int = 0, sync_fc2: bool = True):
@@ -860,7 +870,8 @@ class UltraEPLayer0Runner:
         self._topk_all = topk_all
         cfg = self.cfg
 
-        lay = build_comm_layout(plan, rank, topk_all)
+        lay = build_comm_layout(plan, rank, topk_all,
+                                pinned_masters=self.PINNED_MASTERS)
         self.lay = lay
         dev = device
         self.send_row_index = lay.send_row_index.to(dev)
