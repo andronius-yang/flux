@@ -352,16 +352,74 @@ when fixed cost binds → small budget, many peers; opportunity grows with N.
 
 This is the cleanest available validation of §3.2. **Paper figure.**
 
-### 5.4 The model's missing term: gateway coupling grows with N
+### 5.4 RETRACTED — there was no coupling term; the opportunity was never there
 
-Analytically the dedup byte saving at n=8/k=8 is still ~34%, and ~19% at n=16
-(expected distinct remote nodes hit = `(N−1)(1 − (1−1/N)^k)` vs `k(N−1)/N`
-crossings), yet **measured latency benefit is zero.** The saving is real and
-fully cancelled.
+**This section previously claimed:** the dedup byte saving at n=8/k=8 is still
+~34% analytically (from the iid reference `(N−1)(1 − (1−1/N)^k)` vs `k(N−1)/N`
+crossings) yet measured latency benefit is zero, therefore the cost model needs
+a *gateway coupling term growing with N* that cancels it.
 
-→ The cost model needs a **coupling term growing with N**: the gateway runs N−1
-rounds, each waiting on its slowest contributor. It crosses the shrinking dedup
-benefit at **n ≈ 8**. The starvation-campaign deficits are the direct evidence.
+**That was wrong, and the error was using an iid reference for a non-iid
+generator.** Measured directly (2026-08-15, `sweeps/dedup_factor.py`, offline,
+no GPU) the true cross-node dedup ceiling of the synthetic families is:
+
+| nodes | uniform | fanoutskew | iid reference (what §5.4 assumed) |
+|---|---|---|---|
+| 4 | 53.1% | 52.5% | 55.0% |
+| 8 | **3.1%** | **2.5%** | 34.4% |
+| 16 | **0.0%** | **0.0%** | 19.3% |
+
+There is essentially **no dedup opportunity at n≥8 and literally none at n=16**.
+Dedup-merge shows zero latency benefit there because **there is nothing to
+dedup** — no coupling term is needed to explain §5.2 at all.
+
+**The mechanism is exact and closed-form.** The sorted column-major dealer gives
+`U[s][n] = min(copies_to_node, T)` (`gen_matrix.dedup_round_stats`), and
+copies-per-node ≈ `topk·T/nn`, so
+
+> **synthetic dedup ceiling = max(0, 1 − nn/topk)** — nonzero only while
+> **nodes < topk**.
+
+Check: n=2 → 75%, n=4 → 50% (measured 53.1%), n=8 → 0% (measured 3.1%, the
+residual is skew/rounding), n=16 → 0%. And it upper-bounds the measured
+latencies of §5.2 (−54.8%, −26.5%, ~0, ~0) exactly as a ceiling should.
+
+### 5.4b The retraction's real consequence: §5.2 is a generator artifact
+
+Real routing does **not** collapse. Re-mapping the stored Qwen3 routing files
+across node counts (same real co-activation structure, only the
+expert→rank→node map changes as `epr = G//W`, tokens-per-rank held constant):
+
+| nodes | real trace | synthetic dealer | iid reference |
+|---|---|---|---|
+| 2 | 75.1% | 75.0% | 75.0% |
+| 4 | 53.3% | 50.0% | 55.0% |
+| 8 | **33.6%** | **0.0%** | 34.4% |
+| 16 | **17.5%** | **0.0%** | 19.3% |
+
+Confirmed exactly, not just by re-mapping, on the *actually generated* 8-node
+trace matrix `w32x4_trace-2d1cf0_b8_k8_id001`: **35.7%** ceiling
+(copies=229047, unique=147201).
+
+**Real Qwen3 routing behaves like iid for dedup purposes; the synthetic dealer
+destroys all dedup opportunity once `nn ≥ topk`.** Since every n=8 and n=16
+measurement in §5.1–§5.3 used synthetic families, and every trace capsule in the
+repo is 4-node:
+
+> **§5.2's "dedup-merge dies at n≥8" is an artifact of the matrix generator, not
+> a property of MoE dispatch. We have no real-routing measurement of dedup-merge
+> above 4 nodes.** The headline claim of §3.2/§5.3 — that dedup and coalesce
+> anti-correlate in N — survives only on the budget axis until a trace run at
+> n≥8 exists.
+
+This is why the 8n/16n eager specs carry a `trace` arm: the synthetic families
+there can test eager's round de-serialization, but they cannot test dedup at
+all, because their ceiling is exactly zero.
+
+*Methodological lesson worth keeping:* an analytic reference is only a reference
+for the generator that produced the data. The iid formula was right for real
+routing and wrong for the dealer, and using it as a stand-in manufactured a
+"missing coupling term" that did not exist.
 
 ### 5.5 The engine axis, measured
 
@@ -387,8 +445,11 @@ relay_ident_bytes`, a **relay load-balance** metric. The true dedup factor is
 `$PSCRATCH/.../a2av_test_matrices/generated/` (23 with real-trace routing, where
 the closed form does not hold and U comes from measured routing).
 
-**Not yet done. Zero GPU cost.** Doing it separates "bytes saved" from "latency
-gained" and would quantify §5.4's coupling term directly.
+**DONE 2026-08-15** — `sweeps/dedup_factor.py`, zero GPU cost. It did not
+quantify a coupling term; it showed there was none to quantify, and retracted
+§5.4. See §5.4/§5.4b. The script computes both the synthetic ceiling (regenerate
+chunks deterministically → `dedup_round_stats`) and the real-routing ceiling
+from a `<mid>.routing.txt`.
 
 ### 5.7 SCOPE CAVEAT — every result above is from a near-compute-balanced regime
 
@@ -555,9 +616,13 @@ It therefore tests three nested claims:
 
 1. **§3.3 — merge's true price is coupling, not bytes.** If coupling is the
    price, relieving it must pay.
-2. **§5.4 — the coupling term grows with N.** Eager's benefit should be an
+2. **The coupling term grows with N.** Eager's benefit should be an
    increasing function of N, since it de-serializes N−1 rounds. Flat-in-N
    benefit falsifies the round-serialization microfoundation.
+   *(This claim originally cited §5.4, which is now retracted — §5.4's evidence
+   for a coupling term was an artifact. Eager is therefore the **only**
+   remaining evidence for or against a coupling term at all, which raises rather
+   than lowers the value of the n≥8 run.)*
 3. **§3.6 — merge manufactures the stages that overlap fills.** The gateway's
    rounds *are* merge-created stages. If they cannot be filled, §3.6 is in
    trouble, since it is what makes merge and overlap non-orthogonal.
@@ -605,9 +670,14 @@ cell, it is cheap, and the framework predicts a specific result: eager's value
 should grow with N (more rounds to de-serialize) **but only once connections
 exceed NN−1**. If eager wins at n=16/conn=32 and loses at n=16/conn=8, that
 confirms both the head-of-line mechanism and the channel-oversubscription
-counter-mechanism in one capsule — and it would also test whether de-coupling
-the gateway recovers the dedup benefit that §5.4 shows is being cancelled at
-n≥8.
+counter-mechanism in one capsule.
+
+*(Amended 2026-08-15: this originally also promised to test "whether de-coupling
+the gateway recovers the dedup benefit §5.4 shows is cancelled at n≥8". §5.4 is
+retracted — on the synthetic families there is no cancelled benefit to recover,
+because the ceiling is exactly zero at n≥8. The dedup question is only
+answerable on the `trace` arm, which is why all four 8n/16n specs now carry
+one.)*
 
 ### 7.4 Results — the N=4 anchor (capsules C1/C2, 2026-08-15)
 
@@ -692,18 +762,26 @@ a shipping default.
 
 ## 8. Open questions
 
-1. **Does de-coupling the gateway recover the dead dedup benefit at n≥8?**
-   §5.4 says ~34% of byte saving is available at n=8 but yields zero latency. If
-   coupling is the cause, eager / early-fire variants should recover part of it.
-   Prediction to falsify: eager at n=16 either recovers dedup, or loses to plain
-   `hier` outright.
+1. ~~**Does de-coupling the gateway recover the dead dedup benefit at n≥8?**~~
+   **ANSWERED / VOID (2026-08-15).** The premise was false: on the synthetic
+   families the n≥8 dedup ceiling is exactly 0%, so there is no cancelled
+   benefit to recover and no coupling term is implied. See §5.4. The live
+   replacement question is (1b).
+1b. **Does dedup-merge still pay at n≥8 under REAL routing?** Real traces retain
+   33.6% (n=8) and 17.5% (n=16) dedup headroom where synthetic has none, and no
+   trace capsule above 4 nodes exists. This is now the single highest-value
+   measurement in the campaign, and the `trace` arm of the 8n/16n specs is
+   aimed at it.
 2. **Is dedup actively harmful at high N?** At n=16/b=2MiB,
-   `hier_compress_union` is **+1.2%** — slightly worse than no dedup. Noise at
-   n=3, or is dedup *adding* puts there? If the latter, dedup and coalesce may
-   not compose at all at scale and must be *chosen between* — which would be a
-   significant claim.
-3. **Measure the real dedup factor offline** (§5.6) and plot measured latency
-   gain against predicted byte saving. Separates opportunity from coupling. Free.
+   `hier_compress_union` is **+1.2%** — slightly worse than no dedup. With the
+   ceiling now known to be 0% there, this is dedup's *pure overhead* with zero
+   offsetting benefit, which makes it a clean measurement of the cost side
+   rather than a puzzle. Re-ask it on the trace arm, where the benefit is real.
+3. ~~**Measure the real dedup factor offline.**~~ **DONE** — `dedup_factor.py`;
+   it retracted §5.4 rather than confirming it (§5.4b).
+3b. **Why does dedup help *less* under skew than under uniform?** §7.4 measured
+   ≈−20% (fanoutskew) vs ≈−33% (uniform) at n=4/b≥8, while §4.3 argues skew
+   should *increase* collision opportunity. One of the two is wrong.
 4. **Compute η (§3.4) across the existing phases capsules.** Gives a per-config
    overlap-efficiency number, conservative but reportable.
 5. **Does the Dim-N weight split (§4.1) actually pay?** It is the framework's
