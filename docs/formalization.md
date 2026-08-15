@@ -758,6 +758,82 @@ a shipping default.
    pushes both merges the same direction and so does not explain their opposite
    scaling.
 
+### 7.5 Results — n=8 (capsules B1/B2, 2026-08-15)
+
+`20260815-082516_perlmutter_45bda348` (conn=8) and
+`20260815-084642_perlmutter_ca5a1fbf` (conn=32), 60/60 ok each, same build
+`ba9e91096019dfc0`, isolated, topk=8, G=128, now including the **trace** arm.
+Numbers below use `--stat schema-median` (§ analyzer) unless noted.
+
+**Noise control first.** Cells are n=1 (one launch each), and 8n is much noisier
+than 4n. Comparing mean-over-iterations against median-over-iterations separates
+within-launch transients from real effects at zero cost: the eye-catching
+**−29.7%** eager "win" at uniform/b2 collapses to **−3.7%** under the median (it
+was inflated iterations in the *baseline* cell), while the large fanoutskew
+penalties are stable (+25.8→+27.6, +15.6→+17.5, +16.2→+16.6). Quote the median.
+
+**The conn discriminator — channel oversubscription confirmed, decisively.**
+Eager vs `hier_compress_lb_union`, fanoutskew, 8 nodes:
+
+| conn | b=1 | b=2 | b=8 | b=16 | b=32 |
+|---|---|---|---|---|---|
+| 8 | −2.9 | +0.5 | **+27.6** | **+17.5** | **+16.6** |
+| 32 | −4.5 | −4.9 | **+2.0** | **−4.3** | **−1.6** |
+
+The penalty **vanishes** with more channels. At n=8 eager wants `NN−1 = 7`
+streams, which against conn=8 collides with the main stream,
+`cp_stream_inter_node`, the pack stream and the GEMM. A competing hypothesis —
+that eager converts serialization into *NIC bandwidth sharing*, delaying the
+heavy round that sets the makespan under skew — is **falsified**: bandwidth
+sharing would not care about `CUDA_DEVICE_MAX_CONNECTIONS`. §7.3 is upheld:
+**issue channels belong in the §2 resource vector, and eager's entire cost is
+denominated in them.**
+
+**The N-curve, both signs of it.** Eager vs its base, median stat:
+
+| conn | n=4 (mean of cells) | n=8 (mean of cells) |
+|---|---|---|
+| 32 (adequate) | ≈ **+0.2%** | ≈ **−3.3%** |
+| 8 (starved) | ≈ **+3.7%** | ≈ +2.6% (fanoutskew alone: **+11.8%**) |
+
+> **With adequate channels eager's *benefit* grows with N (≈0% → ≈−3%),
+> confirming §7.1 claim 2 and that inter-round serialization is real. With
+> starved channels its *penalty* grows with N, because its cost is denominated
+> in a resource whose demand is `NN−1`.**
+
+So eager is a legitimate default **conditional on channel headroom**, not
+unconditionally — and the n=4/conn=8 verdict that shelved it in 2026-08-07 was
+measured in exactly the starved corner.
+
+**Dedup at 8 nodes under REAL routing (the §5.4b question).**
+`hier_compress_union` vs `hier`, trace arm:
+
+| conn | b=1 | b=2 | b=8 | b=16 | b=32 |
+|---|---|---|---|---|---|
+| 8 | +1.9 | +0.6 | −4.6 | −5.5 | −4.5 |
+| 32 | +1.8 | +0.1 | −4.0 | −6.1 | −2.0 |
+
+**These are two independent capsules agreeing cell-by-cell** — a replication,
+which matters far more than n=1 per cell suggests. Meanwhile the *synthetic*
+families disagree wildly between the same two capsules (fanoutskew b=1: −4.0 vs
++4.9; uniform b=2: +8.8 vs −6.7). That contrast is itself the confirmation of
+§5.4b: where the dedup ceiling is 0%, `union` vs `hier` measures nothing but
+gateway mechanics and behaves like noise; where it is 35.7%, the signal
+replicates.
+
+Three conclusions:
+
+1. **Dedup-merge does pay at n=8 under real routing** (≈−4 to −6% at b≥8),
+   contradicting §5.2's synthetic-derived "dies at n≥8". §5.4b's retraction is
+   now confirmed *experimentally*, not just analytically.
+2. **The budget axis survives.** Dedup pays only at b≥8 and is mildly harmful at
+   b=1–2 (+1.8/+1.9 and +0.1/+0.6, also replicated), matching §3.2: dedup buys
+   bytes, so it loses where fixed cost binds.
+3. **Conversion is poor and that is the new live question.** A 35.7% byte
+   ceiling yields ~5% latency. The byte saving is real, available, and largely
+   *not* converting — which is where a coupling/overhead term genuinely belongs,
+   unlike the retracted §5.4 where the opportunity never existed at all.
+
 ---
 
 ## 8. Open questions
