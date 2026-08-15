@@ -12,6 +12,11 @@ Latency statistic (SCHEMA.md / the `/sweep` skill): for `isolated` cells quote
 the **mean over iterations of the per-iteration max-across-ranks** of `e2e_ms`.
 A layer is not done until its slowest rank is done, so the max-across-ranks is
 the per-iteration latency; the mean over iterations is the point estimate.
+`--stat schema-median` takes the median over iterations instead of the mean.
+Comparing it against `schema` is a free diagnostic for WITHIN-launch noise: a
+delta that moves a lot between the two rested on a few inflated iterations (the
+documented CXI/EFA transient), while one that holds under both is real. It does
+nothing for launch-to-launch variance -- that needs repeated cells.
 `--stat median-all` reproduces the cruder median-over-all-(rank,iter) rows if
 you need to compare against an older analysis that used it.
 
@@ -46,8 +51,16 @@ def cell_latency(rows, stat):
     per_iter = collections.defaultdict(list)
     for _, it, v in rows:
         per_iter[it].append(v)
-    # per-iteration max across ranks, then mean over iterations
-    return statistics.mean([max(vs) for vs in per_iter.values()])
+    # per-iteration max across ranks (a layer ends when its slowest rank ends)
+    per_iter_max = [max(vs) for vs in per_iter.values()]
+    if stat == "schema-median":
+        # robust variant: median over iterations instead of mean. Identical to
+        # `schema` when iterations are clean; diverges only when a minority of
+        # iterations inside a launch are inflated (the documented CXI/EFA
+        # transient). Comparing the two diagnoses WITHIN-launch noise for free,
+        # without spending another allocation on repeats.
+        return statistics.median(per_iter_max)
+    return statistics.mean(per_iter_max)
 
 
 def load_capsule(run_id, stat):
@@ -94,7 +107,7 @@ def main():
     ap.add_argument("--cols", default="budget_mib", help="cells.csv field for table columns")
     ap.add_argument("--topk", type=int, help="restrict to one topk")
     ap.add_argument("--mode", default="isolated", help="restrict to one mode (default isolated)")
-    ap.add_argument("--stat", default="schema", choices=["schema", "median-all"])
+    ap.add_argument("--stat", default="schema", choices=["schema", "schema-median", "median-all"])
     args = ap.parse_args()
 
     arms = [a.strip() for a in args.arms.split(",") if a.strip()]
