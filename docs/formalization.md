@@ -672,8 +672,21 @@ a shipping default.
    as N grows *and* as budget shrinks. The b=1 point did not exist before this
    campaign.
 2. **Dedup helps *less* under skew.** At b≥8, union vs hier is ≈−33% under
-   `uniform` but only ≈−20% under `fanoutskew`. Worth reconciling with §4.3,
-   which argues skew should *increase* collision opportunity.
+   `uniform` but only ≈−20% under `fanoutskew`. **RESOLVED — not a
+   contradiction of §4.3.** Measured remote-traffic fraction over the stored
+   matrices: `uniform` W=16 is **0.80**, `fanoutskew` is **0.50**. There is
+   simply 60% more cross-node traffic to dedup under `uniform`. Moreover
+   `fanoutskew` does not skew *expert popularity* at all — it skews how much
+   each source node sends remotely and then spreads that remote traffic
+   **uniformly over all remote ranks** (`w[d] = p / (W - L)`,
+   `gen_matrix.py:_row_weights`), so collision probability *per remote byte* is
+   identical to `uniform`. §4.3's claim concerns co-activation / expert-
+   popularity concentration, which **no synthetic family here produces** — only
+   the trace family could, and it has no instances above W=16 (§5.7).
+   Side note for §5.1–§5.2: `uniform`'s remote fraction itself rises with W
+   (0.80 → 0.90 → 0.95 at W=16/32/64), a confound to keep in mind, though it
+   pushes both merges the same direction and so does not explain their opposite
+   scaling.
 
 ---
 
