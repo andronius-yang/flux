@@ -553,6 +553,52 @@ separate 8-cell capsule where a timeout costs one cell rather than the campaign.
 Matrix generation at b=64/64-rank is confirmed working (sym 10G, cap 262144), so
 the only live risk there is runtime harness memory.
 
+**RESOLVED 2026-08-15 — capsule `20260815-124911_perlmutter_71b93a5d`.** The
+first non-blocking 16-node lb-vs-union measurement. 18/18 ok, isolated, conn=8,
+topk=8, G=192, instance 003, build `31fc91f44af8` (median stat):
+
+| family | b=2 | b=8 | b=16 |
+|---|---|---|---|
+| trace | +6.2 | +6.4 | +2.5 |
+| fanoutskew | +7.8 | +3.9 | **−8.3** |
+
+**lb loses in 5 of 6 cells.** At the two budgets that the blocking capsules
+also covered, the contrast is direct:
+
+| budget | BLOCKING conn=1 | NON-BLOCKING conn=8 (this run) |
+|---|---|---|
+| b=2 | **+0.3** | +6.2 / +7.8 |
+| b=8 | **−1.4** | +6.4 / +3.9 |
+
+> **The 16-node lb win does not survive the removal of `BLOCKING_WIRE`.** It was
+> the knob, as §5.8 predicted. The non-blocking series therefore reads
+> +2.0 (2n) → +2.8 (4n) → +4.2 (8n) → ≈+5 (16n): **lb_union gets monotonically
+> worse than union as N grows, with no crossover.**
+
+Two honest qualifications:
+
+1. **Build-confounded across N.** This capsule ran on `31fc91f44af8`
+   (phase-ordered-wire), not the `ba9e91096019` used for 4n/8n, because the
+   conda editable install was repointed mid-campaign. The *within-capsule*
+   lb-vs-union comparison is valid (SCHEMA rule 4); splicing this point onto the
+   2n/4n/8n series is not, and the build ledger records configs moving 6–33%
+   across builds. The qualitative conclusion (lb loses, no crossover) is robust
+   because it is a within-capsule sign, not a magnitude.
+2. **Noisy at n=1.** Mean and median disagree materially here (fanoutskew b=8:
+   +3.9 median vs −9.2 mean), so no single cell is trustworthy. The 5/6 sign
+   pattern is the result, not the numbers.
+
+The one cell that goes the other way — **fanoutskew b=16, −8.3%** — is the
+largest budget tested and is the only support in this campaign for the
+"lb wins at high N once the budget is large" hypothesis. It is a single noisy
+cell and b=32/b=64 are unreachable at 16n (zero ok cells historically; lb_union
+reproducibly hangs at b=64, `b17d826`), so the budget axis cannot currently be
+pushed further at this node count. Treat it as unresolved, not as support.
+
+Eager at 16n, same capsule, vs union: +11.7 / +10.1 / +21.8 (trace) and
++13.8 / +25.3 / −4.2 (fanoutskew) — consistent with §7.5b's verdict, and no
+crossover appears at 16 nodes either.
+
 *Lesson, same shape as §5.4:* a knob that exists "for measurement" silently
 became part of a headline comparison. Always split historical pairs by
 `env_json` before trusting a remembered trend.
