@@ -438,6 +438,10 @@ theory but deprioritized as a build direction.
 dependency and increases overlap, shouldn't it be the default?"**
 → See §7. The intuition is right; the recalled mechanism was not.
 
+**F6 — "What formalization does eager try to test?"**
+→ See §7.1. It is a pure probe of the coupling term, and the cleanest
+single-axis experiment we have.
+
 ---
 
 ## 7. `FLUX_A2AV_FANOUT` ("eager") — actual mechanism and why it is not default
@@ -488,6 +492,65 @@ layer1 `moe_gather_rs`.) **Three distinct knobs, easily conflated.**
    arrivals uniform. Also, the existing ring rotation
    (`dlg = (my_lr + 1 + dn + dl) % L`) already spreads first-window arrival at
    zero cost, targeting a related goal more cheaply.
+
+### 7.1 What formalization eager tests
+
+Eager is **not a merge variant** — it is the overlap primitive (§3.4) applied at
+a new scope: *inside* the merge, across gateway rounds, instead of between comm
+and compute. It is a **pure probe of the coupling term** (§3.3, §5.4).
+
+What makes it unusually clean: eager is byte-identical to the ring order, issues
+the same L puts across the same NN−1 rounds, uses the same engine, and changes
+neither placement nor dedup opportunity. **Every `L_r` in the cost model is
+unchanged.** The only variable is the ordering constraint among rounds. Most
+sweep arms confound bytes, messages, and engine at once; eager varies one axis.
+
+It therefore tests three nested claims:
+
+1. **§3.3 — merge's true price is coupling, not bytes.** If coupling is the
+   price, relieving it must pay.
+2. **§5.4 — the coupling term grows with N.** Eager's benefit should be an
+   increasing function of N, since it de-serializes N−1 rounds. Flat-in-N
+   benefit falsifies the round-serialization microfoundation.
+3. **§3.6 — merge manufactures the stages that overlap fills.** The gateway's
+   rounds *are* merge-created stages. If they cannot be filled, §3.6 is in
+   trouble, since it is what makes merge and overlap non-orthogonal.
+
+### 7.2 Why a null result is still informative: it discriminates two couplings
+
+There are two distinct microfoundations for the coupling cost, and they demand
+different primitives:
+
+- **Inter-round coupling** — round 1's wait blocks rounds 2..NN−1 on the shared
+  stream. Scales with NN−1. **This is what eager removes.**
+- **Intra-round coupling** — a round still waits for its own relay chunk, which
+  waits for the slowest of the L contributing local ranks. **Eager cannot touch
+  this by construction.**
+
+So: eager wins at n=16 ⟹ coupling is inter-round, it is reversible, and the
+paper's claim upgrades from "dedup dies above n=8" to "dedup dies above n=8
+*unless the gateway is decoupled*." Eager flat at n=16 *with adequate
+connections* ⟹ coupling is intra-round, and the fix is not more streams but
+**splitting the window** so a round forwards partial arrivals instead of waiting
+for its whole relay chunk — a different primitive we would only know to reach
+for because eager came back flat.
+
+### 7.3 Eager would force a resource into the model
+
+Eager's entire cost is NN−1 streams — nothing else. The model's resource vector
+(§2) is currently `{NIC, NVLink, CE, SM, HBM}`, which does not include issue
+channels. If eager wins at conn=32 and loses at conn=8, then:
+
+> **Issue channels / hardware connections are a resource in R**, not an
+> implementation detail.
+
+Eager is the one primitive whose cost lands *only* on that resource, making it
+the cleanest available probe for whether the resource vector is complete.
+
+**Corollary for prioritization: eager's value is as an instrument, not as an
+optimization.** Its mediocre n=4 perf verdict is not a reason to skip it; a
+single-axis A/B is worth disproportionately more for validating a cost model
+than for making anything faster.
 
 ### The experiment that would settle it
 
