@@ -1,0 +1,40 @@
+# NR-14 follow-up (2026-08-15): does slot-last WIN in the regime the measured
+# mechanism (amendment 2026-08-15b) predicts it should — b1, where the weight
+# wire out-bytes tokens 8:1 (E0 census) and the slot class is small (pref frac
+# 0.089)? Prediction registered before running:
+#   - control pair (default weights-first issue order): slotlast ~= interleave
+#     at b1, because weights land before the sweep reaches slot tiles — no
+#     weight spin to remove.
+#   - test pair (tokens_first issue order, weights deliberately late):
+#     tokfirst_slotlast < tokfirst, because interleaved slot tiles park CTAs
+#     on the weight gate and the deferred class is small enough that the
+#     resident prefix still bridges arrivals (condition 1 AND 2 of 2026-08-15b
+#     hold, unlike b64 where both fail).
+# Method rule NR-13 fact 9 / NR-14: never headline an ordering effect from one
+# capsule — this spec is run at least twice, forward and reversed arm order
+# (see the _rev twin).
+platform: perlmutter
+nodes: 4
+variants:
+  - moonep_fused_push_auto_gated_tokfirst
+  - moonep_fused_push_auto_gated_tokfirst_slotlast
+  - moonep_fused_push_auto_gated_slotlast
+  - moonep_fused_push_auto_gated_slotinterleave
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib: [1]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 20
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated, e2e]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+notes: "NR-14 b1 win-regime probe, forward arm order: tokfirst vs tokfirst_slotlast (test pair, weights late) + slotlast vs slotinterleave (control pair, weights early)"

@@ -777,6 +777,42 @@ t_enter/t_fire/t_done).
 **Confidence: measured** (per-tile device timestamps, 15 epochs, both arms, one
 binary; the park is deterministic per epoch, not a transient).
 
+### NR-14 Amendment (2026-08-15c) — b1 win-regime probe: the knob's win condition is self-defeating; no budget found where slot-last wins e2e
+
+**Question tested (user):** does slot-last win at b1, the regime 2026-08-15b
+predicts is favorable (weight wire out-bytes tokens 8:1, slot class only ~9% of
+rows)? Four-arm b1 capsules, order-controlled per the method rule (forward
+20260815-140229, reversed 20260815-140527, 20 iters, one binary), plus a
+tile-trace pair (20260815-140810, instrumented):
+
+| pair | isolated max-rank e2e_ms (fwd / rev) |
+|---|---|
+| tokfirst → tokfirst_slotlast (weights LATE) | 5.30→5.33 / 5.30→5.34 |
+| slotinterleave → slotlast (weights early, control) | 4.78→4.82 / (4.78)→4.84 |
+
+**Neutral everywhere — and the tile trace shows WHY, which is the interesting
+part.** Under tokens_first the hypothesized micro-mechanism is real and
+slot-last fixes it at kernel level: interleaved slot tiles enter at t=0 and
+spin on the weight gate (worst rank 3: 148 CTA-ms slot spin, 0.78 ms full-park,
+GEMM makespan 1.72 ms), and slot-last collapses that to ~0 (0.3 CTA-ms; worst
+GEMM makespan 0.93 ms). But the b1 GEMM is only 0.4–1.7 ms of a ~5.3 ms
+iteration — the critical path is the surrounding fixed cost (stage-1/2 host
+metadata + wire; NR-9 stage2-dominated regime) — so a 0.8 ms faster kernel
+moves e2e by nothing.
+
+**Structural read: the win condition is self-defeating on this workload.**
+Slot-last pays only where (a) slot tiles spin on late weights inside the GEMM
+AND (b) the GEMM is the iteration's critical path. (a) holds only at small
+budgets (weights out-byte tokens, GEMM short) — where (b) fails; at large
+budgets (b) holds but weights land 1–2 ms into a ~17 ms GEMM so (a) fails, and
+slot-last instead destroys token-arrival pacing (2026-08-15b). Untested corner:
+b8 + tokens_first (w:t ≈ 0.91, GEMM ~6.5 ms) — the only remaining place both
+conditions could marginally coexist; expected small at best.
+
+**Confidence: measured** (two clean order-controlled capsules + instrumented
+trace pair, one binary). Decision unchanged: knob default 0, tokfirst
+non-default; both retained as ablation arms.
+
 ### NR-14 Amendment (2026-08-14c, SUPERSEDED by the 2026-08-15 amendment above) — slot-last canonicalized as the binary default
 
 **User decision after the ladder capsule: `FLUX_A2AV_SCHED_PREFETCH_LAST` defaults

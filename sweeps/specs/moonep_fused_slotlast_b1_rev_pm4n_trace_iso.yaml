@@ -1,0 +1,28 @@
+# Reversed-arm-order twin of moonep_fused_slotlast_b1_pm4n_trace_iso.yaml
+# (NR-13 fact 9 / NR-14 method rule: repeat AND reverse the arm order before
+# believing any schedule/ordering effect). Same cells, execution order flipped.
+platform: perlmutter
+nodes: 4
+variants:
+  - moonep_fused_push_auto_gated_slotinterleave
+  - moonep_fused_push_auto_gated_slotlast
+  - moonep_fused_push_auto_gated_tokfirst_slotlast
+  - moonep_fused_push_auto_gated_tokfirst
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib: [1]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 20
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated, e2e]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+notes: "NR-14 b1 win-regime probe, REVERSED arm order twin"
