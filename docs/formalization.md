@@ -834,6 +834,37 @@ Three conclusions:
    *not* converting — which is where a coupling/overhead term genuinely belongs,
    unlike the retracted §5.4 where the opportunity never existed at all.
 
+### 7.6 The dedup ceiling is independent of budget — so budget acts on conversion
+
+Exact ceilings on the *generated* trace matrices (`sweeps/dedup_factor.py`
+methodology, computed directly from each `<mid>.routing.txt`):
+
+| nodes | b=1 | b=2 | b=4 | b=8 | b=16 | b=32 | b=64 |
+|---|---|---|---|---|---|---|---|
+| 8 | 35.8% | 35.8% | 35.5% | 35.7% | 35.6% | 35.6% | 35.6% |
+| 16 | 26.0% | 25.8% | · | 25.8% | 25.9% | · | · |
+
+**Flat in budget, to within 0.3 points.** This decomposes §7.5's budget effect
+cleanly: dedup-merge's *opportunity* does not vary with budget at all, so the
+fact that it is mildly harmful at b=1–2 and worth ~−5% at b≥8 is entirely a
+**conversion** effect — its fixed-cost overhead is constant while the bytes it
+saves scale with the budget. That is §3.2's cost model confirmed on the
+opportunity/realisation split rather than inferred from latency alone.
+
+It also means **budget and node count act on different terms**: N sets the
+opportunity (35.7% → 26.0% from 8 to 16 nodes), budget sets how much of it
+survives overhead. The §3.2 claim that dedup and coalesce "anti-correlate on
+both axes" was conflating these.
+
+**Pre-registered prediction for A1/A2 (n=16), recorded before the run:** the
+n=8 trace arm converted a 35.7% ceiling into ≈5% latency (~14% conversion). If
+conversion is roughly N-invariant, n=16's 26.0% ceiling should yield **≈3–4% at
+b≥8, and ≥0 (mildly harmful) at b=1–2**. A materially larger gain would mean
+conversion *improves* with N; a null would mean the fixed overhead grows with N
+fast enough to eat a still-substantial 26% opportunity — which would finally be
+genuine evidence for a coupling term that grows in N, this time with the
+opportunity actually verified present.
+
 ---
 
 ## 8. Open questions
