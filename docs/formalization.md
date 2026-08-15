@@ -499,6 +499,66 @@ for the comm-bound regime.
 
 ---
 
+### 5.8 CONFOUND — the "lb wins at 16 nodes" result is a BLOCKING_WIRE artifact
+
+Recalled from an earlier campaign: at 16 nodes `hier_compress_lb_union` beat
+`hier_compress_union`, reversing the penalty seen at lower N. **The result is
+real but confounded**, and the confound inverts the conclusion.
+
+The only 16-node lb-vs-union data in the whole capsule set is
+`20260805-135758_perlmutter_25308597` (topk=4, G=128) and
+`20260805-142025_perlmutter_44fa16c5` (topk=8, G=192) — same day, `git_sha
+a25eda6e`, `.so 23035ab8f8f3`, isolated, `sm_margin=8`, `EARLY_LAUNCH=1`,
+**`FLUX_A2AV_BLOCKING_WIRE=1`**, and **no `CUDA_DEVICE_MAX_CONNECTIONS` key at
+all** (i.e. conn=1 from `launch.sh`'s default).
+
+Splitting every lb-vs-union pair in the capsule set by that knob:
+
+| nodes | wire | conn | cells | lb vs union |
+|---|---|---|---|---|
+| 2 | nonblock | 8 | 47 | +2.0 |
+| 4 | nonblock | 8 | 61 | +2.8 |
+| 8 | nonblock | 8 | 15 | +4.2 |
+| 8 | nonblock | 32 | 15 | +4.5 |
+| 4 | **BLOCK** | 1 | 18 | +6.3 |
+| 8 | **BLOCK** | 1 | 18 | +2.2 |
+| 16 | **BLOCK** | 1 | 10 | **−1.7** |
+| 16 | **BLOCK** | 8 | 5 | +0.5 |
+
+> **The N-trend reverses sign with the knob.** Blocking: +6.3 → +2.2 → −1.7, lb
+> improving with N to an outright win. Non-blocking: +2.0 → +2.8 → +4.2, lb
+> getting *worse* with N. These are 47/61/15/18-cell medians, not noise.
+
+`FLUX_A2AV_BLOCKING_WIRE` is documented measurement-only: it serializes the GEMM
+behind the wire (§9 "laws", `layer0_a2av_walkthrough.md`), and the
+realistic-trace campaign already recorded that the lb/union gap **vanishes**
+under it. So blocking mode suppresses precisely the mechanism that makes lb
+worse — the 16n win is most plausibly that suppression rather than a genuine
+crossover. Note also that even at 16n, moving from conn=1 to conn=8 *within*
+blocking mode takes lb from −1.7% back to +0.5%.
+
+**There is no non-blocking 16-node lb-vs-union measurement in existence.** The
+pending A1/A2 capsules supply the first one, and the two regimes make opposite
+predictions there — which makes that run considerably more valuable than the
+eager verdict alone (§7.5b) suggested.
+
+A second axis is worth probing rather than assuming: lb's penalty *does* shrink
+with budget (topk8 at 4n: +10.4 at b=1 → +2.3 at b=8), and the 16n wins sit at
+the largest budgets tested (−1.4 at b=8 topk8; −2.2 at b=32 topk4). If lb ever
+wins non-blocking, high N with a large budget is where. `b=64` has never run
+above 2 nodes and `b=32`/topk8 at 16n has zero ok cells historically (all exit
+143, timeout-reaped) — so
+`sweeps/specs/lbunion_pm16n_iso_k8_bigbudget_probe.yaml` isolates it as a
+separate 8-cell capsule where a timeout costs one cell rather than the campaign.
+Matrix generation at b=64/64-rank is confirmed working (sym 10G, cap 262144), so
+the only live risk there is runtime harness memory.
+
+*Lesson, same shape as §5.4:* a knob that exists "for measurement" silently
+became part of a headline comparison. Always split historical pairs by
+`env_json` before trusting a remembered trend.
+
+---
+
 ## 6. Feedback, objections, and questions raised (recorded verbatim in substance)
 
 These are the user's, and they shaped the framework above. Keep them; they are
