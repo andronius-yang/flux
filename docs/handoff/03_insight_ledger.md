@@ -632,17 +632,16 @@ Three findings:
    e2e mode the regression vanishes (b1 4.77 vs 4.98 — mildly positive) because
    adjacent iterations already overlap the flows. tokfirst stays a non-default
    ablation arm.
-2. **E2 slotlast is the strict-win knob**: isolated b1/b8 within noise (−1.3% at
-   b8), −14.9% at b64 (26.11 → 22.24), and it needs no driver change. At b64 the
-   token wire dominates (E0: w:t = 0.14) and the baseline's loss is slot tiles
-   blocking the wavefront while their weights/rows are in flight — moving them
-   last recovers ~3.9 ms.
-3. **The two fixes are NON-ADDITIVE at b64** (all three treated arms land at
-   ~22.2) — they recover the same stall from two sides (wire order vs consumption
-   order), consistent with NR-13's "the pathology is ordering, not bytes".
-   Combined also inherits tokfirst's small-budget regression → the recommended
-   default is **slotlast alone** (`FLUX_A2AV_SCHED_PREFETCH_LAST=1` on the gated
-   arms); canonicalization (flipping the knob default) left to a user decision.
+2. ~~**E2 slotlast is the strict-win knob**: isolated b1/b8 within noise (−1.3% at
+   b8), −14.9% at b64 (26.11 → 22.24)~~ — **RETRACTED 2026-08-15, see the
+   amendment below.** The b64 "win" was a first-cell transient; order-controlled
+   repeats make slot-last a ~29% regression there. The b64 baseline cell (26.11)
+   was simply the first cell executed in its group.
+3. ~~**The two fixes are NON-ADDITIVE at b64** (all three treated arms land at
+   ~22.2)~~ — **also retracted**: the three treated arms agreeing at ~22.2 while
+   only the first-executed baseline read 26.11 is exactly the signature of a
+   single slow cell, not of two fixes recovering one stall. Recommended default
+   after the 2026-08-15 amendment: **no schedule change** (knob stays 0).
 
 **TODO-extension (user-flagged): the E3 lane cap.** A two-round dispatch needs
 per-round gating lanes — `a2av_signal_buffer` [2W] and a [E, 2W] gating cumsum —
@@ -662,3 +661,86 @@ lever).
 **measured** (capsule 20260814-145605, one binary, correctness green). Open: nsys
 confirmation that slotlast's b64 win is slot-tile spin relocation (tile-trace
 sidecar rerun), and the b8 e2e +2.5% slotlast wiggle (single-capsule noise scale).
+
+### NR-14 Amendment (2026-08-15) — the b64 slot-last win is RETRACTED; canonicalization attempted and REVERTED
+
+**Headline correction: fact 2 of NR-14 ("E2 slotlast is the strict-win knob,
+−14.9% at b64") is WRONG and is withdrawn.** Under an order-controlled repeat
+slot-last is a **~29% REGRESSION** at b64, and the ladder's apparent win was a
+first-cell transient.
+
+**How it was caught.** The user asked to canonicalize slot-last as the default.
+The verification capsule (20260815-124013, three arms: default / explicit `=1` /
+explicit `=0`) refused to line up: the slow cell was the default arm in isolated
+mode but the explicit `_slotlast` arm in e2e mode, and — the decisive tell —
+`moonep_fused_push_auto_gated` (unset, hence slot-last after the flip) and
+`_slotlast` (explicit `=1`) are the SAME configuration yet differed by 3.6 ms in
+e2e. A per-cell transient of that size is larger than the effect being claimed.
+
+**The controlled experiment.** Two arms (`_slotlast` vs `_slotinterleave`), b64
+only, 20 iters, three capsules per arm order, one binary:
+
+| arm order | capsules | slot-last (`=1`) | interleaved (`=0`) |
+|---|---|---|---|
+| slot-last first | 20260815-124733 / -124853 / -125007 | 27.95 / 27.90 / 28.26 | 25.24 / 24.33 / 24.23 |
+| interleaved first | 20260815-125313 / -125432 / -125546 | 28.66 / 28.94 / 29.08 | 22.25 / 22.20 / 22.13 |
+
+The penalty follows the **arm**, not the position (it survives reversing the
+order), and the e2e-mode cells of the same capsules agree (slot-last 27.8-28.2 vs
+interleaved 23.1-23.3). Six capsules, no overlap between the distributions.
+
+**Flag plumbing verified, so this is not a wiring artifact.** A rank-0 one-shot
+audit line (`[a2av] sched_prefetch_last=…`, added in this commit) confirms the
+resolved value: unset→1 under the flipped default, `=1`→1, `=0`→0.
+
+**Mechanism (the risk flagged in the E2 design, now the observed behavior).**
+Deferring EVERY prefetch-slot problem leaves a wavefront tail that is entirely
+weight-gated with no resident work left to overlap. E0's census predicted the
+exposure: up to **53%** of a rank's GEMM rows are slot rows on this trace, so the
+"tail" is half the work, and the spin it inherits is no longer hidden. Slot-last
+can only pay when the slot class is small relative to resident work.
+
+**Decision: default stays 0.** `FLUX_A2AV_SCHED_PREFETCH_LAST=1` remains an opt-in
+ablation; `_slotinterleave` pins the default explicitly for A/B pairs; every gated
+arm now lists the knob in `requires` so a build lacking it is skipped, not silently
+measured.
+
+**Methodological consequence (upgrade of NR-13 fact 9).** At b64 a single cell can
+sit 3-6 ms (up to ~16%) off an identically-configured twin, and the first cell of a
+budget group is a frequent victim. **No schedule/ordering headline may rest on one
+capsule**: repeat it, and reverse the arm order. NR-14's E1 result (tokens_first
+regresses small budgets) was measured the same way and carries the same caveat —
+its sign was at least confirmed twice, but it deserves the same order-controlled
+treatment before anyone acts on it.
+
+### NR-14 Amendment (2026-08-14c, SUPERSEDED by the 2026-08-15 amendment above) — slot-last canonicalized as the binary default
+
+**User decision after the ladder capsule: `FLUX_A2AV_SCHED_PREFETCH_LAST` defaults
+to 1**, i.e. every weight-gated forward now schedules prefetch-slot problems last;
+`=0` remains the ablation handle. The default lives inside the weight-gate branch
+(gemm_grouped_v2_ag_scatter.cc), so ungated and non-moonep paths are untouched — a
+run without `weight_signal` cannot reorder anything.
+
+**Consequences for arm semantics (read before comparing across capsules).** Every
+`*_gated` arm carrying no explicit setting now runs slot-last, so the SAME ARM NAME
+means a different schedule before and after this flip — capsule 20260814-145605's
+`moonep_fused_push_auto_gated` and `_tokfirst` cells are interleaved-order
+measurements. Three guards were added in `sweeps/variants.py`:
+
+1. every weight-gated arm lists `FLUX_A2AV_SCHED_PREFETCH_LAST` in `requires`, so a
+   stale binary (no knob string → silent fallback to the interleaved order) skips
+   the cell instead of measuring the wrong thing;
+2. `moonep_fused_push_auto_gated_slotinterleave` (explicit `=0`) is the ablation arm
+   and the way to reproduce pre-flip cells;
+3. `_tokfirst` now pins `=0` so it stays the single-variable E1 ablation it was in
+   the ladder, and `_slotlast` / `_tokfirst_slotlast` are retained pinning `=1`
+   explicitly so the ladder spec and capsule still resolve to the same
+   configuration.
+
+**Verification: capsule 20260814-160644** (one binary, post-flip): canonical
+`moonep_fused_push_auto_gated` (default, no env) vs `_slotinterleave` (`=0`) at
+b1/b64, isolated + e2e — see the table in that capsule; the canonical arm must
+reproduce the ladder's `_slotlast` numbers and the ablation arm the ladder's
+baseline. **Falsifier for the canonicalization:** any capsule where the default arm
+does not match its explicit `_slotlast` twin within cell noise (that would mean the
+default is not reaching the kernel).
