@@ -834,6 +834,40 @@ Three conclusions:
    *not* converting — which is where a coupling/overhead term genuinely belongs,
    unlike the retracted §5.4 where the opportunity never existed at all.
 
+### 7.5b VERDICT — eager is a net loss; every earlier delta was against the wrong baseline
+
+§7.5 quotes eager against its own base `hier_compress_lb_union`. That flatters
+it, because `lb_union` is not the arm you would ship — plain
+`hier_compress_union` is. Against **that** baseline (median stat):
+
+| config | eager vs `union`, mean | cells lost |
+|---|---|---|
+| 4n conn=32 | **+8.1%** | 10/10 |
+| 8n conn=8 | **+8.5%** | 14/15 |
+| 8n conn=32 | **+1.5%** | 9/15 |
+
+**Eager does not beat the best arm at any node count measured.** It repairs a
+deficiency in an arm that is already the weaker design. As a shipping default:
+no.
+
+What survives, and it is the part worth keeping:
+
+1. **The gap closes monotonically with N** at adequate channels: +8.1% (4n) →
+   +1.5% (8n), and at 8n/conn=32 eager already wins 6/15 cells (−8.0, −8.5,
+   −7.0, all at larger budgets). Extrapolation puts a crossover near 16 nodes —
+   the pending A1/A2 point.
+2. **The mechanism is confirmed and quantified** regardless of the verdict:
+   inter-round serialization is real, and eager's cost is denominated in CUDA
+   issue channels (+27.6% → +2.0% from `conn` alone, §7.5).
+3. **§7.1 called this in advance** — eager's value is as an *instrument* for the
+   coupling term, not as an optimization. It told us the resource vector was
+   missing channels while losing on wall-clock. Both halves held.
+
+*Statistical honesty:* cells are n=1 and these are single-digit effects, so the
+weight is on sign counts (10/10, 14/15), not per-cell magnitudes. +1.5% at
+8n/conn=32 is small enough that the defensible claim is **"eager ≈ union at 8
+nodes given channel headroom"**, not "eager loses there".
+
 ### 7.6 The dedup ceiling is independent of budget — so budget acts on conversion
 
 Exact ceilings on the *generated* trace matrices (`sweeps/dedup_factor.py`
