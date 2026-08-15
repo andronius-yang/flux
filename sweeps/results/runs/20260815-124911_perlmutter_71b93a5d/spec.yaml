@@ -1,0 +1,33 @@
+G: 192
+H: 4096
+budgets_mib:
+  - 2
+  - 8
+  - 16
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
+  - "fanoutskew:nodefracs=0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1"
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "003"
+modes:
+  - isolated
+nodes: 16
+notes: "16n backfill: union vs lb_union (+eager) x trace+fanoutskew, b2/8/16 k8 G192, isolated, conn=8, NON-blocking wire"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+skip_correctness: false
+sm_margin: 8
+timeout_s: 600
+topk: 8
+variants:
+  - hier_compress_union
+  - hier_compress_lb_union
+  - hier_compress_lb_union_eager
+warmup_iters: 5
