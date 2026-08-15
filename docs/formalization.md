@@ -779,9 +779,13 @@ a shipping default.
    rather than a puzzle. Re-ask it on the trace arm, where the benefit is real.
 3. ~~**Measure the real dedup factor offline.**~~ **DONE** — `dedup_factor.py`;
    it retracted §5.4 rather than confirming it (§5.4b).
-3b. **Why does dedup help *less* under skew than under uniform?** §7.4 measured
-   ≈−20% (fanoutskew) vs ≈−33% (uniform) at n=4/b≥8, while §4.3 argues skew
-   should *increase* collision opportunity. One of the two is wrong.
+3b. ~~**Why does dedup help less under skew than under uniform?**~~ **RESOLVED**
+   in §7.4 side result 2: it is a remote-fraction effect (`uniform` 0.80 vs
+   `fanoutskew` 0.50), and `fanoutskew` does not skew expert *popularity* at
+   all. Note how this compounds with §5.4b: **no synthetic family produces
+   co-activation concentration, and none has dedup headroom at nn ≥ topk** — so
+   the `trace` arm is the only way to test either §4.3 or dedup-at-scale, and
+   until this campaign no trace matrix above W=16 existed at all.
 4. **Compute η (§3.4) across the existing phases capsules.** Gives a per-config
    overlap-efficiency number, conservative but reportable.
 5. **Does the Dim-N weight split (§4.1) actually pay?** It is the framework's
