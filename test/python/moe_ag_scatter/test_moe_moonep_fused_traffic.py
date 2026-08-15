@@ -424,7 +424,7 @@ if __name__ == "__main__":
     output_dtype = input_dtype
     assert args.H * input_dtype.itemsize == args.chunk_bytes
     assert args.G % W == 0
-    assert W <= 32, "fused gating ballot is single-warp (W <= 32)"
+    assert W <= 64, "fused gating segment masks cap world_size at 64"
 
     if args.weight_issue_order == "tokens_first":
         # join's destination gate and getmem's landing join must precede
