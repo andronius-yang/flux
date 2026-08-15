@@ -390,6 +390,52 @@ the closed form does not hold and U comes from measured routing).
 **Not yet done. Zero GPU cost.** Doing it separates "bytes saved" from "latency
 gained" and would quantify §5.4's coupling term directly.
 
+### 5.7 SCOPE CAVEAT — every result above is from a near-compute-balanced regime
+
+**Expert placement in the a2av harness is static, uniform, and contiguous**:
+`owner_rank = expert_id // experts_per_rank`, `experts_per_rank = G // W`
+(`python/flux/testing/traffic_matrix.py:62`). No replication, no balancing. On
+top of that the harness levels load twice more:
+
+1. **Row sums are asserted equal** (`traffic_matrix.py:91-93`) — invariant 1.
+   Per-rank *send* volume is structurally identical. (This is physically correct
+   for a uniform batch split: every rank holds `tokens_per_rank` tokens, each
+   picking exactly topk experts. It is not an artifact — but it does mean ragged
+   / variable-tokens-per-rank batches cannot be expressed at all.)
+2. **Within a destination rank, copies are dealt round-robin over that rank's
+   experts** (`base = chunks[s] // experts_per_rank` + remainder spread), so
+   per-expert load inside a rank is as even as arithmetic allows.
+
+The matrix families then skew the *wire pattern* (fan-out, remote fraction, node
+skew) — not compute. Measured over the 200 stored matrices:
+
+| family | W | row imb (send) | col imb (**compute**) med | max |
+|---|---|---|---|---|
+| uniform | 16/32/64 | 1.0000 | 1.00 | 1.05 |
+| remotefrac | 16/32/64 | 1.0000 | 1.22 | 1.25 |
+| fanoutskew | 16/32/64 | 1.0000 | 1.43–1.53 | 1.54 |
+| **trace (real Qwen3)** | **16** | 1.0000 | **2.03** | **3.10** |
+| hotcol | 16 | 1.0000 | 7.50 | 7.50 |
+
+→ **`L_SM` was pinned near-constant while `L_NIC` was varied.** The synthetic
+sweeps are, by design, a pure comm benchmark — which is exactly the regime where
+placement has nothing to fix and flow primitives are the only lever. That is why
+placement did not appear to matter before it was introduced as a variable.
+
+Placement became relevant precisely when the campaign moved to real traces: the
+trace family's 2.03 median imbalance is the same ballpark as the EPLB arm's
+reported 1.852 → 1.014.
+
+**The gap that matters for the framework:** there are **no trace matrices above
+W=16** (22 at W=16, 1 at W=4; none at W=32/64). So every node-count scaling
+result in §5.1–§5.4 — including the dedup/coalesce crossover and dedup's death
+at n=8 — comes from configurations with essentially no compute imbalance
+(1.00–1.53). **Prediction:** at 8n/16n *with real traces*, `L_SM` starts to bind,
+and per §3.4 (Σ→max) shaving comm further stops paying — the crossover node
+count should move, and placement should overtake flow primitives as the lever.
+Until real-trace matrices exist at W=32/64, the scaling story is only established
+for the comm-bound regime.
+
 ---
 
 ## 6. Feedback, objections, and questions raised (recorded verbatim in substance)
@@ -562,6 +608,72 @@ confirms both the head-of-line mechanism and the channel-oversubscription
 counter-mechanism in one capsule — and it would also test whether de-coupling
 the gateway recovers the dedup benefit that §5.4 shows is being cancelled at
 n≥8.
+
+### 7.4 Results — the N=4 anchor (capsules C1/C2, 2026-08-15)
+
+First two capsules of the N-scaling campaign. Both from build
+`ba9e91096019dfc0` (the twin gate passes, so they are comparable), isolated,
+topk=8, G=128, 40 cells each, all `ok`. C1 = `20260815-044144_perlmutter_22befac3`
+(conn=8), C2 = `20260815-045429_perlmutter_b10fc8dd` (conn=32). One matrix
+instance per cell, so each number is a single measurement — read sign
+consistency across cells, not individual magnitudes.
+
+**Eager vs its own base `hier_compress_lb_union` (the single-axis A/B):**
+
+| conn | family | b=1 | b=2 | b=8 | b=16 | b=32 |
+|---|---|---|---|---|---|---|
+| 8 | fanoutskew | +4.7 | +10.3 | +2.5 | +3.7 | +1.9 |
+| 8 | uniform | +1.1 | +0.6 | +2.1 | +5.1 | +5.6 |
+| 32 | fanoutskew | −0.2 | −1.1 | −2.6 | +3.7 | −1.2 |
+| 32 | uniform | −16.5 | −4.4 | −1.4 | +3.2 | +4.3 |
+
+At conn=8 eager is worse in **10/10 cells**. This is the *expected* low end of
+an increasing-in-N curve: `NN−1 = 3` rounds is the least head-of-line blocking
+there is to remove, and 3 extra streams + 3 event records + 3 join waits cost
+more than they save. The anchor is doing its job, not failing.
+
+**The conn control is the real result.** Comparing each variant against itself
+across the twins (conn=32 vs conn=8, negative = conn32 faster):
+
+| variant | extra streams | fanoutskew | uniform |
+|---|---|---|---|
+| `hier` | 0 | +2.4 +1.6 −12.5 +0.6 +0.1 | +0.2 −6.8 −2.4 −0.3 +0.4 |
+| `hier_compress_lb_union` | 0 | +0.9 +4.4 +4.3 −0.3 +1.5 | +19.3 +3.3 −0.5 +1.0 +0.8 |
+| `hier_compress_lb_union_eager` | NN−1 | **−3.8 −6.4 −1.0 −0.3 −1.6** | **−1.5 −1.9 −3.9 −0.8 −0.5** |
+| `hier_compress_union` | 0 | +0.5 +0.0 +0.3 +0.1 −0.1 | +15.6 −0.9 +0.3 −0.5 +0.9 |
+
+**Eager is the only arm that allocates streams and the only arm that
+systematically benefits from more connections — 10/10 negative.** The arms that
+allocate none are ~0 or noise. That is about as clean a confirmation of the
+channel-oversubscription mechanism as this apparatus can produce, and it
+supports promoting issue channels into the §2 resource vector (§7.3).
+
+**Refinement it forces on the prediction.** §7's "only once connections exceed
+NN−1" is *wrong as stated*: at n=4 eager needs only 3 streams, comfortably under
+conn=8, yet still gains from conn=32. Eager's streams are not the only channel
+consumers — the main stream, `cp_stream_inter_node`, the pack stream and the
+GEMM all compete. So the binding comparison is **total concurrent stream demand
+vs conn**, not `NN−1` vs conn. This makes the n=16 prediction *stronger*: 15
+extra streams at conn=8 should be severely oversubscribed.
+
+**Eager still never beats plain `hier_compress_union`**, at either conn (union
+is −1.6 to −14.6% vs lb_union across both capsules). Consistent with the n=4
+verdict from 2026-08-07. Eager's value remains as an instrument (§7.1), not as
+a shipping default.
+
+**Two side results, both new:**
+
+1. **Dedup-merge goes negative at small budget.** vs `hier` at n=4/conn=8,
+   `hier_compress_union` is −20.2% (fanoutskew) / −33.2% (uniform) at b=8 but
+   **+2.4% / −0.0% at b=1**, and `lb_union` is outright **+10.3% / +12.8%** at
+   b=1. §3.2 predicts this — dedup saves *bytes*, so where bytes do not bind
+   (b=1 is the fixed-cost regime) its index/staging overhead is pure loss.
+   **§5.2 should therefore claim decay on both axes, not only in N**: dedup dies
+   as N grows *and* as budget shrinks. The b=1 point did not exist before this
+   campaign.
+2. **Dedup helps *less* under skew.** At b≥8, union vs hier is ≈−33% under
+   `uniform` but only ≈−20% under `fanoutskew`. Worth reconciling with §4.3,
+   which argues skew should *increase* collision opportunity.
 
 ---
 
