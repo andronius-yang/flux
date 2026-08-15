@@ -23,6 +23,13 @@
 # G=192 (not 128): 16n/64r requires it at topk=8 -- G=128 only ever ran with
 # k=4 at this world size. b=32 is DROPPED: it has zero ok cells in the entire
 # capsule history at 16n/k8 (every attempt exit 143, timeout-reaped).
+# 2026-08-15: the synthetic dealer gives U=min(copies,T), so its cross-node
+# dedup ceiling is max(0, 1-nn/topk) = ZERO at nn>=topk=8. Measured exactly:
+# 0.0% for uniform/fanoutskew at 8n and 16n, vs 35.7% on the generated 8n
+# TRACE matrix (w32x4_trace-2d1cf0, copies=229047 unique=147201). So the
+# synthetic families here can test eager's round de-serialization but CANNOT
+# test dedup at all -- the trace arm is what makes the dedup question
+# answerable at these node counts.
 platform: perlmutter
 nodes: 16
 variants:
@@ -33,6 +40,7 @@ variants:
 families:
   - "fanoutskew:nodefracs=0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1"   # per-NODE exporter skew: max arrival skew
   - uniform                         # null control: eager should give ~0
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"   # REAL routing: the ONLY family with dedup headroom at nn>=topk
 budgets_mib: [1, 2, 8, 16]
 topk: 8
 G: 192

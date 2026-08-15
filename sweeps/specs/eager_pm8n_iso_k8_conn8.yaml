@@ -19,6 +19,13 @@
 # every comparison here is within-capsule or across this campaign's own N).
 # Compare arms within this capsule only (SCHEMA invariant 4); the twin is comparable
 # only if manifest.json flux_libs[].sha256 matches.
+# 2026-08-15: the synthetic dealer gives U=min(copies,T), so its cross-node
+# dedup ceiling is max(0, 1-nn/topk) = ZERO at nn>=topk=8. Measured exactly:
+# 0.0% for uniform/fanoutskew at 8n and 16n, vs 35.7% on the generated 8n
+# TRACE matrix (w32x4_trace-2d1cf0, copies=229047 unique=147201). So the
+# synthetic families here can test eager's round de-serialization but CANNOT
+# test dedup at all -- the trace arm is what makes the dedup question
+# answerable at these node counts.
 platform: perlmutter
 nodes: 8
 variants:
@@ -29,6 +36,7 @@ variants:
 families:
   - "fanoutskew:nodefracs=0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1"   # per-NODE exporter skew: max arrival skew
   - uniform                         # null control: eager should give ~0
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"   # REAL routing: the ONLY family with dedup headroom at nn>=topk
 budgets_mib: [1, 2, 8, 16, 32]
 topk: 8
 G: 128
