@@ -188,7 +188,8 @@ VARIANTS = {
         driver="moonep_fused",
         test_args=["--weight_path", "push", "--weight_gate", "tiles"],
         env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
-        requires=["FLUX_A2AV_LB_UNION"],
+        # slot-last by binary default since NR-14 (see canonicalization note)
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_SCHED_PREFETCH_LAST"],
     ),
     # M4: weight multicast — ONE inter-node put per (expert, dest node) into
     # a plan-chosen gateway's own slot, NVLink CE fan-out to the other needy
@@ -213,7 +214,8 @@ VARIANTS = {
         test_args=["--weight_path", "push", "--weight_push_mode", "mcast",
                    "--weight_gate", "tiles"],
         env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
-        requires=["FLUX_A2AV_LB_UNION"],
+        # slot-last by binary default since NR-14 (see canonicalization note)
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_SCHED_PREFETCH_LAST"],
     ),
     # F-C (NR-13): plan-aware push — the driver engages the gateway
     # machinery only when the replicated census finds a real fan-out group
@@ -226,13 +228,86 @@ VARIANTS = {
         env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_LB_UNION"],
     ),
+    # SCHEDULE-KNOB NOTE (2026-08-15, NR-14 amendment): slot-last
+    # (FLUX_A2AV_SCHED_PREFETCH_LAST) stays DEFAULT OFF. Canonicalizing it was
+    # attempted and reverted — under an order-controlled repeat it is a ~29%
+    # REGRESSION at b64, not the -15% win capsule 20260814-145605 appeared to
+    # show (that was a first-cell transient). The gated arms below therefore
+    # run the historical interleaved order by default; `_slotlast` opts in and
+    # `_slotinterleave` pins the default explicitly for A/B work. Every gated
+    # arm lists the knob in `requires` so a build without it is skipped rather
+    # than silently measured.
+    # LESSON (SCHEMA.md protocol rule 4 in practice): at b64 a single cell can
+    # sit 3-6 ms off its own twin. Never headline a schedule/ordering effect
+    # from one capsule — repeat it, and reverse the arm order.
     "moonep_fused_push_auto_gated": dict(
         comm_pattern="moonep_fused_a2av",
         driver="moonep_fused",
         test_args=["--weight_path", "push", "--weight_push_mode", "auto",
                    "--weight_gate", "tiles"],
         env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
-        requires=["FLUX_A2AV_LB_UNION"],
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_SCHED_PREFETCH_LAST"],
+    ),
+    # Explicit interleaved (stage-major) order — same as the default, pinned so
+    # an A/B pair states its schedule on both sides instead of relying on the
+    # binary default. This is the FAST arm at b64 (~22.2 ms vs slot-last ~28.7).
+    "moonep_fused_push_auto_gated_slotinterleave": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_push_mode", "auto",
+                   "--weight_gate", "tiles"],
+        env={"FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_SCHED_PREFETCH_LAST": "0",
+             "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_SCHED_PREFETCH_LAST"],
+    ),
+    # E1 (NR-14): tokens-first issue order — the fused forward (token a2av +
+    # GEMM) is host-enqueued BEFORE the weight push, so the latency-critical
+    # token windows own the NIC first and the bulk weight legs ride behind
+    # them (pure fire-ordering, no completion waits). Driver-level flag, same
+    # binary as auto_gated; A/B within one capsule.
+    # E1 ALONE (issue-order flip without the slot-last schedule) — pins the
+    # schedule knob off so this stays the single-variable ablation it was in
+    # capsule 20260814-145605 after the default flip. NR-14: this arm REGRESSES
+    # isolated b1/b8 (+15%/+8%); kept as an ablation, never a default.
+    "moonep_fused_push_auto_gated_tokfirst": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_push_mode", "auto",
+                   "--weight_gate", "tiles",
+                   "--weight_issue_order", "tokens_first"],
+        env={"FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_SCHED_PREFETCH_LAST": "0",
+             "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_SCHED_PREFETCH_LAST"],
+    ),
+    # E2 = NR-13 F-D: FLUX_A2AV_SCHED_PREFETCH_LAST reorders the static tile
+    # schedule so ALL resident problems precede ALL prefetch-slot problems
+    # (stage-major within each class) — the weight spin moves to the tail of
+    # the wavefront where it overlaps resident compute instead of idling the
+    # persistent fleet (NR-13 fact 5: 2.4-5x slot-tile spin).
+    # NOT a default: the order-controlled repeats (NR-14 amendment 2026-08-15)
+    # make these the SLOW arms at b64 (~28.7 vs ~22.2 ms). Retained as the
+    # opt-in ablation and so the ladder spec / capsule 20260814-145605 still
+    # resolve to the same configuration.
+    "moonep_fused_push_auto_gated_slotlast": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_push_mode", "auto",
+                   "--weight_gate", "tiles"],
+        env={"FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_SCHED_PREFETCH_LAST": "1",
+             "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_SCHED_PREFETCH_LAST"],
+    ),
+    # E1 + E2 combined: the NR-14 headline arm (phase-ordered wire AND
+    # slot-last wavefront).
+    "moonep_fused_push_auto_gated_tokfirst_slotlast": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_push_mode", "auto",
+                   "--weight_gate", "tiles",
+                   "--weight_issue_order", "tokens_first"],
+        env={"FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_SCHED_PREFETCH_LAST": "1",
+             "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_SCHED_PREFETCH_LAST"],
     ),
     # UltraEP-semantics replicated-expert balancing (semantic port of
     # Dots-Infra/UltraEP; see python/flux/testing/ultraep_semantics.py, bit-

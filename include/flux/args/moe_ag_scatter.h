@@ -72,6 +72,12 @@ struct GemmGroupedV2AGScatterArguments {
   uint64_t *weight_signal_ptr = nullptr;
   uint64_t weight_signal_expected = 0;
   int weight_gate_group_start = INT32_MAX;
+  // NR-13 F-D: reorder the static problem schedule so ALL resident problems
+  // (local group < weight_gate_group_start) precede ALL prefetch-slot
+  // problems, stage-major within each class. The persistent fleet has no
+  // skip-ahead, so without this a front-positioned prefetch tile spinning on
+  // its weight signal idles CTAs that have resident work available.
+  bool sched_prefetch_last = false;
   // a2av_ring mode: sends follow the reverse hierarchical ring, so the dense
   // static problem schedule is used instead of the dynamic tile-claimer buckets.
   bool a2av_ring_schedule = false;

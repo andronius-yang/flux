@@ -3367,6 +3367,37 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       args.weight_signal_ptr = reinterpret_cast<uint64_t *>(weight_signal->data_ptr());
       args.weight_signal_expected = static_cast<uint64_t>(weight_signal_epoch);
       args.weight_gate_group_start = static_cast<int>(weight_gate_group_start);
+      // F-D (NR-13 / NR-14): schedule every prefetch-slot problem after every
+      // resident problem so the weight spin lands at the tail of the
+      // wavefront, overlapped with resident compute. Scoped to the weight-gate
+      // branch: without a gate boundary there is no class to reorder.
+      // DEFAULT OFF. Canonicalization was attempted on 2026-08-15 and REVERTED:
+      // the -15% b64 "win" of capsule 20260814-145605 did not survive an
+      // order-controlled repeat. Six capsules (20260815-124733/-124853/-125007
+      // forward order, -125313/-125432/-125546 reversed, 20 iters each) put
+      // slot-last at 27.9-29.1 ms vs 22.1-25.2 ms interleaved at b64 — a ~29%
+      // REGRESSION that follows the arm, not the run position. Mechanism: with
+      // every prefetch-slot problem deferred, the wavefront tail is entirely
+      // weight-gated and has no resident work left to overlap (up to 53% of a
+      // rank's GEMM rows are slot rows at b64). See NR-14 amendment 2026-08-15.
+      static const bool kSchedPrefetchLast =
+          get_int_from_env("FLUX_A2AV_SCHED_PREFETCH_LAST", 0) != 0;
+      args.sched_prefetch_last = kSchedPrefetchLast;
+      // one-shot audit line (rank 0): the timing capsules cannot distinguish
+      // "the flag flipped" from "a whole-cell transient", so make the RESOLVED
+      // value observable in every run's log rather than inferred from ms.
+      static const bool kAuditOnce = [&] {
+        if (get_rank_from_env() == 0) {
+          fprintf(
+              stderr,
+              "[a2av] sched_prefetch_last=%d (gate_start=%d, ep_nexperts=%d)\n",
+              static_cast<int>(kSchedPrefetchLast),
+              args.weight_gate_group_start,
+              ep_nexperts);
+        }
+        return true;
+      }();
+      (void)kAuditOnce;
     }
     for (int gid = 0; gid < num_weights_group; gid++) {
       args.weight[gid] = weights[gid].data_ptr();

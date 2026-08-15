@@ -1,0 +1,34 @@
+# NR-14 phase-ordered-wire ladder (E1/E2), 2026-08-14: in-capsule A/B of the
+# issue-order flip (tokens_first — token a2av host-enqueued before the weight
+# push) and the F-D slot-last static schedule (FLUX_A2AV_SCHED_PREFETCH_LAST),
+# alone and combined, against the moonep_fused_push_auto_gated baseline.
+# Real Qwen3 layer-92 trace routing, 4n16r, weight-gated tiles throughout.
+# Key reads: isolated e2e_ms per budget (expect wins at weight-dominated b1,
+# no b64 regression), cross-rank fused_ms inflation (NR-13 fact-3 signature).
+# NOTE: under tokens_first, prefetch_ms is a concurrent issue window and
+# gate_ms is 0 by definition — only e2e_ms compares across issue orders.
+platform: perlmutter
+nodes: 4
+variants:
+  - moonep_fused_push_auto_gated
+  - moonep_fused_push_auto_gated_tokfirst
+  - moonep_fused_push_auto_gated_slotlast
+  - moonep_fused_push_auto_gated_tokfirst_slotlast
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib: [1, 8, 64]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated, e2e]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+notes: "NR-14 E1/E2 ladder: issue-order flip x slot-last schedule, real Qwen3 layer-92 trace b1/b8/b64 k8, 4n16r, correctness on"

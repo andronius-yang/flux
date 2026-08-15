@@ -1,0 +1,30 @@
+# NR-14 repeatability probe (2026-08-15): capsule 20260815-124013 showed a
+# ~4-6 ms whole-cell swing at b64 landing on DIFFERENT arms per mode (isolated:
+# the default arm slow; e2e: the explicit slotlast arm slow, its =0 twin fast),
+# which is the NR-13 fact-9 rerun-outlier gotcha, not a schedule effect.
+# This spec is run REPEATEDLY in one allocation: if the slow arm moves between
+# capsules, the b64 "slot-last win" from 20260814-145605 is a transient and the
+# canonicalization must not rest on it.
+platform: perlmutter
+nodes: 4
+variants:
+  - moonep_fused_push_auto_gated_slotlast
+  - moonep_fused_push_auto_gated_slotinterleave
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib: [64]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 20
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated, e2e]
+matrix_instance: "001"
+skip_correctness: true
+timeout_s: 900
+notes: "NR-14 repeatability probe: slotlast vs slotinterleave at b64 only, 20 iters, repeated capsules to separate a real schedule effect from whole-cell transients"
