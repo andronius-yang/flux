@@ -1,0 +1,36 @@
+# NR-14 mechanism capture (2026-08-15): WHY is slot-last a ~29% regression at
+# b64? The retraction capsules (20260815-1247xx/-1253xx-1255xx) are latency-only;
+# the ledger's mechanism statement ("the deferred slot class forms a tail that
+# is entirely weight-gated with no resident work left to overlap") is the
+# E2-design risk, not yet observed. This spec reruns the exact A/B pair with
+# the tile-trace sidecar (FLUX_A2AV_NVTX_PROXY=1) so per-tile
+# t_enter/t_fire/t_done stamps + problem_idx classify resident vs prefetch-slot
+# tiles and localize the extra ~5-6 ms (gate spin vs scheduling holes vs
+# compute). NO EARLY_LAUNCH: it functionally reorders the launch sequence and
+# the object under study is the schedule the perf arms actually ran.
+# Instrumented configuration — never quote latency from these cells.
+platform: perlmutter
+nodes: 4
+variants:
+  - moonep_fused_push_auto_gated_slotlast
+  - moonep_fused_push_auto_gated_slotinterleave
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib: [64]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: true
+timeout_s: 900
+extra_env:
+  FLUX_A2AV_NVTX_PROXY: "1"
+notes: "NR-14 mechanism: tile-trace sidecar A/B slotlast vs slotinterleave at b64 only, isolated, instrumented (never latency); answers the ledger's open item (spin relocation vs exposed tail)"

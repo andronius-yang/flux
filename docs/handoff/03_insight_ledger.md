@@ -658,9 +658,12 @@ the capsule: tokfirst ≈ slotlast at b64 shows ordering, not a second round, wa
 lever).
 
 **Confidence:** census **measured** (offline, partition-asserted); E1/E2
-**measured** (capsule 20260814-145605, one binary, correctness green). Open: nsys
+**measured** (capsule 20260814-145605, one binary, correctness green). ~~Open: nsys
 confirmation that slotlast's b64 win is slot-tile spin relocation (tile-trace
-sidecar rerun), and the b8 e2e +2.5% slotlast wiggle (single-capsule noise scale).
+sidecar rerun)~~ — CLOSED by amendment 2026-08-15b (capsule 20260815-132439: the
+"win" was retracted and the measured mechanism is a front-of-schedule
+token-arrival park, not spin relocation). Still open: the b8 e2e +2.5% slotlast
+wiggle (single-capsule noise scale).
 
 ### NR-14 Amendment (2026-08-15) — the b64 slot-last win is RETRACTED; canonicalization attempted and REVERTED
 
@@ -712,6 +715,67 @@ capsule**: repeat it, and reverse the arm order. NR-14's E1 result (tokens_first
 regresses small budgets) was measured the same way and carries the same caveat —
 its sign was at least confirmed twice, but it deserves the same order-controlled
 treatment before anyone acts on it.
+
+### NR-14 Amendment (2026-08-15b) — slot-last mechanism MEASURED: front-of-schedule token-arrival park, not weight-gated tail spin
+
+**Tile-trace capsule 20260815-132439 (2 cells, `_slotlast` vs `_slotinterleave`,
+b64 isolated, FLUX_A2AV_NVTX_PROXY=1, one binary; instrumented — direction-only
+latency 25.26 vs 21.93 ms, consistent with the clean capsules).** This resolves
+the amendment above's open mechanism question and CORRECTS its guessed
+mechanism: the regression is NOT weight-gate spin in the deferred tail.
+Measured weight+token spin on slot-class tiles is negligible in both arms
+(~11 CTA-ms total on the worst rank; weights land ~1-2 ms into a ~17 ms GEMM)
+— the slot tail computes at full occupancy. The damage is at the FRONT:
+
+1. **The dense static schedule is head-of-line blocking.** The weight-gated
+   path requires the a2av static ring schedule (`fill_problem_info`: tile i →
+   CTA `i % 200`, position `i / 200`), so all 200 CTAs sweep the schedule in
+   lockstep and no CTA can skip a gated tile. Overlap therefore only works if
+   the compute time along the schedule stays ≥ the arrival front.
+2. **Slot-last thins the arrival-critical prefix.** On rank 12 (40% slot rows)
+   the resident-only prefix ahead of the first inter-node segment is just the
+   4 own-node segments — 672 tiles ≈ 0.5 ms of work — while segment 0 (first
+   inter-node source) lands at ~6.6 ms. The trace shows exactly 200 tiles
+   (one per CTA, all resident-class, all `seg_end=0`) entered at ~0.7 ms and
+   fired at 6.57 ms: the ENTIRE GPU parks ~5-6 ms at zero compute, in 14/15
+   epochs, and rank 12 sets the max-rank latency every time (21.0-22.2 ms).
+   After the park the iteration is serial: arrival + remaining compute,
+   including a 4-7 ms slot-only tail after the last resident tile.
+3. **Interleaved slot tiles are the ballast that rate-matches the sweep.** In
+   the `=0` arm the same rank runs the identical resident tiles in the same
+   relative order with zero park: each stage's stretch of schedule also
+   carries that stage's slot tiles (~2x work per stage), so the wavefront
+   stays behind the arrival front; spins are 1-22-CTA ripples that track
+   arrivals. Deferring the slot class removes precisely the compute that was
+   hiding inter-node token latency — the opposite of the design intuition
+   (the weight wait it defers is ~0.1% of the wavefront's time at b64).
+4. **Amplification, not pinned:** under slot-last, seg-0 arrival at rank 12
+   itself slips (~3.3 ms interleaved → ~6.6 ms), and the parked ranks come in
+   node-groups (12/13/14 every epoch, plus 7/8/9) — consistent with the
+   documented dispatch-starvation caveat (post-launch-enqueued relay/forward
+   work starving behind a blanketing kernel) turning one park into node-wide
+   late arrivals. Secondary to the main effect; would need nsys on the
+   gateway rank to pin.
+5. **The flip-flop explained.** The interleaved arm has the SAME failure mode
+   latent (ranks 1/2/3/8 park 1-3 ms in most epochs; the cold first iteration
+   parked rank 12 for 5.7 ms even under interleave). Arrival lateness vs
+   schedule position is both the b64 cell-transient NOISE (NR-13 fact 9) and
+   the thing slot-last amplifies — which is why the ladder's first-executed
+   baseline cell could eat a 26.11 ms park and make slot-last look like -15%,
+   and why only order-controlled repeats separated the arm effect from it.
+
+**Consequence for any future schedule work:** a reorder of the static schedule
+must be judged by the arrival-independent work it leaves ahead of the earliest
+late gate, not by which class it defers. E3-style phasing (or any slot
+deferral) only pays if the prefix still bridges the inter-node arrival window
+— on this trace that window is ~6-8 ms and the intra-node resident prefix is
+~0.5 ms, so it cannot. Analysis scripts: scratchpad `analyze_slotlast_trace.py`
+/ `timeline_rank.py` pattern over `plot_a2av_trace.py`'s sidecar format
+(classify by `eid = (tile>>22) % ep_nexperts` vs `gate_start`, occupancy from
+t_enter/t_fire/t_done).
+
+**Confidence: measured** (per-tile device timestamps, 15 epochs, both arms, one
+binary; the park is deterministic per epoch, not a transient).
 
 ### NR-14 Amendment (2026-08-14c, SUPERSEDED by the 2026-08-15 amendment above) — slot-last canonicalized as the binary default
 

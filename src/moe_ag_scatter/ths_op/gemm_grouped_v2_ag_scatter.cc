@@ -3376,10 +3376,15 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       // order-controlled repeat. Six capsules (20260815-124733/-124853/-125007
       // forward order, -125313/-125432/-125546 reversed, 20 iters each) put
       // slot-last at 27.9-29.1 ms vs 22.1-25.2 ms interleaved at b64 — a ~29%
-      // REGRESSION that follows the arm, not the run position. Mechanism: with
-      // every prefetch-slot problem deferred, the wavefront tail is entirely
-      // weight-gated and has no resident work left to overlap (up to 53% of a
-      // rank's GEMM rows are slot rows at b64). See NR-14 amendment 2026-08-15.
+      // REGRESSION that follows the arm, not the run position. Measured
+      // mechanism (tile-trace capsule 20260815-132439, NR-14 amendment
+      // 2026-08-15b): NOT weight-gate spin — the dense static schedule is
+      // head-of-line, and deferring the slot class thins the schedule prefix
+      // ahead of the first inter-node token segment (own-node resident work
+      // ~0.5 ms vs ~6.6 ms arrival on the worst rank), parking the entire
+      // wavefront at zero compute for 5-6 ms every iteration. Interleaved
+      // slot tiles are the ballast that keeps the sweep behind the arrival
+      // front; the weight wait they'd defer is negligible at b64.
       static const bool kSchedPrefetchLast =
           get_int_from_env("FLUX_A2AV_SCHED_PREFETCH_LAST", 0) != 0;
       args.sched_prefetch_last = kSchedPrefetchLast;
