@@ -711,10 +711,12 @@ if __name__ == "__main__":
             try:
                 flux.torch_allclose(x, y, atol=atol, rtol=rtol)
             except Exception as e:
-                torch.save(x, f"{name_x}_{TP_GROUP.rank()}.pt")
-                torch.save(y, f"{name_y}_{TP_GROUP.rank()}.pt")
-                torch.save(moe_ctx, f"moe_ctx_{TP_GROUP.rank()}.pt")
-                print(f"❌ {name_x} check failed")
+                dump_dir = os.environ.get("FLUX_DEBUG_DUMP_DIR", "/tmp")
+                os.makedirs(dump_dir, exist_ok=True)
+                torch.save(x, os.path.join(dump_dir, f"{name_x}_{TP_GROUP.rank()}.pt"))
+                torch.save(y, os.path.join(dump_dir, f"{name_y}_{TP_GROUP.rank()}.pt"))
+                torch.save(moe_ctx, os.path.join(dump_dir, f"moe_ctx_{TP_GROUP.rank()}.pt"))
+                print(f"❌ {name_x} check failed, debug tensors dumped to {dump_dir}")
                 RECORDER.emit_correctness(bitwise=bitwise_all, allclose=False)
                 raise e
             else:
