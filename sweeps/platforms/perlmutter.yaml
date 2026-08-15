@@ -11,7 +11,12 @@ data_root: ${PSCRATCH}/workspace/andrewy/sweep_data
 matrices_root: ${PSCRATCH}/workspace/andrewy/a2av_test_matrices/generated
 # real MoE routing traces (fetch_traces.py); only needed for the trace family
 traces_root: ${PSCRATCH}/workspace/andrewy/moe_traces
-srun_extra: []
+# 2026-08-14: srun steps stopped inheriting the job's GRES gpu allocation by
+# default (`srun --jobid=<id> nvidia-smi -L` -> "No devices found" without this
+# flag). Every sweep.py cell failed immediately with "no CUDA-capable device is
+# detected" until it was pinned. Ported from worktree-realistic-moe-sweep-campaign
+# (3a040c0) so both campaigns share one platform definition.
+srun_extra: ["--gpus-per-node=4"]
 env: {}
 sym_size_max_g: 16
 # 2026-08-04: login/compute PATH nsys is the HPC SDK 2025.3.1 bundle

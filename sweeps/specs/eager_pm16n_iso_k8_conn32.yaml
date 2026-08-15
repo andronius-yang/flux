@@ -1,0 +1,55 @@
+# Eager N-scaling campaign, capsule A2 — 16 nodes, conn=32.
+#
+# Tests docs/formalization.md §7.1: eager is a single-axis A/B (byte-identical,
+# same L puts, same NN-1 rounds, same engine) so every L_r is unchanged and the
+# only variable is the ordering constraint among gateway rounds. Its benefit
+# must be an INCREASING function of N (§7.1 claim 2); this capsule is the N=16
+# point of the 4/8/16 curve.
+#
+# NN-1 = 15 gateway rounds to de-serialize.
+# conn=32 lifts the issue-channel ceiling: eager allocates NN-1=15 streams,
+# and at conn=8 those multiplex onto 8 hardware channels and RE-SERIALIZE,
+# reinstating the head-of-line blocking eager removes. A split verdict
+# (win here, flat/loss at conn=8) forces issue channels into the resource
+# vector of §2, which currently omits them.
+#
+# conn=32 is written explicitly (rather than inherited from the a2av variant
+# default) so this capsule and its twin differ in exactly one field. Compare
+# nodefracs alternate 0.9/0.1 at EVERY node count so the skew shape is
+# constant across the 4/8/16 curve (the older 4n cells used
+# [0.9,0.25,0.25,0.25], so this capsule is not comparable to those --
+# every comparison here is within-capsule or across this campaign's own N).
+# Compare arms within this capsule only (SCHEMA invariant 4); the twin is comparable
+# only if manifest.json flux_libs[].sha256 matches.
+#
+# G=192 (not 128): 16n/64r requires it at topk=8 -- G=128 only ever ran with
+# k=4 at this world size. b=32 is DROPPED: it has zero ok cells in the entire
+# capsule history at 16n/k8 (every attempt exit 143, timeout-reaped).
+platform: perlmutter
+nodes: 16
+variants:
+  - hier                            # no-dedup reference (the §5.2 baseline)
+  - hier_compress_lb_union          # eager's own base: ring order
+  - hier_compress_lb_union_eager    # arm under test: FLUX_A2AV_FANOUT=1
+  - hier_compress_union             # the arm that beat eager at n=4
+families:
+  - "fanoutskew:nodefracs=0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1"   # per-NODE exporter skew: max arrival skew
+  - uniform                         # null control: eager should give ~0
+budgets_mib: [1, 2, 8, 16]
+topk: 8
+G: 192
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "32"
+notes: "eager N-scaling A2: 16n conn=32, hier/lb_union/eager/union x fanoutskew+uniform, b1-16 k8, isolated"

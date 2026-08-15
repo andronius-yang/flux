@@ -1,0 +1,43 @@
+# Eager N-scaling campaign, capsule C1 — 4 nodes, conn=8 (the low N anchor).
+#
+# Tests docs/formalization.md §7.1: eager is a single-axis A/B (byte-identical,
+# same L puts, same NN-1 rounds, same engine) so every L_r is unchanged and the
+# only variable is the ordering constraint among gateway rounds. Its benefit
+# must be an INCREASING function of N (§7.1 claim 2); this capsule is the N=4
+# anchor of the 4/8/16 curve, on the SAME build as the 8n/16n capsules.
+#
+# NN-1 = 3 rounds here, so eager has the least to de-serialize -- a small or
+# null delta is EXPECTED and is the point of the anchor, not a failure.
+#
+# conn=8 is written explicitly (rather than inherited from the a2av variant
+# default) so this capsule and its conn=32 twin differ in exactly one field.
+# Compare arms within this capsule only (SCHEMA invariant 4); the twin is
+# comparable only if manifest.json flux_libs[].sha256 matches.
+platform: perlmutter
+nodes: 4
+variants:
+  - hier                            # no-dedup reference (the §5.2 baseline)
+  - hier_compress_lb_union          # eager's own base: ring order
+  - hier_compress_lb_union_eager    # arm under test: FLUX_A2AV_FANOUT=1
+  - hier_compress_union             # the arm that beat eager at n=4
+families:
+  - "fanoutskew:nodefracs=0.9,0.1,0.9,0.1"   # per-NODE exporter skew: max arrival skew
+  - uniform                         # null control: eager should give ~0
+budgets_mib: [1, 2, 8, 16, 32]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+notes: "eager N-scaling C1: 4n conn=8, hier/lb_union/eager/union x fanoutskew+uniform, b1-32 k8, isolated"
