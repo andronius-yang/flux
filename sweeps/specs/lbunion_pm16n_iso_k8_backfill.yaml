@@ -1,0 +1,66 @@
+# 16n non-blocking lb-vs-union — the measurement that does not exist yet.
+# Sized to fit a 45-MINUTE BACKFILL WINDOW (2026-08-15).
+#
+# WHY THIS RUN. docs/formalization.md §5.8: the only 16-node lb-vs-union data in
+# the capsule set (20260805-135758, 20260805-142025) ran with
+# FLUX_A2AV_BLOCKING_WIRE=1 + conn=1, and there lb WINS (-1.7%). Blocking wire is
+# measurement-only -- it serializes the GEMM behind the wire and the
+# realistic-trace campaign found the lb/union gap vanishes under it. Split by the
+# knob, the N-trend reverses sign:
+#   nonblock conn8: 2n +2.0 | 4n +2.8 | 8n +4.2   <- lb WORSENS with N
+#   BLOCK    conn1: 4n +6.3 | 8n +2.2 | 16n -1.7  <- lb IMPROVES with N
+# There is NO non-blocking 16n measurement anywhere. This supplies it, and the
+# two regimes predict opposite outcomes.
+#
+# WHY THESE BUDGETS. b=2 and b=8 are exactly where the blocking 16n capsules
+# reported +0.3 and -1.4, so running them non-blocking is a matched-budget A/B on
+# the knob itself. b=16 extends toward the large-budget end where lb's penalty is
+# smallest (topk8 4n: +10.4 at b1 -> +2.3 at b8). b=32 is omitted (zero ok cells
+# in history at 16n/topk8, all timeout-reaped) and b=64 is omitted because
+# hier_compress_lb_union REPRODUCIBLY HANGS there (b17d826: two independent
+# attempts at W32, ~4min stall, idle-watchdog killed) -- the arm under test cannot
+# run at b64, so there is nothing to measure.
+#
+# SIZING. Their 45-min 16n job timed out on 25 cells, so budget ~1.8 min/cell at
+# W64. 3 arms x 2 families x 3 budgets = 18 cells ~= 33 min, leaving margin inside
+# a 45-min window. Requesting <=45 min is what gets backfilled at all: a 1:30:00
+# 16-node request sat 5h and never started, while 0:45:00 waited 35 min and
+# 0:15-0:30 at 8n started in seconds.
+#
+# conn=8 only: the non-blocking N-series this extends is all conn=8, and the eager
+# conn axis is already settled (§7.5b -- eager loses to union at every N measured,
+# so it rides along here as a free 16n data point, not as the question).
+#
+# matrix_instance 003: instance 001 collided with another session's G=192
+# matrices at the same identity (see their 1451bbe, which had to move to 002).
+#
+# Correctness stays ON: safe now that debug dumps go to /tmp rather than cwd
+# (cherry-picked 19ce9f9) -- previously a failing 16n cell wrote 2.5GB+ of .pt
+# per rank straight into the repo and blew the home quota.
+platform: perlmutter
+nodes: 16
+variants:
+  - hier_compress_union             # the arm to beat
+  - hier_compress_lb_union          # does the balanced wire win at 16n NON-blocking?
+  - hier_compress_lb_union_eager    # free 16n point for the N-curve (§7.5b)
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"   # real routing
+  - "fanoutskew:nodefracs=0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1,0.9,0.1"
+budgets_mib: [2, 8, 16]
+topk: 8
+G: 192
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "003"
+skip_correctness: false
+timeout_s: 600
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+notes: "16n backfill: union vs lb_union (+eager) x trace+fanoutskew, b2/8/16 k8 G192, isolated, conn=8, NON-blocking wire"
