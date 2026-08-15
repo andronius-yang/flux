@@ -637,6 +637,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     CHECK_DIV(ffn_hidden, ffn_tp_size);
     FLUX_CHECK_GE(nnodes, 1);
     CHECK_DIV(world_size, nnodes);
+    // the process_tile segment gate builds 64-bit source masks from two
+    // 32-lane ballots (one warp lane per pair of sources)
+    FLUX_CHECK_LE(world_size, 64) << "segment gating masks cap world_size at 64";
     FLUX_CHECK(!a2av_ring || a2av_dispatch) << "a2av_ring requires a2av_dispatch";
     FLUX_CHECK(!a2av_hier || a2av_dispatch) << "a2av_hier requires a2av_dispatch";
     FLUX_CHECK(!(a2av_hier && a2av_ring)) << "a2av_hier and a2av_ring are mutually exclusive";
@@ -1144,8 +1147,28 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       for (int s = 0; s < W; s++) {
         M_this_ep += chunks64[s * W + rank];
       }
-      FLUX_CHECK_LE(M_this_ep, this->max_recv_ntokens_)
-          << "a2av recv buffer overflow; raise FLUX_A2AV_MAX_RECV_NTOKENS";
+      if (!compress) {
+        // recv holds raw copies: gate on the max copies column over ALL
+        // destinations — the same expression on every rank, so a failure is
+        // collective. The old per-rank M_this_ep form let one skewed rank
+        // throw while the rest entered the wire and spun on its signals until
+        // an external watchdog killed them. Under compress the recv layout is
+        // deduped and the max_col dedup check below is the true (also
+        // collective) recv gate — M_this_ep there counts GEMM A-row copies,
+        // which alias recv rows and may legitimately exceed recv capacity
+        // (index scratch is ctor-sized to n_copies_max, so no separate A-row
+        // capacity check is needed).
+        int64_t copies_max_col = 0;
+        for (int d = 0; d < W; d++) {
+          int64_t col = 0;
+          for (int s = 0; s < W; s++) {
+            col += chunks64[s * W + d];
+          }
+          copies_max_col = std::max(copies_max_col, col);
+        }
+        FLUX_CHECK_LE(copies_max_col, this->max_recv_ntokens_)
+            << "a2av recv buffer overflow; raise FLUX_A2AV_MAX_RECV_NTOKENS";
+      }
       // staging layout: cumA/offA/offR_of_A i64 [nexG], expert_base i64
       // [nexperts], sorted_splits_cumsum i32 [nexG] (row-major [E, W])
       char *stage = reinterpret_cast<char *>(this->a2av_meta_pinned_.data_ptr()) +
@@ -2066,7 +2089,19 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       for (int s = 0; s < W; s++) {
         M_this_ep += chunks64[s * W + rank];
       }
-      FLUX_CHECK_LE(M_this_ep, this->max_recv_ntokens_)
+      // never compress on this path (compress requires use_meta); the counts
+      // are a D2H of an integer histogram over replicated splits/scatter_index,
+      // so the max-column expression is identical on every rank and a failure
+      // is collective (see the use_meta site above for why not per-rank).
+      int64_t copies_max_col = 0;
+      for (int d = 0; d < W; d++) {
+        int64_t col = 0;
+        for (int s = 0; s < W; s++) {
+          col += chunks64[s * W + d];
+        }
+        copies_max_col = std::max(copies_max_col, col);
+      }
+      FLUX_CHECK_LE(copies_max_col, this->max_recv_ntokens_)
           << "a2av recv buffer overflow; raise FLUX_A2AV_MAX_RECV_NTOKENS";
     }
     auto chunk_at = [&](int s, int d) -> int64_t { return chunks64[s * W + d]; };
