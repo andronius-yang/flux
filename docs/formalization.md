@@ -1,0 +1,542 @@
+# Formalization: primitives, flows, and scheduling for MoE layer0
+
+**Status: working theory, not settled.** This is the running record of the
+framework we intend to use as the paper's Section 3 ("why these optimizations
+are one thing, not a pile of tricks"). It exists to be recalled in future
+paper-writing / brainstorming sessions. It records the framing, the empirical
+evidence extracted from existing capsules, **and the objections and open
+questions raised against it** — those are as important as the claims.
+
+Started 2026-08-15. Companion authorities: `sweeps/SCHEMA.md` (what results
+mean), `docs/handoff/00_START_HERE.md` (campaign state), `docs/design.md`
+(kernel design).
+
+---
+
+## 0. Motivation
+
+We had been describing the work as "we categorized three consumers of resources
+in MoE — expert GEMM, expert dispatch, token dispatch — and existing systems
+each address some subset":
+
+| system | addresses | leaves alone |
+|---|---|---|
+| FAST | token dispatch | expert GEMM overlap, balance |
+| Comet | overlaps expert GEMM with token dispatch | balances neither token nor expert dispatch |
+| MoonEP | shifts imbalance from token dispatch to expert dispatch | overlaps nothing |
+| EPLB | rebalances expert placement | no overlap, no wire reshaping |
+
+A systems paper cannot present this as "we did a bunch of overlapping and
+reduction." We need primitives that let us reason about flow of data and usage
+of compute. The starting pair was **merge** (aggregate so data crosses a domain
+boundary once, possibly via a gateway) and **split** (subdivide a large object
+so multiple NICs / paths carry it).
+
+This doc argues those two are real but incomplete, and proposes what completes
+them.
+
+---
+
+## 1. The core formulation: one assignment variable generates all three costs
+
+The three "resource consumers" are not independent — they are three shadows of
+a single choice:
+
+> For every (token *t*, expert *e*) pair the router demands, choose the rank
+> **r(t,e)** where that product is computed.
+
+That choice induces all three costs at once:
+
+- *t* must be present at `r(t,e)` → **token dispatch**
+- `W_e` must be present at `r(t,e)` → **expert dispatch**
+- `r(t,e)` pays the FLOPs → **compute, and its imbalance**
+
+Every system is a corner of this one problem:
+
+| system | r(t,e) | consequence |
+|---|---|---|
+| Comet / classic EP | `home(e)` | tokens move; imbalance = routing skew |
+| MoonEP | `home(t)` | weights move; imbalance moves to which experts get pulled |
+| EPLB | `home(e)`, but *changes* `home` | same flow shape, flatter load, memory cost |
+| ours (virtual-expert lb_union) | mixed, per-group | the interpolation nobody else does |
+
+### 1.1 The crossover is a bytes ratio
+
+Per expert *e*, with *h* = bytes per token activation and `W_e` = bytes of e's
+layer0 weights:
+
+- **pull tokens to e:** `h · (#remote tokens routed to e)`
+- **push e's weights to the tokens:** `W_e` (once, under multicast)
+
+→ **push iff remote-token-count for *e* exceeds `W_e / h`.**
+
+Illustrative (H=7168, I=2048, gate+up, bf16): `W_e ≈ 59 MB`, `h ≈ 14 KB`,
+threshold ≈ **4k tokens** (≈2k with fp8 weights).
+
+Consequences worth stating as a result rather than a heuristic:
+
+- Below threshold tokens win — which is *why* classic EP is the sensible default.
+- Above it (long prefill; high skew concentrating tokens on one expert) weights win.
+- **The direction of optimal flow flips with batch × skew, and it flips per
+  expert, not per layer.** This is the justification for a framework instead of
+  a point design, and it explains why MoonEP looks good only on some shapes.
+
+---
+
+## 2. The cost model and the lower bound
+
+Resources are richer than (network, compute). The real vector is:
+
+**R = { NIC (inter-node), NVLink (intra-node), CE (copy engine), SM, HBM }**
+
+For a placement π, with `L_r(π)` the load induced on resource *r*:
+
+```
+T  ≥  max_r  L_r(π) / rate_r
+```
+
+plus a critical-path floor (the ingredient bytes + FLOPs of any single tile).
+
+This gives the paper's spine:
+
+> **Placement moves the lower bound. The other primitives close the gap to it.**
+
+- MoonEP lowers `L_SM`(imbalance), raises `L_NIC`.
+- EPLB lowers `L_SM` at fixed `L_NIC`, paying memory.
+- **Comet does not move the bound at all** — it only closes the gap. Which is
+  exactly why overlap alone collapses under routing skew.
+
+Prior work does one or the other. The reason both are needed jointly:
+**the placement that minimizes the bound is not the one that is easiest to
+overlap.**
+
+---
+
+## 3. The primitive algebra
+
+### 3.1 Merge and split are the *spatial* half of a 2×2
+
+Both share a signature — *amortize* (fewer, bigger) vs *subdivide* (more,
+smaller) — and that signature also exists on the time axis:
+
+|  | **Amortize** | **Subdivide** |
+|---|---|---|
+| **Space** | **Merge** — one crossing serves many destinations | **Split** — many paths serve one object |
+| **Time** | **Cache / Replicate** — one transfer serves many uses | **Pipeline** — many stages serve one object |
+
+Every cell pays the same currency:
+
+- **amortization** buys byte/fixed-cost savings with **latency and coupling**
+  (you wait for the slowest contributor);
+- **subdivision** buys parallelism and earliness with **fixed cost and
+  coordination**.
+
+Occupancy of the cells: Comet is bottom-right only. EPLB is bottom-left (+
+Place). DeepEP is the top row. Nobody occupies all four — that is the shape of
+our contribution.
+
+### 3.2 Merge is TWO primitives, not one
+
+This is the sharpening the data forced (§5), and it is probably the single most
+defensible novel claim in the framework:
+
+- **Dedup-merge** — *same bytes* to many destinations cross once (node-level
+  token compression; weight multicast). Saves **bytes**. Opportunity depends on
+  *collisions* (a token's topk landing on one node).
+- **Coalesce-merge** — *different bytes* to the same destination are bundled.
+  Saves **messages** (per-put fixed cost). Opportunity depends on
+  *fragmentation* (peer count × small transfers).
+
+They have different cost models and, empirically, **opposite scaling on both
+node count and budget.**
+
+Symmetrically, split is two things: *bandwidth split* (parallel paths, same
+time) and *pipeline split* (sequential chunks, earliness — the temporal cell).
+
+### 3.3 Merge relocates work; it never removes it
+
+Merge introduces a **gateway**, which is a new resource that can bind. It is
+profitable on bytes essentially always (NVLink ~600 GB/s vs NIC ~25 GB/s), so
+**the real cost of merge is latency coupling, not bytes.**
+
+This reframes our window gating: **`lb` vs `union` is not a hack, it is the
+continuous knob on merge** — how much to coalesce before firing, trading
+coupling against amortization. The starvation campaign's numbers (lb deficit
+0.29–0.455 vs union 0.07–0.11) are a direct measurement of over-merging's
+coupling cost.
+
+### 3.4 Overlap is not a fourth cell — it converts Σ into max
+
+Overlap does not reshape a flow. It changes how resource loads *combine*:
+
+```
+without overlap:   T = Σ_r  L_r / rate_r
+with perfect overlap: T = max_r  L_r / rate_r
+```
+
+> **Overlap's entire contribution is converting a sum over resources into a max
+> over resources.**
+
+This makes it first-class instead of an afterthought, and it says exactly when
+it is worthless: when one resource dominates, `Σ ≈ max` already and there is
+nothing to hide. Hence Comet-style overlap collapsing under skew.
+
+Define **overlap efficiency**:
+
+```
+η = (Σ − T) / (Σ − max)   ∈ [0,1]
+```
+
+**η is measurable from capsules we already have**: `phases` mode force-syncs per
+iteration, so it *is* a measurement of Σ. `η = (Σ_phases − T_isolated) /
+(Σ_phases − max_phase)`. Caveat: the syncs inflate Σ, so η computed this way is
+a **conservative lower bound**. Nobody in this literature reports an overlap
+efficiency number; we could.
+
+### 3.5 The engine axis: primitives are not implementation-neutral
+
+Because CE and SM are distinct resources, **which engine implements a primitive
+decides whether it competes with the compute it is supposed to hide behind.**
+
+> A spatial primitive's value depends on its implementing engine.
+
+A merge staged through SM-driven packing/index-building destroys overlap with
+the GEMM even while saving the same wire bytes; a merge staged through CE-driven
+bulk copies preserves it. This is why `sm_margin` and
+`CUDA_DEVICE_MAX_CONNECTIONS` are first-order in our results and not tuning
+noise. §5.3 has the measurement.
+
+### 3.6 Merge *creates* the overlap opportunity
+
+Not orthogonal — they compose. Flat a2av uses one engine for cross-node
+traffic. Hierarchy decomposes each transfer into
+**NVLink-gather → NIC-cross → NVLink-scatter**: three stages over two disjoint
+engines, i.e. a pipeline that did not previously exist.
+
+> **Merge manufactures the stages; overlap fills them.**
+
+So "overlapping inter-node RDMA with intra-node NVLink" is not a separate
+optimization from hierarchy — it is the payoff of hierarchy, and it is why
+hierarchy's win grows with node count (§5.1).
+
+### 3.7 Summary: the three-part structure
+
+1. **Place** sets the loads `L_r` → *sets the bound*.
+2. **Merge / Split** move load between resources → *reshape the bound*.
+3. **Overlap / Pipeline** make `max` achievable instead of `Σ`, conditional on
+   engine disjointness → *close the gap*.
+
+---
+
+## 4. The scheduling problem
+
+Layer0 is a **two-ingredient assembly problem**: tile (t,e) becomes eligible at
+`max(arrival(t), arrival(W_e))`, and ingredients are *shared* — one weight
+arrival unlocks many tiles, one token arrival unlocks topk.
+
+The natural greedy is **density**: send next whatever maximizes *unlocked FLOPs
+per byte on the binding resource*.
+
+### 4.1 Why naive greedy stalls, and the fix
+
+The dependency is an **AND**, so the unlock function is **not submodular** — a
+weight arriving alone unlocks nothing. Greedy stalls. This is precisely why the
+current staged scheme exists (prefetch expert weights scheduled last, dispatch
+tokens sent early): it hand-resolves the conjunction.
+
+> **The current 2-round scheme is the two-point discretization of the density
+> rule.** Tokens are small and unlock topk tiles each (high density); weight
+> blocks are huge with zero density until tokens land.
+
+**The fix — split both flows fine enough that short prefixes already unlock a
+real tile.** For weights that means splitting along the **N (intermediate)
+dimension**: `W[:, 0:I/c]` plus any tokens is a valid GEMM tile.
+
+> Comet reschedules layer0 along **Dim-M** to overlap the *token* flow. The dual
+> is **Dim-N** to overlap the *weight* flow.
+
+With both, the unlock function becomes near-linear in prefix, density is
+well-defined incrementally and **dynamic** (weight-chunk density jumps the
+instant the first token chunk lands), and the two rounds dissolve into one
+density-ordered stream. A static 2-round schedule cannot exploit that jump.
+Bonus: column blocks are discardable after use → memory-bounded weight
+streaming → more resident experts.
+
+### 4.2 Hardness
+
+Exact makespan is NP-hard: the placement half is a partition problem; the
+ordering half is min-sum-set-cover-like (greedy is 4-approx in the OR case).
+The split-to-linearize trick is what buys back the regime where greedy has
+teeth.
+
+The placement stage itself is cheap enough for one-shot per-layer use: binary
+search on T with a greedy feasibility check over E×R counts (256×64 = 16k) is
+microseconds on host — compatible with the no-schedule-caching constraint.
+
+### 4.3 Balance vs locality: the central tension
+
+Dedup-merge pays off when a token's topk experts **collide on one node**.
+Load balancing spreads a hot expert's replicas across nodes, which spreads each
+token's destination set and **destroys collisions**.
+
+> **Load balance and co-activation locality are opposed placement objectives.**
+
+(Recorded but *deprioritized* — see §6, the user prefers a MoonEP-style
+per-batch direction over an EPLB successor. The tension itself remains true and
+should still be stated in the paper; it is what makes joint scheduling
+necessary. Supporting evidence already in hand: mismatched-topic load made
+placement *worse* than fixed, +31–43% e2e, because a load-only objective is
+fragile to distribution shift.)
+
+### 4.4 Re-push vs keep-stale is ski rental
+
+MoonEP re-prefetches every round — no persistent replication. The question
+"replicate only when enough has changed" is **not orthogonal to e2e latency**;
+it is the temporal-amortization cell of the 2×2, trading expert-dispatch bytes
+(`L_NIC`) against compute imbalance (`L_SM`) — the same objective, evaluated on
+the time axis.
+
+> Keeping a stale placement costs an imbalance penalty **every batch**;
+> re-pushing costs a large **one-time** transfer. Rent repeatedly, or buy once.
+
+This is **ski rental**: deterministic 2-competitive, `e/(e−1)` randomized, with
+**no prediction of future batches required** — which matters given
+no-schedule-caching. Concrete rule: accumulate the imbalance penalty since the
+last re-push; re-push when it reaches the weight-transfer cost.
+
+MoonEP is the degenerate *always-rent* strategy. The claim this buys us against
+it is not "we overlapped more" but: **same placement quality, asymptotically
+bounded fraction of the weight traffic.**
+
+---
+
+## 5. Empirical evidence (from existing capsules, 2026-08-15)
+
+Offline re-analysis of all 175 capsules; **no new GPU time**. Every delta
+computed **within a capsule** (same binary — SCHEMA invariant 4), same `mode`,
+same `matrix_id`, topk=8, median `e2e_ms`. Cell counts are small (2–7); the
+trends are consistent across 4 node counts × 3 budgets, but individual cells are
+suggestive, not definitive.
+
+### 5.1 Coalesce-merge: `hier` vs flat `a2av`
+
+Delta of a2av vs hier (positive = a2av slower, i.e. coalescing wins):
+
+| nodes | b=2MiB | b=8MiB | b=32MiB |
+|---|---|---|---|
+| 2 | −5.8 | +69.0 | +0.4 |
+| 4 | +67.2 | +68.9 | +64.4 |
+| 8 | +147.0 | +74.6 | +47.7 |
+| 16 | **+238.0** | +148.4 | · |
+
+**Grows with N; grows as budget shrinks.** At b=2MiB/16 nodes flat a2av is
+**3.4× slower**. Low budget × many nodes is exactly where fragmented small puts
+dominate — the per-put fixed cost term.
+
+### 5.2 Dedup-merge: `hier_compress_union` vs `hier`
+
+| nodes | b=2MiB | b=8MiB | b=32MiB |
+|---|---|---|---|
+| 2 | −36.4 | −53.9 | **−61.2** |
+| 4 | −18.5 | −36.9 | −41.9 |
+| 8 | +2.6 | −5.4 | −0.5 |
+| 16 | +1.2 | −1.1 | · |
+
+**Decays with N — dead by n=8, crosses zero — and grows with budget.**
+
+### 5.3 The two anti-correlate on both axes
+
+Dedup-merge saves *bytes* → matters when bytes bind → large budget; opportunity
+shrinks with N (fewer collisions). Coalesce-merge saves *messages* → matters
+when fixed cost binds → small budget, many peers; opportunity grows with N.
+
+This is the cleanest available validation of §3.2. **Paper figure.**
+
+### 5.4 The model's missing term: gateway coupling grows with N
+
+Analytically the dedup byte saving at n=8/k=8 is still ~34%, and ~19% at n=16
+(expected distinct remote nodes hit = `(N−1)(1 − (1−1/N)^k)` vs `k(N−1)/N`
+crossings), yet **measured latency benefit is zero.** The saving is real and
+fully cancelled.
+
+→ The cost model needs a **coupling term growing with N**: the gateway runs N−1
+rounds, each waiting on its slowest contributor. It crosses the shrinking dedup
+benefit at **n ≈ 8**. The starvation-campaign deficits are the direct evidence.
+
+### 5.5 The engine axis, measured
+
+At n=4 / topk=8, vs `hier`:
+
+| variant | delta | engine |
+|---|---|---|
+| `hier_compress` | −0.1% | SM index build |
+| `hier_compress_union` | **−26.5%** | pure-CE puts |
+| `hier_compress_lb_union` | −24.7% | pure-CE puts |
+
+**All three dedup the same bytes.** The ~26-point spread is purely the SM cost
+of the index build versus CE puts. Same primitive, same byte saving, different
+engine, 26 points. Direct support for §3.5.
+
+### 5.6 Terminology caution — `wire_ratio` is NOT the dedup factor
+
+`wire_ratio` in `cells.csv` is `headroom` from
+`sweeps/gen_matrix.py:dedup_stats_from_U` = `relay_balanced_bytes /
+relay_ident_bytes`, a **relay load-balance** metric. The true dedup factor is
+`pair[(sn,dn)] = (copies, unique, ratio)` from the same function, and it is
+**computable offline** over the 200 stored matrices at
+`$PSCRATCH/.../a2av_test_matrices/generated/` (23 with real-trace routing, where
+the closed form does not hold and U comes from measured routing).
+
+**Not yet done. Zero GPU cost.** Doing it separates "bytes saved" from "latency
+gained" and would quantify §5.4's coupling term directly.
+
+---
+
+## 6. Feedback, objections, and questions raised (recorded verbatim in substance)
+
+These are the user's, and they shaped the framework above. Keep them; they are
+the reviewer questions we will face.
+
+**F1 — "The formalization doesn't account for overlapping."**
+Overlapping inter/intra RDMA/NVLink, computation with communication, expert
+weights — arguably the most important optimization we did, and it was missing
+from the first framing. → Resolved into §3.4–§3.6: overlap is Σ→max, it is
+coupled to merge through the engine axis, and merge is what creates the stages
+it fills. *This resolution is new and should be checked against more data.*
+
+**F2 — "Low budget, comm-dominated batch: reduce small fragmented puts; comm can
+eat some skew and still show minimal latency."**
+→ **Confirmed** by §5.1, and specifically it is the *coalesce* half, not the
+dedup half: at b=2MiB, n≥8, dedup contributes nothing (+2.6, +1.2) while
+coalescing contributes +147% / +238%.
+
+**F3 — "The machinery might not be the cleanest code; is the perspective
+actually new?"**
+Assessment: the individual primitives are not new (hierarchical a2a = DeepEP,
+overlap = Comet, placement = EPLB). What is not seen elsewhere:
+(a) **weights as a first-class flow subject to the same primitives as tokens**
+(weight multicast *is* dedup-merge; split weight prefetch across NICs *is*
+split); (b) **weight-gated tiles** — Comet gates tiles on token arrival, gating
+on *weight* arrival is a different dependency; (c) **interpolating the
+placement** (virtual-expert mapping driving a flux-native fused path on a MoonEP
+plan) instead of picking a corner; (d) the §5.3 dedup/coalesce separation.
+Code quality does not affect novelty but does affect whether reviewers believe
+the numbers and how artifact evaluation goes; the capsule discipline is the
+mitigation and is unusually strong.
+
+**F4 — "Not an EPLB-style successor; MoonEP is more relevant and newer, and has
+per-batch balancing. But MoonEP re-prefetches every round — no persistent
+replication — so maybe replicate only when enough changes arrive. This seems
+orthogonal to e2e latency though."**
+→ Direction accepted (per-batch, not EPLB successor). **Disputed as
+orthogonal**: §4.4 shows it is the temporal-amortization cell of the same
+`max(L_NIC, L_SM)` objective, and it has a clean 2-competitive ski-rental
+solution requiring no prediction. §4.3's co-activation tension is retained as
+theory but deprioritized as a build direction.
+
+**F5 — "What is eager's actual mechanism? If it removes a false synchronization
+dependency and increases overlap, shouldn't it be the default?"**
+→ See §7. The intuition is right; the recalled mechanism was not.
+
+---
+
+## 7. `FLUX_A2AV_FANOUT` ("eager") — actual mechanism and why it is not default
+
+Source: `src/moe_ag_scatter/ths_op/gemm_grouped_v2_ag_scatter.cc` ~L2682–2737.
+
+The lb_union gateway forward loops `dn = 1 .. NN-1`, one round per remote source
+node. Each round does `CUStreamWaitValue64(node_sig + ns)` — wait for that
+node's relay chunk to land — then issues L `putmem_signal` forwards.
+
+- **Default (knob off):** every round shares `tail_stream`. Streams execute in
+  issue order, so round 1's *wait* blocks rounds 2..NN−1 even if their relay
+  chunks have already landed. **Head-of-line blocking across gateway rounds.**
+- **Eager (`FLUX_A2AV_FANOUT=1`, requires `FLUX_A2AV_LB_UNION`):** each round
+  gets its own stream `fanout_streams_[dn-1]`; rounds fire in **arrival order**
+  rather than fixed ascending-round order. They re-join `tail_stream` via
+  `fanout_events_` so `all_gather_event` / the pre-barrier wait and the
+  staging/recv reuse invariant are unchanged.
+
+So the mechanism **is** removal of a false serialization — the user's intuition
+was correct. It is **not** "launch the GEMM first, then start transfers"; that is
+a *different* knob, `FLUX_A2AV_EARLY_LAUNCH` (same file, ~L321/L2113), which
+defers the cp_stream wire ops as descriptors so the GEMM is enqueued first and
+tiles spin on signals. (There is also an unrelated `FLUX_A2AV_RS_EAGER` in
+layer1 `moe_gather_rs`.) **Three distinct knobs, easily conflated.**
+
+### Why it is not the default
+
+1. **The verdict was "not clearly better," and it was never re-run at scale.**
+   Only capsules `20260807-055012` (isolated) and `20260807-055227` (nsys), both
+   n=4 / b32 / k8 / conn=8. Eager 16.544 / 28.765 vs ring lb_union 17.188 /
+   28.924 → **−3.7% and −0.5%** — and plain `hier_compress_union` (16.470 /
+   28.226) was as good or better than eager in both. Marginal win over its own
+   base, no win over the simpler arm. The code comment says to canonicalize or
+   delete "once the eager-vs-ring capsule verdict is in the ledger"; that verdict
+   was never produced.
+2. **n=4 is the worst possible place to test it.** The head-of-line opportunity
+   is `NN−1` rounds = **3**. At n=16 it is **15** — the mechanism should matter
+   far more there, and it was never run there.
+3. **It may self-defeat at scale via connection oversubscription.** Eager
+   allocates NN−1 streams. The a2av family pins
+   `CUDA_DEVICE_MAX_CONNECTIONS=8`; at n=16 that is 15 streams over 8 hardware
+   channels, so streams multiplex onto shared channels and **re-serialize —
+   reinstating the head-of-line blocking it removed, while adding overhead.**
+   Newer (moonep) grids run `conn=32`, which would lift that constraint.
+4. **It helps least where lb_union works best.** The benefit is a function of
+   *arrival skew across source nodes*; the balanced wire exists precisely to make
+   arrivals uniform. Also, the existing ring rotation
+   (`dlg = (my_lr + 1 + dn + dl) % L`) already spreads first-window arrival at
+   zero cost, targeting a related goal more cheaply.
+
+### The experiment that would settle it
+
+**Eager × {conn=8, conn=32} × {n=8, n=16} × {b=2, b=8}.** This is the untested
+cell, it is cheap, and the framework predicts a specific result: eager's value
+should grow with N (more rounds to de-serialize) **but only once connections
+exceed NN−1**. If eager wins at n=16/conn=32 and loses at n=16/conn=8, that
+confirms both the head-of-line mechanism and the channel-oversubscription
+counter-mechanism in one capsule — and it would also test whether de-coupling
+the gateway recovers the dedup benefit that §5.4 shows is being cancelled at
+n≥8.
+
+---
+
+## 8. Open questions
+
+1. **Does de-coupling the gateway recover the dead dedup benefit at n≥8?**
+   §5.4 says ~34% of byte saving is available at n=8 but yields zero latency. If
+   coupling is the cause, eager / early-fire variants should recover part of it.
+   Prediction to falsify: eager at n=16 either recovers dedup, or loses to plain
+   `hier` outright.
+2. **Is dedup actively harmful at high N?** At n=16/b=2MiB,
+   `hier_compress_union` is **+1.2%** — slightly worse than no dedup. Noise at
+   n=3, or is dedup *adding* puts there? If the latter, dedup and coalesce may
+   not compose at all at scale and must be *chosen between* — which would be a
+   significant claim.
+3. **Measure the real dedup factor offline** (§5.6) and plot measured latency
+   gain against predicted byte saving. Separates opportunity from coupling. Free.
+4. **Compute η (§3.4) across the existing phases capsules.** Gives a per-config
+   overlap-efficiency number, conservative but reportable.
+5. **Does the Dim-N weight split (§4.1) actually pay?** It is the framework's
+   main *prescription* and is so far untested.
+6. **Where does layer1 fit?** Its merge is a *reduce* (partial sums combined
+   before crossing), a `topk→1` byte reduction that is associative and therefore
+   unconditional. **Scatter-merge is conditional; gather-merge is
+   unconditional.** Worth one line in the paper for symmetry.
+7. **A slot exists for compress/quantize** (reduce bytes at compute/accuracy
+   cost) in the same algebra; probably out of scope, but the framework should
+   name the slot.
+
+---
+
+## 9. One-sentence thesis candidates
+
+- "Every optimization here transfers work from a saturated resource to a slack
+  one; the primitives are the legal transfers, and the scheduler picks the
+  sequence."
+- "Placement moves the lower bound; merge and split reshape it; overlap makes it
+  achievable."
+- "Prior work either moves the bound or closes the gap. A good scheduler must do
+  both, because the placement that minimizes the bound is not the one that is
+  easiest to overlap."
