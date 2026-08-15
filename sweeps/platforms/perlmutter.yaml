@@ -11,7 +11,11 @@ data_root: ${PSCRATCH}/workspace/andrewy/sweep_data
 matrices_root: ${PSCRATCH}/workspace/andrewy/a2av_test_matrices/generated
 # real MoE routing traces (fetch_traces.py); only needed for the trace family
 traces_root: ${PSCRATCH}/workspace/andrewy/moe_traces
-srun_extra: []
+# 2026-08-15: srun steps stopped inheriting the job's GRES gpu allocation by
+# default (verified via `srun --jobid=<id> nvidia-smi -L` -> "No devices
+# found" without this flag, GPUs visible with it) -- add it explicitly so
+# CUDA is visible inside launch.sh's torchrun.
+srun_extra: ["--gpus-per-node=4"]
 env: {}
 sym_size_max_g: 16
 # 2026-08-04: login/compute PATH nsys is the HPC SDK 2025.3.1 bundle

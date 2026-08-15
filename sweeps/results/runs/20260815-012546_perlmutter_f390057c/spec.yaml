@@ -1,0 +1,28 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 64
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+nodes: 4
+notes: ""
+platform: perlmutter
+profile_iters: 3
+retries: 1
+skip_correctness: true
+sm_margin: 8
+timeout_s: 900
+topk: 8
+variants:
+  - allgather
+  - hier_compress_lb_union
+warmup_iters: 5
