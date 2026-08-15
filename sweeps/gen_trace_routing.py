@@ -291,6 +291,16 @@ def real_dedup_stats(routing, W, L, T, G):
     return u, U
 
 
+def read_routing(path):
+    """Inverse of write_routing: returns the [ntokens][topk] expert-id rows."""
+    with open(path) as f:
+        ntokens, topk, _g = (int(x) for x in f.readline().split()[:3])
+        routing = [[int(x) for x in line.split()] for line in f]
+    if len(routing) != ntokens or any(len(r) != topk for r in routing):
+        raise SystemExit(f"malformed routing file {path}")
+    return routing
+
+
 def write_routing(out_root, matrix_id, routing, topk, G):
     path = os.path.join(out_root, f"{matrix_id}.routing.txt")
     lines = [f"{len(routing)} {topk} {G}"]

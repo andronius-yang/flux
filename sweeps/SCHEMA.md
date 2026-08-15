@@ -288,7 +288,9 @@ this mark, like the union modes).
 One row per cell, including `skipped_capability` / `failed` / `timeout` ones.
 Highlights (full list = header row):
 
-- `status` — `ok`, `failed`, `timeout`, `skipped_capability`.
+- `status` — `ok`, `failed`, `timeout`, `stuck`, `skipped_capability`,
+  `skipped_capacity` (exact knob demand exceeds the platform symmetric-heap
+  cap; recorded up front, never launched).
 - `deterministic` — AND over all ranks' recorded
   `torch.are_deterministic_algorithms_enabled()`. Perf cells must be 0; this
   column is the audit that they were (never assume — the 2026-07-29 root-cause
@@ -393,20 +395,41 @@ derived "exposed comm" as raw truth. Timeline modes are the ground truth for
 and cross-process node timelines that the torch profiler cannot), torchprof
 when Python-op attribution is needed.
 
-## Knob scaling (validated anchors)
+## Knob scaling (exact per-cell computation, 2026-08-15)
 
-`scale_knobs` in sweep.py, overridable per-platform:
+`exact_scale_knobs` in sweep.py: each cell's `FLUX_A2AV_MAX_{RECV,STAGE,RELAY}_NTOKENS`
+is computed from the SAME expressions the runtime FLUX_CHECKs, evaluated on the cell's
+on-disk matrix (+ routing file when `routing_mode=real`; dealer closed form otherwise)
+by `gen_matrix.a2av_knob_demands`. Per knob:
 
-- `FLUX_A2AV_MAX_{RECV,STAGE,RELAY}_NTOKENS = max(163840, 4 * row_chunks)`
-  (rounded up to 8192), where `row_chunks = budget_mib * 2^20 * topk /
-  chunk_bytes`. Anchors: post-topk ≤256 MiB → 163840; 512 → 262144; 1024 →
-  524288 (topk16 sweeps, 2026-07-29).
-- `NVSHMEM_SYMMETRIC_SIZE`: 6G up to post-topk 256 MiB, linear to 16G at
-  1024 MiB, capped by platform `sym_size_max_g`.
+- `RECV = max(copies column max, union-bcast dedup column max)` — covers the
+  non-compress recv gate and the lb_union region layout.
+- `STAGE = max(hier copies staging, identity-relay U staging, balanced-relay chunks)`;
+  `RELAY = balanced-relay chunks`. These are far below RECV (~19-40% at the
+  scales measured), so they are sized independently.
+- Each demand is rounded up to 8192 rows and floored at 163840: every cell whose
+  demands fit the old floor keeps a **byte-identical** `env_json`.
+- `NVSHMEM_SYMMETRIC_SIZE` = component sum of the ctor's symmetric buffers
+  (2 send halves + RECV + STAGE + RELAY, or the dense W*T gathered input,
+  whichever is larger) + 1G overhead, floor 6G, capped by platform
+  `sym_size_max_g`. If the *uncapped* requirement exceeds the cap the runner
+  records the cell as `skipped_capacity` instead of launching it.
 
-Under-sizing fails loudly (FLUX_CHECK recv-overflow / NVSHMEM init) — but note
-the recv-overflow check is per-rank data-dependent: some ranks throw while the
-rest spin at 100% GPU. That is what the cell timeout is for.
+Parity with the torch reference (`flux.testing.moonep_fused_map.required_a2av_knobs`)
+and the dealer closed form are unit-tested in `sweeps/test_knob_demands.py`.
+
+History: the previous anchor formula (`max(163840, 4*row_chunks)` uniform across the
+three knobs; anchors from topk16 sweeps 2026-07-29) had no world-size term, while the
+lb_union recv demand grows ~W*T. It under-provisioned exactly at b64/W32 (271685 needed
+vs 262144, one-rank FLUX_CHECK -> apparent hang) and b32+b64/W64 (259218/518504 vs
+163840/262144, collective fast-fail), 2026-08-15. Capsules recorded before this change
+carry the old env values — knobs are capacity-only, but do not byte-diff `env_json`
+across the policy boundary.
+
+Under-sizing still fails loudly (FLUX_CHECK recv-overflow / NVSHMEM init); as of
+2026-08-15 the recv-overflow checks are collective (same expression on every rank), so
+a capacity failure aborts all ranks instead of leaving the fleet spinning for the
+watchdog.
 
 ## Protocol rules
 

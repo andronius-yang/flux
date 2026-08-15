@@ -294,6 +294,91 @@ def dedup_stats_from_U(chunks, U, L, tokens_per_rank):
     }
 
 
+def dealer_dedup_u(chunks, tokens_per_rank):
+    """Per-RANK dedup counts under the sorted column-major dealer: the same
+    contiguous-run argument as dedup_round_stats's U — a run of C copies to
+    one destination rank covers exactly min(C, T) distinct tokens (a rank's
+    experts are contiguous in the dealt stream). Does NOT hold for real
+    routing; use gen_trace_routing.real_dedup_stats there."""
+    T = tokens_per_rank
+    return [[min(c, T) for c in row] for row in chunks]
+
+
+def a2av_knob_demands(chunks, u, U, L):
+    """Exact a2av capacity demands in ROWS, replicating every runtime
+    capacity FLUX_CHECK of gemm_grouped_v2_ag_scatter.cc for the flux-driver
+    arms: recv copies-column max (the recv gate on non-compress paths),
+    union-bcast dedup recv max (compress lb_union), identity/balanced-relay
+    staging and non-compress hier staging. Mirrors the torch implementation
+    in python/flux/testing/moonep_fused_map.py:required_a2av_knobs (parity
+    unit test in sweeps/test_knob_demands.py); torch-free so the login-node
+    runner can call it. chunks/u are [W][W] rows, U is [W][nn] rows."""
+    W = len(chunks)
+    nn = W // L
+
+    recv_copies = max(sum(chunks[s][d] for s in range(W)) for d in range(W))
+
+    def region_rows(s, d):
+        if nn > 1 and s // L != d // L:
+            return U[s][d // L]
+        return u[s][d]
+
+    recv_union = max(sum(region_rows(s, d) for s in range(W)) for d in range(W))
+
+    def gr(l, n):  # global rank of local rank l on node n
+        return n * L + l
+
+    def node_chunk(s, n):
+        return sum(chunks[s][n * L + j] for j in range(L))
+
+    stage_hier = stage_ident = stage_lb = relay_lb = 0
+    if nn > 1:
+        for gn in range(nn):
+            for gl in range(L):
+                stage_hier = max(
+                    stage_hier,
+                    sum(node_chunk(gr(gl, ns), gn) for ns in range(nn) if ns != gn),
+                )
+                stage_ident = max(
+                    stage_ident,
+                    sum(U[gr(gl, ns)][gn] for ns in range(nn) if ns != gn),
+                )
+
+        def chunk_bound(n, m, k):
+            # canonical stream of source node n's L union segments toward node
+            # m, cut into L near-equal chunks; relay rank k carries chunk k
+            total = sum(U[gr(j, n)][m] for j in range(L))
+            return (total // L) * k + min(k, total % L)
+
+        for n in range(nn):
+            for k in range(L):
+                stage_lb = max(
+                    stage_lb,
+                    sum(
+                        chunk_bound(ns, n, k + 1) - chunk_bound(ns, n, k)
+                        for ns in range(nn)
+                        if ns != n
+                    ),
+                )
+                relay_lb = max(
+                    relay_lb,
+                    sum(
+                        chunk_bound(n, (n - dn + nn) % nn, k + 1)
+                        - chunk_bound(n, (n - dn + nn) % nn, k)
+                        for dn in range(1, nn)
+                    ),
+                )
+
+    return {
+        "recv_copies": recv_copies,
+        "recv_union": recv_union,
+        "stage_hier": stage_hier,
+        "stage_ident": stage_ident,
+        "stage_lb": stage_lb,
+        "relay_lb": relay_lb,
+    }
+
+
 def check_feasible(chunks, W, topk, tokens_per_rank, nexperts=None):
     """Mirror of traffic_matrix_to_choosed_experts's routing constraint: with
     G experts (G % W == 0), each (source, expert) pair may receive at most
