@@ -562,8 +562,16 @@ public:
       int counter = atomicAdd(tile_counter_ptr + problem_idx, 1);
       // printf("problem: %d counter: %d/%d\n", problem_idx, counter, problem_tile_count);
       if (counter == problem_tile_count - 1) { // current problem done
+        // group_idx must come from the FULL problem list (problem_idx spans
+        // empty problems too -- they produce no tiles and never reach this
+        // callback), while the completion target counts only NON-EMPTY
+        // problems. Dividing problem_idx by the non-empty stride mis-bucketed
+        // completions whenever an expert had zero rows (real traces at 16
+        // ranks leave experts empty), so some split flag never fired and
+        // every layer1 arm hung on the cascade (root-caused 2026-08-16).
+        int problems_per_split_full = params.problem_visitor.problem_count / params.n_split;
         int problem_per_split = *params.non_empty_problem_count / params.n_split;
-        int group_idx = problem_idx / problem_per_split;
+        int group_idx = problem_idx / problems_per_split_full;
         int * problem_counter_ptr = params.barrier_ptr + cutlass::round_nearest(params.n_split, 128);
         int problem_counter = atomicAdd(problem_counter_ptr + group_idx, 1);
         // printf("tile: %d counter: %d/%d\n", group_idx, problem_counter, problem_per_split);
