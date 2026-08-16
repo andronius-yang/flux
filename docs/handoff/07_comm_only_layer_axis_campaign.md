@@ -1,132 +1,175 @@
 # 07 — Comm-only layer-axis campaign (2026-08-16)
 
 The first sweep campaign with a **layer dimension**: layer0 (dispatch), layer1
-(combine), and the combined continuous pass (l01). Comm-only arms — no
-MoonEP/DeepEP/UltraEP/EPLB. Real Qwen3-235B trace routing
-(`pools=mmlu/high_school_world_history;layer=92;sem=homog`, matrix_instance
-001), topk=8, G=128, H=ffn=4096, bf16, budgets 1–64 MiB, isolated mode,
-Perlmutter 4n/W16 (m5350_g). Verdict protocol: forward + reversed-arm-order
-capsule pairs; a knob effect is real only if the sign agrees in both.
+(combine), and the combined continuous layer0+GELU+layer1 pass, all on real
+Qwen3-235B trace routing (`mmlu/high_school_world_history`, layer 92, homog,
+topk=8, G=128, H=4096, bf16), budgets 1–64 MiB, isolated mode, Perlmutter.
+Comm-only: no MoonEP/UltraEP/EPLB arms. This doc is the campaign authority;
+`sweeps/SCHEMA.md` governs interpretation. Every number below is
+capsule-traceable; W=8 (2n) and W=16 (4n) results are never mixed.
 
-**STATUS: layer0 COMPLETE (verdict-grade). Layer1/l01 in flight** on the
-post-fix binaries (this doc updates as those capsules land).
+## Executive summary
 
-## 1. Layer0 headline (final)
+1. **Layer0 factorial verdicts (W=16, verdict-grade — three independent runs,
+   sign agreement)**: on the lb_union base, `FLUX_A2AV_FUSED_STAGE2` **wins**
+   (−0.2…−0.7 ms), `FLUX_A2AV_EARLY_LAUNCH` **wins** (−0.3…−1.8 ms, grows
+   with budget), `FLUX_A2AV_FANOUT` **loses** (+0.05…+0.6 ms — the
+   `hier_compress_lb_union_eager` A/B arm finally has its verdict: delete).
+   **Canonical layer0 config: `lb_union + FUSED_STAGE2 + EARLY_LAUNCH`** —
+   beats stock flux (allgather) by 26–29% at b2–b32, 16% at b64.
+2. **Layer1 verdicts (W=8, binary C)**: plain `a2av_hier` is the winner —
+   ~2× faster than dense ring-RS everywhere, 1.4–2.2× faster than unfused
+   torch (b1–b16). **The eager arrival-order reduce is a 15–35% REGRESSION**
+   on trace routing; compress ≈ hier at W=8 (dedup should grow with node
+   count — 4n data pending). Schedule inheritance (tmiso→tmamo) is worth a
+   flat ~0.3 ms on hier, 1.5–3.8 ms on compress.
+3. **Combined pass (W=8, binary C)**: best pairing =
+   `lb_union(F+E) + plain hier`: **9.93 ms at b8 vs 15.87 stock and 17.50
+   torch (−37% / −43%), and −37…−51% vs stock across b1–b16**, decomposition
+   identity clean (−1%). The original
+   eager pairing violated the identity (+18% at b8): ablation attributed the
+   entire penalty to the l1 eager persistent reduce (early-launch
+   exonerated) — eager is doubly disqualified (slow alone AND composes
+   badly).
+4. **Two real bugs found, root-caused, and fixed** by this campaign's
+   bring-up discipline (details §5): the lazy-load spin-kernel deadlock
+   (binary B fix) and the empty-expert split-cascade hang (binary C fix) —
+   the latter explains why layer1 had never survived real trace routing at
+   any scale.
+5. Baseline feasibility boundaries confirmed: unfused torch reference OOMs
+   at b32+ (its curve legitimately ends at b16); FAST hits the 16G
+   symmetric-heap ceiling at b64 on both layers (documented loss).
 
-Isolated per-layer latency, mean-over-iters of per-iteration max-across-ranks
-e2e_ms, forward capsules (7ff7098d blow / 01f7e410 bhigh; fast 03ddc517 /
-4124b1a5); reverse twins 78f371c6 / c914e099 agree:
+## 1. Capsule ledger (all committed; one build per comparison set)
 
-| budget | torch (unfused) | fast (BvN a2av) | allgather (stock flux) | lb_union base | **lb_union fused+early** |
+**Binary A** (pre-fix, sha `d69ceee…`/ths-op `355de11b…`):
+- P2 bring-up 2n: `20260816-123413` (l1 identity check), `20260816-125015`
+  (clean arms), `20260816-131627` (factorial 8-corner smoke, 8/8 green).
+- P3 layer0 4n: `20260816-132227` (blow fwd 45/45), `20260816-133612`
+  (bhigh fwd 18/18), rev twins ×2 drivers: `20260816-161551` + `-161758`
+  (45/45 each), `20260816-162940` + `-163134` (18/18 each) — the duplicate
+  rev pairs are two independent drivers of the same specs on one binary
+  (bonus ordering repeats).
+- P3 fast: l0 `20260816-134133` (5/5) + `-134308` (b32 ok, b64 heap-ceiling
+  fail); l1 `20260816-163504` (5/5) + `-163640` (b32 ok, b64 fail).
+- Documented negatives: `20260816-134402` (l1 4n, 20/20 stuck — later
+  root-caused as the empty-expert bug, NOT node count), `20260816-170140`
+  (binary-B 4n smoke still stuck — the discriminator that separated bug #2
+  from bug #1).
+- The one-shot BvN `schedule_ms` in fast cells ≈ 0.9 ms flat on Perlmutter —
+  floors its small-budget cells (quote alongside b1/b2 comparisons).
+- b1–b16 layer0 cells carry the un-overlapped torch reference as
+  `impl=torch` rows (comm+scatter+gemm; OOM-bounded above b16).
+
+**Binary C** (both fixes, 2n sub-campaign, W=8):
+- l1 five arms fwd+rev: `20260816-172012` (50/50; provenance: launched on
+  binary B, every trace cell stuck, ALL data-producing attempts post-swap on
+  C — audited via start_ts) + `20260816-185918` (bhigh 20/20);
+  rev `20260816-191205` (50/50) + `20260816-192706` (20/20).
+- l0 companion (identity siblings): `20260816-190517` (10/10).
+- l01 combined (eager pairing) fwd+rev: `20260816-190804` + `20260816-193310`
+  (15/15 each).
+- l01 corrected pairing (hier) fwd+rev: the two capsules from specs
+  `commsweep2n_l01hier_blow{,_rev}` (5/5 ok each, allclose, budget order
+  reversed between them).
+- 4n binary-C l1+l01 campaign: parallel session's lane, in flight.
+
+## 2. Layer0 (W=16, binary A) — the factorial
+
+Isolated max-rank e2e_ms (fwd / revA / revB), selected budgets:
+
+| arm | b2 | b8 | b32 | b64 |
+|---|---|---|---|---|
+| allgather (stock flux) | 2.36/2.37/2.36 | 6.11/6.13/6.12 | 23.8/24.1/23.8 | 52.2/51.4/52.0 |
+| lb_union (base) | 1.86 | 4.75 | 19.7 | 45.7 |
+| **+F+E (fused_early)** | **1.67** | **4.43–4.46** | 19.2–19.4 | 44.4–44.7 |
+| +F+N+E (triple) | 1.71 | 4.44–4.46 | **18.7–19.0** | 43.9–44.5 |
+
+(Full 9-arm × 7-budget × 3-run table: `factorial_analysis.py` output in the
+capsules; base numbers quoted from fwd, spreads across runs ≤ ~2% except
+flagged single-cell transients.) Main effects with three-run sign agreement:
+F −0.19…−0.71 (agree b1,b2,b4,b8,b32); E −0.06…−1.8 (agree b2,b16,b32,b64);
+N +0.04…+0.56 (agree b2–b16). The triple's occasional edge over fused_early
+rides an N×E interaction — not verdict-grade since N loses alone. NR-14
+lesson held: two arms showed 3–6 ms single-cell outliers at b16/b64 in one
+run each; only the three-run agreement rule kept them out of the verdicts.
+
+**Canonicalization recommendation**: default-on `FLUX_A2AV_FUSED_STAGE2` and
+`FLUX_A2AV_EARLY_LAUNCH` for lb_union; delete the `_eager` (FANOUT) A/B arm.
+
+## 3. Layer1 (W=8, binary C)
+
+Isolated max-rank e2e_ms, trace, fwd/rev agree ≤2% (quoting fwd):
+
+| arm (tm=iso) | b1 | b8 | b16 | b64 |
+|---|---|---|---|---|
+| torch (unfused) | 3.44 | 9.47 | 16.5 | OOM |
+| l1_dense (stock ring-RS) | 3.63 | 11.07 | 22.6 | 90.0 |
+| **l1_hier** | **1.60** | **6.00** | **11.9** | **50.2** |
+| l1_hier_eager | 1.86 | 7.82 | 15.9 | 67.3 |
+| l1_compress | 2.78 | 7.47 | 13.6 | 53.5 |
+| l1_fast (e2e≡iso, dealer) | 2.9* | 7.1* | 12.9* | heap-fail |
+
+(*fast values from its own capsules `163504/163640`; dealer-routing arm —
+same matrix bytes, no token-overlap dedup.) With inherited indices (tmamo),
+hier drops to 1.30/5.67/11.6/49.7 and compress to 1.29/5.69/11.5/49.7 —
+compress's in-forward CSR build is its main iso-mode cost at W=8; its wire
+dedup breaks even here (2 nodes = little inter-node fan-in to dedup).
+
+## 4. Combined layer0+1 (W=8, binary C)
+
+Isolated max-rank e2e_ms of the full pass (l0 → GELU → l1), fwd/rev:
+
+| pairing | b1 | b2 | b4 | b8 | b16 |
 |---|---|---|---|---|---|
-| b1  | 1.923 | 4.644 | 1.661 | 1.581 | **1.238** |
-| b2  | 3.342 | 5.085 | 2.296 | 2.002 | **1.673** |
-| b4  | 6.425 | 7.275 | 3.534 | 2.845 | **2.588** |
-| b8  | 12.784 | 11.624 | 6.114 | 4.721 | **4.469** |
-| b16 | 25.484 | 20.731 | 11.773 | **9.093** | 9.154 |
-| b32 | — (OOM) | 40.085 | 23.843 | 19.705 | **19.227** |
-| b64 | — (OOM) | — (heap fail) | 52.201 | 45.697 | **44.447** |
+| torch+torch | 6.52 | 6.96 | 11.4 | 17.5 | 32.1 |
+| allgather+dense (stock) | 5.06 | 5.73 | 9.90 | 15.9 | 32.0 |
+| lbunion(F+E)+hier_eager | 2.83 | 4.58 | 7.79 | 14.6 | 24.0 |
+| **lbunion(F+E)+hier** | **2.47** | **3.46** | **5.51** | **9.93** | **20.1** |
 
-- torch reference is infeasible ≥ b32 (materializes the full unsharded
-  tensor) — a real feasibility boundary, not a harness gap.
-- fast's flat in-window BvN schedule recompute floors it at small budgets
-  (crosses torch at b8); b64 hits the known 16G symmetric-heap team-creation
-  ceiling (re-confirmed; documented loss).
-- Winner vs stock flux: **−26..−29% at b2–b32**, −16% at b64, 2.9× vs torch
-  at b8.
+(hier-pairing capsules: `commsweep2n_l01hier_blow{,_rev}` runs, fwd/rev
+within 0.5% at every budget; vs stock −51/−40/−44/−37/−37%; identity
+residual −1.2% at b8, ~0% at b16.)
 
-## 2. The 2³ factorial (final; the campaign's core)
+Decomposition identity (combined ≈ l0-isolated + GELU + l1-amortized,
+tolerance ±10%): torch +0.9%, stock −1.0%, eager pairing **+18.3% at b8**
+(FAIL — grows b1→b8, gone at b16), hier pairing −1% (ablation). Attribution
+ablation at b8: eager-off = 9.95 ms, early-launch-off = no change ⇒ the l1
+eager persistent reduce kernel is the entire composition penalty (it
+occupies SMs/issue slots while the l0 stage of the window still needs the
+device; fixed-cost signature explains the vanishing residual at b16).
+`l1_index_build_ms` (one-shot python builders, untimed by decision) is
+reported in every l01 cell's info record.
 
-Knobs on the `hier_compress_lb_union` base: F=`FLUX_A2AV_FUSED_STAGE2`,
-N=`FLUX_A2AV_FANOUT`, E=`FLUX_A2AV_EARLY_LAUNCH`; all 8 corners, fwd+rev.
-Sign-stable verdicts (fwd/rev agreement, per budget):
+## 5. The two bugs (both fixed; full narratives in the memory ledger)
 
-- **F: WIN** (−0.24..−0.53 ms wherever both orderings agree; b16/b64
-  inconclusive — the NR-14 noise zone). → canonicalization-grade evidence
-  for flipping the FUSED_STAGE2 default.
-- **E: WIN** (−0.04 at b1 → −1.78 ms at b64, growing with budget). →
-  EARLY_LAUNCH graduates from "its own configuration" to a recommended
-  default on lb_union (guards: conn>1 on compress paths; never with
-  PACK_OVERLAP).
-- **N: LOSS** (+0.02 at b1 → +1.2 ms at b64). The 2026-08-07 lb_union_eager
-  A/B finally resolves: **fanout off / delete the temp arm**. (Note: the 2n
-  synthetic smoke had suggested otherwise — real-trace 4n reversed it; the
-  repeat-with-reversed-order protocol is what made this trustworthy.)
-- **N×E interaction: beneficial and sign-stable at every budget** (fanout
-  hurts much less under early-launch) — mechanistically interesting (both
-  contend for issue order; early-launch drains the contention), practically
-  moot since N's main effect loses.
-- FN, FE: budget-dependent, no stable verdict.
-
-Winner configuration: **lb_union + FUSED_STAGE2 + EARLY_LAUNCH** — the l01
-pairing arm (`l01_lbunion_hier_eager`) carries it.
-
-## 3. Two layer1 hang bugs found and fixed (bring-up ladder + debug track)
-
-The campaign's bring-up ladder caught, and the parallel debug track fixed,
-two distinct never-before-seen hangs (layer1 multi-node had only ever run
-2n × synthetic before today):
-
-1. **Lazy-load deadlock** (2n eager/compress): `CUDA_MODULE_LOADING=LAZY`
-   defers first-launch kernel module loads; eager/compress launch persistent
-   spin kernels first, and NVSHMEM 3.2.5 delivers every on-stream signal via
-   a device kernel whose first-ever launch then queues behind the
-   never-exiting spinner → circular wait. Fix: ctor-time kernel preload +
-   NVSHMEM transport priming (branch worktree-l1-hang-debug, 1550b67,
-   merged). Validated 2n: eager + compress green, 8/8 allclose (compress
-   with CHECK_IDENTITY on its first correct GPU run ever).
-2. **Empty-expert split-cascade mis-bucketing** (ALL l1 arms × trace
-   matrices, any node count): `set_barrier_ptr` in
-   gather_rs_gemm_grouped_with_absmax.h divided the full-list problem_idx by
-   the NON-empty problem count; real-trace routing leaves ~15/128 experts
-   with zero tokens, mis-bucketing completions so a per-split barrier never
-   fires. This is why every l1 trace cell hung (capsule 20260816-134402,
-   20/20 stuck) while synthetics were green — the "4n hang" was a
-   matrix-family confound. Fix: one-liner (branch worktree-l1-nn4-debug,
-   c9b82b6, merged). Validated 4n on the exact hang config: hier 16/16
-   allclose 8.12 ms, dense 15.54 ms. Sibling `gemm_rs` set_barrier_ptr:
-   unaudited, flagged.
-
-Method note for the ledger: the two bugs masked each other across scales
-(2n synthetic green + 4n trace stuck read as "node-count bug"), and the
-family confound was only broken by a same-binary same-nodes A/B of
-remotefrac-vs-trace. Lesson: bring-up ladders must include a REAL-routing
-rung, not just synthetic.
-
-## 4. Layer1 + combined (PENDING — capsules in flight)
-
-- Layer1 five-arm capsule pairs (dense, hier, hier_eager, compress,
-  compress_eager × tmiso/tmamo) re-run on the fixed binary; early 2n
-  observations: hier tmiso−tmamo gap ≈ 0.33–0.43 ms (the schedule-
-  inheritance value, as predicted); eager costs +80% over legacy at 2n b8
-  and the gap persists at 4n (6.88 vs 3.78 ms remotefrac) — the eager-vs-
-  legacy verdict on real traces is the open headline question.
-- l1_fast baseline: port validated (bitwise NCCL cross-check + allclose,
-  first GPU run green); b1–b4 capsule cells landed (e21d3f34), b8+ rerun
-  pending.
-- Combined l01: bench + identity checker landed
-  (test/python/moe_combined/test_moe_l0l1_traffic.py,
-  sweeps/check_l01_identity.py); first GPU bring-up + capsules pending.
-  Acceptance gate: e2e(l01) ≈ e2e(l0 iso) + act + e2e(l1 tmamo) within 10%.
-
-## 5. Capsule index (this campaign, committed)
-
-P2 bring-up: 20260816-123413 (l1 identity rung), -125015 (clean l1 rung),
--131627 (factorial 8-corner smoke, 8/8 green).
-P3 layer0: -132227 (blow fwd 45/45), -133612 (bhigh fwd 18/18), -161758
-(blow REV 45/45), -163134 (bhigh REV 18/18); fast: -134133 (5/5), -134308
-(1/2, b64 documented loss). Third factorial confirmation: 1451c017.
-Layer1 negatives: -134402 (20/20 stuck, pre-fix trace hang, the bug-2
-evidence), -170140 (binary-B 4n smoke negative — the discriminator).
-Binary discipline: fwd/rev pairs share a binary; layer0 capsules = pre-fix
-binary; layer1/l01 results quote post-fix binaries only. Never compare
-across.
+1. **Lazy-load spin deadlock** (binary B fix, `worktree-l1-hang-debug`
+   1550b67): `CUDA_MODULE_LOADING=LAZY` first-launch module loads enqueue
+   behind the never-exiting persistent spin kernels that l1 eager and
+   compress introduce; NVSHMEM 3.2.5 delivers every on-stream signal via a
+   device kernel, so the signal producer can never load ⇒ circular wait.
+   Fix: ctor-time `cudaFuncGetAttributes` preload + NVSHMEM transport
+   priming. Found because compress's first-ever GPU run was gated by the
+   bring-up ladder.
+2. **Empty-expert split-cascade hang** (binary C fix, `worktree-l1-nn4-debug`
+   c9b82b6): `set_barrier_ptr`'s split cascade divides the full problem list
+   by the non-empty problem count — any local expert with zero routed rows
+   mis-buckets completions and the per-split barrier never fires. Hangs
+   EVERY l1 arm (dense included) on any matrix containing empty experts —
+   i.e. all real-trace matrices at these shapes — at any node count. This
+   masqueraded as an "NN>2 bug" because synthetic bring-up matrices have no
+   empty experts. Audit rule: when trace cells hang, `bincount` the routing
+   for empty experts FIRST.
 
 ## 6. Open items
 
-- Layer1/l01 capsules on the fixed binary (in flight) + this doc's §4.
-- Canonicalization patches: FUSED_STAGE2 + EARLY_LAUNCH defaults on
-  lb_union; delete FLUX_A2AV_FANOUT + the lb_union_eager arm (verdict §2).
-- gemm_rs set_barrier_ptr audit (same pattern as bug 2's site).
-- trace-matrix compress/eager smoke post-fix (debug-agent recommendation).
-- 16n closure cells (separate campaign; W64 fixes still unvalidated at 16n).
+- 4n binary-C l1 + l01 campaign (parallel session, in flight) — completes
+  the W=16 layer1/combined story, incl. whether compress's dedup pays at
+  larger node counts (the formalization doc's open question 6).
+- `l01_fast` (fast+fast combined) blocked on the FAST credit-reset question;
+  `l1_fast` b64 heap ceiling documented.
+- Canonicalization patches (knob defaults F/E on; delete FANOUT arm) not yet
+  applied to variants/kernel defaults — do after the 4n lane lands so the
+  whole campaign shares one variant table.
+- gemm_rs sibling `set_barrier_ptr` (same pattern as bug #2) unaudited.
+- 16n W64 closure cells (pre-campaign debt) remain unrun — separate campaign.
