@@ -1,0 +1,26 @@
+# Reversed-order twin of commsweep4n_l1fix_blow.yaml (binary B).
+platform: perlmutter
+nodes: 4
+variants:
+  - l1_compress_eager
+  - l1_compress
+  - l1_hier_eager
+  - l1_hier
+  - l1_dense
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
+budgets_mib: [1, 2, 4, 8, 16]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+notes: "comm-only campaign l1 binary-B blow REV"

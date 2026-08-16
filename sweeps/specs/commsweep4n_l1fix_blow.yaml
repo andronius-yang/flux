@@ -1,0 +1,32 @@
+# Binary-B layer1 campaign (post lazy-load fix, worktree-l1-hang-debug
+# 1550b67 merged + rebuilt): ALL FIVE l1 arms restored, full low tier
+# including the b1/b2 (and in fact whole-4n) retest — on binary A every l1
+# cell at 4n was stuck (capsule 20260816-134402, documented negative), while
+# 2n was green for hier; this capsule is the discriminator between the
+# lazy-load class (fix cures 4n) and an NN>2 logic bug (debug track resumes).
+# Compare arms ONLY within this capsule pair (binary B != binary A).
+platform: perlmutter
+nodes: 4
+variants:
+  - l1_dense
+  - l1_hier
+  - l1_hier_eager
+  - l1_compress
+  - l1_compress_eager
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
+budgets_mib: [1, 2, 4, 8, 16]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+notes: "comm-only campaign l1 binary-B blow fwd: post-fix, all 5 arms, 4n retest"
