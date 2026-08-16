@@ -1,0 +1,23 @@
+# l1_fast completion on binary B: the b8/b16 cells lost to allocation expiry
+# on binary A (capsules 20260816-163658/-163816). b8/16 correctness ON.
+platform: perlmutter
+nodes: 4
+variants:
+  - l1_fast
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog;dealer=1"
+budgets_mib: [8, 16]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+modes: [e2e]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+notes: "comm-only campaign l1_fast binary-B completion b8/b16"
