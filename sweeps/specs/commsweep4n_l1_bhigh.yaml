@@ -3,12 +3,11 @@
 # --skip_correctness flag exists exactly for this).
 platform: perlmutter
 nodes: 4
+# compress arms dropped (2n bring-up hang) — see commsweep4n_l1_blow.yaml
 variants:
   - l1_dense
   - l1_hier
   - l1_hier_eager
-  - l1_compress
-  - l1_compress_eager
 families:
   - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
 budgets_mib: [32, 64]

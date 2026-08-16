@@ -4,15 +4,19 @@
 # proxy — never compare across timing_mode). torch un-overlapped baseline
 # rides every cell as impl=torch rows (correctness ON). l1_fast runs in its
 # own e2e capsule (commsweep4n_l1fast_*.yaml, same binary).
-# Verdict pairs (rev twin): eager-vs-legacy, compress-vs-hier.
+# Verdict pairs (rev twin): eager-vs-legacy.
+# l1_compress / l1_compress_eager DROPPED 2026-08-16 (P2 bring-up): the
+# compress combine hangs on its first forward at 2n — setup completes, then
+# silence until the idle watchdog; clean AND CHECK_IDENTITY runs, both
+# timing modes (capsules 20260816-123413 / 20260816-125015). Wire-handshake
+# deadlock, first-ever GPU run of that path; separate debug item — do not
+# re-add until it passes the 2n ladder.
 platform: perlmutter
 nodes: 4
 variants:
   - l1_dense
   - l1_hier
   - l1_hier_eager
-  - l1_compress
-  - l1_compress_eager
 families:
   - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
 budgets_mib: [1, 2, 4, 8, 16]
