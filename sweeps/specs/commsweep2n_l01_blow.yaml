@@ -1,0 +1,27 @@
+# P5 combined layer0+1 capsule at 2 NODES (W=8, binary B): the NN>2 hang
+# blocks the 4n combined flux arms (their l1 stage). 2n delivers the
+# combined story now; 4n follows the NN>2 fix. Sibling l0/l1 cells for the
+# identity check come from the 2n l1fix capsules + a 2n l0 companion.
+platform: perlmutter
+nodes: 2
+variants:
+  - l01_torch
+  - l01_allgather_dense
+  - l01_lbunion_hier_eager
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
+budgets_mib: [1, 2, 4, 8, 16]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+notes: "comm-only campaign P5 l01 2n blow fwd: combined continuous pass, W=8, binary B"

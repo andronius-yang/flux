@@ -1,0 +1,31 @@
+# Binary-B layer1 campaign at 2 NODES (W=8): the NN>2 hang blocks 4n l1
+# (binary-B smoke 20260816-170140 still stuck -> logic bug, debug track
+# engaged), while 2n is fully validated post lazy-load fix — eager AND
+# compress green (debug validation 2026-08-16). This pair delivers the
+# five-arm layer1 story at W=8; the 4n story follows the NN>2 fix.
+# NOTE W=8 != W=16: never compare these cells against the 4n capsules.
+platform: perlmutter
+nodes: 2
+variants:
+  - l1_dense
+  - l1_hier
+  - l1_hier_eager
+  - l1_compress
+  - l1_compress_eager
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
+budgets_mib: [1, 2, 4, 8, 16]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+notes: "comm-only campaign l1 binary-B 2n blow fwd: all 5 arms, W=8"

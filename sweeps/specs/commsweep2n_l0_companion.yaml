@@ -1,0 +1,26 @@
+# 2n layer0 companion capsule (binary B): sibling l0-isolated cells for the
+# l01 identity check at W=8 (the 4n l0 capsules are W=16 and binary A —
+# never mix). Arms match the l01 pairings: allgather (stock) and the
+# lb_union+F+E winner config.
+platform: perlmutter
+nodes: 2
+variants:
+  - allgather
+  - hier_compress_lb_union_fused_early
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
+budgets_mib: [1, 2, 4, 8, 16]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+notes: "comm-only campaign 2n l0 companion (identity-check siblings, binary B)"
