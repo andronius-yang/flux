@@ -741,6 +741,19 @@ transport (pre-reduce costs SMs) — the inverse of dispatch dedup, whose fanout
 was free CE copies; whether the wire savings pay for the SM pressure at small
 budgets is the open measurement question.
 
+**Kernel-loading constraint (root-caused 2026-08-16, first 2-node GPU runs):**
+both 14.1 and 14.2 put a persistent spin kernel on the device before the
+epoch's first NVSHMEM on-stream call, and NVSHMEM 3.2.5 delivers every
+on-stream signal via a device kernel (`nvshmemi_signal_op_kernel` et al.).
+Under `CUDA_MODULE_LOADING=LAZY` (the launch.sh default) a kernel's module
+loads at its FIRST launch; a first launch enqueued behind a never-exiting
+resident spin kernel never completes the load, no signal is ever produced,
+and the epoch deadlocks (the §13 legacy path survives only because its lone
+spin kernel, the pack, drains once the GEMM finishes). The combine therefore
+preloads every kernel it launches at ctor time — `a2av_combine_preload` +
+one priming NVSHMEM op per transport path in `init_buffer_once`, with the
+device idle — making the op correct under either loading mode.
+
 Executable specs, validated on CPU before any GPU run:
 `test_a2av_combine_sim.py` (`simulate_compress`: set-valued payloads through
 conv → pre-reduce → C' wire → CSR reduce; any double-counted or missing copy
