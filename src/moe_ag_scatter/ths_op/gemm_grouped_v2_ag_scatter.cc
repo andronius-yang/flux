@@ -359,6 +359,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // mine-token cumsum, gating lanes histogrammed sort-free. Cuts the
   // launch-blocking stage-2 chain to ~3 kernels + 1 cumsum.
   const bool fused_stage2_;
+  // FLUX_A2AV_SEG_GATE_BALLOT=1: legacy two-ballot (W<=64) process_tile
+  // segment gate instead of the default W-unbounded predicate gate (A/B knob)
+  const bool seg_gate_ballot_;
   uint64_t run_id_ = 0;              // epoch value carried by the NVSHMEM signals
   int64_t max_recv_ntokens_ = 0;     // rows of the symmetric recv buffer
   int64_t max_stage_ntokens_ = 0;    // rows of the symmetric gateway staging buffer
@@ -629,6 +632,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         blocking_wire_(get_int_from_env("FLUX_A2AV_BLOCKING_WIRE", 0) != 0),
         fanout_eager_(get_int_from_env("FLUX_A2AV_FANOUT", 0) != 0),
         fused_stage2_(get_int_from_env("FLUX_A2AV_FUSED_STAGE2", 0) != 0 && a2av_hier_compress),
+        seg_gate_ballot_(get_int_from_env("FLUX_A2AV_SEG_GATE_BALLOT", 0) != 0),
         // ring_mode barriers are CUDA-IPC based and intra-node only; multi-node
         // must take the NVSHMEM barrier (ring_mode = false)
         group_barrier(this->tp_group, nnodes == 1 && this->tp_group->get_size() > 8) {
@@ -637,9 +641,18 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     CHECK_DIV(ffn_hidden, ffn_tp_size);
     FLUX_CHECK_GE(nnodes, 1);
     CHECK_DIV(world_size, nnodes);
-    // the process_tile segment gate builds 64-bit source masks from two
-    // 32-lane ballots (one warp lane per pair of sources)
-    FLUX_CHECK_LE(world_size, 64) << "segment gating masks cap world_size at 64";
+    // the default predicate segment gate is W-unbounded; the remaining caps
+    // are the progress/trace instrumentation buckets (kMaxBuckets = 129 →
+    // W<=128) and, per mode, the legacy ballot gate (FLUX_A2AV_SEG_GATE_BALLOT=1,
+    // W<=64) and the dynamic claimer's 64-bit multi-source masks (W<=64).
+    if (seg_gate_ballot_) {
+      FLUX_CHECK_LE(world_size, 64) << "ballot segment gate caps world_size at 64";
+    } else {
+      FLUX_CHECK_LE(world_size, 128) << "progress buckets cap world_size at 128";
+    }
+    if (a2av_dispatch && !(a2av_ring || a2av_hier || a2av_hier_compress)) {
+      FLUX_CHECK_LE(world_size, 64) << "dynamic-claimer multi-source masks cap world_size at 64";
+    }
     FLUX_CHECK(!a2av_ring || a2av_dispatch) << "a2av_ring requires a2av_dispatch";
     FLUX_CHECK(!a2av_hier || a2av_dispatch) << "a2av_hier requires a2av_dispatch";
     FLUX_CHECK(!(a2av_hier && a2av_ring)) << "a2av_hier and a2av_ring are mutually exclusive";
@@ -3371,6 +3384,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         .tile_size_m = tile_M,
         .tile_size_n = tile_N,
         .barrier_ptr = barrier_ptr};
+    args.seg_gate_ballot = this->seg_gate_ballot_;
     if (a2av_dispatch_) {
       args.signal_ptr = reinterpret_cast<uint64_t *>(this->a2av_signal_buffer.data_ptr());
       args.signal_expected = this->run_id_;

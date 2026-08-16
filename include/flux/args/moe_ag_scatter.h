@@ -81,6 +81,9 @@ struct GemmGroupedV2AGScatterArguments {
   // a2av_ring mode: sends follow the reverse hierarchical ring, so the dense
   // static problem schedule is used instead of the dynamic tile-claimer buckets.
   bool a2av_ring_schedule = false;
+  // FLUX_A2AV_SEG_GATE_BALLOT=1: legacy two-ballot (W<=64) process_tile
+  // segment gate instead of the default W-unbounded predicate gate (A/B knob)
+  bool seg_gate_ballot = false;
   // FLUX_A2AV_NVTX_PROXY=1: device-memory tile-progress slots (a2av_progress.h),
   // published by the GEMM for the NVTX poller thread. nullptr when disabled.
   void *progress_slots = nullptr;

@@ -195,6 +195,9 @@ public:
     uint64_t *weight_signal_ptr = nullptr;
     uint64_t weight_signal_expected = 0;
     int weight_gate_group_start = INT32_MAX;
+    // FLUX_A2AV_SEG_GATE_BALLOT=1: legacy two-ballot (W<=64) segment gate
+    // instead of the default W-unbounded predicate gate (A/B knob)
+    bool seg_gate_ballot = false;
 
     //
     // Methods
@@ -313,6 +316,7 @@ public:
     uint64_t *weight_signal_ptr = nullptr;
     uint64_t weight_signal_expected = 0;
     int weight_gate_group_start = INT32_MAX;
+    bool seg_gate_ballot = false;
     //// added by flux /////
 
     //
@@ -363,6 +367,7 @@ public:
       weight_signal_ptr = args.weight_signal_ptr;
       weight_signal_expected = args.weight_signal_expected;
       weight_gate_group_start = args.weight_gate_group_start;
+      seg_gate_ballot = args.seg_gate_ballot;
     }
 
     CUTLASS_HOST_DEVICE
@@ -410,6 +415,7 @@ public:
       weight_signal_ptr = args.weight_signal_ptr;
       weight_signal_expected = args.weight_signal_expected;
       weight_gate_group_start = args.weight_gate_group_start;
+      seg_gate_ballot = args.seg_gate_ballot;
     }
   };
 
@@ -594,30 +600,55 @@ public:
       int m_end = min((tile_idx_m + 1) * Mma::Shape::kM, problem_size.m()) - 1;
       // TODO(houqi.1993) not with weight_groups
       int * split_accum = params.split_tp_accum_ptr + params.world_size * (problem_idx % params.nexperts_ep);
-      // W <= 64 segment masks: two 32-lane ballots per bound (lane i covers
-      // sources i and i+32). The old single-ballot form broke past W=32: a
-      // tile whose rows extend beyond split_accum[31] got an EMPTY m_end
-      // ballot (segment_end == -1) and skipped every wait — including its
-      // sources < 32 — so at W=64 tiles raced the wire and read zero-cleared
-      // unarrived rows.
-      uint32_t seg_mask_start_lo =
-          __ballot_sync(0xffffffff, lane_idx < params.world_size && (m_start < split_accum[lane_idx]));
-      uint32_t seg_mask_end_lo =
-          __ballot_sync(0xffffffff, lane_idx < params.world_size && (m_end < split_accum[lane_idx]));
-      uint64_t seg_mask_start = seg_mask_start_lo;
-      uint64_t seg_mask_end = seg_mask_end_lo;
-      if (params.world_size > 32) {
-        seg_mask_start |= uint64_t(__ballot_sync(
+      int segment_start, segment_end;
+      if (!params.seg_gate_ballot) {
+        // W-unbounded predicate gate (default): split_accum is a monotone
+        // cumsum, so source seg's rows intersect [m_start, m_end] iff
+        //   split_accum[seg]     >  m_start   (i.e. seg >= segment_start)
+        //   split_accum[seg - 1] <= m_end     (i.e. seg <= segment_end)
+        // Each lane tests its strided segments locally — no warp ballot, no
+        // 32/64-source cliff. The bounds are still materialized (warp
+        // min/max redux) for the claimed[] attribution and the trace record;
+        // the wait loop below re-derives membership per segment. The empty
+        // identity (no seg in range) yields segment_start = segment_end = -1,
+        // matching the empty-ballot encoding of the legacy path.
+        unsigned first_u = 0xffffffffu, last_u = 0u;
+        for (int seg = lane_idx; seg < params.world_size; seg += 32) {
+          int acc_prev = (seg == 0) ? 0 : split_accum[seg - 1];
+          if (split_accum[seg] > m_start && acc_prev <= m_end) {
+            first_u = min(first_u, unsigned(seg));
+            last_u = max(last_u, unsigned(seg) + 1u);
+          }
+        }
+        segment_start = int(__reduce_min_sync(0xffffffff, first_u));
+        segment_end = int(__reduce_max_sync(0xffffffff, last_u)) - 1;
+      } else {
+        // legacy W <= 64 segment masks (FLUX_A2AV_SEG_GATE_BALLOT=1): two
+        // 32-lane ballots per bound (lane i covers sources i and i+32). The
+        // pre-fix single-ballot form broke past W=32: a tile whose rows
+        // extend beyond split_accum[31] got an EMPTY m_end ballot
+        // (segment_end == -1) and skipped every wait — including its sources
+        // < 32 — so at W=64 tiles raced the wire and read zero-cleared
+        // unarrived rows.
+        uint32_t seg_mask_start_lo =
+            __ballot_sync(0xffffffff, lane_idx < params.world_size && (m_start < split_accum[lane_idx]));
+        uint32_t seg_mask_end_lo =
+            __ballot_sync(0xffffffff, lane_idx < params.world_size && (m_end < split_accum[lane_idx]));
+        uint64_t seg_mask_start = seg_mask_start_lo;
+        uint64_t seg_mask_end = seg_mask_end_lo;
+        if (params.world_size > 32) {
+          seg_mask_start |= uint64_t(__ballot_sync(
+                                0xffffffff,
+                                lane_idx + 32 < params.world_size && (m_start < split_accum[lane_idx + 32])))
+                            << 32;
+          seg_mask_end |= uint64_t(__ballot_sync(
                               0xffffffff,
-                              lane_idx + 32 < params.world_size && (m_start < split_accum[lane_idx + 32])))
+                              lane_idx + 32 < params.world_size && (m_end < split_accum[lane_idx + 32])))
                           << 32;
-        seg_mask_end |= uint64_t(__ballot_sync(
-                            0xffffffff,
-                            lane_idx + 32 < params.world_size && (m_end < split_accum[lane_idx + 32])))
-                        << 32;
+        }
+        segment_start = __ffsll((long long)seg_mask_start) - 1;
+        segment_end = __ffsll((long long)seg_mask_end) - 1;
       }
-      int segment_start = __ffsll((long long)seg_mask_start) - 1;
-      int segment_end = __ffsll((long long)seg_mask_end) - 1;
       // minimal-wait contract: a source is waited on only if it contributes
       // rows to this tile. Boundary sources are non-empty by ballot
       // construction, so this skips exactly the EMPTY INTERIOR segments
