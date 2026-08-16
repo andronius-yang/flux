@@ -16,7 +16,9 @@ capsule-traceable; W=8 (2n) and W=16 (4n) results are never mixed.
    with budget), `FLUX_A2AV_FANOUT` **loses** (+0.05…+0.6 ms — the
    `hier_compress_lb_union_eager` A/B arm finally has its verdict: delete).
    **Canonical layer0 config: `lb_union + FUSED_STAGE2 + EARLY_LAUNCH`** —
-   beats stock flux (allgather) by 26–29% at b2–b32, 16% at b64.
+   beats stock flux (allgather) by ~25–27% at b1–b8, tapering to −23…−24%
+   (b16), −19% (b32), −15% (b64); beats unfused torch by up to −64% (b16)
+   and FAST at every budget.
 2. **Layer1 verdicts (W=8, binary C)**: plain `a2av_hier` is the winner —
    ~2× faster than dense ring-RS everywhere, 1.4–2.2× faster than unfused
    torch (b1–b16). **The eager arrival-order reduce is a 15–35% REGRESSION**
@@ -80,10 +82,17 @@ Isolated max-rank e2e_ms (fwd / revA / revB), selected budgets:
 
 | arm | b2 | b8 | b32 | b64 |
 |---|---|---|---|---|
-| allgather (stock flux) | 2.36/2.37/2.36 | 6.11/6.13/6.12 | 23.8/24.1/23.8 | 52.2/51.4/52.0 |
-| lb_union (base) | 1.86 | 4.75 | 19.7 | 45.7 |
-| **+F+E (fused_early)** | **1.67** | **4.43–4.46** | 19.2–19.4 | 44.4–44.7 |
-| +F+N+E (triple) | 1.71 | 4.44–4.46 | **18.7–19.0** | 43.9–44.5 |
+| torch unfused (impl rows) | 3.34 | 12.78 | OOM | OOM |
+| fast (dealer arm; +0.9 ms BvN) | 5.09 | 11.62 | 40.1 | heap-fail |
+| allgather (stock flux) | 2.30/2.29/2.27 | 6.11/6.65/6.26 | 23.8/24.1/23.8 | 52.2/51.4/52.0 |
+| lb_union (base) | 2.00 | 4.72 | 19.7 | 45.7 |
+| **+F+E (fused_early)** | **1.67** | **4.47/4.67/4.43** | 19.2–19.4 | 44.4–44.7 |
+| +F+N+E (triple) | 1.72–1.81 | 4.44–4.46 | **18.7–19.0** | 43.9–44.5 |
+
+torch/fast quoted from their own rows/capsules (single driver each; torch
+b1–b16 only). Baseline shape: torch beats fast below b8; fast crosses over
+at b8 (11.6 vs 12.8) and holds to b32; the winner config dominates both
+everywhere (e.g. b16: 8.9–9.2 vs torch 25.5, fast 20.7, stock 11.5–11.8).
 
 (Full 9-arm × 7-budget × 3-run table: `factorial_analysis.py` output in the
 capsules; base numbers quoted from fwd, spreads across runs ≤ ~2% except
@@ -108,10 +117,12 @@ Isolated max-rank e2e_ms, trace, fwd/rev agree ≤2% (quoting fwd):
 | **l1_hier** | **1.60** | **6.00** | **11.9** | **50.2** |
 | l1_hier_eager | 1.86 | 7.82 | 15.9 | 67.3 |
 | l1_compress | 2.78 | 7.47 | 13.6 | 53.5 |
-| l1_fast (e2e≡iso, dealer) | 2.9* | 7.1* | 12.9* | heap-fail |
 
-(*fast values from its own capsules `163504/163640`; dealer-routing arm —
-same matrix bytes, no token-overlap dedup.) With inherited indices (tmamo),
+`l1_fast` is excluded from this table — its capsules (`163504/163640`) are
+**W=16**: 3.96/5.13/6.27/11.11/21.0/42.4 ms at b1–b32 (b64 heap-fail),
+dealer arm, e2e≡iso. It currently stands alone at W=16 (the flux l1 4n
+cells were the binary-A negatives); the pending 4n binary-C lane makes it
+comparable. With inherited indices (tmamo),
 hier drops to 1.30/5.67/11.6/49.7 and compress to 1.29/5.69/11.5/49.7 —
 compress's in-forward CSR build is its main iso-mode cost at W=8; its wire
 dedup breaks even here (2 nodes = little inter-node fan-in to dedup).
