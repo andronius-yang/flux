@@ -1,0 +1,29 @@
+# 4n combined-pass BEST-pairing A/B (binary C): plain-hier pairing (the 2n
+# corrected headline) vs compress pairing (candidate winner at large budgets
+# per the 4n l1 verdicts — compress wins iso b32/64 and more in tmamo, which
+# is what the l01 window inherits). Full budget range; correctness skipped
+# at all budgets to fit one capsule (the pairings' correctness is already
+# proven: l01 bring-up gates + the corrected-pairing 2n capsules + the l1
+# arms' own allclose at 4n; the torch reference OOMs >= b32 anyway).
+platform: perlmutter
+nodes: 4
+variants:
+  - l01_lbunion_hier
+  - l01_lbunion_compress
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
+budgets_mib: [1, 2, 4, 8, 16, 32, 64]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: true
+timeout_s: 900
+notes: "comm-only campaign 4n l01 best-pairing A/B (hier vs compress), binary C"

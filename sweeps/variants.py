@@ -724,6 +724,37 @@ VARIANTS = {
         ],
         l1_pattern="a2av_hier",
     ),
+    # COMPRESS pairing (2026-08-16, post 4n l1 verdicts): l1 compress loses
+    # iso at small budgets (in-forward CSR build) but WINS at b32/b64 at
+    # W=16 (-4/-6% iso, -14% tmamo — capsules 96f807d1/9725d5e0 + rev). The
+    # l01 window inherits the CSRs (amortized semantics), which is exactly
+    # compress's best case — candidate combined winner at LARGE budgets;
+    # A/B against l01_lbunion_hier inside one capsule.
+    "l01_lbunion_compress": dict(
+        comm_pattern="l01_lbunion_compress",  # cells.csv label only
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "a2av_hier_compress",
+            "--l1_comm_pattern", "a2av_hier_compress",
+        ],
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8",
+        },
+        requires=[
+            "FLUX_A2AV_LB_UNION",
+            "FLUX_A2AV_FUSED_STAGE2",
+            "FLUX_A2AV_EARLY_LAUNCH",
+            "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS",
+            "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+        ],
+        l1_pattern="a2av_hier_compress",
+    ),
     # l0 = lb_union + the P3 factorial WINNERS (2026-08-16, three-run sign
     # agreement over capsules 7ff7098d/1451c017/78f371c6 + bhigh twins):
     # F=FUSED_STAGE2 win (-0.2..-0.7 ms, b1-b8+b32), E=EARLY_LAUNCH win
