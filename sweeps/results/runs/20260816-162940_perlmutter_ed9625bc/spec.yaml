@@ -1,0 +1,37 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 32
+  - 64
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 4
+nodes: 4
+notes: "comm-only campaign P3 l0 bhigh REV: reversed arm order twin"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+skip_correctness: true
+sm_margin: 8
+timeout_s: 900
+topk: 8
+variants:
+  - hier_compress_lb_union_fused_eager_early
+  - hier_compress_lb_union_eager_early
+  - hier_compress_lb_union_fused_early
+  - hier_compress_lb_union_fused_eager
+  - hier_compress_lb_union_early
+  - hier_compress_lb_union_eager
+  - hier_compress_lb_union_fused
+  - hier_compress_lb_union
+  - allgather
+warmup_iters: 5
