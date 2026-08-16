@@ -1,0 +1,36 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 1
+  - 2
+  - 8
+  - 16
+  - 32
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "32"
+families:
+  - "fanoutskew:nodefracs=0.9,0.1,0.9,0.1"
+  - uniform
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+nodes: 4
+notes: "eager N-scaling C2: 4n conn=32, hier/lb_union/eager/union x fanoutskew+uniform, b1-32 k8, isolated"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+skip_correctness: false
+sm_margin: 8
+timeout_s: 900
+topk: 8
+variants:
+  - hier
+  - hier_compress_lb_union
+  - hier_compress_lb_union_eager
+  - hier_compress_union
+warmup_iters: 5
