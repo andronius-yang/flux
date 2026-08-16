@@ -695,9 +695,11 @@ VARIANTS = {
         requires=["FLUX_A2AV_RS_MAX_SEND_ROWS"],
         l1_pattern="dense",
     ),
-    # lb_union base for l0; ADD the P3 factorial winner knobs before the P5
-    # capsules (analysis pending — see the campaign report). l1 = hier+eager
-    # (binary-B validated pairing).
+    # l0 = lb_union + the P3 factorial WINNERS (2026-08-16, three-run sign
+    # agreement over capsules 7ff7098d/1451c017/78f371c6 + bhigh twins):
+    # F=FUSED_STAGE2 win (-0.2..-0.7 ms, b1-b8+b32), E=EARLY_LAUNCH win
+    # (-0.3..-1.8 ms, b2/b16-b64), N=FANOUT loss (+0.05..+0.6, b2-b16) —
+    # so F+E on, N off. l1 = hier + eager reduce (binary-B pairing).
     "l01_lbunion_hier_eager": dict(
         comm_pattern="l01_lbunion_hier_eager",  # cells.csv label only
         driver="l01",
@@ -709,11 +711,15 @@ VARIANTS = {
         ],
         env={
             "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1",
             "FLUX_A2AV_RS_EAGER": "1",
             "CUDA_DEVICE_MAX_CONNECTIONS": "8",
         },
         requires=[
             "FLUX_A2AV_LB_UNION",
+            "FLUX_A2AV_FUSED_STAGE2",
+            "FLUX_A2AV_EARLY_LAUNCH",
             "FLUX_A2AV_RS_MAX_SEND_ROWS",
             "FLUX_A2AV_RS_EAGER",
         ],

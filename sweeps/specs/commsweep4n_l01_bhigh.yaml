@@ -1,0 +1,25 @@
+# P5 combined capsule, high tier. skip_correctness AND no torch arm: the
+# unfused two-layer reference materializes full buffers at b32/b64 (OOM,
+# same story as both per-layer tiers).
+platform: perlmutter
+nodes: 4
+variants:
+  - l01_allgather_dense
+  - l01_lbunion_hier_eager
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
+budgets_mib: [32, 64]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: true
+timeout_s: 900
+notes: "comm-only campaign P5 l01 bhigh fwd"

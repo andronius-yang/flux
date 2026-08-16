@@ -1,0 +1,23 @@
+# Reversed-order twin of commsweep4n_l01_bhigh.yaml.
+platform: perlmutter
+nodes: 4
+variants:
+  - l01_lbunion_hier_eager
+  - l01_allgather_dense
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
+budgets_mib: [32, 64]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: true
+timeout_s: 900
+notes: "comm-only campaign P5 l01 bhigh REV"
