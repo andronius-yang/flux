@@ -19,20 +19,24 @@ capsule-traceable; W=8 (2n) and W=16 (4n) results are never mixed.
    beats stock flux (allgather) by ~25–27% at b1–b8, tapering to −23…−24%
    (b16), −19% (b32), −15% (b64); beats unfused torch by up to −64% (b16)
    and FAST at every budget.
-2. **Layer1 verdicts (W=8, binary C)**: plain `a2av_hier` is the winner —
-   ~2× faster than dense ring-RS everywhere, 1.4–2.2× faster than unfused
-   torch (b1–b16). **The eager arrival-order reduce is a 15–35% REGRESSION**
-   on trace routing; compress ≈ hier at W=8 (dedup should grow with node
-   count — 4n data pending). Schedule inheritance (tmiso→tmamo) is worth a
-   flat ~0.3 ms on hier, 1.5–3.8 ms on compress.
-3. **Combined pass (W=8, binary C)**: best pairing =
-   `lb_union(F+E) + plain hier`: **9.93 ms at b8 vs 15.87 stock and 17.50
-   torch (−37% / −43%), and −37…−51% vs stock across b1–b16**, decomposition
-   identity clean (−1%). The original
-   eager pairing violated the identity (+18% at b8): ablation attributed the
-   entire penalty to the l1 eager persistent reduce (early-launch
-   exonerated) — eager is doubly disqualified (slow alone AND composes
-   badly).
+2. **Layer1 verdicts (binary C)**: plain `a2av_hier` is the standalone
+   winner at small/mid budgets — ~2× faster than dense ring-RS everywhere
+   (W=8 and W=16), 1.4–2.2× faster than unfused torch. **The eager
+   arrival-order reduce is a REGRESSION at both scales** (15–35% at W=8;
+   +2%→+11% at W=16, growing with budget). **Compress crosses over at
+   W=16**: loses iso at b1–b4 (in-forward CSR build), wins −4/−6% at
+   b32/b64 (−17/−14% with inherited indices) — dedup-merge on the combine
+   wire pays at scale under real routing (§3.1). Schedule inheritance
+   (tmiso→tmamo) is worth a flat ~0.3 ms on hier, 1.5–5 ms on compress.
+3. **Combined pass (binary C)**: at W=8 the corrected pairing
+   `lb_union(F+E) + plain hier` gave 9.93 ms at b8 (−37% vs stock), after
+   the eager pairing violated the decomposition identity (+18% at b8;
+   ablation pinned the entire penalty on the l1 eager persistent reduce).
+   **At W=16 the best-pairing A/B crowns `lb_union(F+E) + compress` at
+   EVERY budget** (fwd/rev agreement): the combined window inherits the
+   CSRs, so compress's build penalty vanishes and the wire dedup remains —
+   **10.6 ms at b8 vs 21.9 stock (−52%) and 24.8 torch (−57%)**; −45..−52%
+   vs stock across b2–b64 (§4.1).
 4. **Two real bugs found, root-caused, and fixed** by this campaign's
    bring-up discipline (details §5): the lazy-load spin-kernel deadlock
    (binary B fix) and the empty-expert split-cascade hang (binary C fix) —
@@ -127,6 +131,31 @@ hier drops to 1.30/5.67/11.6/49.7 and compress to 1.29/5.69/11.5/49.7 —
 compress's in-forward CSR build is its main iso-mode cost at W=8; its wire
 dedup breaks even here (2 nodes = little inter-node fan-in to dedup).
 
+### 3.1 Layer1 at W=16 (4n, binary C — capsules 96f807d1/9725d5e0 fwd, a13c43be/0c055e74 rev; all allclose)
+
+Isolated max-rank e2e_ms (fwd; rev agrees ≤2% except noted; tmamo in parens):
+
+| arm (iso) | b1 | b4 | b8 | b16 | b32 | b64 |
+|---|---|---|---|---|---|---|
+| torch (unfused) | 2.86 | 6.62 | 11.9 | 22.3 | OOM | OOM |
+| l1_dense (stock) | 5.19 | 10.1 | 15.7 | 31.4 | 59.8 | 122.5 |
+| **l1_hier** | **1.95** (1.64) | **4.25** (3.92) | **7.73** (7.42) | **14.6** (14.4) | 29.4 (30.0) | 61.4 (61.5) |
+| l1_hier_eager | 1.95 | 4.44 | 7.91 | 15.9 | 32.9 | 68.0 |
+| l1_compress | 3.05 | 5.03 | 7.93 | 14.4† | **28.6** (24.9) | **58.1** (53.2) |
+| l1_compress_eager | 3.03 | 5.68 | 9.79 | 18.1 | 34.6 | 70.1 |
+| l1_fast (W=16, dealer) | 3.96 | 6.27 | 11.1 | 21.0 | 42.4 | heap-fail |
+
+W=16 verdicts (fwd/rev sign agreement vs l1_hier):
+- **eager: LOSS at scale too** — +2% (b8) growing to **+11% (b32/b64)**;
+  the 2n verdict generalizes.
+- **compress CROSSES OVER**: +54/+19% at b1/b4 (in-forward CSR build), ~par
+  at b8 (†b16 fwd favors compress −0.28, rev +0.68 — no verdict), then
+  **WINS −4% (b32) and −6% (b64)**; in tmamo (inherited indices) the win is
+  −17% (b32) and **−13.6% (b64)** — dedup-merge on the combine wire pays at
+  W=16 large budgets under real routing (formalization open question 6:
+  answered for the combine direction).
+- dense ≈ 2× hier everywhere; torch loses to hier from b1.
+
 ## 4. Combined layer0+1 (W=8, binary C)
 
 Isolated max-rank e2e_ms of the full pass (l0 → GELU → l1), fwd/rev:
@@ -152,6 +181,38 @@ device; fixed-cost signature explains the vanishing residual at b16).
 `l1_index_build_ms` (one-shot python builders, untimed by decision) is
 reported in every l01 cell's info record.
 
+### 4.1 Combined at W=16 (4n, binary C)
+
+Eager pairing + baselines (capsules 537522b3/5282d34f fwd, 9bd629be/b002806a
+rev; all allclose where correctness ON):
+
+| pairing | b1 | b2 | b4 | b8 | b16 | b32 | b64 |
+|---|---|---|---|---|---|---|---|
+| torch+torch | 4.96 | 7.49 | 13.4 | 24.8 | 48.3 | OOM | OOM |
+| allgather+dense (stock) | 6.84 | 7.66 | 13.5 | 21.9 | 43.1 | 85.2 | 177.3 |
+| lbunion(F+E)+hier_eager | 3.54 | 4.64 | 8.00 | 15.2 | 25.1 | 53.9 | 113.2 |
+
+Best-pairing A/B (capsules 9378fed5 fwd / 397ac0fa rev; compress-pairing
+correctness gated at 4n first):
+
+| pairing | b1 | b2 | b4 | b8 | b16 | b32 | b64 |
+|---|---|---|---|---|---|---|---|
+| lbunion(F+E)+hier | 2.86/2.91 | 4.81*/4.06 | 6.87/6.66 | 12.5/12.5 | 24.9/24.8 | 52.0/51.8 | 112.4/111.7 |
+| **lbunion(F+E)+compress** | **2.76/2.70** | **3.63/3.66** | **5.89/5.86** | **10.6/10.6** | **21.2/21.2** | **46.2/45.3** | **99.6/100.4** |
+
+(*single-iteration transient in the fwd cell, max 11.5 ms; the rev twin is
+clean.) **The compress pairing wins at EVERY budget with fwd/rev agreement**
+— −10..−15% vs the hier pairing at b2–b16, −11..−12% at b32/b64, and even
+b1: the combined window inherits the CSR indices (amortized semantics), so
+compress's isolated-mode build penalty vanishes and the wire-dedup win
+remains. Note the W=8 combined table above predates the W=16 compress
+verdict; at W=8 combined, hier vs compress was not measured — the W=16 A/B
+is the authority for the pairing choice.
+
+**Campaign combined headline (W=16)**: `lb_union(F+E) + compress` = **10.6 ms
+at b8 vs 21.9 stock flux (−52%) and 24.8 torch (−57%)**; −45..−52% vs stock
+across b2–b64.
+
 ## 5. The two bugs (both fixed; full narratives in the memory ledger)
 
 1. **Lazy-load spin deadlock** (binary B fix, `worktree-l1-hang-debug`
@@ -174,9 +235,9 @@ reported in every l01 cell's info record.
 
 ## 6. Open items
 
-- 4n binary-C l1 + l01 campaign (parallel session, in flight) — completes
-  the W=16 layer1/combined story, incl. whether compress's dedup pays at
-  larger node counts (the formalization doc's open question 6).
+- ~~4n binary-C l1 + l01 campaign~~ LANDED (§3.1/§4.1): W=16 five-arm l1
+  pairs, l01 eager-pairing + best-pairing A/B, l1_fast completion — compress
+  dedup pays at W=16 (l1 iso b32/64; combined at every budget).
 - `l01_fast` (fast+fast combined) blocked on the FAST credit-reset question;
   `l1_fast` b64 heap ceiling documented.
 - Canonicalization patches (knob defaults F/E on; delete FANOUT arm) not yet
