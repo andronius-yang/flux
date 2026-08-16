@@ -8,7 +8,7 @@ FLUX_SRC_DIR=${SCRIPT_DIR}
 export NVSHMEM_BOOTSTRAP=UID
 export NVSHMEM_DISABLE_CUDA_VMM=1 # moving from cpp to shell
 export CUDA_DEVICE_MAX_CONNECTIONS=${CUDA_DEVICE_MAX_CONNECTIONS:-1}
-export CUDA_MODULE_LOADING=LAZY # EAGER if launch the consumer kernel before the producer kernel on host
+export CUDA_MODULE_LOADING=${CUDA_MODULE_LOADING:-LAZY} # overridable; LAZY first-launch loads deadlock behind persistent spin kernels -- the a2av combine preloads its kernels at ctor (see a2av_combine_preload)
 
 # set default communication env vars
 export BYTED_TORCH_BYTECCL=O0

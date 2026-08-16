@@ -364,6 +364,34 @@ a2av_combine_reduce_kernel(A2AVCombineReduceArguments args) {
 
 }  // namespace
 
+// Force-load every combine kernel at construction time. Under
+// CUDA_MODULE_LOADING=LAZY (the launch.sh default) a kernel's module is loaded
+// at its FIRST launch; the eager / compress schedules put a persistent spin
+// kernel (eager reduce / pre-reduce) on the device BEFORE the epoch's first
+// launch of the remaining kernels, and a first-launch load that must complete
+// behind a never-exiting resident kernel deadlocks the epoch (root cause of
+// the 2026-08-16 two-node eager/compress hangs). Attribute queries are the
+// documented cudart way to preload a kernel under lazy loading, and the ctor
+// runs with an idle device, so every load here is trivial.
+void
+a2av_combine_preload(DataTypeEnum dtype) {
+  cudaFuncAttributes attr;
+  tuple_return_if(
+      cute::make_tuple(_FP16{}, _BF16{}),
+      [&](auto cdtype) { return cdtype == dtype; },
+      [&](auto cdtype) {
+        using T = decltype(to_cuda_dtype(cdtype));
+        CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_combine_pack_kernel<T, true>));
+        CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_combine_pack_kernel<T, false>));
+        CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_combine_eager_reduce_kernel<T, true>));
+        CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_combine_eager_reduce_kernel<T, false>));
+        CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_combine_prereduce_kernel<T>));
+        CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_combine_csr_reduce_kernel<T>));
+        CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_combine_reduce_kernel<T>));
+      },
+      [&]() { FLUX_CHECK(false) << "unsupported dtype for a2av combine preload: " << dtype; });
+}
+
 void
 a2av_combine_pack(
     A2AVCombinePackArguments const &args, DataTypeEnum dtype, cudaStream_t stream) {

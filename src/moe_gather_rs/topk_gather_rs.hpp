@@ -66,6 +66,12 @@ void internode_reduce_gather_rs(
 
 // a2av_hier combine (implemented in a2av_combine.cu): persistent split-major pack
 // kernel behind the GEMM cascade flags, and the per-split destination topk reduce
+
+// ctor-time kernel preload: forces the module load of every combine kernel so
+// no first-launch lazy load can deadlock behind the eager / pre-reduce spin
+// kernels (CUDA_MODULE_LOADING=LAZY footgun; see a2av_combine.cu)
+void a2av_combine_preload(DataTypeEnum dtype);
+
 void a2av_combine_pack(
     A2AVCombinePackArguments const &args, DataTypeEnum dtype, cudaStream_t stream);
 

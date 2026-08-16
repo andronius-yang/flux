@@ -282,6 +282,40 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           cudaMemset(this->group_flags.get(), 0, sizeof(int) * this->nnodes * this->n_split));
       CUDA_CHECK(
           cudaMemset(this->group_counters.get(), 0, sizeof(int) * this->nnodes * this->n_split));
+      // Preload every kernel this data path launches: ours (attribute queries
+      // force the module loads) plus NVSHMEM's on-stream transfer/signal
+      // kernels (primed by issuing one real op per transport path). Under
+      // CUDA_MODULE_LOADING=LAZY a kernel's module is loaded at its FIRST
+      // launch, and the eager / compress schedules put a persistent spin
+      // kernel on the device BEFORE the epoch's first NVSHMEM on-stream call:
+      // that first-launch load never completes behind the never-exiting
+      // resident kernel and the epoch deadlocks (2-node eager/compress hang,
+      // root-caused 2026-08-16; legacy survives only because its lone spin
+      // kernel, the pack, drains once the GEMM finishes). The ctor runs with
+      // an idle device, so every load below is trivial. The priming ops write
+      // SET 0 over zero-initialized signal slots (a no-op value), and
+      // nvshmem_barrier_all() orders their remote delivery before any epoch.
+      a2av_combine_preload(from_torch_dtype(dtype));
+      {
+        cudaStream_t stream = c10::cuda::getCurrentCUDAStream();
+        uint64_t *sig = (uint64_t *)this->a2av_recv_signals_.data_ptr();
+        nvshmemx_signal_op_on_stream(sig, 0, NVSHMEM_SIGNAL_SET, this->rank, stream);
+        if (this->local_world_size > 1) {
+          int peer = this->node_idx * this->local_world_size +
+                     (this->local_rank + 1) % this->local_world_size;
+          nvshmemx_putmem_signal_nbi_on_stream(
+              sig, sig, sizeof(uint64_t), sig + 1, 0, NVSHMEM_SIGNAL_SET, peer, stream);
+        }
+        if (this->nnodes > 1) {
+          int peer = ((this->node_idx + 1) % this->nnodes) * this->local_world_size +
+                     this->local_rank;
+          nvshmemx_putmem_signal_nbi_on_stream(
+              sig, sig, sizeof(uint64_t), sig + 1, 0, NVSHMEM_SIGNAL_SET, peer, stream);
+        }
+        nvshmemx_quiet_on_stream(stream);
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        nvshmem_barrier_all();
+      }
       torch::cuda::synchronize();
       this->buffer_initialized = true;
       return;
