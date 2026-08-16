@@ -1,0 +1,32 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 16
+  - 8
+  - 4
+  - 2
+  - 1
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 4
+nodes: 2
+notes: comm-only campaign l01 corrected pairing 2n repeat (budget order reversed)
+platform: perlmutter
+profile_iters: 3
+retries: 1
+skip_correctness: false
+sm_margin: 8
+timeout_s: 900
+topk: 8
+variants:
+  - l01_lbunion_hier
+warmup_iters: 5
