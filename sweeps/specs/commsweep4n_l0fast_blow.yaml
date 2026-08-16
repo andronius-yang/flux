@@ -1,0 +1,28 @@
+# Comm-only layer-axis campaign, P3 layer0 FAST baseline capsule (low tier).
+# fast expands in e2e mode only; its e2e IS isolated semantics (host-sync
+# every iteration — SCHEMA.md equivalence note), so these cells compare
+# against the isolated capsules of the same build. Its e2e_ms includes the
+# in-window BvN schedule recompute (~0.9 ms on Perlmutter) — call out at
+# small budgets. trace family: fast cannot consume real routing — the runner
+# forbids it — so the dealer=1 counterfactual arm keeps the same matrix bytes.
+platform: perlmutter
+nodes: 4
+variants:
+  - fast
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog;dealer=1"
+budgets_mib: [1, 2, 4, 8, 16]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+modes: [e2e]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+notes: "comm-only campaign P3 l0 fast blow: FAST BvN baseline, dealer routing arm"

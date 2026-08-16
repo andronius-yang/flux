@@ -1,0 +1,25 @@
+# P3 layer1 FAST baseline capsule (low tier): FAST BvN alltoallv combine +
+# un-overlapped GemmGroupedV2 (compute -> communicate -> topk-sum), e2e-only
+# (host-blocking => e2e IS isolated semantics, SCHEMA.md). dealer arm — fast
+# drivers cannot consume real routing.
+platform: perlmutter
+nodes: 4
+variants:
+  - l1_fast
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog;dealer=1"
+budgets_mib: [1, 2, 4, 8, 16]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+modes: [e2e]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+notes: "comm-only campaign P3 l1 fast blow: FAST layer1 combine baseline (first sweep outing)"

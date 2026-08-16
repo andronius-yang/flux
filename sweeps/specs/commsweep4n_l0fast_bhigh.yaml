@@ -1,0 +1,24 @@
+# P3 layer0 FAST baseline, high tier. Known-fragile: b64 hit the 16G
+# symmetric-heap team-creation ceiling at 4n before (handoff 06 #4) — if it
+# fails here, record the negative result, do not chase.
+platform: perlmutter
+nodes: 4
+variants:
+  - fast
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog;dealer=1"
+budgets_mib: [32, 64]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+modes: [e2e]
+matrix_instance: "001"
+skip_correctness: true
+timeout_s: 900
+notes: "comm-only campaign P3 l0 fast bhigh: b64 heap-ceiling failure is a known documented loss"

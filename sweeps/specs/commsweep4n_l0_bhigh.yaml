@@ -1,0 +1,33 @@
+# Comm-only layer-axis campaign, P3 layer0 capsule — HIGH budget tier.
+# skip_correctness: the torch reference materializes the full unsharded
+# tensor (8-16 GiB) and OOMs at these budgets (handoff 06 post-mortem) — so
+# no impl=torch rows here and correctness columns stay empty by design.
+platform: perlmutter
+nodes: 4
+variants:
+  - allgather
+  - hier_compress_lb_union
+  - hier_compress_lb_union_fused
+  - hier_compress_lb_union_eager
+  - hier_compress_lb_union_early
+  - hier_compress_lb_union_fused_eager
+  - hier_compress_lb_union_fused_early
+  - hier_compress_lb_union_eager_early
+  - hier_compress_lb_union_fused_eager_early
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
+budgets_mib: [32, 64]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: true
+timeout_s: 900
+notes: "comm-only campaign P3 l0 bhigh fwd: b32/b64, torch reference infeasible (skip)"

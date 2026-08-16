@@ -1,0 +1,32 @@
+# Comm-only layer-axis campaign, P3 LAYER1 capsule — low tier. First-ever
+# layer1 sweep: flux arms auto-expand x2 over timing_mode (tmiso = index
+# build in-forward; tmamo = layer0-inherited indices, the combined-pass
+# proxy — never compare across timing_mode). torch un-overlapped baseline
+# rides every cell as impl=torch rows (correctness ON). l1_fast runs in its
+# own e2e capsule (commsweep4n_l1fast_*.yaml, same binary).
+# Verdict pairs (rev twin): eager-vs-legacy, compress-vs-hier.
+platform: perlmutter
+nodes: 4
+variants:
+  - l1_dense
+  - l1_hier
+  - l1_hier_eager
+  - l1_compress
+  - l1_compress_eager
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
+budgets_mib: [1, 2, 4, 8, 16]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+notes: "comm-only campaign P3 l1 blow fwd: first layer1 sweep, real Qwen3 trace, W16"

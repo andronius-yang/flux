@@ -1,0 +1,23 @@
+# P3 layer1 FAST baseline, high tier (skip_correctness; heap ceiling at b64
+# possible per the layer0 fast precedent — record, don't chase).
+platform: perlmutter
+nodes: 4
+variants:
+  - l1_fast
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog;dealer=1"
+budgets_mib: [32, 64]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+modes: [e2e]
+matrix_instance: "001"
+skip_correctness: true
+timeout_s: 900
+notes: "comm-only campaign P3 l1 fast bhigh: b32/b64"

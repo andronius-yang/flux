@@ -1,0 +1,38 @@
+# Comm-only layer-axis campaign (2026-08-16), P3 layer0 capsule — LOW budget
+# tier (correctness ON; the torch un-overlapped baseline rides every cell as
+# impl=torch rows). Arms: stock flux dispatch (allgather) + the full 2^3
+# factorial on the lb_union base (F=FUSED_STAGE2, N=FANOUT, E=EARLY_LAUNCH).
+# fast runs in its own e2e capsule (commsweep4n_l0fast_*.yaml, same binary —
+# cross-capsule comparison licensed by the fast e2e==isolated equivalence +
+# matching build hash, SCHEMA.md).
+# Verdict protocol: pair with commsweep4n_l0_blow_rev.yaml (reversed variant
+# order); a knob effect is real only if the sign agrees in both orderings.
+platform: perlmutter
+nodes: 4
+variants:
+  - allgather
+  - hier_compress_lb_union
+  - hier_compress_lb_union_fused
+  - hier_compress_lb_union_eager
+  - hier_compress_lb_union_early
+  - hier_compress_lb_union_fused_eager
+  - hier_compress_lb_union_fused_early
+  - hier_compress_lb_union_eager_early
+  - hier_compress_lb_union_fused_eager_early
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
+budgets_mib: [1, 2, 4, 8, 16]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+notes: "comm-only campaign P3 l0 blow fwd: baselines+factorial, real Qwen3 trace, W16"
