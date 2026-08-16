@@ -1,5 +1,55 @@
 # Realistic-MoE-trace sweep — debug/fix TODO (2026-08-15)
 
+> **STATUS UPDATE (2026-08-15, debug session, branch `worktree-debug`): all four
+> items root-caused; #1/#2/#3 fixed in code.** Summary — details in the
+> per-item annotations below:
+>
+> - **#1 and #2 are ONE kernel bug**: the `process_tile` source-segment gate
+>   (`src/moe_ag_scatter/cutlass_impls/ag_scatter_gemm_grouped_with_absmax.h`)
+>   built its wait range from a single-warp 32-lane ballot. At W=64 any tile
+>   whose rows extend past `split_accum[31]` got an empty `m_end` ballot
+>   (`segment_end == -1`) and **waited for nothing** — including its sources
+>   < 32 — so the allgather arm read zero-cleared unarrived rows (the exact
+>   band/source pattern was reproduced offline from the routing files:
+>   b8 zero rows = sources 5,6 = the last-fetched node in ring order; b1 =
+>   the fetch frontier, sources 31-34). moonep_fused's `assert W <= 32`
+>   guarded the same cliff — its "crash" was that designed precondition, and
+>   it never reached `torch_allclose` (item #2's moonep half was a
+>   mischaracterization; the deterministic allclose failure was
+>   allgather-only). FIXED: 64-bit segment masks from two ballots + strided
+>   spin loop; host `FLUX_CHECK(world_size <= 64)`; test assert relaxed to 64.
+> - **#3 is the predicted knob under-provisioning**, confirmed exactly:
+>   `scale_knobs()` had no W term (~32·T cap) while the lb_union recv demand
+>   grows ~W·T. Demands from the failure logs (271685 @W32/b64; 259218 @W64/b32;
+>   518504 @W64/b64) are reproduced digit-exact by the new
+>   `gen_matrix.a2av_knob_demands`. The 8n "hang" vs 16n "fast fail" split is
+>   two check sites for one cause: per-rank `:1147` (one rank throws, 31 spin
+>   → watchdog) vs collective `:1262`. FIXED: exact per-cell knob computation
+>   (`sweep.exact_scale_knobs`, per-knob sizing, `skipped_capacity` status;
+>   SCHEMA.md §knobs rewritten) + the C++ checks made collective and the
+>   compress-path `:1147` unit mismatch corrected. GPU-validated at 8n:
+>   the b64/W32 cell runs green with RECV=294912 (dealer and real routing).
+> - **NEW (found during audit): the sweep retry path silently dropped
+>   `routing_mode`** (`sweep.py` retry whitelist), so every retried trace cell
+>   — exactly the 8n/b64 and 16n/b32+b64 failures — ran DEALER routing while
+>   recorded as part of a real-trace family (`routing_mode=''` in cells.csv is
+>   the fingerprint; the demand numbers above are dealer-inflated). FIXED:
+>   retries reuse the pristine cell dict; loud guards refuse to run a trace
+>   cell with degraded routing. **Audit any capsule with `family=trace AND
+>   routing_mode=''` before quoting it as real-trace data.**
+> - **#4 revised**: the 4n b64 `fast` failure is an NVSHMEM team-creation
+>   error at the 16G symmetric-heap ceiling (`team_internal.cpp:531`); a
+>   manual rerun with NCCL_DEBUG=INFO *hung* instead (300 s timeout) — same
+>   heap-ceiling territory, still doc-only. The "8n b64" claim is
+>   **unsupported**: no such cell exists in any capsule or data-root staging
+>   dir (8n `fast` failures on record are b2/b8 from 2026-08-05).
+> - **Also explained**: 4n/8n b64 allgather+lb_union correctness-ON failures
+>   are torch-REFERENCE-path CUDA OOM (the reference materializes the full
+>   unsharded tensor; 8-16 GiB) — that is why `--skip_correctness` "fixed"
+>   them; the flux arm was fine. And lb_union at 16n is allclose-clean but
+>   never bitwise-exact (`correct_bitwise=0`) — presumed reduction order,
+>   unverified, keep in mind when using it as a control arm.
+
 Handoff from the 4n/8n/16n canonical-baselines sweep on real Qwen3-235B
 routing (`mmlu/high_school_world_history`, layer 92, homog, topk=8, G=128,
 non-blocking wire). Branch `worktree-realistic-moe-sweep-campaign` (based on

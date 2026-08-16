@@ -260,9 +260,11 @@ def detect_jobid(explicit):
 
 
 def scale_knobs(budget_mib, topk, chunk_bytes):
-    """MAX_RECV/STAGE/RELAY + NVSHMEM_SYMMETRIC_SIZE from the validated anchor
-    points (topk16 sweeps: post-topk 2..256 MiB -> 163840/6G, 512 -> 262144/10G,
-    1024 -> 524288/16G). See SCHEMA.md §knobs; platform yaml may override."""
+    """LEGACY anchor formula (topk16 sweeps: post-topk 2..256 MiB -> 163840/6G,
+    512 -> 262144/10G, 1024 -> 524288/16G). W-blind: the lb_union recv demand
+    grows ~W*T while this cap is ~32*T, which broke b64/W32 and b32+b64/W64
+    (2026-08-15). Kept only as the fallback when a cell's matrix artifacts are
+    not on disk (e.g. some dry runs); real runs use exact_scale_knobs."""
     row_chunks = budget_mib * (1 << 20) * topk // chunk_bytes
     cap = max(163840, math.ceil(4 * row_chunks / 8192) * 8192)
     post_mib = budget_mib * topk
@@ -276,6 +278,72 @@ def scale_knobs(budget_mib, topk, chunk_bytes):
         "FLUX_A2AV_MAX_RELAY_NTOKENS": str(cap),
         "NVSHMEM_SYMMETRIC_SIZE": f"{sym_g}G",
     }
+
+
+def read_matrix_chunks(matrix_path, chunk_bytes):
+    """Parse a matrix .txt (W, then W*W byte counts) into [W][W] row counts."""
+    with open(matrix_path) as f:
+        toks = f.read().split()
+    w = int(toks[0])
+    vals = [int(x) for x in toks[1 : 1 + w * w]]
+    return [[vals[s * w + d] // chunk_bytes for d in range(w)] for s in range(w)]
+
+
+_EXACT_KNOB_CACHE = {}
+
+
+def exact_scale_knobs(matrix, spec, plat, routing_mode):
+    """Exact per-cell a2av knobs + heap from the SAME expressions the runtime
+    FLUX_CHECKs (gen_matrix.a2av_knob_demands), computed from the on-disk
+    matrix (+ routing file when routing_mode == real; dealer closed form
+    otherwise). Per-knob sizing: RECV from the copies/union column max,
+    STAGE/RELAY from their own bounds (the legacy uniform cap inflated
+    stage/relay ~2.5-5x, which is what pushed b64 heaps to the 16G ceiling).
+    Demands are rounded up to 8192 rows and floored at the legacy 163840 so
+    every previously-passing small-budget cell keeps a byte-identical
+    env_json. Returns (env dict, uncapped_sym_g) — the caller skips the cell
+    as skipped_capacity when uncapped_sym_g exceeds the platform heap cap."""
+    key = (matrix["path"], routing_mode)
+    if key not in _EXACT_KNOB_CACHE:
+        cb = spec["chunk_bytes"]
+        topk = spec["topk"]
+        L = plat["ranks_per_node"]
+        chunks = read_matrix_chunks(matrix["path"], cb)
+        W = len(chunks)
+        nn = W // L
+        T = sum(chunks[0]) // topk  # budget invariant: row sums = T * topk
+        if routing_mode == "real":
+            routing = gen_trace_routing.read_routing(matrix["routing"])
+            u, U = gen_trace_routing.real_dedup_stats(routing, W, L, T, spec["G"])
+        else:
+            u = gen_matrix.dealer_dedup_u(chunks, T)
+            U = [
+                [min(sum(chunks[s][m * L + j] for j in range(L)), T) for m in range(nn)]
+                for s in range(W)
+            ]
+        d = gen_matrix.a2av_knob_demands(chunks, u, U, L)
+
+        def cap(rows):
+            return max(163840, math.ceil(rows / 8192) * 8192)
+
+        recv = cap(max(d["recv_copies"], d["recv_union"]))
+        stage = cap(max(d["stage_hier"], d["stage_ident"], d["stage_lb"]))
+        relay = cap(d["relay_lb"])
+        # heap: whichever the ctor allocates — a2av buffers (2 send halves +
+        # recv + stage + relay) or the dense gathered input (W*T rows), plus
+        # 1G for signal buffers / NVSHMEM internals; floor at the legacy 6G
+        send_rows = 2 * T * topk
+        need_rows = max(send_rows + recv + stage + relay, W * T)
+        sym_g = max(6, math.ceil(need_rows * cb / (1 << 30)) + 1)
+        env = {
+            "FLUX_A2AV_MAX_RECV_NTOKENS": str(recv),
+            "FLUX_A2AV_MAX_STAGE_NTOKENS": str(stage),
+            "FLUX_A2AV_MAX_RELAY_NTOKENS": str(relay),
+            "NVSHMEM_SYMMETRIC_SIZE": f"{sym_g}G",
+        }
+        _EXACT_KNOB_CACHE[key] = (env, sym_g)
+    env, sym_g = _EXACT_KNOB_CACHE[key]
+    return dict(env), sym_g
 
 
 def parse_family(spec_str):
@@ -578,8 +646,9 @@ def eplb_sym_size(matrix_path, plat, spec):
     return f"{sym_g}G"
 
 
-def build_cell_env(spec, plat, cell, staging, matrix_path):
+def build_cell_env(spec, plat, cell, staging, matrix):
     v = VARIANTS[cell["variant"]]
+    matrix_path = matrix.get("path")
     env = {}
     env.update(plat.get("env") or {})
     if v.get("driver", "flux") == "fast":
@@ -617,7 +686,16 @@ def build_cell_env(spec, plat, cell, staging, matrix_path):
             else:
                 env["NVSHMEM_SYMMETRIC_SIZE"] = moonep_sym_size(matrix_path, plat)
     else:
-        env.update(scale_knobs(cell["budget_mib"], spec["topk"], spec["chunk_bytes"]))
+        if matrix.get("path") and os.path.exists(matrix["path"]):
+            knobs, sym_g_required = exact_scale_knobs(
+                matrix, spec, plat, cell.get("routing_mode")
+            )
+            env.update(knobs)
+            # popped by run_cell for the skipped_capacity decision (never
+            # reaches the child process environment)
+            env["_A2AV_SYM_G_REQUIRED"] = str(sym_g_required)
+        else:
+            env.update(scale_knobs(cell["budget_mib"], spec["topk"], spec["chunk_bytes"]))
         sym_max = plat.get("sym_size_max_g")
         if sym_max and int(env["NVSHMEM_SYMMETRIC_SIZE"][:-1]) > int(sym_max):
             env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_max}G"
@@ -763,6 +841,23 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
 
 def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
     staging = os.path.join(run_dir_staging, "cells", cell["cell_id"])
+    # fail loudly instead of silently downgrading the routing: a trace-family
+    # cell without a valid routing_mode, or a "real" cell without its routing
+    # artifact, would otherwise run dealer routing while being recorded as a
+    # trace measurement (this happened via a retry-path key drop; see the
+    # pristine-cell comment in cmd_run)
+    if cell.get("family") == "trace" and cell.get("routing_mode") not in ("real", "dealer"):
+        raise SystemExit(
+            f"{cell['cell_id']}: trace cell has routing_mode="
+            f"{cell.get('routing_mode')!r} (expected 'real' or 'dealer') — refusing"
+            f" to run with silently degraded routing"
+        )
+    if cell.get("routing_mode") == "real" and not matrix.get("routing"):
+        raise SystemExit(
+            f"{cell['cell_id']}: routing_mode=real but the matrix has no routing"
+            f" artifact ({matrix.get('path')}) — refusing to run dealer routing"
+            f" under a 'real' label"
+        )
     cmd, sm_margin, iters, warmup = build_cell_cmd(
         spec,
         plat,
@@ -773,7 +868,27 @@ def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
         routing_path=matrix.get("routing") if cell.get("routing_mode") == "real" else None,
         eplb_load_path=matrix.get("eplb_load"),
     )
-    env_delta = build_cell_env(spec, plat, cell, staging, matrix["path"])
+    env_delta = build_cell_env(spec, plat, cell, staging, matrix)
+    sym_g_required = env_delta.pop("_A2AV_SYM_G_REQUIRED", None)
+    sym_max = plat.get("sym_size_max_g")
+    if sym_g_required is not None and sym_max and int(sym_g_required) > int(sym_max):
+        # exact demand cannot fit the platform's symmetric heap: record the
+        # cell as capacity-skipped up front instead of launching a run that
+        # is guaranteed to die on an overflow FLUX_CHECK / NVSHMEM init
+        print(
+            f"WARNING: {cell['cell_id']}: needs {sym_g_required}G symmetric heap"
+            f" > platform cap {sym_max}G -> skipped_capacity"
+        )
+        return dict(
+            cell,
+            status="skipped_capacity",
+            sm_margin=sm_margin,
+            iters=iters,
+            warmup=warmup,
+            env_delta=env_delta,
+            staging="",
+            exit_code=None,
+        )
     if dry:
         print(f"\n[{cell['cell_id']}]")
         print("  env: " + " ".join(f"{k}={v}" for k, v in sorted(env_delta.items())))
@@ -1270,6 +1385,11 @@ def cmd_run(spec, jobid_arg, dry):
     print(f"run_id: {run_id}")
     print(f"cells: {len(runnable)} runnable, {len(skipped)} skipped_capability")
     done = list(skipped)
+    # pristine cell dicts for the retry pass: a retry must re-run the EXACT
+    # cell as expanded, not a reconstruction (a key whitelist here once
+    # dropped routing_mode, silently downgrading retried trace cells to
+    # dealer routing while cells.csv siblings said "real")
+    pristine = {c["cell_id"]: dict(c) for c in runnable}
     for cell in runnable:
         done.append(
             run_cell(spec, plat, cell, jobid, matrices[cell["cell_id"]], run_dir_staging, dry)
@@ -1286,18 +1406,7 @@ def cmd_run(spec, jobid_arg, dry):
                 old = done[i]
                 if old.get("staging") and os.path.isdir(old["staging"]):
                     os.rename(old["staging"], f"{old['staging']}.attempt{attempt - 1}")
-                fresh = {
-                    k: old[k]
-                    for k in (
-                        "cell_id",
-                        "variant",
-                        "mode",
-                        "family",
-                        "family_params",
-                        "budget_mib",
-                        "world_size",
-                    )
-                }
+                fresh = dict(pristine[old["cell_id"]])
                 redo = run_cell(
                     spec, plat, fresh, jobid, matrices[old["cell_id"]], run_dir_staging, dry
                 )

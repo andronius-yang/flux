@@ -283,6 +283,7 @@ class GemmGroupedV2AGScatter_Device
         args.accum_per_rank_ptr,
         ws_args.tile_count,
         args.ep_nexperts};
+    gemm_args.seg_gate_ballot = args.seg_gate_ballot;
     if (args.signal_ptr != nullptr) {
       // a2av dispatch mode: per-source signals + dynamically claimed tile buckets
       A2AVScheduleWorkspace a2av_ws = get_a2av_ws(args, args_workspace);

@@ -33,9 +33,12 @@
 namespace bytedance::flux {
 
 struct A2AVProgressSlots {
-  // world_size is bounded by the 64-bit multi-source masks; +1 for bucket W
-  // (multi-source tiles), which reports as its own pseudo-source.
-  static constexpr int kMaxBuckets = 65;
+  // sized for W=128 (+1 for bucket W, the multi-source pseudo-source). The
+  // predicate segment gate is W-unbounded, but the dynamic claimer's 64-bit
+  // multi-source masks still cap ITS mode at W=64, and the tile-trace meta
+  // packs segment ids in 6 bits (aliases above 64) — the host ctor enforces
+  // the per-mode caps.
+  static constexpr int kMaxBuckets = 129;
 
   // -- device -> host ------------------------------------------------------
   // written once per epoch by the first CTA observing the source's signal
