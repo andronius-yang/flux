@@ -1,9 +1,8 @@
 # Reversed-order twin of commsweep4n_l1_blow.yaml.
 platform: perlmutter
 nodes: 4
-# compress arms dropped (2n bring-up hang) — see commsweep4n_l1_blow.yaml
+# compress + hier_eager arms dropped (2n hangs) — see commsweep4n_l1_blow.yaml
 variants:
-  - l1_hier_eager
   - l1_hier
   - l1_dense
 families:

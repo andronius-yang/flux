@@ -4,19 +4,18 @@
 # proxy — never compare across timing_mode). torch un-overlapped baseline
 # rides every cell as impl=torch rows (correctness ON). l1_fast runs in its
 # own e2e capsule (commsweep4n_l1fast_*.yaml, same binary).
-# Verdict pairs (rev twin): eager-vs-legacy.
-# l1_compress / l1_compress_eager DROPPED 2026-08-16 (P2 bring-up): the
-# compress combine hangs on its first forward at 2n — setup completes, then
-# silence until the idle watchdog; clean AND CHECK_IDENTITY runs, both
-# timing modes (capsules 20260816-123413 / 20260816-125015). Wire-handshake
-# deadlock, first-ever GPU run of that path; separate debug item — do not
-# re-add until it passes the 2n ladder.
+# l1_compress / l1_compress_eager / l1_hier_eager DROPPED 2026-08-16 (P2
+# bring-up): compress hangs on its first forward at 2n (both tm, clean AND
+# CHECK_IDENTITY; capsules 20260816-123413 / -125015), and hier_eager ALSO
+# hangs at 2n — sm_margin 16 and 32 both still hang (rung 3c), refuting the
+# persistent-kernel SM-deadlock hypothesis. Both are on the parallel debug
+# track; do not re-add until they pass the 2n ladder. Until then the l1
+# sweep story is torch (impl rows) / l1_dense / l1_hier / l1_fast.
 platform: perlmutter
 nodes: 4
 variants:
   - l1_dense
   - l1_hier
-  - l1_hier_eager
 families:
   - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
 budgets_mib: [1, 2, 4, 8, 16]
