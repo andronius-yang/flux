@@ -44,6 +44,7 @@ TEST_MOONEP_FUSED = "test/python/moe_ag_scatter/test_moe_moonep_fused_traffic.py
 TEST_EPLB = "test/python/moe_ag_scatter/test_moe_eplb_traffic.py"
 TEST_GATHER_RS = "test/python/moe_gather_rs/test_moe_gather_rs_traffic.py"
 TEST_FAST_GATHER_RS = "test/python/moe_gather_rs/test_moe_gather_rs_fast_baseline.py"
+TEST_L01 = "test/python/moe_combined/test_moe_l0l1_traffic.py"
 
 MODES = ("e2e", "isolated", "phases", "torchprof", "nsys")
 MODE_ORDER = {m: i for i, m in enumerate(MODES)}  # clean numbers before perturbed
@@ -489,6 +490,14 @@ def expand_cells(spec, plat):
                             " cell would be an empty perturbed cell"
                         )
                         continue
+                    if driver == "l01" and mode == "phases":
+                        print(
+                            f"NOTE: {vname} x phases not generated — the combined"
+                            " bench reports l0/act/l1 sub-events via the recorder"
+                            " in every mode; l0 phase marks would perturb the"
+                            " window semantics"
+                        )
+                        continue
                     fslug = family_slug(fam, fparams)
                     # timing_mode is a cell axis ONLY for l1 flux (gather_rs)
                     # cells: isolated = in-forward index build, amortized =
@@ -764,6 +773,28 @@ def build_cell_env(spec, plat, cell, staging, matrix):
         sym_max = plat.get("sym_size_max_g")
         if sym_max and int(env["NVSHMEM_SYMMETRIC_SIZE"][:-1]) > int(sym_max):
             env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_max}G"
+    elif v.get("driver", "flux") == "l01":
+        # combined cells: BOTH ops allocate on one NVSHMEM heap — merge the
+        # layer0 and layer1 exact knob sets and SUM their heap demands. The
+        # l0 sizing runs even for the allgather/torch arms (their FLUX_A2AV_*
+        # knobs are ignored by non-a2av paths; the heap term still covers the
+        # dense gathered input bound).
+        l0_knobs, l0_sym_g = exact_scale_knobs(
+            matrix, spec, plat, cell.get("routing_mode")
+        )
+        l1_knobs, l1_sym_g = exact_rs_scale_knobs(
+            matrix, spec, plat, cell.get("routing_mode"), v.get("l1_pattern", "dense")
+        )
+        env.update(l0_knobs)
+        env.update(l1_knobs)
+        # subtract the double-counted floors/overheads conservatively: keep
+        # the plain sum minus one 1G overhead term, floor 6G
+        sym_g = max(6, l0_sym_g + l1_sym_g - 1)
+        env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_g}G"
+        env["_A2AV_SYM_G_REQUIRED"] = str(sym_g)
+        sym_max = plat.get("sym_size_max_g")
+        if sym_max and sym_g > int(sym_max):
+            env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_max}G"
     elif v.get("driver", "flux") == "moonep_fused":
         # the driver computes the EXACT FLUX_A2AV_MAX_* knobs from the plan
         # (setdefault -- never pre-set them here); heap must hold the fused
@@ -924,6 +955,44 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         if spec["skip_correctness"]:
             test_args.append("--skip_correctness")
         return srun_prefix + ["./launch_fast.sh"] + test_args, sm_margin, iters, warmup
+    if v.get("driver", "flux") == "l01":
+        # combined layer0+1 continuous bench: full argv built here and
+        # returned early (layer1-style single-dash dims; l0/l1 patterns and
+        # --impl ride the variant's test_args)
+        test_args = [
+            TEST_L01,
+            "--traffic_matrix",
+            matrix_path,
+            "--topk",
+            str(spec["topk"]),
+            "-G",
+            str(spec["G"]),
+            "-N",
+            str(spec["H"]),
+            "-K",
+            str(spec["ffn_hidden"]),
+            "--chunk_bytes",
+            str(spec["chunk_bytes"]),
+            "--dtype",
+            spec["dtype"],
+            "--iters",
+            str(iters),
+            "--warmup_iters",
+            str(warmup),
+            "--sm_margin",
+            str(sm_margin),
+            "--n_split",
+            str(spec["n_split_l1"]),
+        ]
+        test_args += list(v.get("test_args") or [])
+        if routing_path:
+            test_args += ["--routing_file", routing_path]
+        if spec["skip_correctness"]:
+            test_args.append("--skip_correctness")
+        if cell["mode"] == "torchprof":
+            test_args.append("--profile")
+        launcher = cell_launcher(cell, plat, staging)
+        return srun_prefix + launcher + test_args, sm_margin, iters, warmup
     if v.get("driver", "flux") == "gather_rs":
         # layer1 flux cells: full argv built here and returned early — the
         # generic tail below appends --H/--ffn_hidden_size, which the l1

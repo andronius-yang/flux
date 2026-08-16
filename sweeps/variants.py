@@ -659,4 +659,64 @@ VARIANTS = {
         requires=[],
         requires_file="3rdparty/FAST/nvidia/libflash.so",
     ),
+    # ------------------------------------------------------------------
+    # COMBINED layer0+1 continuous-pass arms, driver="l01"
+    # (test/python/moe_combined/test_moe_l0l1_traffic.py): one timed window
+    # per isolated iteration = layer0 forward (routing/schedule computed
+    # once, in-window) -> GELU -> layer1 forward on inherited inverse
+    # indices (python builders OUTSIDE the window, one-shot cost reported
+    # as l1_index_build_ms — decided 2026-08-16). No timing_mode axis, no
+    # phases cells. `l1_pattern` is consumed by the runner's heap sizing
+    # (NVSHMEM_SYMMETRIC_SIZE = SUM of both layers' demands — two ops, one
+    # heap). Validation identity per capsule: e2e(l01) ~= e2e(l0 isolated)
+    # + act_ms + e2e(l1 tmamo) — sweeps/check_l01_identity.py.
+    # DEFERRED arms: l01_fast (bench --impl fast is a stub until the FAST
+    # credit-reset question is settled at bring-up) and
+    # l01_lbunion_compress_eager (pending the binary-B l1 verdicts).
+    "l01_torch": dict(
+        comm_pattern="l01_torch_unfused",  # cells.csv label only
+        driver="l01",
+        layer="l01",
+        test_args=["--impl", "torch"],
+        env={},
+        requires=[],
+        l1_pattern="dense",
+    ),
+    "l01_allgather_dense": dict(
+        comm_pattern="l01_allgather_dense",  # cells.csv label only
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "allgather",
+            "--l1_comm_pattern", "dense",
+        ],
+        env={},
+        requires=["FLUX_A2AV_RS_MAX_SEND_ROWS"],
+        l1_pattern="dense",
+    ),
+    # lb_union base for l0; ADD the P3 factorial winner knobs before the P5
+    # capsules (analysis pending — see the campaign report). l1 = hier+eager
+    # (binary-B validated pairing).
+    "l01_lbunion_hier_eager": dict(
+        comm_pattern="l01_lbunion_hier_eager",  # cells.csv label only
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "a2av_hier_compress",
+            "--l1_comm_pattern", "a2av_hier",
+        ],
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_RS_EAGER": "1",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8",
+        },
+        requires=[
+            "FLUX_A2AV_LB_UNION",
+            "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_EAGER",
+        ],
+        l1_pattern="a2av_hier",
+    ),
 }
