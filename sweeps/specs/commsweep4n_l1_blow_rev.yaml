@@ -2,12 +2,18 @@
 platform: perlmutter
 nodes: 4
 # compress + hier_eager arms dropped (2n hangs) — see commsweep4n_l1_blow.yaml
+# b1/b2 dropped from THIS rev spec only (2026-08-16): in the fwd capsule
+# (20260816-134402) ALL l1 arms hang at b1 AND b2 on the 4n real trace
+# (dense + hier, both timing modes; b4-16 clean) — 16 watchdog kills, no
+# data either ordering. Retest on the post-fix binary before re-adding;
+# if still stuck there, it's a distinct small-budget l1 bug for the debug
+# track (fwd capsule documents the negatives).
 variants:
   - l1_hier
   - l1_dense
 families:
   - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
-budgets_mib: [1, 2, 4, 8, 16]
+budgets_mib: [4, 8, 16]
 topk: 8
 G: 128
 H: 4096
