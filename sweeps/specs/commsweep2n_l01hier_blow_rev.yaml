@@ -1,0 +1,22 @@
+# Reversed twin of commsweep2n_l01hier_blow.yaml (single arm: rev = repeat).
+platform: perlmutter
+nodes: 2
+variants:
+  - l01_lbunion_hier
+families:
+  - "trace:pools=mmlu/high_school_world_history;layer=92;sem=homog"
+budgets_mib: [16, 8, 4, 2, 1]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+notes: "comm-only campaign l01 corrected pairing 2n repeat (budget order reversed)"
