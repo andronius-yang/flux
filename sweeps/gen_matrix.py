@@ -379,6 +379,82 @@ def a2av_knob_demands(chunks, u, U, L):
     }
 
 
+def a2av_rs_knob_demands(chunks, U, L):
+    """Exact LAYER1 (gather-rs combine) capacity demands in ROWS, replicating
+    the runtime FLUX_CHECKs of gemm_grouped_v2_gather_rs.cc (all collective:
+    identical expressions on every rank, so an undersized knob aborts cleanly
+    everywhere, never hangs — unlike the layer0 per-rank recv gate).
+
+    Inputs stay in DISPATCH orientation (`chunks[h][o]` = rows homed at rank h
+    whose expert copy is owned by rank o; `U[h][m]` = distinct tokens of home
+    rank h with >= 1 copy on owner node m — the same [W][nn] dedup matrix the
+    layer0 sizing uses). The layer1 wire runs owner->home, i.e. the transpose:
+    the C++ `chunk_at(s, d)` equals `chunks[d][s]` here (its row-sum check
+    :546-550 pins that orientation to the gemm rows).
+
+    Demands (cc line anchors, 2026-08-16 tree):
+      rs_send  (:562-571)  max over owner o of sum_h chunks[h][o] — the max
+                           dispatch COLUMN sum; numerically identical to the
+                           layer0 recv_copies bound.
+      rs_stage (:600-615)  non-compress gateway staging at (gnode gn, lane gl):
+                           rows homed on node gn owned by the lane-gl rank of
+                           every other node.
+      rs_conv  (:687-708)  compress convergence at (owner node n2, dest lane
+                           dl): rows owned anywhere on n2, homed at lane-dl
+                           ranks of remote nodes.
+      rs_wire  (:687-710)  compress wire: one pre-reduced partial per distinct
+                           (token, owner node), U-summed over remote home
+                           ranks of lane dl.
+    The recv panel is knob-free (max_m / W exact, :233). No legacy floor is
+    applied here — the layer1 axis is new, there are no historical capsules
+    whose env_json must stay byte-identical (contrast a2av_knob_demands).
+    Torch-free so the login-node runner can call it; parity unit test in
+    sweeps/test_knob_demands.py."""
+    W = len(chunks)
+    nn = W // L
+
+    rs_send = max(sum(chunks[h][o] for h in range(W)) for o in range(W))
+
+    def gr(l, n):  # global rank of local rank l on node n
+        return n * L + l
+
+    rs_stage = rs_conv = rs_wire = 0
+    if nn > 1:
+        for gn in range(nn):
+            for gl in range(L):
+                rs_stage = max(
+                    rs_stage,
+                    sum(
+                        chunks[h][gr(gl, ns)]
+                        for ns in range(nn)
+                        if ns != gn
+                        for h in range(gn * L, (gn + 1) * L)
+                    ),
+                )
+        for n2 in range(nn):
+            for dl in range(L):
+                rs_conv = max(
+                    rs_conv,
+                    sum(
+                        chunks[gr(dl, tn)][n2 * L + ls]
+                        for tn in range(nn)
+                        if tn != n2
+                        for ls in range(L)
+                    ),
+                )
+                rs_wire = max(
+                    rs_wire,
+                    sum(U[gr(dl, tn)][n2] for tn in range(nn) if tn != n2),
+                )
+
+    return {
+        "rs_send": rs_send,
+        "rs_stage": rs_stage,
+        "rs_conv": rs_conv,
+        "rs_wire": rs_wire,
+    }
+
+
 def check_feasible(chunks, W, topk, tokens_per_rank, nexperts=None):
     """Mirror of traffic_matrix_to_choosed_experts's routing constraint: with
     G experts (G % W == 0), each (source, expert) pair may receive at most

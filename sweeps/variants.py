@@ -500,6 +500,76 @@ VARIANTS = {
         },
         requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2"],
     ),
+    # 2^3 FACTORIAL COMPLETION on the lb_union base (2026-08-16 comm-only
+    # campaign): F=FUSED_STAGE2, N=FANOUT (eager forwards), E=EARLY_LAUNCH.
+    # Base/+F/+N are the three entries above; the five below complete the
+    # cube so every pairwise/3-way interaction is attributable in-capsule.
+    # Canonical suffix order: fused < eager < early (existing names keep
+    # their historical spelling).
+    # Static-guard survey (gemm_grouped_v2_ag_scatter.cc, 2026-08-16): the
+    # only combination FLUX_CHECKs are E+PACK_OVERLAP (:687), N-requires-
+    # LB_UNION (:677), and E-on-compress-needs-conn>1 (:689-697, met by the
+    # family conn=8 pin) — nothing blocks F+N, F+E, N+E, or F+N+E.
+    # DYNAMIC CAVEAT: E's deferred cp-stream wire replay has never executed
+    # together with N's per-round fanout streams — a correctness-ON smoke
+    # gates the *eager_early arms before any perf capsule.
+    # E is a clean-mode configuration (unlike BLOCKING_WIRE); quotable
+    # per-arm, per the SKILL.md "its own configuration" rule.
+    "hier_compress_lb_union_early": dict(
+        comm_pattern="a2av_hier_compress",
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8",
+        },
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_EARLY_LAUNCH"],
+    ),
+    "hier_compress_lb_union_fused_eager": dict(
+        comm_pattern="a2av_hier_compress",
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_FANOUT": "1",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8",
+        },
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2", "FLUX_A2AV_FANOUT"],
+    ),
+    "hier_compress_lb_union_fused_early": dict(
+        comm_pattern="a2av_hier_compress",
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8",
+        },
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2", "FLUX_A2AV_EARLY_LAUNCH"],
+    ),
+    "hier_compress_lb_union_eager_early": dict(
+        comm_pattern="a2av_hier_compress",
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FANOUT": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8",
+        },
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_FANOUT", "FLUX_A2AV_EARLY_LAUNCH"],
+    ),
+    "hier_compress_lb_union_fused_eager_early": dict(
+        comm_pattern="a2av_hier_compress",
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_FANOUT": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8",
+        },
+        requires=[
+            "FLUX_A2AV_LB_UNION",
+            "FLUX_A2AV_FUSED_STAGE2",
+            "FLUX_A2AV_FANOUT",
+            "FLUX_A2AV_EARLY_LAUNCH",
+        ],
+    ),
     # union broadcast + source-side pack overlap (dedicated stream,
     # double-buffered send); MAX_CONNECTIONS=2 lets the pack stream actually
     # run concurrently with compute.
@@ -516,5 +586,77 @@ VARIANTS = {
             "CUDA_DEVICE_MAX_CONNECTIONS": "2",
         },
         requires=["FLUX_A2AV_UNION_BCAST", "FLUX_A2AV_PACK_OVERLAP"],
+    ),
+    # ------------------------------------------------------------------
+    # LAYER1 (gather-rs combine) variants, driver="gather_rs" (2026-08-16
+    # layer-axis campaign). comm_pattern here selects the
+    # GemmGroupedV2GatherRSOp ctor booleans via the l1 bench CLI; env knobs
+    # are the FLUX_A2AV_RS_* family (sized per-cell by exact_rs_scale_knobs).
+    # FLUX_A2AV_RS_MAX_SEND_ROWS in `requires` is the "build has the merged
+    # layer1 a2av op" probe on every arm (a pre-merge .so would silently run
+    # stock dense). Flux l1 cells carry a timing_mode axis (isolated =
+    # in-forward index build; amortized = layer0-inherited indices — the
+    # combined-pass proxy); never compare across timing_mode.
+    # NOTE: a2av_hier_compress silently degrades to a2av_hier at nnodes == 1
+    # (gather_rs.cc:409-413) — single-node l1_compress* cells measure hier.
+    # EAGER (arrival-order persistent reduce) is orthogonal to hier/compress.
+    "l1_dense": dict(
+        comm_pattern="dense",
+        driver="gather_rs",
+        layer="l1",
+        env={},
+        requires=["FLUX_A2AV_RS_MAX_SEND_ROWS"],
+    ),
+    "l1_hier": dict(
+        comm_pattern="a2av_hier",
+        driver="gather_rs",
+        layer="l1",
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_RS_MAX_SEND_ROWS"],
+    ),
+    "l1_hier_eager": dict(
+        comm_pattern="a2av_hier",
+        driver="gather_rs",
+        layer="l1",
+        env={"FLUX_A2AV_RS_EAGER": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_RS_MAX_SEND_ROWS", "FLUX_A2AV_RS_EAGER"],
+    ),
+    "l1_compress": dict(
+        comm_pattern="a2av_hier_compress",
+        driver="gather_rs",
+        layer="l1",
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[
+            "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS",
+            "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+        ],
+    ),
+    "l1_compress_eager": dict(
+        comm_pattern="a2av_hier_compress",
+        driver="gather_rs",
+        layer="l1",
+        env={"FLUX_A2AV_RS_EAGER": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[
+            "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS",
+            "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+            "FLUX_A2AV_RS_EAGER",
+        ],
+    ),
+    # FAST BvN alltoallv + un-overlapped GemmGroupedV2, layer1 direction
+    # (compute -> communicate -> topk-sum; wire matrix = dispatch transpose).
+    # Same constraints as the layer0 `fast` arm: e2e mode only (host-blocking
+    # per iteration, so its e2e IS isolated semantics — see SCHEMA.md),
+    # >= 2 nodes, libflash built per checkout, no real-routing consumption,
+    # no timing_mode axis (its index metadata is untimed setup; the BvN
+    # schedule recompute stays in-window per the one-shot rule).
+    "l1_fast": dict(
+        comm_pattern="fast_bvn_a2av_rs",  # cells.csv label only, never a CLI flag
+        driver="fast_gather_rs",
+        layer="l1",
+        env={},
+        requires=[],
+        requires_file="3rdparty/FAST/nvidia/libflash.so",
     ),
 }

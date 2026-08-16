@@ -309,12 +309,15 @@ Known, harmless, worth cleaning when you next touch the file:
 
 ---
 
-## 9. Out of scope
+## 9. Out of scope (RESOLVED 2026-08-16)
 
-`origin/a2av-hier-layer1` has 4 unmerged commits (split-pipelined hierarchical alltoallv
-combine with per-split topk reduce, for **layer1**). Safe on GitHub, deliberately not
-covered by this handoff. If layer1 becomes live again, decide merge order against the Tier B
-changes now on `main` before starting.
+Historical: `origin/a2av-hier-layer1` (split-pipelined hierarchical alltoallv
+combine with per-split topk reduce, for **layer1**) was unmerged when this
+handoff was written. It has since merged to main (2026-08-11) together with
+the eager arrival-order reduce and the compress combine wire, and the sweep
+runner grew a layer axis (`l1_*` variants, `timing_mode` isolated/amortized;
+`sweeps/SCHEMA.md` is the authority). Layer1 compress has never run on a GPU
+(CPU-sim only) — bring-up ladder first.
 
 ---
 

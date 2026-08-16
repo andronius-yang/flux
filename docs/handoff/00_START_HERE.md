@@ -77,6 +77,10 @@ is larger than every headline claim in this project. See `04`.
 after — including the idea you are most likely to propose in your first hour, that **saving
 wire bytes wins**. It doesn't, and `NR-01` explains why.
 
-Scope note: this handoff is **layer0 only**. `origin/a2av-hier-layer1` has 4 unmerged
-commits (split-pipelined hierarchical alltoallv combine for layer1). They are safe on
-GitHub and deliberately out of scope here — not forgotten.
+Scope note: this handoff was written **layer0-only**. The layer1 work
+(split-pipelined hierarchical alltoallv combine, `a2av_hier[_compress]` on
+`GemmGroupedV2GatherRSOp`, + eager arrival-order reduce) has since MERGED to
+main (2026-08-11, f97c628 era) and is sweep-integrated as the `l1_*` variants
+(2026-08-16, layer-axis campaign — see `sweeps/SCHEMA.md` §layer/timing_mode).
+Layer1 compress is CPU-sim validated; its first GPU run is the campaign's 2n
+bring-up ladder.

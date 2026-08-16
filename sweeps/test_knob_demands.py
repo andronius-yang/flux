@@ -129,8 +129,112 @@ def test_small_budget_env_stable(tmp_dir="/tmp"):
     print("OK small_budget_env_stable")
 
 
+def test_rs_demands_brute():
+    """Layer1 (gather-rs) demand parity: gen_matrix.a2av_rs_knob_demands takes
+    DISPATCH-orientation inputs; this brute force transcribes the C++ checks
+    of gemm_grouped_v2_gather_rs.cc LITERALLY in WIRE orientation
+    (chunk_at(s, d) == chunks[d][s]; :562-571 send, :600-615 stage,
+    :687-710 conv/wire) so the two index paths are independent. U comes from
+    the dealer stream brute force (dealer_stream_u_U), not the closed form,
+    so a closed-form regression cannot mask an orientation bug here.
+
+    RUNTIME COMPLEMENT (manual, needs GPUs; the analog of the layer0 8n
+    validation): on a 2-node allocation run the compress bench with the
+    computed knobs exactly at demand (expect green), then one knob at
+    demand-1 (expect the matching collective FLUX_CHECK abort on ALL ranks,
+    no hang), e.g.:
+      srun -N2 --ntasks-per-node=1 --gpus-per-node=4 bash -lc 'source ./module.sh && \
+        FLUX_A2AV_RS_MAX_WIRE_ROWS=<demand> ./launch.sh \
+        test/python/moe_gather_rs/test_moe_gather_rs_traffic.py \
+        --traffic_matrix <m.txt> --comm_pattern a2av_hier_compress -G 128 --topk 8'
+      # then rerun with FLUX_A2AV_RS_MAX_WIRE_ROWS=<demand-1> -> expect
+      # "a2av_hier_compress wire panel overflow" everywhere; repeat per knob.
+      # Add FLUX_A2AV_RS_CHECK_IDENTITY=1 on one green run as a free
+      # index-math audit."""
+    rng = random.Random(23)
+    W, L, T, G, topk = 16, 4, 96, 64, 4
+    chunks = []
+    for _s in range(W):
+        cuts = sorted(rng.sample(range(1, T * topk), W - 1))
+        chunks.append([b - a for a, b in zip([0] + cuts, cuts + [T * topk])])
+    _u_bf, U_bf = dealer_stream_u_U(chunks, W, L, T, G, topk)
+    d = gen_matrix.a2av_rs_knob_demands(chunks, U_bf, L)
+
+    nn = W // L
+
+    def chunk_at(s, dd):  # C++ wire orientation: owner s -> home dd
+        return chunks[dd][s]
+
+    send_bf = max(sum(chunk_at(s, dd) for dd in range(W)) for s in range(W))
+
+    def node_chunk(s, n):
+        return sum(chunk_at(s, dd) for dd in range(n * L, (n + 1) * L))
+
+    stage_bf = conv_bf = wire_bf = 0
+    for gn in range(nn):
+        for gl in range(L):
+            stage_bf = max(
+                stage_bf,
+                sum(node_chunk(ns * L + gl, gn) for ns in range(nn) if ns != gn),
+            )
+    for n2 in range(nn):
+        for dl in range(L):
+            conv_rows = wire_rows = 0
+            for tn in range(nn):
+                if tn == n2:
+                    continue
+                for ls in range(L):
+                    conv_rows += chunk_at(n2 * L + ls, tn * L + dl)
+                wire_rows += U_bf[tn * L + dl][n2]
+            conv_bf = max(conv_bf, conv_rows)
+            wire_bf = max(wire_bf, wire_rows)
+
+    assert d["rs_send"] == send_bf, (d, send_bf)
+    assert d["rs_stage"] == stage_bf, (d, stage_bf)
+    assert d["rs_conv"] == conv_bf, (d, conv_bf)
+    assert d["rs_wire"] == wire_bf, (d, wire_bf)
+    # sanity: layer1 send bound == layer0 recv copies bound (same expression)
+    u_cf = gen_matrix.dealer_dedup_u(chunks, T)
+    d0 = gen_matrix.a2av_knob_demands(chunks, u_cf, U_bf, L)
+    assert d["rs_send"] == d0["recv_copies"], (d, d0)
+    print("OK rs_demands_brute")
+
+
+def test_rs_scale_knobs_env():
+    # exact_rs_scale_knobs: 8192-rounding, no legacy floor, per-pattern heap
+    import tempfile
+
+    rng = random.Random(5)
+    W, L, T, topk = 16, 4, 256, 8
+    chunks = []
+    for _s in range(W):
+        cuts = sorted(rng.sample(range(1, T * topk), W - 1))
+        chunks.append([b - a for a, b in zip([0] + cuts, cuts + [T * topk])])
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+        f.write(f"{W}\n")
+        for row in chunks:
+            f.write(" ".join(str(c * 8192) for c in row) + "\n")
+        path = f.name
+    spec = {"chunk_bytes": 8192, "topk": topk, "G": 128}
+    plat = {"ranks_per_node": L}
+    for pattern in ("a2av_hier", "a2av_hier_compress", "dense"):
+        env, sym_g = sweep.exact_rs_scale_knobs({"path": path}, spec, plat, "", pattern)
+        for k in (
+            "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_STAGE_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS",
+            "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+        ):
+            assert int(env[k]) % 8192 == 0 and int(env[k]) >= 8192, (k, env[k])
+        assert env["NVSHMEM_SYMMETRIC_SIZE"] == f"{sym_g}G" and sym_g >= 6, env
+    os.unlink(path)
+    print("OK rs_scale_knobs_env")
+
+
 if __name__ == "__main__":
     test_dealer_closed_form()
     test_small_budget_env_stable()
+    test_rs_demands_brute()
+    test_rs_scale_knobs_env()
     test_parity_vs_torch()
     print("ALL OK")

@@ -42,6 +42,8 @@ TEST_MOONEP = "test/python/moe_ag_scatter/test_moe_moonep_traffic.py"
 TEST_ULTRAEP = "test/python/moe_ag_scatter/test_moe_ultraep_traffic.py"
 TEST_MOONEP_FUSED = "test/python/moe_ag_scatter/test_moe_moonep_fused_traffic.py"
 TEST_EPLB = "test/python/moe_ag_scatter/test_moe_eplb_traffic.py"
+TEST_GATHER_RS = "test/python/moe_gather_rs/test_moe_gather_rs_traffic.py"
+TEST_FAST_GATHER_RS = "test/python/moe_gather_rs/test_moe_gather_rs_fast_baseline.py"
 
 MODES = ("e2e", "isolated", "phases", "torchprof", "nsys")
 MODE_ORDER = {m: i for i, m in enumerate(MODES)}  # clean numbers before perturbed
@@ -71,6 +73,10 @@ SPEC_DEFAULTS = {
     "sm_margin": 8,
     "modes": ["e2e"],
     "matrix_instance": "001",
+    # split-N pipeline depth for layer1 (gather_rs) cells; with N == H == 4096
+    # the op constraint N/n_split % 1024 == 0 allows {1, 2, 4}; 4 is the
+    # bench's own default so standalone-bench numbers stay comparable
+    "n_split_l1": 4,
     "skip_correctness": False,
     "timeout_s": 900,
     "idle_timeout_s": 180,  # kill a cell whose logs stop growing for this long
@@ -189,6 +195,10 @@ CELLS_COLUMNS = [
     "nsys_path",
     "prof_path",
     "notes",
+    # appended 2026-08-16 (layer-axis campaign): old capsules simply lack the
+    # columns — readers use csv.DictReader, never positional indexing
+    "layer",
+    "timing_mode",
 ]
 METRICS_COLUMNS = [
     "run_id",
@@ -290,6 +300,35 @@ def read_matrix_chunks(matrix_path, chunk_bytes):
 
 
 _EXACT_KNOB_CACHE = {}
+_MATRIX_STATS_CACHE = {}
+
+
+def matrix_dedup_stats(matrix, spec, plat, routing_mode):
+    """(chunks, u, U, T) for a matrix+routing pair — one parse + dedup
+    derivation shared by the layer0 (exact_scale_knobs) and layer1
+    (exact_rs_scale_knobs) sizers. u/U come from the routing file when
+    routing_mode == real, else from the dealer closed form (the same split
+    the layer0 sizer always used)."""
+    key = (matrix["path"], routing_mode)
+    if key not in _MATRIX_STATS_CACHE:
+        cb = spec["chunk_bytes"]
+        topk = spec["topk"]
+        L = plat["ranks_per_node"]
+        chunks = read_matrix_chunks(matrix["path"], cb)
+        W = len(chunks)
+        nn = W // L
+        T = sum(chunks[0]) // topk  # budget invariant: row sums = T * topk
+        if routing_mode == "real":
+            routing = gen_trace_routing.read_routing(matrix["routing"])
+            u, U = gen_trace_routing.real_dedup_stats(routing, W, L, T, spec["G"])
+        else:
+            u = gen_matrix.dealer_dedup_u(chunks, T)
+            U = [
+                [min(sum(chunks[s][m * L + j] for j in range(L)), T) for m in range(nn)]
+                for s in range(W)
+            ]
+        _MATRIX_STATS_CACHE[key] = (chunks, u, U, T)
+    return _MATRIX_STATS_CACHE[key]
 
 
 def exact_scale_knobs(matrix, spec, plat, routing_mode):
@@ -308,19 +347,8 @@ def exact_scale_knobs(matrix, spec, plat, routing_mode):
         cb = spec["chunk_bytes"]
         topk = spec["topk"]
         L = plat["ranks_per_node"]
-        chunks = read_matrix_chunks(matrix["path"], cb)
+        chunks, u, U, T = matrix_dedup_stats(matrix, spec, plat, routing_mode)
         W = len(chunks)
-        nn = W // L
-        T = sum(chunks[0]) // topk  # budget invariant: row sums = T * topk
-        if routing_mode == "real":
-            routing = gen_trace_routing.read_routing(matrix["routing"])
-            u, U = gen_trace_routing.real_dedup_stats(routing, W, L, T, spec["G"])
-        else:
-            u = gen_matrix.dealer_dedup_u(chunks, T)
-            U = [
-                [min(sum(chunks[s][m * L + j] for j in range(L)), T) for m in range(nn)]
-                for s in range(W)
-            ]
         d = gen_matrix.a2av_knob_demands(chunks, u, U, L)
 
         def cap(rows):
@@ -343,6 +371,57 @@ def exact_scale_knobs(matrix, spec, plat, routing_mode):
         }
         _EXACT_KNOB_CACHE[key] = (env, sym_g)
     env, sym_g = _EXACT_KNOB_CACHE[key]
+    return dict(env), sym_g
+
+
+_EXACT_RS_KNOB_CACHE = {}
+
+
+def exact_rs_scale_knobs(matrix, spec, plat, routing_mode, comm_pattern):
+    """Layer1 analog of exact_scale_knobs: exact FLUX_A2AV_RS_MAX_*_ROWS +
+    heap for gather_rs-driver cells, from the same expressions as the op's
+    collective FLUX_CHECKs (gen_matrix.a2av_rs_knob_demands; the layer1 wire
+    is the TRANSPOSE of the dispatch matrix, handled inside that function —
+    inputs stay in dispatch orientation). Demands round up to 8192 rows with
+    NO legacy floor (new axis, no historical env_json to preserve). All four
+    knobs are always set — the op only reads the panels its branch allocates.
+    Heap sizing follows the ctor allocations (panels are [n_split, rows,
+    N/n_split] so bytes = rows * chunk_bytes): send + recv(cpr, knob-free) +
+    stage (non-compress) | conv + wire (compress), +1G slack, 6G floor.
+    `dense` has no a2av panels; its multi-node ring/staging buffers are not
+    audited here, so it gets the same conservative bound (verify at the 2n
+    bring-up smoke — flagged in the campaign plan). Returns (env dict,
+    uncapped_sym_g), same skipped_capacity contract as the layer0 sizer."""
+    key = (matrix["path"], routing_mode, comm_pattern)
+    if key not in _EXACT_RS_KNOB_CACHE:
+        cb = spec["chunk_bytes"]
+        topk = spec["topk"]
+        L = plat["ranks_per_node"]
+        chunks, u, U, T = matrix_dedup_stats(matrix, spec, plat, routing_mode)
+        d = gen_matrix.a2av_rs_knob_demands(chunks, U, L)
+
+        def cap(rows):
+            return max(8192, math.ceil(rows / 8192) * 8192)
+
+        send = cap(d["rs_send"])
+        stage = cap(d["rs_stage"])
+        conv = cap(d["rs_conv"])
+        wire = cap(d["rs_wire"])
+        cpr = T * topk  # recv panel rows: knob-free max_m/W exact (cc :233)
+        if comm_pattern == "a2av_hier_compress":
+            need_rows = send + cpr + conv + wire
+        else:  # a2av_hier and (conservatively) dense
+            need_rows = send + cpr + stage
+        sym_g = max(6, math.ceil(need_rows * cb / (1 << 30)) + 1)
+        env = {
+            "FLUX_A2AV_RS_MAX_SEND_ROWS": str(send),
+            "FLUX_A2AV_RS_MAX_STAGE_ROWS": str(stage),
+            "FLUX_A2AV_RS_MAX_CONV_ROWS": str(conv),
+            "FLUX_A2AV_RS_MAX_WIRE_ROWS": str(wire),
+            "NVSHMEM_SYMMETRIC_SIZE": f"{sym_g}G",
+        }
+        _EXACT_RS_KNOB_CACHE[key] = (env, sym_g)
+    env, sym_g = _EXACT_RS_KNOB_CACHE[key]
     return dict(env), sym_g
 
 
@@ -377,12 +456,13 @@ def expand_cells(spec, plat):
                 for vname in spec["variants"]:
                     if vname not in VARIANTS:
                         raise SystemExit(f"unknown variant {vname}; see sweeps/variants.py")
-                    if routing_mode == "real" and VARIANTS[vname].get("driver") == "fast":
+                    driver = VARIANTS[vname].get("driver", "flux")
+                    if routing_mode == "real" and driver in ("fast", "fast_gather_rs"):
                         raise SystemExit(
                             f"variant {vname} (fast driver) cannot consume a routing"
                             f" file; use the dealer=1 arm for trace matrices"
                         )
-                    if VARIANTS[vname].get("driver", "flux") == "fast":
+                    if driver in ("fast", "fast_gather_rs"):
                         if spec["nodes"] < 2:
                             raise SystemExit(
                                 f"variant {vname} requires nodes >= 2"
@@ -395,30 +475,44 @@ def expand_cells(spec, plat):
                                 " alltoallv); --profile/nsys unsupported"
                             )
                             continue
-                    if (
-                        VARIANTS[vname].get("driver", "flux")
-                        in ("moonep", "ultraep", "eplb")
-                        and mode == "phases"
-                    ):
+                    if driver in ("moonep", "ultraep", "eplb") and mode == "phases":
                         print(
                             f"NOTE: {vname} x phases not generated — its phase"
                             " metrics (plan_comm/pack/comm/scatter/prefetch/gemm)"
                             " arrive free in every mode via the recorder"
                         )
                         continue
+                    if driver == "gather_rs" and mode == "phases":
+                        print(
+                            f"NOTE: {vname} x phases not generated — the gather-rs"
+                            " op has no FLUX_A2AV_TIMING stderr marks; a phases"
+                            " cell would be an empty perturbed cell"
+                        )
+                        continue
                     fslug = family_slug(fam, fparams)
-                    cells.append(
-                        {
-                            "cell_id": f"{vname}_{fslug}_b{budget}_k{spec['topk']}_{mode}",
-                            "variant": vname,
-                            "mode": mode,
-                            "family": fam,
-                            "family_params": fparams,
-                            "routing_mode": routing_mode,
-                            "budget_mib": budget,
-                            "world_size": world,
-                        }
-                    )
+                    # timing_mode is a cell axis ONLY for l1 flux (gather_rs)
+                    # cells: isolated = in-forward index build, amortized =
+                    # layer0-inherited indices (the combined-pass proxy)
+                    timing_modes = [""]
+                    if driver == "gather_rs":
+                        timing_modes = ["isolated", "amortized"]
+                    for tm in timing_modes:
+                        tm_slug = {"isolated": "_tmiso", "amortized": "_tmamo"}.get(tm, "")
+                        cells.append(
+                            {
+                                "cell_id": f"{vname}_{fslug}_b{budget}"
+                                f"_k{spec['topk']}{tm_slug}_{mode}",
+                                "variant": vname,
+                                "mode": mode,
+                                "family": fam,
+                                "family_params": fparams,
+                                "routing_mode": routing_mode,
+                                "budget_mib": budget,
+                                "world_size": world,
+                                "layer": VARIANTS[vname].get("layer", "l0"),
+                                "timing_mode": tm,
+                            }
+                        )
     return cells
 
 
@@ -651,9 +745,25 @@ def build_cell_env(spec, plat, cell, staging, matrix):
     matrix_path = matrix.get("path")
     env = {}
     env.update(plat.get("env") or {})
-    if v.get("driver", "flux") == "fast":
+    if v.get("driver", "flux") in ("fast", "fast_gather_rs"):
         # FLUX_A2AV_* knobs are meaningless for FAST; its heap follows capacity
+        # (the 4*max(row,col sum) bound is transpose-symmetric, so the same
+        # sizing serves the layer1 combine direction)
         env["NVSHMEM_SYMMETRIC_SIZE"] = fast_sym_size(matrix_path, plat)
+    elif v.get("driver", "flux") == "gather_rs":
+        # layer1 flux cells: exact FLUX_A2AV_RS_MAX_*_ROWS + heap from the
+        # collective FLUX_CHECK expressions (dispatch-orientation inputs;
+        # the transpose lives inside a2av_rs_knob_demands)
+        knobs, sym_g_required = exact_rs_scale_knobs(
+            matrix, spec, plat, cell.get("routing_mode"), v["comm_pattern"]
+        )
+        env.update(knobs)
+        # popped by run_cell for the skipped_capacity decision (never
+        # reaches the child process environment)
+        env["_A2AV_SYM_G_REQUIRED"] = str(sym_g_required)
+        sym_max = plat.get("sym_size_max_g")
+        if sym_max and int(env["NVSHMEM_SYMMETRIC_SIZE"][:-1]) > int(sym_max):
+            env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_max}G"
     elif v.get("driver", "flux") == "moonep_fused":
         # the driver computes the EXACT FLUX_A2AV_MAX_* knobs from the plan
         # (setdefault -- never pre-set them here); heap must hold the fused
@@ -713,6 +823,38 @@ def build_cell_env(spec, plat, cell, staging, matrix):
     return env
 
 
+def cell_launcher(cell, plat, staging):
+    """Launcher argv for a flux-driver cell: ./launch.sh, wrapped in the nsys
+    capture (with node-local pre-clean) for nsys cells. Shared by the layer0
+    tail and the gather_rs early-return branch of build_cell_cmd."""
+    if cell["mode"] != "nsys":
+        return ["./launch.sh"]
+    return [
+        # node-local pre-clean: a killed nsys leaves multi-GB quadd session
+        # data under /tmp/nvidia; once the root disk fills, every later
+        # nsys dies with SIGBUS (mmap write on a full filesystem)
+        "bash",
+        "-c",
+        'rm -rf /tmp/nvidia/nsight_systems /tmp/nsys-report-*.qdstrm; exec "$@"',
+        "nsys-preclean",
+        plat.get("nsys_bin") or "nsys",
+        "profile",
+        # job id in the name so a retried cell (same staging dir) never
+        # silently overwrites the earlier attempt's capture
+        "-o",
+        os.path.join(staging, "nsys", "node%q{SLURM_NODEID}_%q{SLURM_JOB_ID}"),
+        # NO osrt: the NVSHMEM/EFA proxy thread busy-polls fi_cq_read, and
+        # osrt-tracing it is an event storm (~18 GB per minute of capture,
+        # fills the node-local root disk and wedges the run)
+        "--trace=cuda,nvtx",
+        "--sample=none",
+        "--cpuctxsw=none",
+        "--trace-fork-before-exec=true",
+        "--force-overwrite=true",
+        "./launch.sh",
+    ]
+
+
 def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=None,
                    eplb_load_path=None):
     v = VARIANTS[cell["variant"]]
@@ -753,6 +895,80 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         if spec["skip_correctness"]:
             test_args.append("--skip_correctness")
         return srun_prefix + ["./launch_fast.sh"] + test_args, sm_margin, iters, warmup
+    if v.get("driver", "flux") == "fast_gather_rs":
+        # layer1 FAST baseline: same launcher/constraints as the layer0 fast
+        # arm, layer1 flag names (-N/-K/-G single-dash)
+        test_args = [
+            TEST_FAST_GATHER_RS,
+            "--traffic_matrix",
+            matrix_path,
+            "--topk",
+            str(spec["topk"]),
+            "-G",
+            str(spec["G"]),
+            "-N",
+            str(spec["H"]),
+            "-K",
+            str(spec["ffn_hidden"]),
+            "--chunk_bytes",
+            str(spec["chunk_bytes"]),
+            "--dtype",
+            spec["dtype"],
+            "--iters",
+            str(iters),
+            "--warmup_iters",
+            str(warmup),
+            "--sm_margin",
+            str(sm_margin),
+        ]
+        if spec["skip_correctness"]:
+            test_args.append("--skip_correctness")
+        return srun_prefix + ["./launch_fast.sh"] + test_args, sm_margin, iters, warmup
+    if v.get("driver", "flux") == "gather_rs":
+        # layer1 flux cells: full argv built here and returned early — the
+        # generic tail below appends --H/--ffn_hidden_size, which the l1
+        # bench parser does not accept. sm_margin: no auto-bump (that rule is
+        # layer0-compress-specific); the l1 a2av ladder needs
+        # PACK+REDUCE(+PRERED) blocks = 3+3+2 defaults, covered by the spec
+        # default 8.
+        test_args = [
+            TEST_GATHER_RS,
+            "--traffic_matrix",
+            matrix_path,
+            "--comm_pattern",
+            v["comm_pattern"],
+            "--topk",
+            str(spec["topk"]),
+            "-G",
+            str(spec["G"]),
+            "-N",
+            str(spec["H"]),
+            "-K",
+            str(spec["ffn_hidden"]),
+            "--chunk_bytes",
+            str(spec["chunk_bytes"]),
+            "--dtype",
+            spec["dtype"],
+            "--iters",
+            str(iters),
+            "--warmup_iters",
+            str(warmup),
+            "--sm_margin",
+            str(sm_margin),
+            "--n_split",
+            str(spec["n_split_l1"]),
+            "--timing_mode",
+            cell["timing_mode"],
+        ]
+        test_args += list(v.get("test_args") or [])
+        if routing_path:
+            test_args += ["--routing_file", routing_path]
+        if spec["skip_correctness"]:
+            test_args.append("--skip_correctness")
+        if cell["mode"] == "torchprof":
+            test_args.append("--profile")
+        launcher = cell_launcher(cell, plat, staging)
+        return srun_prefix + launcher + test_args, sm_margin, iters, warmup
     if (
         v["comm_pattern"] == "a2av_hier_compress"
         and spec["nodes"] > 1
@@ -761,6 +977,7 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
     ):
         # gather-gateway paths need a free SM for the index_selects; the two
         # union-broadcast modes forward with pure CE puts and are exempt
+        # (layer0 flux driver only — gather_rs returned above)
         sm_margin = max(1, sm_margin)
     if v.get("driver", "flux") in ("moonep", "ultraep", "moonep_fused", "eplb"):
         # same CLI as the flux driver minus --comm_pattern; variant-specific
@@ -810,32 +1027,7 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         test_args.append("--skip_correctness")
     if cell["mode"] == "torchprof":
         test_args.append("--profile")
-    launcher = ["./launch.sh"]
-    if cell["mode"] == "nsys":
-        launcher = [
-            # node-local pre-clean: a killed nsys leaves multi-GB quadd session
-            # data under /tmp/nvidia; once the root disk fills, every later
-            # nsys dies with SIGBUS (mmap write on a full filesystem)
-            "bash",
-            "-c",
-            'rm -rf /tmp/nvidia/nsight_systems /tmp/nsys-report-*.qdstrm; exec "$@"',
-            "nsys-preclean",
-            plat.get("nsys_bin") or "nsys",
-            "profile",
-            # job id in the name so a retried cell (same staging dir) never
-            # silently overwrites the earlier attempt's capture
-            "-o",
-            os.path.join(staging, "nsys", "node%q{SLURM_NODEID}_%q{SLURM_JOB_ID}"),
-            # NO osrt: the NVSHMEM/EFA proxy thread busy-polls fi_cq_read, and
-            # osrt-tracing it is an event storm (~18 GB per minute of capture,
-            # fills the node-local root disk and wedges the run)
-            "--trace=cuda,nvtx",
-            "--sample=none",
-            "--cpuctxsw=none",
-            "--trace-fork-before-exec=true",
-            "--force-overwrite=true",
-            "./launch.sh",
-        ]
+    launcher = cell_launcher(cell, plat, staging)
     return srun_prefix + launcher + test_args, sm_margin, iters, warmup
 
 
@@ -1114,6 +1306,8 @@ def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, s
             ),
             log_dir=cell.get("staging", ""),
             notes="; ".join(x for x in (spec["notes"], cell.get("cell_note")) if x),
+            layer=cell.get("layer", "l0"),
+            timing_mode=cell.get("timing_mode", ""),
         )
         if cell["status"] in ("ok", "failed", "timeout"):
             metas, iters_rows, info, correctness = read_records(cell["staging"])

@@ -87,7 +87,7 @@ the summarizer's job, never stored here.
 |---|---|
 | run_id, cell_id | capsule + cell identity (join to cells.csv) |
 | mode | `e2e` \| `phases` \| `torchprof` \| `nsys` — see mode rules below |
-| impl | `flux` (the op under test) or `torch` (dense reference) |
+| impl | `flux` (the op under test), `torch` (unfused reference — BOTH layers emit it whenever correctness is on, so the un-overlapped torch baseline rides every flux cell for free), `fast`, or an EP-arm name. NOTE: the runner's isolated console summary aggregates `impl=flux` only — summarizer scripts comparing baselines must also read the `torch`/`fast` rows |
 | rank | global rank (0-based) |
 | iter | post-warmup iteration index (0-based) |
 | metric | see below |
@@ -304,6 +304,21 @@ Highlights (full list = header row):
   off; allclose is the correctness verdict.
 - `matrix_sha256`, `git_sha`, `git_dirty` — provenance; treat `git_dirty=1`
   results as unreproducible.
+- `layer` (appended 2026-08-16) — `l0` (dispatch, the historical default;
+  older capsules simply lack the column), `l1` (gather-rs combine,
+  driver=gather_rs / fast_gather_rs), later `l01` (combined continuous pass).
+  Lives on the VARIANT (sweeps/variants.py `layer` field), not as a spec
+  axis — an l1 measurement is a different arm, not a different mode of the
+  same arm.
+- `timing_mode` (appended 2026-08-16) — l1 flux cells only: `isolated` (the
+  op builds pack/reduce indices + compress CSRs in-forward, on the timed
+  path — what layer1-alone must pay) or `amortized` (the harness precomputes
+  everything a fused layer0+layer1 pipeline would inherit from layer0's
+  in-window stage2 and passes it in untimed — the combined-pass proxy).
+  Cell_id carries `_tmiso`/`_tmamo`. **Never compare across timing_mode**:
+  they measure different regimes by construction. Empty for l0 cells and
+  for `l1_fast` (its index metadata is untimed setup; the BvN schedule
+  recompute stays in-window per the one-shot rule).
 
 ## Modes — the never-mix rule
 
@@ -384,6 +399,24 @@ INSIDE it and floors small budgets — quote it alongside small-budget
 comparisons. Comparable to flux `e2e_ms` (both windows include their
 pack-equivalents).
 
+**fast e2e ≡ isolated (documented equivalence, 2026-08-16).** The fast
+drivers (layer0 `test_moe_ag_fast_baseline.py`, layer1
+`test_moe_gather_rs_fast_baseline.py`) execute an explicit
+`torch.cuda.synchronize()` before every iteration's window
+(test_moe_ag_fast_baseline.py:194) followed by the HOST-BLOCKING
+`comm.alltoallv` (:200-201), and the tail NVSHMEM barrier doubles as the
+per-iteration credit reset — no cross-iteration pipelining is physically
+possible, so a fast `e2e` cell already measures one isolated execution per
+iteration. Fast `e2e_ms` may therefore be compared against other arms'
+`isolated` cells (this equivalence, not a mode match, is the license); the
+general isolated-vs-e2e never-mix rule is unchanged for every other arm.
+
+Layer1 (`driver=gather_rs`) cells never expand in `phases` mode — the
+gather-rs op has no `FLUX_A2AV_TIMING` stderr marks; the runner prints a
+NOTE and skips, mirroring the EP arms. l1 flux cells instead carry the
+`timing_mode` axis (see cells.csv) — isolated-vs-amortized within one arm is
+the schedule-inheritance decomposition, obtained without instrumentation.
+
 ## Comm/comp attribution
 
 Phase wall-times from `phases` mode inherently conflate overlap (comm hidden
@@ -430,6 +463,37 @@ Under-sizing still fails loudly (FLUX_CHECK recv-overflow / NVSHMEM init); as of
 2026-08-15 the recv-overflow checks are collective (same expression on every rank), so
 a capacity failure aborts all ranks instead of leaving the fleet spinning for the
 watchdog.
+
+### Layer1 (gather-rs) knobs — `exact_rs_scale_knobs` (2026-08-16)
+
+l1 flux cells get `FLUX_A2AV_RS_MAX_{SEND,STAGE,CONV,WIRE}_ROWS` +
+`NVSHMEM_SYMMETRIC_SIZE` from `gen_matrix.a2av_rs_knob_demands`, replicating
+the gather-rs op's collective FLUX_CHECKs (gemm_grouped_v2_gather_rs.cc
+:562-571 send, :600-615 stage, :687-710 conv/wire). Inputs stay in DISPATCH
+orientation — the layer1 wire is the matrix transpose, and the transposition
+lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
+`chunks[d][s]`):
+
+- `SEND = max dispatch column sum` (each owner's outbound rows — numerically
+  identical to the layer0 recv_copies bound).
+- `STAGE` (non-compress): per-(gateway node, lane) staging of remote-homed
+  copies. `CONV`/`WIRE` (compress): per-(owner node, dest lane) convergence
+  rows and U-deduped wire partials.
+- The recv panel is knob-free (`max_m / world_size` exact, cc :233).
+- Rounded up to 8192 rows, NO legacy floor (new axis — no historical
+  env_json to keep byte-identical). Heap = send + recv(cpr) +
+  (stage | conv+wire) rows x chunk_bytes + 1G, floor 6G, same
+  `skipped_capacity` contract. `dense` cells reuse the conservative
+  hier-shaped bound (its ring/staging buffers are not audited here —
+  verify at the 2n bring-up smoke).
+- All four RS knobs are always exported; the op reads only the panels its
+  branch allocates. All RS checks are COLLECTIVE — an undersized l1 cell
+  aborts everywhere, it never hangs (unlike the historical layer0 per-rank
+  recv gate).
+- Parity: `test_rs_demands_brute` in `sweeps/test_knob_demands.py`
+  brute-forces the C++ loops in wire orientation against the
+  dispatch-orientation implementation (plus the manual 2n demand-minus-one
+  GPU probe documented in that test's docstring).
 
 ## Protocol rules
 

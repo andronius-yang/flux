@@ -39,6 +39,7 @@ splits_per_source (built here in untimed setup, mirroring the layer0 harness).
 
 import argparse
 import os
+import sys
 import time
 from typing import List, Tuple, Union
 
@@ -473,6 +474,15 @@ def parse_args():
         help="real routing trace sidecar (ntokens topk G header + one token per line);"
         " must realize --traffic_matrix exactly, mirroring the layer0 harness",
     )
+    parser.add_argument(
+        "--skip_correctness",
+        default=False,
+        action="store_true",
+        help="skip the torch reference (perf_torch + result checks); needed at large"
+        " budgets where the reference materializes full gathered buffers and OOMs"
+        " (mirrors the layer0 harness flag). Correctness columns in the sweep capsule"
+        " stay empty for the cell.",
+    )
     args = parser.parse_args()
     if args.precomputed_indices:
         args.timing_mode = "amortized"
@@ -660,19 +670,23 @@ if __name__ == "__main__":
             splits_per_source_cpu if use_a2av else None,
             unique_counts_cpu,
         )
-        perf_result_torch = perf_torch(
-            inputs,
-            weights,
-            split_cpu,
-            args.iters,
-            args.warmup_iters,
-            token_index,
-            topk_index,
-            args.topk,
-            input_scales,
-            weight_scales,
-            output_vec_scales,
-            args.all_reduce,
+        perf_result_torch = (
+            None
+            if args.skip_correctness
+            else perf_torch(
+                inputs,
+                weights,
+                split_cpu,
+                args.iters,
+                args.warmup_iters,
+                token_index,
+                topk_index,
+                args.topk,
+                input_scales,
+                weight_scales,
+                output_vec_scales,
+                args.all_reduce,
+            )
         )
 
     if TP_GROUP.rank() == 0:
@@ -686,7 +700,8 @@ if __name__ == "__main__":
     TP_GROUP.barrier()
     if should_log_to_rds():
         set_global_args("moe_gather_rs_traffic", args)
-    flux.exec_in_rank_order(TP_GROUP, lambda: log_perf(perf_result_torch))
+    if perf_result_torch is not None:
+        flux.exec_in_rank_order(TP_GROUP, lambda: log_perf(perf_result_torch))
     flux.exec_in_rank_order(TP_GROUP, lambda: log_perf(perf_result_flux))
     if RANK == 0:
         RECORDER.emit_info(
@@ -696,10 +711,18 @@ if __name__ == "__main__":
             timing_mode=args.timing_mode,
             n_split=int(args.n_split),
         )
-    RECORDER.emit_iters("torch", getattr(perf_result_torch, "iter_times", {}))
+    if perf_result_torch is not None:
+        RECORDER.emit_iters("torch", getattr(perf_result_torch, "iter_times", {}))
     RECORDER.emit_iters("flux", getattr(perf_result_flux, "iter_times", {}))
-    atol, rtol = ABSOLUTE_THRESHOLD_MAP[input_dtype], RELATIVE_THRESHOLD_MAP[input_dtype]
     TP_GROUP.barrier()
+
+    if args.skip_correctness:
+        # No torch reference ran: emit no correctness record so the sweep
+        # capsule's correct_* columns stay empty (layer0 harness behavior).
+        RECORDER.flush()
+        sys.exit(0)
+
+    atol, rtol = ABSOLUTE_THRESHOLD_MAP[input_dtype], RELATIVE_THRESHOLD_MAP[input_dtype]
 
     def check_result():
         print(f"#{TP_GROUP.rank()} Threshold = Atol:{atol}  Rtol:{rtol}")

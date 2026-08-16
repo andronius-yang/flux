@@ -21,8 +21,11 @@ root (leave them).
   capsule's `deterministic` column audits it — do not hand-run perf outside
   the runner without that env, and never trust a perf number whose
   deterministic column is 1.
-- Knob scaling (`FLUX_A2AV_MAX_*_NTOKENS`, `NVSHMEM_SYMMETRIC_SIZE`) is
-  formula-driven (SCHEMA.md §knobs) — do not hand-tune per cell.
+- Knob scaling (`FLUX_A2AV_MAX_*_NTOKENS`, layer1 `FLUX_A2AV_RS_MAX_*_ROWS`,
+  `NVSHMEM_SYMMETRIC_SIZE`) is formula-driven (SCHEMA.md §knobs) — do not
+  hand-tune per cell.
+- Layer1 cells: `n_split_l1: 4` (split-N pipeline depth; N/n_split must be a
+  multiple of 1024, and 4 is the bench's own default).
 
 ## Variables (the axes the user picks)
 
@@ -39,7 +42,30 @@ root (leave them).
   expands in `e2e` mode only (its phase breakdown — pack/schedule/fill/wire/
   unpack/gemm — is captured structurally, no phases cell), and its `e2e_ms`
   includes the flat BvN `schedule_ms` recompute (~4.4 ms/iter on p4d) — call
-  that out in small-budget comparisons. EP-semantics arms (driver-swapped
+  that out in small-budget comparisons. NOTE: fast's e2e IS isolated
+  semantics (host-sync every iteration; SCHEMA.md §modes documents the
+  equivalence), so fast e2e cells may be compared against other arms'
+  isolated cells.
+  **2^3 factorial arms on the lb_union base** (F=FUSED_STAGE2, N=FANOUT,
+  E=EARLY_LAUNCH; canonical suffix order fused < eager < early):
+  `hier_compress_lb_union` (base), `_fused`, `_eager`, `_early`,
+  `_fused_eager`, `_fused_early`, `_eager_early`, `_fused_eager_early`.
+  Knob-verdict protocol: repeat the capsule with REVERSED arm order; a knob
+  effect is real only if the sign agrees in both orderings. The *eager_early
+  combos are statically legal but dynamically never co-executed before —
+  run a correctness-ON smoke before any perf capsule.
+  **Layer1 (combine) arms**, driver=gather_rs, `layer=l1` in cells.csv:
+  `l1_dense` (stock flux ring-RS), `l1_hier`, `l1_hier_eager`
+  (`FLUX_A2AV_RS_EAGER=1`, arrival-order reduce), `l1_compress`,
+  `l1_compress_eager`, and `l1_fast` (FAST BvN alltoallv combine +
+  un-overlapped GemmGroupedV2: compute -> communicate -> topk-sum; same
+  constraints as layer0 `fast` — libflash, >= 2 nodes, e2e-only, no real
+  routing). l1 flux cells expand x2 over `timing_mode` (`_tmiso` = index
+  build in-forward; `_tmamo` = layer0-inherited indices, the combined-pass
+  proxy) — never compare across timing_mode. No phases cells for l1
+  (no timing marks). l1 traffic = the SAME dispatch matrices interpreted as
+  the transpose; compress degrades to hier at 1 node. EP-semantics arms
+  (driver-swapped
   tests, six aliased phase names, no phases cells — SCHEMA.md is the
   authority): `moonep[_overlap|_nvshmem|...]` (per-batch global token
   migration), `ultraep[_domain16|_overlap|_nvshmem|...]` (per-batch
@@ -119,5 +145,9 @@ root (leave them).
 - An `nsys_empty` cell status means the capture was lost (killed nsys /
   empty trace) — the rep is missing or undersized; rerun the cell rather
   than trusting an ok-looking srun.log.
+- Layer1 RS capacity FLUX_CHECKs are COLLECTIVE: an undersized l1 cell
+  aborts on every rank (clean `failed`, never a hang) — unlike the layer0
+  recv-overflow spin. And `l1_compress*` silently degrades to hier on a
+  single node — a 1n compress cell measures hier.
 - Single-node runs can't use `remotefrac`/`nodeskew` (no remote ranks);
   use `uniform`/`hotcol`.
