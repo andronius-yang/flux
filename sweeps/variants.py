@@ -695,6 +695,35 @@ VARIANTS = {
         requires=["FLUX_A2AV_RS_MAX_SEND_ROWS"],
         l1_pattern="dense",
     ),
+    # CORRECTED best pairing (2026-08-16 ablation, 2n b8): l1 EAGER OFF —
+    # the eager persistent reduce is both a standalone l1 loss (15-35% vs
+    # legacy hier on trace) AND the entire l01 composition penalty (+18%
+    # identity violation at b8; eager-off closes it to -1% and lands
+    # 9.95 vs eager-pairing 14.4 ms). E(early-launch) exonerated (B-ablation
+    # no-op). This arm is the campaign's headline combined config.
+    "l01_lbunion_hier": dict(
+        comm_pattern="l01_lbunion_hier",  # cells.csv label only
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "a2av_hier_compress",
+            "--l1_comm_pattern", "a2av_hier",
+        ],
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8",
+        },
+        requires=[
+            "FLUX_A2AV_LB_UNION",
+            "FLUX_A2AV_FUSED_STAGE2",
+            "FLUX_A2AV_EARLY_LAUNCH",
+            "FLUX_A2AV_RS_MAX_SEND_ROWS",
+        ],
+        l1_pattern="a2av_hier",
+    ),
     # l0 = lb_union + the P3 factorial WINNERS (2026-08-16, three-run sign
     # agreement over capsules 7ff7098d/1451c017/78f371c6 + bhigh twins):
     # F=FUSED_STAGE2 win (-0.2..-0.7 ms, b1-b8+b32), E=EARLY_LAUNCH win
