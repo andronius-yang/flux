@@ -114,12 +114,39 @@ number; wire rows/bytes equal MoonEP's dedup semantics), `scatter_ms`
 (placement scatter + zero-fill + local duplicate expansion; contains the
 second port-added copy), `prefetch_ms` (redundant expert-weight movement,
 home rank -> prefetch slots — weight traffic, reported separately so token
-comparisons vs other arms stay apples-to-apples; layer0 moves 1 weight
-matrix where MoonEP training moves 3), `gemm_ms` (per-segment GemmOnly over
-`cu_seqlens[E+B]`, padded rows computed per the MoonEP contract), `total_ms`.
+comparisons vs other arms stay apples-to-apples; layer0-only runs move 1
+weight matrix where MoonEP moves 3, `--layers l01` runs move 2 — w1+w2 in
+ONE prefetch phase under one join, the upstream one-pass contract), `gemm_ms`
+(per-segment GemmOnly over `cu_seqlens[E+B]`, padded rows computed per the
+MoonEP contract), `total_ms`. Under `--layers l01` (arm
+`moonep_l01_nvshmem_getmem`, 2026-08-17) five more brackets extend the chain
+after `gemm_ms`: `act_ms` (gelu), `gemm2_ms` (down-projection over the same
+segments), `cpack_ms` (route-weight scale + reverse-dedup partial sums + pack
+— one row per (token, dest) returns, wire symmetric with dispatch),
+`comb_ms` (the DIRECT a2av transpose back), `acc_ms` (home-side index_add
+top-k completion); `total_ms` then ends at `acc`. Keep `prefetch_ms` a
+separately-quoted column in every l01 comparison — it is the always-rent
+baseline any future persistent-experts (keep-stale) arm is judged against.
 The plan itself is deterministic integer host math computed identically on
 every rank at setup (untimed-metadata contract, like `splits_per_source`;
 reported as cell_info `moonep_plan_host_ms`).
+
+Fused-arm brackets (`driver=moonep_fused`): `e2e_ms`, `prefetch_ms` (the
+weight ISSUE window), `gate_ms` (issue -> forward launch; 0 by definition
+under tokens_first), `fused_ms` (the fused dispatch+GEMM window). Sharded
+arms (`--weight_shard`, 2026-08-17) add `shard_ms` (pref_end -> gw_end: the
+egress/reassembly/finalize/gateway chain on its dedicated stream — overlaps
+`fused_ms` under the tiles gate, serial ahead of `gate_ms` under join) plus
+the `wshard_*` cell facts (requested/resolved, leg count, per-rank NIC
+egress bytes pre/post shard). `--layers l01` narrows `fused_ms` to the l0
+window and appends `act_ms`, `l1_join_ms` (the explicit w2 landing gate),
+`l1_ms` (the fused gather-rs combine with INHERITED metadata); `e2e_ms` then
+spans through l1. The standalone virtual-space layer1 arms
+(`driver=moonep_l1`, `moonep_l1_{hier,compress}`) reuse the gather_rs metric
+shape (`e2e_ms` + `iso_sync_ms`, timing_mode axis) with cell facts
+`moonep_gpe` / `moonep_E_virt` / `moonep_empty_slots_rank0` /
+`l1_index_build_ms`; their combine-copy reduction vs the dispatch matrix is
+printed per run (replication makes slot rows combine locally).
 
 M4 arms (same driver, same plan and correctness gates — the grid isolates
 transport and overlap with semantics held fixed; cell facts

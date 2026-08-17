@@ -844,3 +844,56 @@ reproduce the ladder's `_slotlast` numbers and the ablation arm the ladder's
 baseline. **Falsifier for the canonicalization:** any capsule where the default arm
 does not match its explicit `_slotlast` twin within cell noise (that would mean the
 default is not reaching the kernel).
+
+## NR-15 — Egress NIC-sharding: symmetric spread + accumulate/finalize, and the completion of the MoonEP chapter
+
+Relitigation risk: medium. Landed 2026-08-17 on the moonep-completion branch
+(mechanism-first user directive: build it correctly and elegantly regardless of
+predicted win). Design + validation facts:
+
+1. **A sharded leg must spread BOTH ends.** Byte-splitting a cross-node weight
+   leg across the home node's L NICs buys nothing if all shards land on the
+   dest rank's single NIC; shard i rides the same-local-rank wire
+   `(home_node, i) -> (dst_node, i)` and reassembles over NVLink at the dest —
+   the exact mirror of the hier token scheme. Confidence: mechanism (and
+   measured: the microbench's egress-only intuition check is the SL=1 sanity).
+2. **The multi-writer completion contract cannot be SET.** The L reassembly
+   copies come from L different ranks; "the last one SETs the epoch" would
+   itself need cross-rank ordering. Arrivals ACCUMULATE (+1 per chunk,
+   NVSHMEM_SIGNAL_ADD) on a never-reset symmetric counter with a host-mirrored
+   cumulative expectation; the dest's `forward_shard_join()` waits it and then
+   locally SETs the ordinary epoch signal — `join()` and the GEMM weight gate
+   are byte-for-byte unchanged for sharded and unsharded slots. Confidence:
+   mechanism + measured (V3a bitwise slots through sharded reassembly, 2n8r).
+3. **Physics (a2av_comm_bench egress_shard mode, 2n, 2026-08-17):** one 32 MiB
+   leg: direct 2.01 ms (~16.7 GB/s, one NIC) -> SL=2 1.40 -> SL=4 0.80 ->
+   SL=4 + 4-chunk stage/push pipelining 0.70 ms (~2.9x); 64 MiB ~3.2x; 8 MiB
+   only ~1.6x — the `--weight_shard_min_bytes` default (8 MiB) sits at the
+   knee. Chunk pipelining is worth ~10% at 32 MiB. Confidence: measured.
+4. **Balance is exact by construction:** at 2n8r trace b2 the per-rank NIC
+   egress census went from 64 MiB on one rank per node to 16 MiB on every
+   rank (RECORDER `wshard_*` fields audit it per run). Confidence: measured.
+5. **OPEN: tokens_first x sharding hangs (gated).** With kernel priming in
+   place (the 1550b67 pattern, now also applied at set_shard_plan) the 2n
+   hang persists: under tokens_first the fused forward enqueues before the
+   shard chain, and with the conn=8 pin a chain op can land behind the
+   resident spinning GEMM on an aliased issue channel — an NR-02 Class-B
+   cycle the weights_first order cannot form (identical kernels pass there).
+   The driver asserts the combination away; **falsifier/probe: a conn=32 run
+   where the hang persists kills the aliasing hypothesis.** tokens_first is a
+   closed non-default ablation (NR-14), so this gates nothing canonical.
+6. **Follow-ups named, not built:** leg-level fan-out assignment across
+   node-mates (composes with the gateway census for multi-leg hot experts);
+   lazy w2 send + gemm2 tile gating in gather_rs (v1 pushes both matrices
+   upfront and gates gemm2 with a zero-SM `op_w2.join()`); persistent-experts
+   / keep-stale (ski-rental, formalization §4.4) — the l01 arms' separate
+   `prefetch_ms` bracket is the always-rent baseline it will be judged
+   against.
+
+Chapter status: with the sharding mechanism, the standalone virtual-space
+layer1 (`moonep_l1_*`, V1 flux-vs-torch + V2 replication-transparency), and
+the twin e2e journeys (`moonep_l01_nvshmem_getmem` authentic staged;
+`moonep_fused_l01_push_auto_gated[_shard]` optimized with inherited combine
+metadata) GPU-validated 1n->2n->4n with capsules, the MoonEP port and our
+optimizations are COMPLETE as scoped 2026-08-17; everything further lives in
+fact 6's follow-up list.
