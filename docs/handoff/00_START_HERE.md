@@ -84,3 +84,11 @@ main (2026-08-11, f97c628 era) and is sweep-integrated as the `l1_*` variants
 (2026-08-16, layer-axis campaign — see `sweeps/SCHEMA.md` §layer/timing_mode).
 Layer1 compress is CPU-sim validated; its first GPU run is the campaign's 2n
 bring-up ladder.
+
+**Layer-axis campaign authority (2026-08-16): `07_comm_only_layer_axis_campaign.md`**
+— verdicts, capsule ledger, and both hang root-causes for the comm-only
+layer0+layer1 campaign live there (`07_dashboard.html` is the visual summary);
+`08_followup_queue.md` is the post-campaign work queue. Canonicalization of the
+campaign winners (F+E default-ON under LB_UNION; `l01_lbunion_compress` as the
+reference combined config; FANOUT and RS_EAGER closed as losers) landed
+2026-08-16 — `sweeps/variants.py` notes are the arm-level authority.

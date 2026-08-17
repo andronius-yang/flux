@@ -297,6 +297,13 @@ Highlights (full list = header row):
   showed deterministic scatter_ inflating compress paths ~500x).
 - `env_json` — the full env delta the runner constructed (knob scaling,
   variant env, mode env). What you'd need to reproduce by hand.
+  **DEFAULT-FLIP BOUNDARY (2026-08-16)**: binaries built on/after this date
+  default `FLUX_A2AV_FUSED_STAGE2` and `FLUX_A2AV_EARLY_LAUNCH` ON under
+  `FLUX_A2AV_LB_UNION=1` (E only when `CUDA_DEVICE_MAX_CONNECTIONS > 1`).
+  An absent key in `env_json` therefore means a DIFFERENT configuration on
+  either side of the boundary — never byte-compare `env_json` across it;
+  identify the binary by the manifest `flux_libs` sha (protocol rule 4:
+  git_sha is not a build identity).
 - `wire_ratio`, `relay_ident_bytes`, `relay_balanced_bytes` — compress-only
   cell facts from the pre-run analysis block.
 - `correct_bitwise`, `correct_allclose` — AND over ranks; empty when
@@ -306,7 +313,17 @@ Highlights (full list = header row):
   results as unreproducible.
 - `layer` (appended 2026-08-16) — `l0` (dispatch, the historical default;
   older capsules simply lack the column), `l1` (gather-rs combine,
-  driver=gather_rs / fast_gather_rs), later `l01` (combined continuous pass).
+  driver=gather_rs / fast_gather_rs), `l01` (combined continuous pass,
+  driver=l01: one timed window per isolated iteration = layer0 forward
+  (routing/schedule in-window) -> GELU -> layer1 forward on layer0-inherited
+  inverse indices and compress CSRs — i.e. combined cells inherit compress's
+  CSRs, the AMORTIZED l1 semantics, so compress's isolated-mode in-forward
+  CSR-build penalty does not apply to l01 cells; the one-shot python builders
+  run outside the window and are reported as `l1_index_build_ms`. No
+  timing_mode axis, no phases cells. **Reference combined configuration
+  since 2026-08-16: `l01_lbunion_compress`** — see variants.py for the
+  14/14-budget verdict; the standalone-l1 verdict differs at small budgets
+  and must never be conflated with the combined one).
   Lives on the VARIANT (sweeps/variants.py `layer` field), not as a spec
   axis — an l1 measurement is a different arm, not a different mode of the
   same arm.

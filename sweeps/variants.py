@@ -457,17 +457,29 @@ VARIANTS = {
     # gathers. Tier B (2026-08-04): forwards land per (gateway, round) WINDOW
     # with ring-rotated destination order; tiles unblock per landed window.
     # Must be set identically on all ranks (changes wire + recv layout).
+    # CANONICAL BOUNDARY NOTE (2026-08-16, campaign canonicalization):
+    # binaries built on/after this date default FUSED_STAGE2 and EARLY_LAUNCH
+    # ON under LB_UNION=1 (E only when conn>1 — satisfied by the family
+    # conn=8 pin), so this base arm now measures F+E ON. Absent env keys in
+    # env_json therefore mean DIFFERENT configurations on either side of the
+    # boundary — never byte-compare env_json across it; identify the binary by
+    # the manifest flux_libs sha (git_sha is not a build identity). The
+    # pre-flip meaning of this arm = today's
+    # hier_compress_lb_union_nofused_noearly.
     "hier_compress_lb_union": dict(
         comm_pattern="a2av_hier_compress",
         env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_LB_UNION"],
     ),
-    # TEMPORARY A/B arm (2026-08-07, NR-06 re-check on L=4/CXI/realistic
-    # traces): lb_union with EAGER per-round gateway forwards — each round's
-    # node_sig wait + window puts on its own stream instead of the shipped
-    # ascending-round single-stream order, so a late round never head-of-line
-    # blocks a later one. Canonicalize (make default or delete knob + this
-    # entry) once the eager-vs-ring capsule verdict is in the ledger.
+    # CLOSED — LOSER (verdict 2026-08-16, case closed by user directive):
+    # N=FANOUT eager per-round gateway forwards LOSE +0.05..+0.6 ms on real
+    # 4n trace routing under three-run sign agreement (capsules
+    # 7ff7098d/1451c017/78f371c6 + reversed twins; handoff 07 §2). The knob
+    # and this arm are retained as opt-in ABLATION ONLY — the knob default
+    # stays OFF, and no future run may treat FANOUT as an open experiment or
+    # expect a win. Mechanism (2026-08-07 design): each round's node_sig wait
+    # + window puts on its own stream instead of the shipped ascending-round
+    # single-stream order.
     "hier_compress_lb_union_eager": dict(
         comm_pattern="a2av_hier_compress",
         env={
@@ -477,11 +489,15 @@ VARIANTS = {
         },
         requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_FANOUT"],
     ),
-    # TEMPORARY A/B arms for the fused stage-2 consumer build (2026-08-05):
-    # identical wire/gateway semantics to their base variants, but the ATen
-    # key/argsort/index_select chain + Tier B gating searchsorted are replaced
-    # by the fused sort_util kernels. Canonicalize (flip the knob default,
-    # drop these) after the phases + isolated verdict.
+    # Fused stage-2 consumer-build arms (2026-08-05): identical wire/gateway
+    # semantics to their base variants, but the ATen key/argsort/index_select
+    # chain + Tier B gating searchsorted are replaced by the fused sort_util
+    # kernels. CANONICALIZED 2026-08-16: the binary now defaults FUSED_STAGE2
+    # ON under LB_UNION (WINNER, -0.2..-0.7 ms, three-run sign agreement) —
+    # hier_compress_lb_union_fused is an explicit pin of that default
+    # (== base on post-flip binaries; kept for stated-both-sides A/B and
+    # historical name continuity). The union_bcast variant keeps its opt-in
+    # meaning (no default flip outside LB_UNION).
     "hier_compress_union_fused": dict(
         comm_pattern="a2av_hier_compress",
         env={
@@ -515,6 +531,14 @@ VARIANTS = {
     # gates the *eager_early arms before any perf capsule.
     # E is a clean-mode configuration (unlike BLOCKING_WIRE); quotable
     # per-arm, per the SKILL.md "its own configuration" rule.
+    # VERDICTS + CANONICALIZATION (2026-08-16, handoff 07 §2, three-run sign
+    # agreement): F WIN, E WIN, N LOSS — the binary now defaults F+E ON under
+    # LB_UNION (see the base arm's boundary note), so on post-flip binaries
+    # the explicit "+F"/"+E" pins equal the base, and the cube's live
+    # ablation axis is the explicit-OFF arms further below
+    # (_nofused/_noearly/_nofused_noearly). All FANOUT (N) corners are
+    # CLOSED-LOSER ablations per the eager arm's note — retained, never
+    # re-run as open experiments.
     "hier_compress_lb_union_early": dict(
         comm_pattern="a2av_hier_compress",
         env={
@@ -570,6 +594,38 @@ VARIANTS = {
             "FLUX_A2AV_EARLY_LAUNCH",
         ],
     ),
+    # EXPLICIT-OFF ABLATION ARMS (post-canonicalization cube, 2026-08-16): on
+    # binaries with the F+E default flip these pin the winners OFF to measure
+    # their contribution against the canonical base inside one capsule.
+    # _nofused_noearly reproduces the pre-flip base configuration exactly.
+    "hier_compress_lb_union_nofused": dict(
+        comm_pattern="a2av_hier_compress",
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "0",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8",
+        },
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2"],
+    ),
+    "hier_compress_lb_union_noearly": dict(
+        comm_pattern="a2av_hier_compress",
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "0",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8",
+        },
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_EARLY_LAUNCH"],
+    ),
+    "hier_compress_lb_union_nofused_noearly": dict(
+        comm_pattern="a2av_hier_compress",
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "0",
+            "FLUX_A2AV_EARLY_LAUNCH": "0",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8",
+        },
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2", "FLUX_A2AV_EARLY_LAUNCH"],
+    ),
     # union broadcast + source-side pack overlap (dedicated stream,
     # double-buffered send); MAX_CONNECTIONS=2 lets the pack stream actually
     # run concurrently with compute.
@@ -600,6 +656,13 @@ VARIANTS = {
     # NOTE: a2av_hier_compress silently degrades to a2av_hier at nnodes == 1
     # (gather_rs.cc:409-413) — single-node l1_compress* cells measure hier.
     # EAGER (arrival-order persistent reduce) is orthogonal to hier/compress.
+    # CLOSED — LOSER (verdict 2026-08-16, case closed by user directive):
+    # FLUX_A2AV_RS_EAGER regresses standalone at BOTH scales (+15-35% W=8,
+    # +2-11% W=16 vs legacy hier on trace) AND is the entire l01 composition
+    # penalty (+18% identity violation at b8, ablation-attributed — handoff
+    # 07 §4). Kernel + knob retained; the *_eager arms below are opt-in
+    # ABLATIONS ONLY — treat eager as losing unless a future fwd+rev
+    # sign-agreeing capsule overturns this note explicitly.
     "l1_dense": dict(
         comm_pattern="dense",
         driver="gather_rs",
@@ -671,8 +734,9 @@ VARIANTS = {
     # heap). Validation identity per capsule: e2e(l01) ~= e2e(l0 isolated)
     # + act_ms + e2e(l1 tmamo) — sweeps/check_l01_identity.py.
     # DEFERRED arms: l01_fast (bench --impl fast is a stub until the FAST
-    # credit-reset question is settled at bring-up) and
-    # l01_lbunion_compress_eager (pending the binary-B l1 verdicts).
+    # credit-reset question is settled at bring-up). l01_lbunion_compress_eager
+    # will NOT be added — the l1 eager verdict closed as a LOSS (2026-08-16;
+    # see the layer1 CLOSED note).
     "l01_torch": dict(
         comm_pattern="l01_torch_unfused",  # cells.csv label only
         driver="l01",
@@ -700,7 +764,9 @@ VARIANTS = {
     # legacy hier on trace) AND the entire l01 composition penalty (+18%
     # identity violation at b8; eager-off closes it to -1% and lands
     # 9.95 vs eager-pairing 14.4 ms). E(early-launch) exonerated (B-ablation
-    # no-op). This arm is the campaign's headline combined config.
+    # no-op). SUPERSEDED as the reference by l01_lbunion_compress (W=16
+    # best-pairing A/B, 2026-08-16 — compress wins every budget); retained as
+    # the standing A/B pairing arm.
     "l01_lbunion_hier": dict(
         comm_pattern="l01_lbunion_hier",  # cells.csv label only
         driver="l01",
@@ -724,12 +790,15 @@ VARIANTS = {
         ],
         l1_pattern="a2av_hier",
     ),
-    # COMPRESS pairing (2026-08-16, post 4n l1 verdicts): l1 compress loses
-    # iso at small budgets (in-forward CSR build) but WINS at b32/b64 at
-    # W=16 (-4/-6% iso, -14% tmamo — capsules 96f807d1/9725d5e0 + rev). The
-    # l01 window inherits the CSRs (amortized semantics), which is exactly
-    # compress's best case — candidate combined winner at LARGE budgets;
-    # A/B against l01_lbunion_hier inside one capsule.
+    # REFERENCE COMBINED CONFIG (promoted 2026-08-16, item-2
+    # canonicalization): the W=16 best-pairing A/B (capsules 9378fed5/397ac0fa,
+    # 14/14 budgets, fwd+rev) has the compress pairing winning EVERY budget —
+    # 10.6 ms at b8, -52% vs stock, -45..-52% across b2-b64. The l01 window
+    # inherits compress's CSRs from layer0 (amortized semantics; SCHEMA.md),
+    # so compress's isolated-mode in-forward CSR-build penalty does not apply
+    # here. Keep the stories straight: STANDALONE l1 verdicts differ (hier
+    # wins iso at small budgets — handoff 07 §3.1/§4.1); never quote this
+    # combined win as a standalone-l1 recommendation.
     "l01_lbunion_compress": dict(
         comm_pattern="l01_lbunion_compress",  # cells.csv label only
         driver="l01",
@@ -760,6 +829,9 @@ VARIANTS = {
     # F=FUSED_STAGE2 win (-0.2..-0.7 ms, b1-b8+b32), E=EARLY_LAUNCH win
     # (-0.3..-1.8 ms, b2/b16-b64), N=FANOUT loss (+0.05..+0.6, b2-b16) —
     # so F+E on, N off. l1 = hier + eager reduce (binary-B pairing).
+    # CLOSED — LOSER (2026-08-16): the eager pairing lost the composition
+    # A/B (14.4 vs 9.95 ms at b8) — retained as the l01 eager ablation only,
+    # per the layer1 CLOSED note above.
     "l01_lbunion_hier_eager": dict(
         comm_pattern="l01_lbunion_hier_eager",  # cells.csv label only
         driver="l01",

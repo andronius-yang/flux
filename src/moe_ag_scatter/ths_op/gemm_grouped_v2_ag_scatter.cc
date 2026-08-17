@@ -318,7 +318,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // FLUX_A2AV_PACK_OVERLAP=1 (compress): see pack_stream_. Must be set
   // identically on every rank (collective 2x symmetric send allocation).
   const bool pack_overlap_;
-  // FLUX_A2AV_EARLY_LAUNCH=1 (any a2av variant): issue the inter-node sends
+  // FLUX_A2AV_EARLY_LAUNCH=1 (any a2av variant; since 2026-08-16 the default
+  // is ON under FLUX_A2AV_LB_UNION=1 when CUDA_DEVICE_MAX_CONNECTIONS > 1 —
+  // see the ctor initializer): issue the inter-node sends
   // first, launch the GEMM right after stage 2, and defer the SM-free
   // cp_stream wire sequence (self copy, round-0 intra puts, hier/union
   // gateway forwarding) until after the launch; cp_stream FIFO order is
@@ -351,7 +353,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   const bool fanout_eager_;
   std::vector<c10::cuda::CUDAStream> fanout_streams_;  // NN-1, knob on && nnodes > 1
   std::vector<cudaEvent_t> fanout_events_;             // NN-1, DisableTiming
-  // FLUX_A2AV_FUSED_STAGE2=1 (compress only): replace the ATen consumer-build
+  // FLUX_A2AV_FUSED_STAGE2=1 (compress only; since 2026-08-16 the default is
+  // ON under FLUX_A2AV_LB_UNION=1 — see the ctor initializer): replace the
+  // ATen consumer-build
   // chain (key/argsort/index_select + Tier B gating searchsorted) with the
   // fused kernels in sort_util — A rows assigned per (expert, source) group
   // via the host offA table + an atomic in-group rank (interior order is
@@ -628,10 +632,29 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             get_int_from_env("FLUX_A2AV_UNION_BCAST", 0) != 0 ||
             get_int_from_env("FLUX_A2AV_LB_UNION", 0) != 0),
         pack_overlap_(get_int_from_env("FLUX_A2AV_PACK_OVERLAP", 0) != 0),
-        early_launch_(get_int_from_env("FLUX_A2AV_EARLY_LAUNCH", 0) != 0 && a2av_dispatch),
+        // CANONICALIZED 2026-08-16 (layer-axis campaign, handoff 07 §2): under
+        // FLUX_A2AV_LB_UNION=1 the factorial winners EARLY_LAUNCH and
+        // FUSED_STAGE2 default ON (three-run sign agreement: E -0.3..-1.8 ms,
+        // F -0.2..-0.7 ms on real 4n trace routing). An explicit env setting
+        // always wins over the lb_union default. EARLY_LAUNCH's default
+        // additionally requires CUDA_DEVICE_MAX_CONNECTIONS > 1 so a bare
+        // launch.sh run (conn=1 default) keeps its historical behavior instead
+        // of tripping the compress-path conn>1 ctor check below.
+        early_launch_(
+            get_int_from_env(
+                "FLUX_A2AV_EARLY_LAUNCH",
+                (get_int_from_env("FLUX_A2AV_LB_UNION", 0) != 0 &&
+                 get_int_from_env("CUDA_DEVICE_MAX_CONNECTIONS", 1) > 1)
+                    ? 1
+                    : 0) != 0 &&
+            a2av_dispatch),
         blocking_wire_(get_int_from_env("FLUX_A2AV_BLOCKING_WIRE", 0) != 0),
         fanout_eager_(get_int_from_env("FLUX_A2AV_FANOUT", 0) != 0),
-        fused_stage2_(get_int_from_env("FLUX_A2AV_FUSED_STAGE2", 0) != 0 && a2av_hier_compress),
+        fused_stage2_(
+            get_int_from_env(
+                "FLUX_A2AV_FUSED_STAGE2", get_int_from_env("FLUX_A2AV_LB_UNION", 0) != 0 ? 1 : 0) !=
+                0 &&
+            a2av_hier_compress),
         seg_gate_ballot_(get_int_from_env("FLUX_A2AV_SEG_GATE_BALLOT", 0) != 0),
         // ring_mode barriers are CUDA-IPC based and intra-node only; multi-node
         // must take the NVSHMEM barrier (ring_mode = false)

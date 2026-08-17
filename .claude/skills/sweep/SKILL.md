@@ -49,22 +49,36 @@ root (leave them).
   **2^3 factorial arms on the lb_union base** (F=FUSED_STAGE2, N=FANOUT,
   E=EARLY_LAUNCH; canonical suffix order fused < eager < early):
   `hier_compress_lb_union` (base), `_fused`, `_eager`, `_early`,
-  `_fused_eager`, `_fused_early`, `_eager_early`, `_fused_eager_early`.
-  Knob-verdict protocol: repeat the capsule with REVERSED arm order; a knob
-  effect is real only if the sign agrees in both orderings. The *eager_early
-  combos are statically legal but dynamically never co-executed before —
-  run a correctness-ON smoke before any perf capsule.
+  `_fused_eager`, `_fused_early`, `_eager_early`, `_fused_eager_early`,
+  plus explicit-off ablations `_nofused`, `_noearly`, `_nofused_noearly`.
+  VERDICTS SETTLED 2026-08-16 (three-run sign agreement; variants.py notes
+  are the authority): F WIN, E WIN, N LOSS — every FANOUT arm is
+  CLOSED-LOSER, opt-in ablation only, never re-run as an open experiment.
+  Binaries built on/after 2026-08-16 default F+E ON under LB_UNION (E needs
+  conn>1, satisfied by the family conn=8 pin), so the base arm now measures
+  F+E and the explicit-OFF arms are the live ablation axis. Never
+  byte-compare env_json across the default-flip boundary — the manifest
+  flux_libs sha identifies the binary. Knob-verdict protocol: repeat the
+  capsule with REVERSED arm order; a knob effect is real only if the sign
+  agrees in both orderings.
   **Layer1 (combine) arms**, driver=gather_rs, `layer=l1` in cells.csv:
   `l1_dense` (stock flux ring-RS), `l1_hier`, `l1_hier_eager`
-  (`FLUX_A2AV_RS_EAGER=1`, arrival-order reduce), `l1_compress`,
-  `l1_compress_eager`, and `l1_fast` (FAST BvN alltoallv combine +
+  (`FLUX_A2AV_RS_EAGER=1`, arrival-order reduce — CLOSED-LOSER 2026-08-16,
+  ablation only; see variants.py), `l1_compress`,
+  `l1_compress_eager` (same CLOSED verdict), and `l1_fast` (FAST BvN alltoallv combine +
   un-overlapped GemmGroupedV2: compute -> communicate -> topk-sum; same
   constraints as layer0 `fast` — libflash, >= 2 nodes, e2e-only, no real
   routing). l1 flux cells expand x2 over `timing_mode` (`_tmiso` = index
   build in-forward; `_tmamo` = layer0-inherited indices, the combined-pass
   proxy) — never compare across timing_mode. No phases cells for l1
   (no timing marks). l1 traffic = the SAME dispatch matrices interpreted as
-  the transpose; compress degrades to hier at 1 node. EP-semantics arms
+  the transpose; compress degrades to hier at 1 node.
+  **Combined l0+l1 arms** (driver=l01, one timed window per iteration —
+  SCHEMA.md §cells.csv `layer`): `l01_torch`, `l01_allgather_dense`,
+  `l01_lbunion_hier`, `l01_lbunion_compress` (**the reference combined
+  config since 2026-08-16** — compress pairing wins every budget at W=16;
+  combined cells inherit compress's CSRs, amortized semantics),
+  `l01_lbunion_hier_eager` (closed-loser ablation). EP-semantics arms
   (driver-swapped
   tests, six aliased phase names, no phases cells — SCHEMA.md is the
   authority): `moonep[_overlap|_nvshmem|...]` (per-batch global token
