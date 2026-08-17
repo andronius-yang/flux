@@ -23,6 +23,25 @@
 //           PREFETCH_IMPL=kernel|stream, PREFETCH_CHUNK_BYTES (default =
 //           msg, i.e. one chunk), PREFETCH_NBLOCKS (kernel impl, default 8).
 //
+//   egress_shard — NIC-sharded weight push (the WeightPushMulticast egress
+//           sharding design): per node, SHARD_NHOMES "hot expert home" ranks
+//           (lr < NHOMES) each own one <msg_bytes> cross-node leg to the
+//           same-lr rank on the NEXT node. SHARD_DIRECT=1 pushes the whole
+//           leg over the home's single NIC (putmem_signal SET — the
+//           baseline). Otherwise the leg is byte-split into SHARD_L
+//           near-equal shards riding same-local-rank wires:
+//             home --NVLink CE--> egress (node, i) staging  [signal SET]
+//             egress --NIC--> ingress (node+1, i) staging   [signal SET]
+//             ingress --NVLink--> final slot @byte offset   [SIGNAL_ADD +1]
+//           Fast path i == home_lr: home NIC-pushes its own shard straight
+//           into the final slot (egress == home, ingress == dest). The dest
+//           waits arrive >= cumulative expected chunk count — the same wait
+//           the production forward_shard_join() performs before re-emitting
+//           the epoch SET. SHARD_CHUNK_BYTES < shard pipelines the NVLink
+//           staging against the NIC push (per-chunk signals). Knobs:
+//           SHARD_L (default GPUS_PER_NODE), SHARD_NHOMES (default 1),
+//           SHARD_CHUNK_BYTES (default = whole shard), SHARD_DIRECT.
+//
 // No GEMM, no index math: offsets precomputed outside the timed window.
 // Bootstrap is NVSHMEM unique-ID via a shared file (as flux's launch.sh).
 #include <cuda_runtime.h>
@@ -82,7 +101,10 @@ main(int argc, char **argv) {
   if (argc < 4) {
     if (rank == 0)
       fprintf(stderr, "usage: %s <uidfile> a2av <matrix.txt> [iters]\n"
-                      "       %s <uidfile> ag <shard_bytes> [iters]\n", argv[0], argv[0]);
+                      "       %s <uidfile> ag <shard_bytes> [iters]\n"
+                      "       %s <uidfile> prefetch <msg_bytes> [iters]\n"
+                      "       %s <uidfile> egress_shard <msg_bytes> [iters]\n",
+              argv[0], argv[0], argv[0], argv[0]);
     return 1;
   }
   const char *uidfile = argv[1];
@@ -337,6 +359,155 @@ main(int argc, char **argv) {
       // as WeightPrefetchGetmem::forward
       nvshmemx_quiet_on_stream(main_s);
       CUCHECK(cudaEventRecord(t1, main_s));
+      CUCHECK(cudaStreamSynchronize(main_s));
+      float ms;
+      CUCHECK(cudaEventElapsedTime(&ms, t0, t1));
+      if (it >= warmup) t.push_back(ms);
+    }
+  } else if (mode == "egress_shard") {
+    // ---- NIC-sharded weight push (see header). One leg per home rank per
+    // node; every leg's shard geometry is identical, so all indices are
+    // derivable on every rank with zero metadata exchange (the production
+    // scheme's replicated-plan property).
+    long long msg = atoll(arg.c_str());
+    int SL = env_int("SHARD_L", L);
+    int NHOMES = env_int("SHARD_NHOMES", 1);
+    int direct = env_int("SHARD_DIRECT", 0);
+    if (SL < 1) SL = 1;
+    if (SL > L) SL = L;
+    if (NHOMES < 1) NHOMES = 1;
+    if (NHOMES > L) NHOMES = L;
+    if (NN < 2) {
+      if (rank == 0) fprintf(stderr, "egress_shard needs >= 2 nodes\n");
+      return 1;
+    }
+    // near-equal byte split of [0, msg) into SL shards (production cut rule)
+    std::vector<long long> cut(SL + 1, 0), len(SL, 0);
+    {
+      long long base = msg / SL, rem = msg % SL;
+      for (int i = 0; i < SL; i++) {
+        len[i] = base + (i < rem ? 1 : 0);
+        cut[i + 1] = cut[i] + len[i];
+      }
+    }
+    long long shard_max = len.empty() ? 1 : len[0];  // shard 0 is the longest
+    long long chunk = env_ll("SHARD_CHUNK_BYTES", shard_max);
+    if (chunk < 1 || chunk > shard_max) chunk = shard_max;
+    long long MAXC = (shard_max + chunk - 1) / chunk;
+    std::vector<long long> nch(SL, 0);
+    long long total_chunks = 0;  // per leg == the dest's per-iter arrive quota
+    for (int i = 0; i < SL; i++) {
+      nch[i] = len[i] > 0 ? (len[i] + chunk - 1) / chunk : 0;
+      total_chunks += nch[i];
+    }
+    wire_bytes = direct ? (lr < NHOMES ? msg : 0)
+                        : (lr < SL ? (long long)NHOMES * len[lr] : 0);
+
+    char *weight_home = (char *)nvshmem_malloc(msg);   // leg source (home ranks)
+    char *final_slot = (char *)nvshmem_malloc(msg);    // leg dest (dest ranks)
+    char *eg_stage = (char *)nvshmem_malloc((size_t)NHOMES * shard_max);
+    char *in_stage = (char *)nvshmem_malloc((size_t)NHOMES * shard_max);
+    uint64_t *eg_sig = (uint64_t *)nvshmem_calloc((size_t)NHOMES * MAXC, sizeof(uint64_t));
+    uint64_t *in_sig = (uint64_t *)nvshmem_calloc((size_t)NHOMES * MAXC, sizeof(uint64_t));
+    uint64_t *arrive = (uint64_t *)nvshmem_calloc(1, sizeof(uint64_t));
+    CUCHECK(cudaMemset(weight_home, 1, msg));
+    if (rank == 0)
+      fprintf(stderr,
+              "[bench] egress_shard msg=%lld SL=%d nhomes=%d chunk=%lld "
+              "chunks/leg=%lld direct=%d\n",
+              msg, SL, NHOMES, chunk, total_chunks, direct);
+
+    uint64_t epoch = 0, expected = 0;
+    int next_node = (node + 1) % NN;
+    for (int it = 0; it < warmup + iters; it++) {
+      CUCHECK(cudaDeviceSynchronize());
+      nvshmem_barrier_all();
+      epoch++;
+      CUCHECK(cudaEventRecord(t0, main_s));
+      CUCHECK(cudaEventRecord(ready_event, main_s));
+      CUCHECK(cudaStreamWaitEvent(cp, ready_event, 0));
+      CUCHECK(cudaStreamWaitEvent(cp_inter, ready_event, 0));
+      if (direct) {
+        if (lr < NHOMES) {  // single-NIC baseline: whole leg from the home
+          nvshmemx_putmem_signal_nbi_on_stream(
+              final_slot, weight_home, msg, arrive, epoch, NVSHMEM_SIGNAL_SET,
+              next_node * L + lr, cp_inter);
+        }
+      } else {
+        // HOME role: stage shards to node-mates (NVLink CE, wait-free); fast
+        // path i == h goes NIC-direct into the final slot.
+        if (lr < NHOMES) {
+          int h = lr;
+          for (int i2 = 0; i2 < SL; i2++) {
+            for (long long c = 0; c < nch[i2]; c++) {
+              long long soff = c * chunk;
+              long long b = std::min(chunk, len[i2] - soff);
+              long long goff = cut[i2] + soff;
+              if (i2 == h) {
+                nvshmemx_putmem_signal_nbi_on_stream(
+                    final_slot + goff, weight_home + goff, b, arrive, 1,
+                    NVSHMEM_SIGNAL_ADD, next_node * L + h, cp_inter);
+              } else {
+                nvshmemx_putmem_signal_nbi_on_stream(
+                    eg_stage + (size_t)h * shard_max + soff, weight_home + goff,
+                    b, eg_sig + h * MAXC + c, epoch, NVSHMEM_SIGNAL_SET,
+                    node * L + i2, main_s);
+              }
+            }
+          }
+        }
+        // EGRESS role (my shard index == lr): per staged chunk, NIC-push to
+        // the same-lr ingress rank on the next node.
+        if (lr < SL) {
+          for (int h = 0; h < NHOMES; h++) {
+            if (h == lr) continue;  // that leg's shard lr went NIC-direct
+            for (long long c = 0; c < nch[lr]; c++) {
+              long long soff = c * chunk;
+              long long b = std::min(chunk, len[lr] - soff);
+              nvshmemx_signal_wait_until_on_stream(
+                  eg_sig + h * MAXC + c, NVSHMEM_CMP_GE, epoch, cp_inter);
+              nvshmemx_putmem_signal_nbi_on_stream(
+                  in_stage + (size_t)h * shard_max + soff,
+                  eg_stage + (size_t)h * shard_max + soff, b,
+                  in_sig + h * MAXC + c, epoch, NVSHMEM_SIGNAL_SET,
+                  next_node * L + lr, cp_inter);
+            }
+          }
+        }
+        // INGRESS role: legs landing on my node (home (node-1, h) ->
+        // dest (node, h)); NVLink-copy each chunk into the dest's slot at its
+        // global byte offset, +1 on the dest's arrive counter.
+        if (lr < SL) {
+          for (int h = 0; h < NHOMES; h++) {
+            if (h == lr) continue;
+            for (long long c = 0; c < nch[lr]; c++) {
+              long long soff = c * chunk;
+              long long b = std::min(chunk, len[lr] - soff);
+              nvshmemx_signal_wait_until_on_stream(
+                  in_sig + h * MAXC + c, NVSHMEM_CMP_GE, epoch, cp);
+              nvshmemx_putmem_signal_nbi_on_stream(
+                  final_slot + cut[lr] + soff,
+                  in_stage + (size_t)h * shard_max + soff, b, arrive, 1,
+                  NVSHMEM_SIGNAL_ADD, node * L + h, cp);
+            }
+          }
+        }
+      }
+      // drain my NIC pushes inside the window, then the dest arrival wait
+      nvshmemx_quiet_on_stream(cp_inter);
+      CUCHECK(cudaEventRecord(fetch_remote_event, cp_inter));
+      CUCHECK(cudaStreamWaitEvent(cp, fetch_remote_event, 0));
+      if (lr < NHOMES) {  // DEST of the leg arriving from the previous node
+        if (direct) {
+          nvshmemx_signal_wait_until_on_stream(arrive, NVSHMEM_CMP_GE, epoch, cp);
+        } else {
+          expected += (uint64_t)total_chunks;  // cumulative, never reset
+          nvshmemx_signal_wait_until_on_stream(arrive, NVSHMEM_CMP_GE, expected, cp);
+        }
+      }
+      CUCHECK(cudaEventRecord(t1, cp));
+      CUCHECK(cudaStreamSynchronize(cp));
+      CUCHECK(cudaStreamSynchronize(cp_inter));
       CUCHECK(cudaStreamSynchronize(main_s));
       float ms;
       CUCHECK(cudaEventElapsedTime(&ms, t0, t1));

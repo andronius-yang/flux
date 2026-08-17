@@ -145,6 +145,40 @@ salloc --qos interactive -C gpu --account m4243_g -N 2 --gpus-per-node=4 \
   bash a2av_comm_bench/run_prefetch.sh
 ```
 
+## egress_shard mode (design 2026-08-17, results pending first 2n window)
+
+Physics check for the `WeightPushMulticast` egress NIC-sharding design: one
+hot-expert home rank per node must push one `<msg>` weight leg to the same-lr
+rank on the next node. `SHARD_DIRECT=1` sends the whole leg over the home's
+single NIC (`putmem_signal` SET — today's production path). Sharded cases
+byte-split the leg into `SHARD_L` near-equal shards riding same-local-rank
+wires: home NVLink-stages shard i to node-mate lr_i (per-chunk
+`putmem_signal` SET), lr_i NIC-pushes to `(node+1, lr_i)`'s staging, that
+rank NVLink-copies into the final rank's slot at the shard's byte offset
+with `SIGNAL_ADD(+1)` per chunk; the dest waits `arrive >= cumulative
+expected` — exactly the production `forward_shard_join()` wait. The
+symmetric spread matters: egress-only sharding would still funnel into the
+dest rank's single NIC, so shards land on four ingress NICs and reassemble
+over NVLink.
+
+Questions the sweep answers (run_egress_shard.sh):
+1. Does SL=4 approach ~4x the single-NIC leg time (prefetch mode measured
+   ~17 GB/s/NIC, so 32 MiB direct ~1.9 ms → sharded floor ~0.5 ms + NVLink
+   hops)?
+2. Where is the shard-size knee → calibrates `--weight_shard_min_bytes`.
+3. Does per-chunk pipelining (NVLink stage of chunk k+1 overlapping the NIC
+   push of chunk k) pay, and at what chunk count → calibrates
+   `set_shard_plan(..., chunk_bytes)`.
+4. Contention control: with `SHARD_NHOMES=4` (every rank a home — the
+   saturation case) sharding should be ~flat vs direct, since all NICs are
+   already busy; a win there would indicate something other than NIC
+   parallelism.
+
+Aggregation: leg time = slowest rank's `med_ms` (the dest's arrival wait);
+`GB/s(leg) = msg_MB / med_ms`. Per-rank `wire_MB` reports that rank's NIC
+egress bytes (home fast-path shard + its egress-role shards), so the NIC-
+byte balance across the node is visible directly in the RESULT lines.
+
 ## Usage
 
 ```bash
