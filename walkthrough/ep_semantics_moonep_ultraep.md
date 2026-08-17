@@ -757,8 +757,11 @@ From the handoff ledger (`docs/handoff/02_algorithm_state_and_next_moves.md:346-
 every deviation is disclosed and biased **against** the ports: two-sided staged a2av plus
 two local copies instead of one-sided direct-into-slot writes; replicated planning pays a
 visible `plan_comm`; prefetch serialized in the base arm (MoonEP overlaps it — the
-`moonep_overlap` arm restores this and is the honest best configuration); layer0
-prefetches 1 weight matrix where MoonEP training moves 3. The M4 arms then close the
+`moonep_overlap` arm restores this and is the honest best configuration); the
+port moves 2 weight matrices (w1+w2, both in one prefetch phase under one
+join) where MoonEP moves 3 — the port models an ungated FFN, so gate/up
+collapse to one matrix (narrowed 2026-08-17 from the original 1-of-3 when the
+`--layers l01` journey landed; layer0-only runs still move just w1). The M4 arms then close the
 transport-fidelity gap one axis at a time — `moonep_nvshmem` swaps in flux's one-sided
 NVSHMEM `All2AllSingle` (sender-driven, receiver-passive, `moonep_semantics.py:586-618`;
 `putmem_nbi` + two team barriers per call — put-then-barrier like MoonEP's real dispatch;

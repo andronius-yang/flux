@@ -651,6 +651,13 @@ def moonep_getmem_sym_size(matrix_path, plat, spec, variant):
     epn = int(spec["G"]) // w
     # epn home rows + B (= epn) prefetch slots, each ffn_shard rows of H*2B
     home = 2 * epn * int(spec["ffn_hidden"]) * chunk
+    ta = variant.get("test_args") or []
+    if "l01" in ta:
+        # layer1: a SECOND getmem instance homes the down-projection
+        # ([epn, H, ffn] + [B, H, ffn] slots — same byte count); the combine
+        # a2av reuses the dispatch All2AllSingle staging (transpose-invariant
+        # max_split), so only the weight term doubles
+        home *= 2
     staging = 0
     if "nvshmem" in (variant.get("test_args") or []):
         vals = [int(x) for x in toks[1 : 1 + w * w]]

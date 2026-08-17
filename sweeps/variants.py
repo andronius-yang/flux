@@ -145,6 +145,25 @@ VARIANTS = {
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),
+    # AUTHENTIC L0+L1 (2026-08-17): the full staged journey — dispatch +
+    # gemm1 + gelu + gemm2 + combine — zero overlap, faithful defaults.
+    # The prefetch phase moves BOTH projections (w1+w2) back-to-back under
+    # one join, mirroring upstream's one-pass/one-sync prefetch_weight
+    # (MoonEP api.py:158-173; port models an ungated FFN => 2 of upstream's
+    # 3 matrices, disclosed deviation). Combine = the dispatch mirror:
+    # scale by route weights, reverse-dedup partial sums at the expert
+    # side, DIRECT single-stage a2av transpose over the same All2AllSingle
+    # (upstream has no inter-node path — NR-12 fact 7 extrapolation, same
+    # declaration as the dispatch transport), index_add at token home.
+    "moonep_l01_nvshmem_getmem": dict(
+        comm_pattern="moonep_balanced_a2av",
+        driver="moonep",
+        layer="l01",
+        test_args=["--transport", "nvshmem", "--prefetch_transport", "getmem",
+                   "--layers", "l01"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
     # MERGED ARM (our-optimization ablation, never quotable as MoonEP
     # behavior): the MoonEP plan drives the FUSED GemmGroupedV2AGScatterOp
     # through the virtual expert space (flux.testing.moonep_fused_map) —

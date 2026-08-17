@@ -97,9 +97,14 @@ def perf_moonep(
     shared_comm: bool = False,
     prefetch_group=None,
     prefetch_stream=None,
+    layers: str = "l0",
+    w2_local=None,
 ):
+    l01 = layers == "l01"
     total_iters = warmup_iters + iters
     names = ["start", "plan_comm", "pack", "comm", "scatter", "prefetch", "gemm"]
+    if l01:
+        names += ["act", "gemm2", "cpack", "comb", "acc"]
     if overlap_prefetch:
         # prefetch rides its own high-priority stream + its own NCCL
         # communicator (MoonEP async_finish semantics: dedicated comm stream,
@@ -137,6 +142,10 @@ def perf_moonep(
                 with torch.cuda.stream(prefetch_stream):
                     prefetch_stream.wait_event(ev["plan_comm"][i])
                     runner.prefetch(ctx.weights[0], group=prefetch_group)
+                    if l01:
+                        # both projections in ONE phase, one join (upstream
+                        # api.py:158-173: per-matrix launches, single sync)
+                        runner.prefetch2(w2_local, group=prefetch_group)
                     ev["pref_end"][i].record()
             runner.pack(ctx.inputs_shard, route_weights)
             ev["pack"][i].record()
@@ -151,6 +160,8 @@ def perf_moonep(
                 with torch.cuda.stream(prefetch_stream):
                     prefetch_stream.wait_event(ev["comm"][i])
                     runner.prefetch(ctx.weights[0])
+                    if l01:
+                        runner.prefetch2(w2_local)
                     ev["pref_end"][i].record()
             runner.place_and_epilogue()
             ev["scatter"][i].record()
@@ -161,17 +172,33 @@ def perf_moonep(
             else:
                 if do_prefetch:
                     runner.prefetch(ctx.weights[0])
+                    if l01:
+                        runner.prefetch2(w2_local)
                 ev["prefetch"][i].record()
             runner.gemm(gemm_only_op, ctx.weights[0])
             ev["gemm"][i].record()
+            if l01:
+                runner.act()
+                ev["act"][i].record()
+                runner.gemm2(gemm_only_op, w2_local)
+                ev["gemm2"][i].record()
+                runner.combine_pack()
+                ev["cpack"][i].record()
+                runner.combine_a2av()
+                ev["comb"][i].record()
+                runner.combine_place_reduce()
+                ev["acc"][i].record()
 
     keys = ["plan_comm_ms", "pack_ms", "comm_ms", "scatter_ms",
             "prefetch_ms", "gemm_ms", "total_ms"]
+    if l01:
+        keys += ["act_ms", "gemm2_ms", "cpack_ms", "comb_ms", "acc_ms"]
     if overlap_prefetch:
         keys.append("prefetch_wait_ms")
     times = {k: [] for k in keys}
+    last = "acc" if l01 else "gemm"
     for i in range(total_iters):
-        ev["gemm"][i].synchronize()
+        ev[last][i].synchronize()
         if i < warmup_iters:
             continue
         seq = ["plan_comm", "pack", "comm", "scatter"]
@@ -200,7 +227,12 @@ def perf_moonep(
             times["gemm_ms"].append(
                 ev["prefetch"][i].elapsed_time(ev["gemm"][i])
             )
-        times["total_ms"].append(ev["start"][i].elapsed_time(ev["gemm"][i]))
+        if l01:
+            prev = ev["gemm"][i]
+            for name in ("act", "gemm2", "cpack", "comb", "acc"):
+                times[f"{name}_ms"].append(prev.elapsed_time(ev[name][i]))
+                prev = ev[name][i]
+        times["total_ms"].append(ev["start"][i].elapsed_time(ev[last][i]))
     if isolated:
         times["iso_sync_ms"] = iso_sync_times[warmup_iters:]
     return times
@@ -296,6 +328,53 @@ def check_correctness(runner, ctx, plan, w_all, gemm_only_op, atol, rtol,
     return ok_bitwise and ok_allclose
 
 
+def check_correctness_l01(runner, ctx, w_all, full_w2, topk_shard, atol, rtol):
+    """Independent two-layer reference for the staged l01 journey: for each
+    of MY tokens, sum over its top-k entries of
+    route_w * gelu(x @ w1_e^T) @ w2_e^T — built from the RAW routing and
+    inputs, never from the runner's buffers. w1 arrives per expert via NCCL
+    broadcast (a different code path than any prefetch transport); w2 is
+    replicated by construction. Rounding points mirror the pipeline (bf16
+    casts after each GEMM) so the standard thresholds hold; the reference
+    accumulates in fp32 while the pipeline accumulates in bf16 — absorbed by
+    the tolerances at these magnitudes."""
+    cfg = runner.cfg
+    rank, S, H = runner.rank, cfg.S, cfg.H
+    dev = runner.device
+    x = ctx.inputs_shard  # [S, H] my tokens
+    ref = torch.zeros(S, H, dtype=torch.float32, device=dev)
+    tmp_w1 = torch.empty(runner.ffn_size_shard, H, dtype=x.dtype, device=dev)
+    home_w1 = runner.weight_home if runner.weight_home is not None else ctx.weights[0]
+    for e in range(cfg.E):
+        home = e // cfg.epn
+        if home == rank:
+            tmp_w1.copy_(home_w1[e % cfg.epn])
+        torch.distributed.broadcast(tmp_w1, src=home, group=TP_GROUP)
+        mask = topk_shard == e  # [S, K]
+        if not bool(mask.any()):
+            continue
+        s_idx, k_idx = mask.nonzero(as_tuple=True)
+        h1 = torch.matmul(x[s_idx].float(), tmp_w1.float().t()).to(x.dtype)
+        a = torch.nn.functional.gelu(h1)
+        w2e = full_w2[e].to(dev)
+        h2 = torch.matmul(a.float(), w2e.float().t()).to(x.dtype)
+        ref[s_idx] += h2.float() * w_all[rank][s_idx.cpu(), k_idx.cpu()].to(dev).unsqueeze(1)
+    ok = True
+    try:
+        flux.torch_allclose(runner.final_out, ref.to(runner.final_out.dtype),
+                            atol=atol, rtol=rtol)
+    except Exception as e:  # noqa: BLE001
+        ok = False
+        print(f"❌ rank {rank}: l01 combined output vs two-layer reference"
+              " MISMATCH")
+        RECORDER.emit_correctness(bitwise=False, allclose=False)
+        RECORDER.flush()
+        raise e
+    print(f"✅ rank {rank}: l01 combined output matches the two-layer"
+          " reference (allclose)")
+    return ok
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--traffic_matrix", type=str, required=True)
@@ -363,6 +442,14 @@ def parse_args():
                         " window = scatter only")
     parser.add_argument("--no_prefetch", default=False, action="store_true",
                         help="skip per-iteration redundant-weight prefetch")
+    parser.add_argument("--layers", default="l0", choices=["l0", "l01"],
+                        help="l01 runs the full staged journey: dispatch +"
+                        " gemm1 + gelu + gemm2 + combine (gemm2 weights"
+                        " prefetched IN THE SAME phase as gemm1's — upstream"
+                        " moves every projection in one pass under one sync,"
+                        " api.py:158-173; combine = the dispatch mirror:"
+                        " scale, reverse-dedup partial sums at the expert"
+                        " side, direct a2av transpose, index_add at home)")
     parser.add_argument("--skip_correctness", default=False, action="store_true")
     return parser.parse_args()
 
@@ -453,6 +540,35 @@ if __name__ == "__main__":
             device_kernel=args.prefetch_impl == "kernel",
         )
 
+    w2_local = None
+    full_w2 = None
+    if args.layers == "l01":
+        assert not args.no_prefetch, (
+            "--layers l01 needs the prefetch (slot experts' gemm2 weights"
+            " arrive with it)"
+        )
+        # replicated full down-projection set (deterministic seed): each
+        # rank slices its home shard; the reference check reads any expert's
+        # w2 without communication. Magnitudes match the l1 bench scheme.
+        gen2 = torch.Generator().manual_seed(1234)
+        full_w2 = (
+            torch.rand((args.G, args.H, moe_ctx.ffn_size_shard), generator=gen2)
+            * 0.02 - 0.01
+        ).to(input_dtype)
+        w2_local = (
+            full_w2[rank * cfg.epn:(rank + 1) * cfg.epn].cuda().contiguous()
+        )
+        runner.enable_layer1()
+        if args.prefetch_transport == "getmem":
+            # collective (second symmetric weight home); same ordering rules
+            # as enable_getmem_prefetch above
+            runner.enable_getmem_prefetch_w2(
+                w2_local,
+                num_comm_sm=args.num_comm_sm,
+                chunk_bytes=args.prefetch_chunk_bytes,
+                device_kernel=args.prefetch_impl == "kernel",
+            )
+
     prefetch_group = None
     prefetch_stream = None
     if args.overlap_prefetch:
@@ -534,6 +650,13 @@ if __name__ == "__main__":
             moonep_shared_comm_stream=bool(args.shared_comm_stream),
         )
     RECORDER.emit_info(moonep_prefetch_recv_bytes=runner.prefetch_recv_bytes())
+    if args.layers == "l01":
+        # w2 shares the pair list, so the same byte count again (2-of-3
+        # matrices vs upstream's 3 — see the walkthrough deviation note)
+        RECORDER.emit_info(
+            moonep_layers=args.layers,
+            moonep_prefetch_recv_bytes_w2=runner.prefetch_recv_bytes(),
+        )
 
     TP_GROUP.barrier()
     torch.cuda.synchronize()
@@ -550,6 +673,8 @@ if __name__ == "__main__":
             shared_comm=args.shared_comm_stream,
             prefetch_group=prefetch_group,
             prefetch_stream=prefetch_stream,
+            layers=args.layers,
+            w2_local=w2_local,
         )
 
     def fmt(times):
@@ -575,6 +700,10 @@ if __name__ == "__main__":
             runner, moe_ctx, plan, w_all, gemm_only_op, atol, rtol,
             do_prefetch=not args.no_prefetch,
         )
+        if args.layers == "l01":
+            check_correctness_l01(
+                runner, moe_ctx, w_all, full_w2, topk_shard, atol, rtol
+            )
 
     TP_GROUP.barrier()
     torch.cuda.synchronize()

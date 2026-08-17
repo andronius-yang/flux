@@ -788,6 +788,166 @@ class MoonEPLayer0Runner:
                 fast_accum=False,
             )
 
+    # -- layer1 (gemm2 + combine), the dispatch pipeline's mirror image ----
+    #
+    # The combine reverses the dispatch exactly: (1) gemm2 output rows are
+    # scaled by their per-entry route weights (weights_buf, already resident
+    # from the dispatch meta-channel), (2) duplicate slots reduce into their
+    # representative (the REVERSE of dup expansion — the weighted partial
+    # sum over one destination's entries of a token forms at the dest, so
+    # ONE row per (token, dest) crosses the wire: reverse dedup, wire bytes
+    # symmetric with dispatch), (3) a DIRECT single-stage a2av transpose
+    # returns representative rows over the same transport with swapped
+    # splits (All2AllSingle max_split is a global max over the plan's pair
+    # matrix, hence transpose-invariant and cross-rank identical), (4) the
+    # home rank index_adds each returned row into its token's output.
+    # Upstream MoonEP has no inter-node path (NR-12 fact 7); this combine is
+    # the same declared extrapolation as the dispatch transport.
+
+    def enable_layer1(self):
+        """Allocate the gemm2/combine buffers. ffn_size_shard must be set."""
+        cfg = self.cfg
+        assert self.ffn_size_shard > 0, "layer1 needs weight shapes"
+        dev, H = self.device, cfg.H
+        self.act_buf = torch.zeros(
+            self.total_rows, self.ffn_size_shard, dtype=self.dtype, device=dev
+        )
+        self.comb_hidden_buf = torch.zeros(cfg.NvS, H, dtype=self.dtype, device=dev)
+        self.comb_send_buf = torch.empty(self.n_recv, H, dtype=self.dtype, device=dev)
+        self.comb_recv_buf = torch.empty(self.n_send, H, dtype=self.dtype, device=dev)
+        self.final_out = torch.zeros(cfg.S, H, dtype=self.dtype, device=dev)
+        self.prefetch_w2 = torch.zeros(
+            cfg.B, H, self.ffn_size_shard, dtype=self.dtype, device=dev
+        )
+        self.weight_home2 = None
+        self.prefetch2_impl = "nccl"
+
+    def enable_getmem_prefetch_w2(self, local_w2: torch.Tensor,
+                                  num_comm_sm: int = 8,
+                                  chunk_bytes: int = 4 << 20,
+                                  device_kernel: bool = True):
+        """Second WeightPrefetchGetmem instance for the down-projection
+        matrix ([epn, H, ffn_shard] home rows, [B, H, ffn_shard] slots) —
+        upstream moves every projection with its own kernel launch under ONE
+        sync point (api.py:158-173), mirrored here as one forward per matrix
+        and a single driver-side join; the extra per-forward quiet is a
+        disclosed port artifact."""
+        import flux  # GPU-side only
+
+        cfg = self.cfg
+        self._prefetch_op2 = flux.WeightPrefetchGetmem(
+            self.group, cfg.epn, cfg.B, cfg.H, self.ffn_size_shard, self.dtype,
+            contiguous_layout=True,
+        )
+        self.weight_home2 = self._prefetch_op2.weight_home()
+        self.weight_home2.copy_(local_w2)
+        self.prefetch_w2 = self._prefetch_op2.prefetch_slots()
+        pairs = [
+            (b, home, e % cfg.epn)
+            for d, b, e, home in self.prefetch_pairs
+            if d == self.rank
+        ]
+        self._prefetch_op2.set_pairs(
+            torch.tensor(pairs, dtype=torch.int32).reshape(-1, 3)
+        )
+        self._prefetch2_num_comm_sm = num_comm_sm
+        self._prefetch2_chunk_bytes = chunk_bytes
+        self._prefetch2_device_kernel = device_kernel
+        self.prefetch2_impl = "getmem"
+
+    def prefetch2(self, local_w2: torch.Tensor, group=None):
+        """w2 movement, issued back-to-back with prefetch() (same phase, one
+        join) — the upstream one-pass-three-launches contract."""
+        if self.prefetch2_impl == "getmem":
+            self._prefetch_op2.forward(
+                self.prefetch_w2,
+                self._prefetch2_num_comm_sm,
+                self._prefetch2_chunk_bytes,
+                self._prefetch2_device_kernel,
+            )
+            return
+        group = group if group is not None else self.group
+        ops = []
+        P2POp = self.dist.P2POp
+        for d, b, e, home in self.prefetch_pairs:
+            if d == self.rank and home == self.rank:
+                self.prefetch_w2[b].copy_(local_w2[e % self.cfg.epn])
+            elif d == self.rank:
+                ops.append(P2POp(self.dist.irecv, self.prefetch_w2[b], peer=home,
+                                 group=group))
+            elif home == self.rank:
+                ops.append(P2POp(self.dist.isend,
+                                 local_w2[e % self.cfg.epn].contiguous(),
+                                 peer=d, group=group))
+        if ops:
+            for req in self.dist.batch_isend_irecv(ops):
+                req.wait()
+
+    def act(self):
+        """GELU between the two GEMMs (matches the combined-driver torch
+        reference so thresholds transfer)."""
+        self.act_buf.copy_(torch.nn.functional.gelu(self.out_buf))
+
+    def gemm2(self, gemm_only_op, local_w2: torch.Tensor):
+        """Down-projection over the SAME cu_seqlens segments as gemm():
+        local expert segments read the w2 home shard, prefetch slots the
+        prefetched w2."""
+        cfg = self.cfg
+        lo = cfg.epn * self.rank
+        home2 = self.weight_home2 if self.weight_home2 is not None else local_w2
+        for g, start, end, expert_id in self.lay.gemm_segments:
+            w = (
+                home2[expert_id - lo]
+                if g < cfg.E
+                else self.prefetch_w2[g - cfg.E]
+            )
+            gemm_only_op.forward(
+                self.act_buf[start:end],
+                w,
+                output_buf=self.comb_hidden_buf[start:end],
+                fast_accum=False,
+            )
+
+    def combine_pack(self):
+        """Scale by route weights, reduce duplicate slots into their
+        representative, gather representatives in recv order (the exact
+        reverse of place_and_epilogue: the reverse wire returns to each
+        source the rows it sent, in its own packed order)."""
+        comb = self.comb_hidden_buf
+        comb.mul_(self.weights_buf.unsqueeze(1).to(comb.dtype))
+        if self.dup_target.numel():
+            comb.index_add_(
+                0, self.dup_primary, comb.index_select(0, self.dup_target)
+            )
+        torch.index_select(comb, 0, self.place_loffs, out=self.comb_send_buf)
+
+    def combine_a2av(self):
+        """Direct single-stage a2av transpose: dispatch splits swapped."""
+        if self.transport == "nvshmem":
+            self._a2a_hidden.forward(
+                self.comb_send_buf, self.comb_recv_buf,
+                self._out_splits_h, self._in_splits_h, self._num_comm_sm,
+            )
+            return
+        self.dist.all_to_all_single(
+            self.comb_recv_buf,
+            self.comb_send_buf,
+            output_split_sizes=self.lay.send_counts,
+            input_split_sizes=self.lay.recv_counts,
+            group=self.group,
+        )
+
+    def combine_place_reduce(self):
+        """Home-side accumulation: every returned representative row is the
+        weighted partial sum over ONE destination's entries of a token;
+        index_add over the sender-order-derived token index completes the
+        top-k reduction. Returns final_out [S, H]."""
+        self.final_out.zero_()
+        self.final_out.index_add_(
+            0, self.send_row_index, self.comb_recv_buf
+        )
+        return self.final_out
+
     # -- accounting -------------------------------------------------------
 
     def wire_matrix_row(self) -> list:
