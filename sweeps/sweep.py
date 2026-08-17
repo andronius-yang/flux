@@ -45,6 +45,7 @@ TEST_EPLB = "test/python/moe_ag_scatter/test_moe_eplb_traffic.py"
 TEST_EPIC = "test/python/moe_ag_scatter/test_moe_epic_traffic.py"
 TEST_GATHER_RS = "test/python/moe_gather_rs/test_moe_gather_rs_traffic.py"
 TEST_FAST_GATHER_RS = "test/python/moe_gather_rs/test_moe_gather_rs_fast_baseline.py"
+TEST_MOONEP_L1 = "test/python/moe_gather_rs/test_moe_moonep_l1_traffic.py"
 TEST_L01 = "test/python/moe_combined/test_moe_l0l1_traffic.py"
 
 MODES = ("e2e", "isolated", "phases", "torchprof", "nsys")
@@ -485,7 +486,7 @@ def expand_cells(spec, plat):
                             " arrive free in every mode via the recorder"
                         )
                         continue
-                    if driver == "gather_rs" and mode == "phases":
+                    if driver in ("gather_rs", "moonep_l1") and mode == "phases":
                         print(
                             f"NOTE: {vname} x phases not generated — the gather-rs"
                             " op has no FLUX_A2AV_TIMING stderr marks; a phases"
@@ -505,7 +506,7 @@ def expand_cells(spec, plat):
                     # cells: isolated = in-forward index build, amortized =
                     # layer0-inherited indices (the combined-pass proxy)
                     timing_modes = [""]
-                    if driver == "gather_rs":
+                    if driver in ("gather_rs", "moonep_l1"):
                         timing_modes = ["isolated", "amortized"]
                     for tm in timing_modes:
                         tm_slug = {"isolated": "_tmiso", "amortized": "_tmamo"}.get(tm, "")
@@ -698,6 +699,35 @@ def ultraep_sym_size(matrix_path, plat, spec, variant):
     return f"{sym_g}G"
 
 
+def moonep_l1_sym_size(matrix, spec, plat, routing_mode, v):
+    """Symmetric-heap sizing for the moonep VIRTUAL-SPACE layer1 cells. The
+    runner cannot compute the MoonEP plan (torch-free login), so it bounds
+    the virtual-space demands from the matrix: replication only ever REMOVES
+    cross-node copies (a copy either stays dispatched or becomes home-local),
+    so the matrix-based stage/conv/wire demands are UPPER bounds — but the
+    send panel (max gemm rows on one owner) can EXCEED the matrix bound,
+    because replication concentrates rows at token homes; bound it by
+    2 * T * topk (the plan's balance objective with 2x slack). The driver
+    sets the EXACT FLUX_A2AV_RS_MAX_* knobs from the plan itself
+    (setdefault) — never pre-set them here (the moonep_fused contract)."""
+    cb = int(spec["chunk_bytes"])
+    topk = int(spec["topk"])
+    L = plat["ranks_per_node"]
+    chunks, u, U, T = matrix_dedup_stats(matrix, spec, plat, routing_mode)
+    d = gen_matrix.a2av_rs_knob_demands(chunks, U, L)
+    cpr = T * topk
+    send_bound = 2 * cpr
+    if v.get("l1_pattern") == "a2av_hier_compress":
+        rows = send_bound + cpr + d["rs_conv"] + d["rs_wire"]
+    else:
+        rows = send_bound + cpr + d["rs_stage"]
+    sym_g = max(6, math.ceil(rows * cb / (1 << 30)) + 1)
+    sym_max = plat.get("sym_size_max_g")
+    if sym_max:
+        sym_g = min(sym_g, int(sym_max))
+    return f"{sym_g}G"
+
+
 def moonep_fused_sym_size(matrix_path, plat, spec):
     """Symmetric-heap sizing for the moonep_fused arm: the fused op's a2av
     buffers (send S*K rows; recv/stage/relay bounded by W*S, (NN-1)*S and
@@ -835,6 +865,13 @@ def build_cell_env(spec, plat, cell, staging, matrix):
         sym_max = plat.get("sym_size_max_g")
         if sym_max and sym_g > int(sym_max):
             env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_max}G"
+    elif v.get("driver", "flux") == "moonep_l1":
+        # virtual-space layer1 cells: the driver computes the EXACT
+        # FLUX_A2AV_RS_MAX_* knobs from the plan (setdefault -- never
+        # pre-set); heap from the matrix-derived upper bounds
+        env["NVSHMEM_SYMMETRIC_SIZE"] = moonep_l1_sym_size(
+            matrix, spec, plat, cell.get("routing_mode"), v
+        )
     elif v.get("driver", "flux") == "moonep_fused":
         # the driver computes the EXACT FLUX_A2AV_MAX_* knobs from the plan
         # (setdefault -- never pre-set them here); heap must hold the fused
@@ -1050,6 +1087,48 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
             matrix_path,
             "--comm_pattern",
             v["comm_pattern"],
+            "--topk",
+            str(spec["topk"]),
+            "-G",
+            str(spec["G"]),
+            "-N",
+            str(spec["H"]),
+            "-K",
+            str(spec["ffn_hidden"]),
+            "--chunk_bytes",
+            str(spec["chunk_bytes"]),
+            "--dtype",
+            spec["dtype"],
+            "--iters",
+            str(iters),
+            "--warmup_iters",
+            str(warmup),
+            "--sm_margin",
+            str(sm_margin),
+            "--n_split",
+            str(spec["n_split_l1"]),
+            "--timing_mode",
+            cell["timing_mode"],
+        ]
+        test_args += list(v.get("test_args") or [])
+        if routing_path:
+            test_args += ["--routing_file", routing_path]
+        if spec["skip_correctness"]:
+            test_args.append("--skip_correctness")
+        if cell["mode"] == "torchprof":
+            test_args.append("--profile")
+        launcher = cell_launcher(cell, plat, staging)
+        return srun_prefix + launcher + test_args, sm_margin, iters, warmup
+    if v.get("driver", "flux") == "moonep_l1":
+        # moonep virtual-space layer1: gather_rs-style argv (single-dash
+        # dims, no --H/--ffn_hidden_size tail); the driver's --comm_pattern
+        # is the variant's l1_pattern (comm_pattern stays the cells.csv label)
+        test_args = [
+            TEST_MOONEP_L1,
+            "--traffic_matrix",
+            matrix_path,
+            "--comm_pattern",
+            v["l1_pattern"],
             "--topk",
             str(spec["topk"]),
             "-G",

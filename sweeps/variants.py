@@ -838,6 +838,32 @@ VARIANTS = {
             "FLUX_A2AV_RS_EAGER",
         ],
     ),
+    # MOONEP VIRTUAL-SPACE LAYER1 (2026-08-17): the MoonEP plan's combine
+    # through the normal fused gather-rs op over R*(epn+B) virtual experts —
+    # replicated (slot) rows combine LOCALLY, so cross-rank combine copies =
+    # dispatch copies minus replication (the driver prints both). Weights
+    # land in slots via untimed setup here; the e2e moonep drivers move them
+    # with the weight ops. The DRIVER sets the exact FLUX_A2AV_RS_MAX_*
+    # knobs from the plan (setdefault; parity test in test_knob_demands.py);
+    # the runner only sizes the heap (moonep_l1_sym_size upper bounds) —
+    # hence no RS-knob `requires`. l1_pattern doubles as the driver's
+    # --comm_pattern and the heap-sizing branch selector.
+    "moonep_l1_hier": dict(
+        comm_pattern="moonep_a2av_hier",  # cells.csv label
+        driver="moonep_l1",
+        layer="l1",
+        l1_pattern="a2av_hier",
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    "moonep_l1_compress": dict(
+        comm_pattern="moonep_a2av_hier_compress",  # cells.csv label
+        driver="moonep_l1",
+        layer="l1",
+        l1_pattern="a2av_hier_compress",
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
     # FAST BvN alltoallv + un-overlapped GemmGroupedV2, layer1 direction
     # (compute -> communicate -> topk-sum; wire matrix = dispatch transpose).
     # Same constraints as the layer0 `fast` arm: e2e mode only (host-blocking
