@@ -115,6 +115,25 @@ the minimum; document whichever is used), NVSHMEM_SYMMETRIC_SIZE handled by
 the exact sizers. Budget several hours of queue+run; capsule protocol as
 always (fwd+rev if any verdict is claimed).
 
+## Worktree state & the base-ref trap
+
+Debug worktrees `l1-hang-debug` / `l1-nn4-debug` are PURGED (2026-08-16;
+branches kept, everything merged — a stray uncommitted copy of the
+empty-expert fix in l1-hang-debug was verified byte-identical to main
+before removal). The campaign worktree `comm-sweep-layer-axis` remains on
+disk, clean and even with main — a new session may either enter it
+(EnterWorktree with its path) or remove it and start fresh; there is
+nothing unmerged in it either way, and fresh-per-task branches are the
+convention.
+
+**TRAP**: Claude Code's EnterWorktree with a NAME branches from
+**origin/main = upstream bytedance/flux**, not local main — a fresh
+worktree created that way is missing months of local work (this bit the
+campaign on day one). Create worktrees manually instead:
+`git worktree add -b <branch> .claude/worktrees/<name> main`
+then EnterWorktree with the `path`. (Or immediately
+`git reset --hard main` inside a name-created worktree.)
+
 ## 7. Small hygiene items
 
 - The campaign's variants.py still carries the five factorial corner arms
