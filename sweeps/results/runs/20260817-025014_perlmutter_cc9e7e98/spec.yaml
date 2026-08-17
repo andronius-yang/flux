@@ -1,0 +1,29 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 2
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env: {}
+families:
+  - uniform
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 4
+nodes: 2
+notes: "canonicalization smoke: F+E default flip (binary D, ths-op a690c9e6); base arm silently F+E vs explicit-off ablation"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+skip_correctness: false
+sm_margin: 8
+timeout_s: 900
+topk: 8
+variants:
+  - hier_compress_lb_union
+  - hier_compress_lb_union_nofused_noearly
+warmup_iters: 5
