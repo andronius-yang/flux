@@ -882,8 +882,24 @@ def build_cell_env(spec, plat, cell, staging, matrix):
     elif v.get("driver", "flux") == "moonep_fused":
         # the driver computes the EXACT FLUX_A2AV_MAX_* knobs from the plan
         # (setdefault -- never pre-set them here); heap must hold the fused
-        # a2av buffers plus the permanent weight tensor
-        env["NVSHMEM_SYMMETRIC_SIZE"] = moonep_fused_sym_size(matrix_path, plat, spec)
+        # a2av buffers plus the permanent weight tensor. l01 adds the l1
+        # gather-rs panels + the second (w2) weight tensor: sum the two
+        # sizers (each already carries floors/headroom — conservative)
+        if v.get("layer") == "l01":
+            fused_g = int(moonep_fused_sym_size(matrix_path, plat, spec)[:-1])
+            rs_g = int(
+                moonep_l1_sym_size(
+                    matrix, spec, plat, cell.get("routing_mode"),
+                    {"l1_pattern": v.get("l1_pattern", "a2av_hier_compress")},
+                )[:-1]
+            )
+            sym_g = fused_g + rs_g
+            sym_max = plat.get("sym_size_max_g")
+            if sym_max:
+                sym_g = min(sym_g, int(sym_max))
+            env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_g}G"
+        else:
+            env["NVSHMEM_SYMMETRIC_SIZE"] = moonep_fused_sym_size(matrix_path, plat, spec)
     elif v.get("driver", "flux") in ("moonep", "ultraep", "eplb", "epic"):
         # no FLUX_A2AV_* scale knobs ever; NVSHMEM heap only for the
         # one-sided-transport arms (All2AllSingle symmetric staging is

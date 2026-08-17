@@ -1,0 +1,25 @@
+# MoonEP L0+L1 debut: authentic staged journey vs optimized fused pairing,
+# with their l0-only siblings as in-capsule anchors. One binary (the
+# moonep-completion build). prefetch_ms is reported per arm — the always-rent
+# baseline for any future persistent-experts (keep-stale) work. Rerun as the
+# _rev twin before quoting any delta (NR-14 method rule).
+platform: perlmutter
+nodes: 4
+variants: [moonep_nvshmem_getmem, moonep_l01_nvshmem_getmem, moonep_fused_push_auto_gated, moonep_fused_l01_push_auto_gated]
+families: ["trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"]
+budgets_mib: [1, 8]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 1200
+
+notes: "MoonEP l01 debut conn=8: authentic staged vs optimized fused (+l0 anchors), trace b1/8, isolated, correctness on"

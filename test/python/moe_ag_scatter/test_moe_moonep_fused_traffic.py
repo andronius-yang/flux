@@ -174,6 +174,23 @@ def parse_args():
                         " FIRST and the weight push after -- pure"
                         " fire-ordering, no completion waits between the"
                         " flows; requires push + tiles gate")
+    parser.add_argument("--layers", default="l0", choices=["l0", "l01"],
+                        help="l01 appends the optimized layer1: gelu + the"
+                        " fused gather-rs op (gemm2+combine) over the SAME"
+                        " virtual expert space with INHERITED combine"
+                        " metadata (built once at setup — the no-recalc l01"
+                        " contract). w2 rides a second weight op issued in"
+                        " the same pref bracket as w1 (both matrices upfront"
+                        " — upstream one-pass prefetch, api.py:158-173); an"
+                        " explicit op_w2.join() gates gemm2 (v1: no gemm2"
+                        " tile gate — named follow-up). The l1 push op's"
+                        " weight_full feeds gather_rs with zero copies.")
+    parser.add_argument("--l1_comm_pattern", default="a2av_hier_compress",
+                        choices=["a2av_hier", "a2av_hier_compress"],
+                        help="combine transport for --layers l01 (compress ="
+                        " the W16 combined winner; degrades to hier on 1"
+                        " node)")
+    parser.add_argument("--l1_n_split", type=int, default=4)
     parser.add_argument("--check_staged", default=False, action="store_true",
                         help="also run one staged MoonEPLayer0Runner"
                         " iteration on the same plan and compare outputs"
@@ -184,11 +201,14 @@ def parse_args():
 
 @torch.no_grad()
 def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
-                      meta, out_buf, epn, sharded=False):
+                      meta, out_buf, epn, sharded=False, op_w2=None, l1=None):
     total_iters = args.warmup_iters + args.iters
+    names = ["start", "pref_start", "pref_end", "gw_end", "gate", "end"]
+    if l1 is not None:
+        names += ["l0_end", "act_end", "l1_join"]
     ev = {
         name: [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
-        for name in ("start", "pref_start", "pref_end", "gw_end", "gate", "end")
+        for name in names
     }
     w_stream = torch.cuda.Stream(priority=-1)
     # NR-13 F-B extended to sharding: every shard-machinery wait (egress
@@ -205,6 +225,8 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
     tiles = push and args.weight_gate == "tiles"
     tokens_first = args.weight_issue_order == "tokens_first"  # implies push+tiles
 
+    w_ops = [op_w] + ([op_w2] if op_w2 is not None else [])
+
     def emit_shard_chain(i):
         # DEADLOCK RULE compliance under tokens_first: shard_stream waits
         # only on pref_end, which w_stream records after its own wait-free
@@ -213,11 +235,35 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
         # remote rank's wait-free issue (or an earlier op on this stream).
         with torch.cuda.stream(shard_stream):
             shard_stream.wait_event(ev["pref_end"][i])
-            op_w.forward_egress()
-            op_w.forward_ingress()
-            op_w.forward_shard_join()
-            op_w.forward_gateway()
+            for w in w_ops:
+                w.forward_egress()
+                w.forward_ingress()
+                w.forward_shard_join()
+                w.forward_gateway()
             ev["gw_end"][i].record()
+
+    def emit_l1_chain(i):
+        # optimized layer1 on the main stream: gelu -> explicit w2 landing
+        # gate (v1: zero-SM join, no gemm2 tile gate — named follow-up) ->
+        # fused gather-rs (gemm2 + combine) with INHERITED metadata. The
+        # join sits after the whole l0 window, so it is almost always
+        # already satisfied by the time the stream reaches it.
+        ev["l0_end"][i].record()
+        l1["act_buf"].copy_(torch.nn.functional.gelu(out_buf))
+        ev["act_end"][i].record()
+        if push:
+            op_w2.join()  # w2 landing gate (getmem: pref_end join proved it)
+        ev["l1_join"][i].record()
+        l1["out"] = l1["op"].forward_gather_rs(
+            l1["act_buf"], l1["wfull2"], l1["split"], l1["routing"],
+            input_scale=l1["input_scales"],
+            weight_scale=l1["weight_scales"],
+            output_vec_scale=l1["vec"],
+            fast_accum=False,
+            sm_margin=args.sm_margin,
+            bias=None,
+            **l1["kwargs"],
+        )
     torch.cuda.synchronize()
     torch.distributed.barrier()
     for i in range(total_iters):
@@ -270,12 +316,20 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
                     got = op_w.forward(multicast=mcast)
                     assert got == epoch == i + 1, \
                         f"epoch skew: {got} vs peeked {epoch} vs iter {i + 1}"
+                    if op_w2 is not None:
+                        # both matrices in ONE issue window (upstream
+                        # one-pass prefetch); w2 has no tile gate, its
+                        # landing gate is the join inside emit_l1_chain
+                        op_w2.forward(multicast=mcast)
                     ev["pref_end"][i].record()
                     if not sharded:
-                        op_w.forward_gateway()
+                        for w in w_ops:
+                            w.forward_gateway()
                         ev["gw_end"][i].record()
                 if sharded:
                     emit_shard_chain(i)
+                if l1 is not None:
+                    emit_l1_chain(i)
                 torch.cuda.current_stream().wait_event(ev["gw_end"][i])
                 ev["end"][i].record()
                 continue
@@ -290,6 +344,8 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
                 ev["pref_start"][i].record()
                 if push:
                     epoch = op_w.forward(multicast=mcast)
+                    if op_w2 is not None:
+                        op_w2.forward(multicast=mcast)
                 else:
                     op_w.forward(
                         op_w.prefetch_slots(),
@@ -297,6 +353,13 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
                         args.prefetch_chunk_bytes,
                         args.prefetch_impl == "kernel",
                     )
+                    if op_w2 is not None:
+                        op_w2.forward(
+                            op_w2.prefetch_slots(),
+                            args.num_comm_sm,
+                            args.prefetch_chunk_bytes,
+                            args.prefetch_impl == "kernel",
+                        )
                 ev["pref_end"][i].record()
                 if push and not sharded:
                     # NR-13 F-B: the gateway's slot-arrival wait + NVLink
@@ -304,7 +367,8 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
                     # waits on weight ARRIVAL — pref_end now means "home puts
                     # issued" on every rank. The fan-out overlaps the fused
                     # forward; gw_end is joined back in after it (below).
-                    op_w.forward_gateway()
+                    for w in w_ops:
+                        w.forward_gateway()
                     ev["gw_end"][i].record()
             if push and sharded:
                 emit_shard_chain(i)
@@ -341,6 +405,8 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
                 a2av_unique_counts=meta.a2av_unique_counts,
                 **gate_kwargs,
             )
+            if l1 is not None:
+                emit_l1_chain(i)
             if push:
                 # drain the concurrent gateway fan-out inside the iteration
                 # (keeps next iteration's slot rewrites happens-after, and
@@ -349,6 +415,8 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
             ev["end"][i].record()
 
     times = {"e2e_ms": [], "prefetch_ms": [], "gate_ms": [], "fused_ms": []}
+    if l1 is not None:
+        times.update({"act_ms": [], "l1_join_ms": [], "l1_ms": []})
     if sharded:
         # the shard machinery window: pref_end (home issue done) -> gw_end
         # (egress + reassembly + finalize + gateway drained). Overlaps the
@@ -369,10 +437,65 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
         times["gate_ms"].append(
             0.0 if tokens_first else ev["pref_end"][i].elapsed_time(ev["gate"][i])
         )
-        times["fused_ms"].append(ev["gate"][i].elapsed_time(ev["end"][i]))
+        if l1 is not None:
+            # l01 brackets: fused_ms narrows to the l0 window; prefetch_ms
+            # stays its own bracket (the future persistent-experts baseline)
+            times["fused_ms"].append(ev["gate"][i].elapsed_time(ev["l0_end"][i]))
+            times["act_ms"].append(ev["l0_end"][i].elapsed_time(ev["act_end"][i]))
+            times["l1_join_ms"].append(ev["act_end"][i].elapsed_time(ev["l1_join"][i]))
+            times["l1_ms"].append(ev["l1_join"][i].elapsed_time(ev["end"][i]))
+        else:
+            times["fused_ms"].append(ev["gate"][i].elapsed_time(ev["end"][i]))
     if isolated:
         times["iso_sync_ms"] = iso_sync_times[args.warmup_iters :]
     return times
+
+
+@torch.no_grad()
+def check_correctness_l01(args, moe_ctx, choosed_experts, w_tok, full_w2,
+                          l1_out, epn, atol, rtol):
+    """Independent two-layer reference for the optimized l01 journey: for
+    each of MY tokens, sum over its top-k entries of
+    route_w * gelu(x @ w1_e^T) @ w2_e^T — from the RAW ORIGINAL routing and
+    inputs (never the virtual space or the ops' buffers). w1 arrives per
+    expert via NCCL broadcast; w2 is replicated by construction. Rounding
+    points mirror the pipeline (bf16 casts after each GEMM); the reference
+    accumulates in fp32 — absorbed by the tolerances."""
+    rank = TP_GROUP.rank()
+    W = TP_GROUP.size()
+    ntokens = choosed_experts.shape[0]
+    S = ntokens // W
+    x = moe_ctx.inputs_shard  # [S, H] my tokens
+    my_topk = choosed_experts[rank * S:(rank + 1) * S].to(x.device)
+    ref = torch.zeros(S, args.H, dtype=torch.float32, device=x.device)
+    ffn_shard = moe_ctx.ffn_size_shard
+    tmp_w1 = torch.empty(ffn_shard, args.H, dtype=x.dtype, device=x.device)
+    for e in range(args.G):
+        home = e // epn
+        if home == rank:
+            tmp_w1.copy_(moe_ctx.weights[0][e % epn])
+        torch.distributed.broadcast(tmp_w1, src=home, group=TP_GROUP)
+        mask = my_topk == e
+        if not bool(mask.any()):
+            continue
+        s_idx, k_idx = mask.nonzero(as_tuple=True)
+        h1 = torch.matmul(x[s_idx].float(), tmp_w1.float().t()).to(x.dtype)
+        a = torch.nn.functional.gelu(h1)
+        w2e = full_w2[e].to(x.device)
+        h2 = torch.matmul(a.float(), w2e.float().t()).to(x.dtype)
+        ref[s_idx] += h2.float() * w_tok[rank * S + s_idx.cpu(), k_idx.cpu()].to(
+            x.device
+        ).unsqueeze(1)
+    try:
+        flux.torch_allclose(l1_out, ref.to(l1_out.dtype), atol=atol, rtol=rtol)
+    except Exception as e:  # noqa: BLE001
+        print(f"❌ rank {rank}: l01 combined output vs two-layer reference"
+              " MISMATCH")
+        RECORDER.emit_correctness(bitwise=False, allclose=False)
+        RECORDER.flush()
+        raise e
+    print(f"✅ rank {rank}: l01 combined output matches the two-layer"
+          " reference (allclose)")
 
 
 @torch.no_grad()
@@ -655,6 +778,107 @@ if __name__ == "__main__":
         int(meta.m_per_rank[rank]), ffn_shard, dtype=output_dtype, device="cuda"
     )
 
+    # ---- optimized layer1 (--layers l01): second weight op + fused
+    # gather-rs over the SAME virtual space with INHERITED metadata ----
+    op_w2 = None
+    l1_bundle = None
+    full_w2 = None
+    w_tok = None
+    if args.layers == "l01":
+        from flux.testing.a2av_combine_indices import (
+            build_a2av_combine_indices,
+            build_a2av_compress_indices,
+            build_a2av_unique_counts,
+        )
+        from flux.testing.moonep_fused_map import required_a2av_rs_knobs
+
+        gen2 = torch.Generator().manual_seed(1234)
+        full_w2 = (
+            torch.rand((args.G, args.H, ffn_shard), generator=gen2) * 0.02 - 0.01
+        ).to(input_dtype)
+        w2_home = full_w2[rank * epn:(rank + 1) * epn].cuda().contiguous()
+        if args.weight_path == "push":
+            op_w2 = flux.WeightPushMulticast(
+                TP_GROUP, epn, B, args.H, ffn_shard, input_dtype,
+            )
+            op_w2.set_plan(push_pairs)
+            if weight_sharded:
+                # same table: w2's expert_bytes equal w1's (H*ffn == ffn*H)
+                op_w2.set_shard_plan(
+                    shard_table, args.weight_shard_chunk_bytes,
+                    DIST_ENV.LOCAL_WORLD_SIZE,
+                )
+        else:
+            op_w2 = flux.WeightPrefetchGetmem(
+                TP_GROUP, epn, B, args.H, ffn_shard, input_dtype,
+                contiguous_layout=True,
+            )
+            op_w2.set_pairs(torch.tensor(my_pairs, dtype=torch.int32).reshape(-1, 3))
+        op_w2.weight_home().copy_(w2_home)
+
+        # exact RS knobs BEFORE the gather_rs ctor (parity-tested formulas)
+        for k, v in required_a2av_rs_knobs(meta, W, DIST_ENV.LOCAL_WORLD_SIZE).items():
+            os.environ.setdefault(k, v)
+        use_l1_compress = args.l1_comm_pattern == "a2av_hier_compress"
+        M_all = ntokens * args.topk
+        l1_op = flux.GemmGroupedV2GatherRSOp(
+            TP_GROUP, vmap.E_virt, M_all, args.H, args.topk, output_dtype,
+            1, W, 1,
+            nnodes=DIST_ENV.NNODES, n_split=args.l1_n_split,
+            do_all_reduce=False, use_read_mode=False,
+            a2av_hier=not use_l1_compress,
+            a2av_hier_compress=use_l1_compress,
+        )
+        # INHERITED combine metadata, built ONCE (the no-recalc contract):
+        # split/routing/dedup come from the same plan metadata the l0 op
+        # consumes; the amortized index/CSR set is what a fused pipeline
+        # hands over.
+        split_cpu_v = meta.splits
+        routing_v = scatter_gpu.flatten()
+        l1_kwargs = {"splits_per_source": meta.splits_per_source}
+        uc = None
+        if use_l1_compress and DIST_ENV.NNODES > 1:
+            uc = build_a2av_unique_counts(
+                vmap.virtual_choosed.long(), W, DIST_ENV.NNODES, gpe
+            )
+            l1_kwargs["a2av_unique_counts"] = uc
+        pack_index, reduce_index = build_a2av_combine_indices(
+            routing_v, split_cpu_v, rank, W, args.topk
+        )
+        l1_kwargs["a2av_pack_index"] = pack_index
+        l1_kwargs["a2av_reduce_index"] = reduce_index
+        if uc is not None:
+            wire_ptr, wire_copy, red_ptr, red_row = build_a2av_compress_indices(
+                routing_v, split_cpu_v, uc, rank, W, DIST_ENV.NNODES, args.topk
+            )
+            l1_kwargs["a2av_wire_csr"] = [wire_ptr, wire_copy]
+            l1_kwargs["a2av_reduce_csr"] = [red_ptr, red_row]
+
+        # per-copy route weights (replicated seed) -> this rank's gemm-row
+        # vec scale via the inverse of the virtual scatter index
+        gen3 = torch.Generator().manual_seed(777)
+        w_tok = torch.rand((ntokens, args.topk), generator=gen3) + 0.5
+        m_start = int(meta.splits[: rank * gpe].sum())
+        M_cur = int(meta.m_per_rank[rank])
+        rows = meta.scatter_index.flatten().long()
+        mask = (rows >= m_start) & (rows < m_start + M_cur)
+        t_idx = (torch.arange(ntokens * args.topk) // args.topk)[mask]
+        k_idx = (torch.arange(ntokens * args.topk) % args.topk)[mask]
+        vec_v = torch.zeros(max(M_cur, 1), dtype=torch.float32)
+        vec_v[rows[mask] - m_start] = w_tok[t_idx, k_idx]
+        l1_bundle = {
+            "op": l1_op,
+            "wfull2": op_w2.weight_full(),
+            "split": split_cpu_v,
+            "routing": routing_v,
+            "vec": vec_v[:M_cur].cuda(),
+            "kwargs": l1_kwargs,
+            "input_scales": torch.ones((1,), dtype=torch.float32, device="cuda"),
+            "weight_scales": torch.ones((gpe,), dtype=torch.float32, device="cuda"),
+            "act_buf": torch.zeros(M_cur, ffn_shard, dtype=output_dtype, device="cuda"),
+            "out": None,
+        }
+
     if rank == 0:
         wire_rows = [
             [int(((plan.dst[s] >= 0)
@@ -677,12 +901,13 @@ if __name__ == "__main__":
             weight_gate=args.weight_gate,
             weight_issue_order=args.weight_issue_order,
             weight_shard=args.weight_shard,
+            weight_layers=args.layers,
             **{f"knob_{k}": v for k, v in knobs.items()},
         )
 
     times = perf_moonep_fused(
         args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu, meta, out_buf, epn,
-        sharded=weight_sharded,
+        sharded=weight_sharded, op_w2=op_w2, l1=l1_bundle,
     )
     RECORDER.emit_iters("flux", times)
     e2e = sum(times["e2e_ms"]) / len(times["e2e_ms"])
@@ -692,6 +917,17 @@ if __name__ == "__main__":
 
     if not args.skip_correctness:
         check_correctness(args, plan, vmap, meta, moe_ctx, op_w, wfull, out_buf)
+        if args.layers == "l01":
+            if input_dtype == torch.float16:
+                l01_atol, l01_rtol = 1e-2, 1e-3
+            else:
+                l01_atol, l01_rtol = 1e-2, 1.5e-2
+            check_correctness_l01(
+                args, moe_ctx, choosed_experts.cpu(), w_tok, full_w2,
+                l1_bundle["out"], epn, l01_atol, l01_rtol,
+            )
         if rank == 0:
             print("correctness OK (V3a bitwise slots, V3b allclose gemm"
-                  + (", staged row-map A/B" if args.check_staged else "") + ")")
+                  + (", staged row-map A/B" if args.check_staged else "")
+                  + (", l01 two-layer reference" if args.layers == "l01" else "")
+                  + ")")

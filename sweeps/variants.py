@@ -274,6 +274,36 @@ VARIANTS = {
     # shards legs >= the threshold; census + resolution RECORDER-audited
     # (wshard_*). The shard machinery waits ride a dedicated late-drained
     # stream (NR-13 F-B extended); shard_ms brackets its window.
+    # OPTIMIZED L0+L1 (2026-08-17): fused l0 (lb_union + push auto + tile
+    # gate) + the virtual-space fused gather-rs combine (compress, the W16
+    # combined winner) with INHERITED metadata — built once at setup, the
+    # no-recalc l01 contract. BOTH matrices push upfront in one issue window
+    # (two WeightPushMulticast instances, same plan; op_w2.weight_full feeds
+    # gather_rs with zero copies); gemm2 gates on an explicit op_w2.join()
+    # (v1 — gemm2 tile gating is the named follow-up). prefetch_ms stays its
+    # own bracket: the always-rent baseline any future persistent-experts
+    # (keep-stale) arm is judged against.
+    "moonep_fused_l01_push_auto_gated": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        layer="l01",
+        l1_pattern="a2av_hier_compress",
+        test_args=["--weight_path", "push", "--weight_push_mode", "auto",
+                   "--weight_gate", "tiles", "--layers", "l01"],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_SCHED_PREFETCH_LAST"],
+    ),
+    "moonep_fused_l01_push_auto_gated_shard": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        layer="l01",
+        l1_pattern="a2av_hier_compress",
+        test_args=["--weight_path", "push", "--weight_push_mode", "auto",
+                   "--weight_gate", "tiles", "--layers", "l01",
+                   "--weight_shard", "auto"],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_SCHED_PREFETCH_LAST"],
+    ),
     "moonep_fused_push_auto_shard": dict(
         comm_pattern="moonep_fused_a2av",
         driver="moonep_fused",
