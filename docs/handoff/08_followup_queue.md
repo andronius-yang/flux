@@ -1,5 +1,15 @@
 # 08 — Follow-up queue after the comm-only layer-axis campaign
 
+> **STATUS 2026-08-17**: items 1–4 DONE (commits 58efc02 + docs follow-up;
+> smoke capsule `20260817-025014_perlmutter_cc9e7e98`, uncommitted — human
+> commits capsules). User-directed deviations from the queue as written:
+> the FANOUT arm was NOT deleted and the F/E ablation arms were KEPT — all
+> eager/FANOUT mechanisms retained but marked CLOSED-LOSER (decisive,
+> case closed, ablation-only); explicit-off arms added as the post-flip
+> ablation axis. Item 4 verdict: UNREACHABLE on deployed paths (one latent
+> PCIe-only analog recorded in handoff 07 §6, not fixed). Remaining: items
+> 5 (l01_fast bring-up) and 6 (16n W64 + first 16n layer1 closure).
+
 Handoff for a fresh session starting the post-campaign work. Read
 `docs/handoff/07_comm_only_layer_axis_campaign.md` FIRST — it is the campaign
 authority (verdicts, capsule ledger, both bug narratives); `sweeps/SCHEMA.md`

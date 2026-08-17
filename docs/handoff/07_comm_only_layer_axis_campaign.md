@@ -240,8 +240,31 @@ across b2–b64.
   dedup pays at W=16 (l1 iso b32/64; combined at every budget).
 - `l01_fast` (fast+fast combined) blocked on the FAST credit-reset question;
   `l1_fast` b64 heap ceiling documented.
-- Canonicalization patches (knob defaults F/E on; delete FANOUT arm) not yet
-  applied to variants/kernel defaults — do after the 4n lane lands so the
-  whole campaign shares one variant table.
-- gemm_rs sibling `set_barrier_ptr` (same pattern as bug #2) unaudited.
+- ~~Canonicalization patches~~ LANDED 2026-08-17 (commit 58efc02 + smoke
+  capsule 20260817-025014): F+E default-ON under LB_UNION in the binary
+  (E gated on conn>1 so bare launch.sh conn=1 runs keep historical
+  behavior); FANOUT and RS_EAGER arms KEPT but marked CLOSED-LOSER (user
+  directive: mechanisms retained, case closed, ablation-only);
+  explicit-off ablation arms added (_nofused/_noearly/_nofused_noearly);
+  `l01_lbunion_compress` promoted to reference combined config. 2n smoke
+  (binary D, ths-op sha a690c9e6): both arms ok+allclose, base (silent F+E)
+  1.241 ms vs explicit-off 1.542 ms at b2 uniform — defaults demonstrably
+  engaged. env_json boundary note in variants.py/SCHEMA.md/SKILL.md.
+- ~~gemm_rs sibling `set_barrier_ptr` unaudited~~ AUDITED 2026-08-17:
+  **UNREACHABLE on every default/deployed path** — the MoE trigger (one
+  empty segment among nonempty) is structurally impossible in gemm_rs
+  (`m % world_size` FLUX_CHECKed, reduce_scatter_kernel.hpp:2190), and the
+  PCIe swizzle's genuinely-empty segments are explicitly skipped. ONE latent
+  exact analog of the c9b82b6 mismatch exists at
+  `sm89/gemm_with_absmax.h:843-848` + `epilogue_evt.hpp:358-363` (counter
+  indexed by tile ROW, target counts a whole RANK SEGMENT — missing
+  `/ segments_per_rank`), reachable only via the non-default, warned-against
+  `use_gemmk=true` + `per_tile_flags=false` combo in kPcieMode (never
+  entered on Perlmutter/AWS NVLink) with `m_per_rank > kM`; minimal fix =
+  `seg = segment_idx / segments_per_rank` in both files if PCIe ever
+  matters. Adjacent notes: m=0 hangs the PCIe waiters (no `m > 0` guard);
+  `tiled_m < world_size` floor-division hazards at epilogue_evt.hpp:397 and
+  sm89:827 (currently un-dereferenced / guarded only on the ws==8 queue
+  path). Not fixed — unvalidatable on our platforms; recorded here so the
+  audit stops being listed.
 - 16n W64 closure cells (pre-campaign debt) remain unrun — separate campaign.
