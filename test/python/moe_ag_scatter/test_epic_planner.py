@@ -423,6 +423,108 @@ def test_wire_emulation_m_invariance(case):
             assert logical in topk_all[s, t].tolist()
 
 
+BIG = 1 << 32
+
+
+def emulate_combine(plan, topk_all, m):
+    """CPU emulation of the full combine round trip for every rank.
+
+    Expert rank d packs its group-g recv stream (src-major, (slot, token)
+    within src — literally re-derived here, NOT assumed from the
+    transposition theorem) and routes each row back to its source. Row tag
+    = phys * BIG + (src*S + token). Home rank r stages tags via
+    comb_dst_slot. Returns per-rank [S, K] int64 tag staging.
+    """
+    cfg = plan.cfg
+    R, nlp, S = cfg.R, cfg.nlp, cfg.S
+    bounds = group_partition(nlp, m)
+    group_of_slot = torch.empty(nlp, dtype=torch.int64)
+    for g, (lo, hi) in enumerate(bounds):
+        group_of_slot[lo:hi] = g
+
+    # canonical per-src entry streams ((phys, token) sorted)
+    ent = []
+    for src in range(R):
+        t, p = reroute_expand(cfg, plan, src, topk_all[src])
+        order = torch.argsort(p * (S + 1) + t, stable=True)
+        ent.append((t[order], p[order]))
+
+    lays = [
+        build_epic_group_layouts(plan, r, topk_all, m, ranks_per_node=cfg.D)
+        for r in range(R)
+    ]
+    staging = [torch.full((S * cfg.K,), -1, dtype=torch.int64)
+               for _ in range(R)]
+    for g in range(m):
+        # expert rank d's combine send stream = its recv stream (src-major)
+        for d in range(R):
+            per_src = []
+            for src in range(R):
+                t_all, p_all = ent[src]
+                msk = ((p_all // nlp) == d) & (
+                    group_of_slot[p_all % nlp] == g)
+                per_src.append((t_all[msk], p_all[msk]))
+            # route each src's slice straight back to it
+            for src in range(R):
+                toks, phys = per_src[src]
+                tags = phys * BIG + (src * S + toks)
+                grp = lays[src].groups[g]
+                # home-side recv position within group g from expert d:
+                # position range = sum of send_counts[:d] .. +send_counts[d]
+                off = sum(grp.send_counts[:d])
+                dst = grp.comb_dst_slot[off:off + grp.send_counts[d]]
+                assert dst.numel() == tags.numel()
+                staging[src][dst] = tags
+    return [s.view(S, cfg.K) for s in staging]
+
+
+@pytest.mark.parametrize("case", EMU_CASES, ids=lambda c: c.name)
+def test_combine_emulation_roundtrip_and_m_invariance(case):
+    cfg, topk_all, tpe, _, plan, _ = build(case)
+    ref = emulate_combine(plan, topk_all, 1)
+    l2p = plan.l2p.long()
+    for r in range(cfg.R):
+        st = ref[r]
+        assert bool((st >= 0).all()), "staging cell never written"
+        # content: cell (t, j) carries THIS rank's token t...
+        tok_part = st % BIG
+        expect_tok = (r * cfg.S
+                      + torch.arange(cfg.S).unsqueeze(1).expand(cfg.S, cfg.K))
+        assert torch.equal(tok_part, expect_tok)
+        # ...served by the D6-chosen instance of topk[t, j]
+        phys_part = st // BIG
+        topk = topk_all[r].long()
+        for j in range(cfg.K):
+            l = topk[:, j]
+            C = plan.lcnts.long()[l]
+            expected_phys = l2p[l, torch.remainder(
+                torch.full_like(l, r), C)]
+            assert torch.equal(phys_part[:, j], expected_phys)
+    # bitwise m-invariance of the final staging
+    for m in (2, 4):
+        got = emulate_combine(plan, topk_all, m)
+        for r in range(cfg.R):
+            assert torch.equal(got[r], ref[r]), (case.name, m, r)
+
+
+def test_comb_dst_slot_permutation():
+    case = EMU_CASES[0]
+    cfg, topk_all, tpe, _, plan, _ = build(case)
+    for m in (1, 2, 4):
+        for r in range(cfg.R):
+            lay = build_epic_group_layouts(plan, r, topk_all, m,
+                                           ranks_per_node=cfg.D)
+            allc = torch.cat([g.comb_dst_slot for g in lay.groups])
+            assert bool(
+                (torch.bincount(allc, minlength=cfg.S * cfg.K) == 1).all())
+            # j matches the entry's expert position in the token's topk
+            for grp in lay.groups:
+                t = grp.send_row_index
+                j = grp.comb_dst_slot - t * cfg.K
+                got_l = topk_all[r].long()[t, j]
+                assert torch.equal(got_l, grp.send_entry_logical)
+
+
 def test_dup_stats_consistency():
     case = EMU_CASES[1]
     cfg, topk_all, _, _, plan, _ = build(case)
@@ -434,6 +536,105 @@ def test_dup_stats_consistency():
         if m == 1:
             assert d["dup_cross_group"] == 0
         assert d["dup_vs_nodedup"] >= 0
+
+
+# ---------------------------------------------------------------------------
+# hier_compress virtual bundles (S2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("m", (1, 2, 4))
+@pytest.mark.parametrize("case", EMU_CASES, ids=lambda c: c.name)
+def test_hc_bundles_invariants(case, m):
+    from flux.testing.epic_semantics import build_epic_hc_bundles
+
+    cfg, topk_all, tpe, _, plan, _ = build(case)
+    L = cfg.D
+    bundles = build_epic_hc_bundles(plan, topk_all, m, L)
+    assert len(bundles) == m
+    gpe = cfg.nlp + 1
+    ntokens = cfg.R * cfg.S
+
+    # K_g coverage: every real entry appears exactly once across groups
+    total_real = 0
+    for b in bundles:
+        vce = b.virtual_choosed.long()
+        assert vce.shape == (ntokens, b.K_g)
+        pad_slots = (vce % gpe) == cfg.nlp
+        # pads self-route to the token's home rank
+        home = torch.arange(ntokens) // cfg.S
+        assert bool((vce[pad_slots] // gpe
+                     == home.unsqueeze(1).expand_as(vce)[pad_slots]).all())
+        # pad accounting (incl. multi-pad tokens)
+        assert int(pad_slots.sum()) == int(b.pad_rows_per_rank.sum())
+        total_real += int((~pad_slots).sum())
+        # splits of real slots == the per-rank layout seg_rows for the group
+        for r in range(cfg.R):
+            lay = build_epic_group_layouts(plan, r, topk_all, m,
+                                           ranks_per_node=L)
+            grp = lay.groups[b.g]
+            got = b.meta.splits.long()[
+                r * gpe + grp.slot_lo: r * gpe + grp.slot_hi]
+            assert got.tolist() == grp.seg_rows
+        # m_per_rank = layout rows + pads
+        for r in range(cfg.R):
+            lay = build_epic_group_layouts(plan, r, topk_all, m,
+                                           ranks_per_node=L)
+            n_rows = sum(lay.groups[b.g].seg_rows)
+            assert int(b.meta.m_per_rank[r]) == n_rows + int(
+                b.pad_rows_per_rank[r])
+    assert total_real == ntokens * cfg.K
+
+    # multi-pad tokens (several pads of one token sharing the pad slot) must
+    # be exercised somewhere in the battery — guaranteed in the skewed K=4
+    # case at m=4
+    if m == 4 and case.name == "emu_skew":
+        pads_max = max(
+            int((((b.virtual_choosed.long() % gpe) == cfg.nlp)).sum(1).max())
+            for b in bundles
+        )
+        assert pads_max >= 2, "no multi-pad token exercised"
+
+
+def test_hc_dedup_reconciliation():
+    """Within-group dedup savings from u/U reconcile with the direct-arm
+    dup counterfactual: sum over groups of (rank-level copies - unique)
+    == dup_vs_nodedup - dup_cross_group (both count same-rank duplicate
+    (token, dest) pairs recoverable within one group's message)."""
+    from flux.testing.epic_semantics import build_epic_hc_bundles
+
+    case = EMU_CASES[1]
+    cfg, topk_all, _, _, plan, _ = build(case)
+    gpe = cfg.nlp + 1
+    for m in (1, 2):
+        bundles = build_epic_hc_bundles(plan, topk_all, m, cfg.D)
+        saved = 0
+        for b in bundles:
+            cnt = b.meta.splits_per_source.long().view(
+                cfg.R, cfg.R, gpe)
+            # exclude pad slots (self-copies, not wire savings)
+            chunks = cnt[:, :, :cfg.nlp].sum(2)
+            u = b.meta.a2av_unique_counts[:, :cfg.R].long()
+            # u counts pads too (they are entries on the home rank): remove
+            # the pad-token uniques by recomputing u over real entries only
+            vce = b.virtual_choosed.long()
+            real = (vce % gpe) != cfg.nlp
+            owner = torch.where(real, vce // gpe, torch.full_like(vce, -1))
+            flags = torch.zeros(cfg.R * cfg.S, cfg.R + 1, dtype=torch.bool)
+            flags.scatter_(1, owner + 1, True)
+            u_real = flags[:, 1:].view(cfg.R, cfg.S, cfg.R).sum(1)
+            saved += int((chunks - u_real).sum())
+        lay0 = build_epic_group_layouts(plan, 0, topk_all, m,
+                                        ranks_per_node=cfg.D)
+        d = epic_dup_stats(lay0, cfg.R)
+        # dup stats are per-rank (rank 0's sends); reconcile globally by
+        # summing every rank's stats
+        tot_within = 0
+        for r in range(cfg.R):
+            lay = build_epic_group_layouts(plan, r, topk_all, m,
+                                           ranks_per_node=cfg.D)
+            tot_within += epic_dup_stats(lay, cfg.R)["dup_within_group"]
+        assert saved == tot_within, (m, saved, tot_within)
 
 
 # ---------------------------------------------------------------------------

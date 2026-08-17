@@ -125,7 +125,16 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--capsule", required=True, help="sweeps/results/runs/<run_id> dir")
     p.add_argument("--l0-cell", required=True, help="layer0 isolated cell_id (or substring)")
-    p.add_argument("--l1-cell", required=True, help="layer1 tmamo isolated cell_id (or substring)")
+    p.add_argument("--l1-cell", default=None,
+                   help="layer1 tmamo isolated cell_id (or substring); omit "
+                   "with --l1-from-l01 for arm families without a standalone "
+                   "l1 cell (epic)")
+    p.add_argument("--l1-from-l01", action="store_true",
+                   help="source the l1 term from the l01 cell's own l1_ms "
+                   "metric (the epic driver emits l1_ms = e2e - l0 - act, so "
+                   "the WITHIN-cell identity is exact by construction; the "
+                   "informative check is then l0-cell-vs-l01-cell l0_ms "
+                   "agreement, reported alongside)")
     p.add_argument("--l01-cell", required=True, help="combined l01 cell_id (or substring)")
     p.add_argument(
         "--impl",
@@ -142,8 +151,36 @@ def main():
 
     rows = load_metrics(args.capsule)
     l0 = resolve_cell(rows, args.l0_cell, "--l0-cell")
-    l1 = resolve_cell(rows, args.l1_cell, "--l1-cell")
     l01 = resolve_cell(rows, args.l01_cell, "--l01-cell")
+    if args.l1_from_l01:
+        e0, n0 = max_rank_mean(rows, l0, args.impl, "e2e_ms")
+        e01, n01 = max_rank_mean(rows, l01, args.impl, "e2e_ms")
+        act, _ = max_rank_mean(rows, l01, args.impl, "act_ms")
+        l1_term, _ = max_rank_mean(rows, l01, args.impl, "l1_ms")
+        l0_in_l01, _ = max_rank_mean(rows, l01, args.impl, "l0_ms")
+        rhs = e0 + act + l1_term
+        residual = e01 - rhs
+        rel = residual / e01 if e01 else float("inf")
+        print(f"capsule : {args.capsule}  (--l1-from-l01 mode)")
+        print(f"impl    : {args.impl}")
+        print(f"l0   e2e: {e0:9.3f} ms  [{l0}] ({n0} iters)")
+        print(f"l01 l0  : {l0_in_l01:9.3f} ms  [{l01}]  <- l0-vs-l01 "
+              f"agreement is the informative check "
+              f"({(l0_in_l01 - e0) / e0 if e0 else 0:+.1%})")
+        print(f"l01  act: {act:9.3f} ms  [{l01}]")
+        print(f"l01  l1 : {l1_term:9.3f} ms  [{l01}]")
+        print(f"sum     : {rhs:9.3f} ms")
+        print(f"l01  e2e: {e01:9.3f} ms  [{l01}] ({n01} iters)")
+        print(f"residual: {residual:+9.3f} ms  ({rel:+.1%}, tolerance "
+              f"±{args.tolerance:.0%})")
+        if abs(rel) > args.tolerance:
+            print("FAIL: decomposition identity violated")
+            sys.exit(1)
+        print("OK")
+        return
+    if args.l1_cell is None:
+        p.error("--l1-cell is required unless --l1-from-l01")
+    l1 = resolve_cell(rows, args.l1_cell, "--l1-cell")
 
     # soft sanity: the identity is defined over isolated-discipline cells of
     # one capsule; mode mismatch or an l1 isolated-timing cell are warnings,

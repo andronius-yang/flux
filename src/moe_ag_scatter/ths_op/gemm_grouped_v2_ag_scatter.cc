@@ -1086,7 +1086,12 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       torch::Tensor const &scatter_index,
       const int32_t *cnt_host,  // [W, nexperts] splits_per_source, or nullptr
       const int32_t *uc_host,   // [W, W + nnodes] a2av_unique_counts, or nullptr
-      cudaStream_t stream) {
+      cudaStream_t stream,
+      // wire-deferral (FLUX_A2AV_EARLY_LAUNCH replay) is a caller decision:
+      // forward_impl passes early_launch_; dispatch_only passes false (no
+      // GEMM to reorder around — this also keeps the gather/relay tail on
+      // cp_stream instead of the never-joined pack_stream_).
+      bool defer_wire_arg) {
     const int W = this->world_size;
     const int64_t E = this->ep_nexperts;
     const int tokens_per_rank = inputs_shard.size(0);
@@ -2185,7 +2190,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     // instead of issued; forward_impl replays them (issue_deferred_wire) right
     // after the GEMM launch. The WHOLE cp_stream sequence defers or none of it
     // — cp_stream is FIFO and a partial deferral would reorder delivery.
-    const bool defer_wire = this->early_launch_;
+    const bool defer_wire = defer_wire_arg;
     if (defer_wire) {
       this->deferred_wire_.clear();
       this->deferred_wire_armed_ = true;
@@ -3116,6 +3121,93 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         sorted_gather_index, sorted_scatter_index, sorted_splits_cumsum, (int)M_this_ep};
   }
 
+ public:
+  // Dispatch-only entry for externally-composed pipelines (the EPIC
+  // baseline): run the a2av wire WITHOUT the fused GEMM and materialize the
+  // received rows into a dense [M_this_ep, hidden] tensor an external
+  // grouped GEMM can consume. Completion gating is barrier-based (simple
+  // and provably covers empty-window signal slots): the first
+  // nvshmemx_barrier_all quiesces every rank's outstanding puts before the
+  // gather reads the recv buffer; the second is the standard epoch-close
+  // barrier (next iteration's remote puts must not race this epoch's
+  // reads). EARLY_LAUNCH deferral is neutralized via defer_wire_arg=false.
+  // Reads FLUX_A2AV_DISPATCH_ONLY_TAG (a no-op knob whose literal string in
+  // the built .so is the sweep runner's capability probe for this method).
+  std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, int64_t>
+  dispatch_only(
+      torch::Tensor inputs_shard,
+      torch::Tensor splits_gpu,
+      torch::Tensor scatter_index,
+      c10::optional<torch::Tensor> splits_per_source,
+      c10::optional<torch::Tensor> a2av_unique_counts,
+      c10::optional<torch::Tensor> dense_out) {
+    (void)get_int_from_env("FLUX_A2AV_DISPATCH_ONLY_TAG", 0);
+    FLUX_CHECK(a2av_dispatch_) << "dispatch_only requires an a2av-mode op";
+    FLUX_CHECK(!pack_overlap_)
+        << "dispatch_only is untested with FLUX_A2AV_PACK_OVERLAP";
+    CHECK_INPUT(inputs_shard, this->input_dtype);
+    CHECK_NDIM(inputs_shard, 2);
+    CHECK_INPUT(splits_gpu, torch::kInt32);
+    CHECK_NDIM(splits_gpu, 1);
+    FLUX_CHECK_LE(this->nexperts, splits_gpu.size(0));
+    CHECK_INPUT(scatter_index, torch::kInt32);
+    CHECK_NDIM(scatter_index, 2);
+    FLUX_CHECK_EQ(scatter_index.size(1), this->topk);
+
+    const int32_t *cnt_host = nullptr;
+    if (splits_per_source.has_value()) {
+      auto const &cnt = splits_per_source.value();
+      FLUX_CHECK(cnt.device().is_cpu()) << "splits_per_source must be a CPU tensor";
+      FLUX_CHECK(cnt.scalar_type() == torch::kInt32);
+      FLUX_CHECK(cnt.is_contiguous());
+      CHECK_2D(cnt, world_size, this->nexperts);
+      cnt_host = cnt.data_ptr<int32_t>();
+    }
+    const int32_t *uc_host = nullptr;
+    if (a2av_unique_counts.has_value()) {
+      auto const &uc = a2av_unique_counts.value();
+      FLUX_CHECK(uc.device().is_cpu()) << "a2av_unique_counts must be a CPU tensor";
+      FLUX_CHECK(uc.scalar_type() == torch::kInt32);
+      FLUX_CHECK(uc.is_contiguous());
+      CHECK_2D(uc, world_size, world_size + this->nnodes);
+      uc_host = uc.data_ptr<int32_t>();
+    }
+    if (a2av_hier_compress_) {
+      FLUX_CHECK(cnt_host != nullptr && uc_host != nullptr)
+          << "a2av_hier_compress requires splits_per_source AND a2av_unique_counts";
+    }
+
+    cudaStream_t stream = c10::cuda::getCurrentCUDAStream();
+    auto st = this->a2av_dispatch(
+        inputs_shard, splits_gpu, scatter_index, cnt_host, uc_host, stream,
+        /*defer_wire_arg=*/false);
+
+    CUDA_CHECK(cudaStreamWaitEvent(stream, this->all_gather_event));
+    if (a2av_hier_compress_ && nnodes > 1 && !relay_identity_ && !union_bcast_) {
+      CUDA_CHECK(cudaStreamWaitEvent(stream, this->signal_done_event_));
+    }
+    // delivery barrier: after this, every rank's epoch-n puts have landed
+    nvshmemx_barrier_all_on_stream(stream);
+
+    auto gidx = st.sorted_gather_index.narrow(0, 0, st.M_this_ep);
+    torch::Tensor dense;
+    if (dense_out.has_value()) {
+      dense = dense_out.value();
+      CHECK_INPUT(dense, this->input_dtype);
+      CHECK_2D(dense, st.M_this_ep, this->hidden);
+      at::index_select_out(dense, this->a2av_recv_buffer, 0, gidx);
+    } else {
+      dense = at::index_select(this->a2av_recv_buffer, 0, gidx);
+    }
+
+    // epoch-close barrier: iteration n+1 remote puts must not race the
+    // gather above (dense is private memory past this point)
+    nvshmemx_barrier_all_on_stream(stream);
+    return {dense, st.sorted_scatter_index, st.sorted_splits_cumsum,
+            (int64_t)st.M_this_ep};
+  }
+
+ protected:
   std::vector<torch::Tensor>
   forward_impl(
       torch::Tensor inputs_shard,
@@ -3248,7 +3340,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       FLUX_CHECK(!allgather_output.has_value()) << "a2av mode has no dense gathered buffer";
       FLUX_CHECK_EQ((int)splits_gpu.size(0), nexperts) << "drop-token unsupported in a2av mode";
       A2AVDispatchState a2av_state =
-          this->a2av_dispatch(inputs_shard, splits_gpu, scatter_index, cnt_host, uc_host, stream);
+          this->a2av_dispatch(
+              inputs_shard, splits_gpu, scatter_index, cnt_host, uc_host, stream,
+              /*defer_wire_arg=*/this->early_launch_);
       sorted_gather_index = a2av_state.sorted_gather_index;
       sorted_scatter_index = a2av_state.sorted_scatter_index;
       sorted_splits_cumsum = a2av_state.sorted_splits_cumsum;
@@ -4283,6 +4377,24 @@ GemmGroupedV2AGScatterOp::clear_buffers() {
   FLUX_CHECK(impl_ != nullptr) << "GemmGroupedV2AGScatterOp is not initialized";
   impl_->clear_buffers();
 }
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, int64_t>
+GemmGroupedV2AGScatterOp::dispatch_only(
+    torch::Tensor inputs_shard,
+    torch::Tensor splits_gpu,
+    torch::Tensor scatter_index,
+    c10::optional<torch::Tensor> splits_per_source,
+    c10::optional<torch::Tensor> a2av_unique_counts,
+    c10::optional<torch::Tensor> dense_out) {
+  FLUX_CHECK(impl_ != nullptr) << "GemmGroupedV2AGScatterOp is not initialized";
+  return impl_->dispatch_only(
+      std::move(inputs_shard),
+      std::move(splits_gpu),
+      std::move(scatter_index),
+      std::move(splits_per_source),
+      std::move(a2av_unique_counts),
+      std::move(dense_out));
+}
+
 torch::Tensor
 GemmGroupedV2AGScatterOp::forward(
     torch::Tensor inputs_shard,

@@ -757,7 +757,14 @@ def epic_sym_size(matrix_path, plat, spec, v):
     post-topk emission to one dest) scaled by the runner's All2AllSingle
     split headroom (--a2a_split_headroom, default 2.0): the runner sizes
     max_split = headroom * initial max per-(group, pair) rows, and
-    max-pair-rows <= row sum. Floor 2G, plat cap (same policy as eplb)."""
+    max-pair-rows <= row sum. Floor 2G, plat cap (same policy as eplb).
+
+    hier_compress arms additionally allocate per-group fused-op dispatch
+    buffers (send + recv/stage/relay, driver-sized exact via os.environ)
+    and per-group TopkReduceScatterOp combine panels — conservatively 2x
+    the row-sum basis on top of the All2AllSingle staging (the driver sets
+    the exact FLUX_A2AV_MAX_* / FLUX_A2AV_RS_MAX_* knobs itself; the sweep
+    must NOT pre-set them for this driver)."""
     headroom = 2.0
     ta = v.get("test_args") or []
     if "--a2a_split_headroom" in ta:
@@ -772,7 +779,10 @@ def epic_sym_size(matrix_path, plat, spec, v):
     chunk = int(spec["chunk_bytes"])
     hidden = 2 * w * max_pair_bytes
     probs = 2 * w * (max_pair_bytes // chunk) * 4
-    sym_g = max(2, math.ceil(2 * (hidden + probs) / (1 << 30)))
+    need = 2 * (hidden + probs)
+    if "hier_compress" in ta:
+        need += 4 * w * max_pair_bytes  # fused dispatch + combine panels
+    sym_g = max(2, math.ceil(need / (1 << 30)))
     sym_max = plat.get("sym_size_max_g")
     if sym_max:
         sym_g = min(sym_g, int(sym_max))
@@ -845,7 +855,7 @@ def build_cell_env(spec, plat, cell, staging, matrix):
             env["NVSHMEM_SYMMETRIC_SIZE"] = moonep_getmem_sym_size(
                 matrix_path, plat, spec, v
             )
-        elif "nvshmem" in ta:
+        elif "nvshmem" in ta or "hier_compress" in ta:
             if v.get("driver") == "ultraep":
                 env["NVSHMEM_SYMMETRIC_SIZE"] = ultraep_sym_size(
                     matrix_path, plat, spec, v

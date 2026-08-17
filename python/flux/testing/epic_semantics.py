@@ -398,6 +398,13 @@ class EpicGroupLayout:
     recv_counts: list                 # [W] rows from each src
     place_slots: torch.Tensor         # [n_recv_g] int64 ABSOLUTE hidden_buf slot
     seg_rows: list                    # [slot_hi - slot_lo] rows per slot
+    # combine (layer1): home staging slot t*K + j per SEND entry. By the
+    # transposition theorem the combine recv stream on the home rank is,
+    # position for position, this rank's dispatch send window (same order),
+    # so this single tensor is the entire combine-side wire metadata.
+    # j = position of the entry's logical expert in topk_all[rank, t] —
+    # unique because reroute_expand hard-asserts distinct experts per token.
+    comb_dst_slot: torch.Tensor = None  # [n_send_g] int64 in [0, S*K)
 
 
 @dataclass
@@ -479,6 +486,15 @@ def build_epic_group_layouts(plan: UltraEPPlan, rank: int,
     inter_send = inter_recv = 0
     my_node = rank // ranks_per_node if ranks_per_node else 0
 
+    # Combine home-slot table pos[t, l] = j (position of logical l in this
+    # rank's topk row for token t; unique — reroute_expand asserts distinct
+    # experts per token).
+    my_topk = topk_all[rank].cpu().long()                       # [S, K]
+    pos = torch.full((cfg.S, cfg.G), -1, dtype=torch.int64)
+    pos[torch.arange(cfg.S).unsqueeze(1), my_topk] = (
+        torch.arange(cfg.K, dtype=torch.int64).expand(cfg.S, cfg.K)
+    )
+
     # Replicated global pair-rows max (see EpicCommLayout.max_pair_rows):
     # every (src, group, dest) pair over ALL sources, not just this rank's.
     max_pair_rows = 0
@@ -538,6 +554,8 @@ def build_epic_group_layouts(plan: UltraEPPlan, rank: int,
                 if s // ranks_per_node != my_node:
                     inter_recv += recv_counts[s]
 
+        j_g = pos[tok_g, send_entry_logical]
+        assert bool((j_g >= 0).all()), "send entry expert not in token's topk"
         groups.append(EpicGroupLayout(
             g=g, slot_lo=lo, slot_hi=hi,
             send_row_index=tok_g,
@@ -546,9 +564,17 @@ def build_epic_group_layouts(plan: UltraEPPlan, rank: int,
             recv_counts=recv_counts,
             place_slots=place_slots,
             seg_rows=seg_rows[lo:hi].tolist(),
+            comb_dst_slot=tok_g * cfg.K + j_g,
         ))
         send_off.append(send_off[-1] + int(tok_g.numel()))
         recv_off.append(recv_off[-1] + sum(recv_counts))
+
+    # Every (token, topk-slot) staging cell is owned by exactly one send
+    # entry across all groups — the combine-staging correctness invariant.
+    all_comb = torch.cat([grp.comb_dst_slot for grp in groups])
+    assert bool(
+        (torch.bincount(all_comb, minlength=cfg.S * cfg.K) == 1).all()
+    ), "comb_dst_slot is not a permutation of [0, S*K)"
 
     return EpicCommLayout(
         m=m, groups=groups, send_off=send_off, recv_off=recv_off,
@@ -590,6 +616,148 @@ def epic_dup_stats(lay: EpicCommLayout, R: int):
         "dup_within_group": per_group_savings,
         "dup_cross_group": total_savings - per_group_savings,
     }
+
+
+# ---------------------------------------------------------------------------
+# hier_compress transport (EPIC Mode 2): per-group virtual bundles for the
+# fused op's dispatch_only entry. Virtual expert space = physical slots + ONE
+# PAD slot per rank (gpe = nlp + 1, pad local index = nlp, LAST in the rank
+# block so pad GEMM rows are a contiguous dense-tail). Per-group fixed
+# topk = K_g = max in-group entries of any token; pad entries self-route to
+# the home rank's pad slot (self-copies, deduped by compress like any other
+# same-rank duplicate). Metadata recipe/preflight/knob math reuse
+# moonep_fused_map verbatim (FusedMeta is just the field bundle).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class EpicHcBundle:
+    """One group's replicated host metadata for the hier_compress arm."""
+
+    g: int
+    K_g: int
+    gpe: int                        # nlp + 1
+    E_virt: int                     # R * gpe
+    virtual_choosed: torch.Tensor   # [ntokens, K_g] int32 CPU
+    meta: "object"                  # moonep_fused_map.FusedMeta
+    pad_rows_per_rank: torch.Tensor  # [W] int64
+
+
+def build_epic_hc_bundles(plan: UltraEPPlan, topk_all: torch.Tensor, m: int,
+                          local_world_size: int, fixed_kg=None):
+    """Per-group virtual routing bundles (replicated pure function of the
+    plan + routing). Entry -> vslot mapping comes from the same
+    reroute_expand expansion the direct layouts use, so bundles are
+    consistent with EpicCommLayout by construction."""
+    from .moonep_fused_map import (
+        FusedMeta,
+        _stable_scatter_index,
+        preflight_metadata_checks,
+        required_a2av_knobs,
+    )
+
+    cfg = plan.cfg
+    R, S, nlp = cfg.R, cfg.S, cfg.nlp
+    gpe = nlp + 1
+    E_virt = R * gpe
+    ntokens = R * S
+    L = local_world_size
+    bounds = group_partition(nlp, m)
+    group_of_slot = torch.empty(nlp, dtype=torch.int64)
+    for g, (lo, hi) in enumerate(bounds):
+        group_of_slot[lo:hi] = g
+
+    ent = []
+    for src in range(R):
+        t, p = reroute_expand(cfg, plan, src, topk_all[src])
+        order = torch.argsort(p * (S + 1) + t, stable=True)
+        ent.append((t[order], p[order]))
+
+    home_of_token = torch.arange(ntokens, dtype=torch.int64) // S
+    pad_vslot = home_of_token * gpe + nlp          # [ntokens]
+
+    bundles = []
+    for g in range(m):
+        gts, vsl = [], []
+        for src in range(R):
+            t_all, p_all = ent[src]
+            msk = group_of_slot[p_all % nlp] == g
+            gts.append(src * S + t_all[msk])
+            vsl.append((p_all[msk] // nlp) * gpe + (p_all[msk] % nlp))
+        gts = torch.cat(gts)
+        vsl = torch.cat(vsl)
+        order = torch.argsort(gts, stable=True)
+        gts_s, vsl_s = gts[order], vsl[order]
+        # per-token occurrence index (column in virtual_choosed)
+        positions = torch.arange(gts_s.numel(), dtype=torch.int64)
+        if gts_s.numel():
+            new_run = torch.cat([
+                torch.ones(1, dtype=torch.bool), gts_s[1:] != gts_s[:-1]])
+            run_start = torch.cummax(
+                torch.where(new_run, positions,
+                            torch.full_like(positions, -1)), 0).values
+            occ = positions - run_start
+            K_g = int(occ.max()) + 1
+        else:
+            occ = positions
+            K_g = 1
+        if fixed_kg is not None:
+            # op instances freeze topk at ctor: migration may not widen a
+            # group's per-token entry count past the frozen width
+            assert K_g <= fixed_kg[g], (
+                f"group {g}: post-migration K_g {K_g} exceeds the frozen op "
+                f"topk {fixed_kg[g]} — hc arms cannot absorb this migration"
+            )
+            K_g = fixed_kg[g]
+        vce = torch.full((ntokens, K_g), -1, dtype=torch.int64)
+        vce[gts_s, occ] = vsl_s
+        pad_mask = vce < 0
+        pad_rows = torch.zeros(R, dtype=torch.int64).index_add_(
+            0, home_of_token, pad_mask.sum(1))
+        vce = torch.where(pad_mask, pad_vslot.unsqueeze(1).expand_as(vce), vce)
+        vce = vce.int()
+
+        # metadata recipe: build_fused_metadata with (S, K_g, gpe, E_virt)
+        vce_l = vce.long()
+        scatter_index = _stable_scatter_index(vce)
+        splits = torch.bincount(vce_l.flatten(), minlength=E_virt).int()
+        src_of_copy = home_of_token.repeat_interleave(K_g)
+        splits_per_source = (
+            torch.bincount(src_of_copy * E_virt + vce_l.flatten(),
+                           minlength=R * E_virt)
+            .view(R, E_virt).int().contiguous()
+        )
+        owner = vce_l // gpe
+        flags = torch.zeros(ntokens, R, dtype=torch.bool)
+        flags.scatter_(1, owner, True)
+        u_mat = flags.view(R, S, R).sum(1)
+        nn = R // L
+        U_mat = flags.view(ntokens, nn, L).any(dim=2).view(R, S, nn).sum(1)
+        a2av_unique_counts = torch.cat([u_mat, U_mat], dim=1).int().contiguous()
+        m_per_rank = splits.long().view(R, gpe).sum(1)
+        meta = FusedMeta(
+            scatter_index=scatter_index,
+            splits=splits,
+            splits_per_source=splits_per_source,
+            a2av_unique_counts=a2av_unique_counts,
+            m_per_rank=m_per_rank,
+        )
+        preflight_metadata_checks(meta, R, L)
+        bundles.append(EpicHcBundle(
+            g=g, K_g=K_g, gpe=gpe, E_virt=E_virt,
+            virtual_choosed=vce, meta=meta,
+            pad_rows_per_rank=pad_rows,
+        ))
+    return bundles
+
+
+def epic_hc_required_knobs(bundle: EpicHcBundle, W: int,
+                           local_world_size: int) -> dict:
+    """Exact FLUX_A2AV_MAX_{RECV,STAGE,RELAY}_NTOKENS for one group's op
+    instance (moonep_fused_map.required_a2av_knobs on the group's meta)."""
+    from .moonep_fused_map import required_a2av_knobs
+
+    return required_a2av_knobs(bundle.meta, W, local_world_size)
 
 
 # ---------------------------------------------------------------------------
@@ -781,7 +949,8 @@ class EpicLayer0Runner(EPLBLayer0Runner):
     def __init__(self, plan: UltraEPPlan, rank: int, group, device,
                  topk_all: torch.Tensor, m: int, dtype=torch.bfloat16,
                  ffn_size_shard: int = 0, place_fc2: bool = True,
-                 ranks_per_node: int = 4, comm_group=None):
+                 ranks_per_node: int = 4, comm_group=None,
+                 layers: str = "l0"):
         super().__init__(plan, rank, group, device, topk_all, dtype=dtype,
                          ffn_size_shard=ffn_size_shard, place_fc2=place_fc2)
         self.m = m
@@ -791,11 +960,35 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         # on `group`.
         self.comm_group = comm_group if comm_group is not None else group
         self.ranks_per_node = ranks_per_node
+        assert layers in ("l0", "l01")
+        if layers == "l01":
+            assert place_fc2, "--layers l01 requires fc1fc2 weight placement"
+        self.layers = layers
         self._gemm_backend = "grouped"
         self._grouped_ops = None
+        self._grouped_ops_fc2 = None
+        self.hc_enabled = False
+        self.hcc_enabled = False
+        self._last_inputs = None
         self.group_outputs = [None] * m
+        self.group_act = [None] * m
+        self.group1_outputs = [None] * m
         self.migration_swap_bytes = 0
         self._build_group_state(topk_all)
+        if layers == "l01":
+            H = self.cfg.H
+            dev = self.device
+            # expert-side packed combine rows (recv-capacity-sized, grows
+            # with migration); home-side combine recv [S*K, H]; staging for
+            # the terminal Sum; final [S, H] output.
+            self.comb_send_buf = torch.empty(
+                self.recv_buf.shape[0], H, dtype=dtype, device=dev)
+            self.comb_recv_buf = torch.empty(
+                self.n_send, H, dtype=dtype, device=dev)
+            self.stage_buf = torch.zeros(
+                self.n_send, H, dtype=dtype, device=dev)
+            self.final_out = torch.zeros(self.cfg.S, H, dtype=dtype,
+                                         device=dev)
 
     # -- layout (initial + post-migration rebuild) --------------------------
 
@@ -830,6 +1023,17 @@ class EpicLayer0Runner(EPLBLayer0Runner):
             grp.send_entry_logical.to(dev) for grp in elay.groups
         ]
         self.g_place_slots = [grp.place_slots.to(dev) for grp in elay.groups]
+        if self.layers == "l01":
+            self.g_comb_dst = [grp.comb_dst_slot.to(dev) for grp in elay.groups]
+            self.g_comb_pack = [
+                (grp.place_slots - elay.seg_start[grp.slot_lo]).to(dev)
+                for grp in elay.groups
+            ]
+            if (hasattr(self, "comb_send_buf")
+                    and elay.n_recv > self.comb_send_buf.shape[0]):
+                self.comb_send_buf = torch.empty(
+                    self.recv_buf.shape[0], self.cfg.H, dtype=self.dtype,
+                    device=dev)
         if self.transport == "nvshmem":
             self._refresh_nvshmem_splits()
             assert elay.max_pair_rows <= self._epic_max_split, (
@@ -853,6 +1057,8 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         self._build_group_state(self._topk_all)
         if self._gemm_backend == "grouped" and self._grouped_ops is not None:
             self._build_grouped_ops()
+        if self.hc_enabled:
+            self._rebuild_hc_bundles()
         return (time.perf_counter() - t0) * 1e3
 
     # -- transports ---------------------------------------------------------
@@ -892,6 +1098,186 @@ class EpicLayer0Runner(EPLBLayer0Runner):
             for grp in self.elay.groups
         ]
 
+    def enable_hier_compress(self, tp_env, local_world_size: int,
+                             headroom: float = 1.5,
+                             relay: str = "identity"):
+        """EPIC Mode-2 dispatch transport: per-group GemmGroupedV2AGScatterOp
+        instances (a2av_hier_compress) driven through dispatch_only over the
+        virtual physical-slot expert space. relay='identity' is the faithful
+        PXN shape (inter-node to the same-index GPU, NVLink forward =
+        FLUX_A2AV_RELAY_IDENTITY); 'balanced' is our chunked-relay ablation.
+        Requires enable_nvshmem() first (the per-entry probs side-wire stays
+        on All2AllSingle — the fused op moves token rows only). Capacity env
+        knobs are process-global ctor-reads: set per instance, in
+        SPMD-identical group order, BEFORE each ctor."""
+        import os
+
+        import flux
+
+        assert self.transport == "nvshmem", (
+            "enable_hier_compress requires enable_nvshmem() first")
+        assert relay in ("identity", "balanced")
+        os.environ["FLUX_A2AV_RELAY_IDENTITY"] = (
+            "1" if relay == "identity" else "0")
+        os.environ.pop("FLUX_A2AV_LB_UNION", None)  # baseline: no lb_union
+        self._hc_relay = relay
+        self._hc_L = local_world_size
+        self._hc_headroom = headroom
+        self._hc_tp_env = tp_env
+        self._hc_bundles = build_epic_hc_bundles(
+            self.plan, self._topk_all, self.m, local_world_size)
+        self._hc_kg = [b.K_g for b in self._hc_bundles]
+        self._hc_ops = []
+        self._hc_splits_gpu = []
+        self._hc_scatter_gpu = []
+        self._hc_caps = []
+        ntokens = self.cfg.R * self.cfg.S
+        for b in self._hc_bundles:
+            knobs = epic_hc_required_knobs(b, self.cfg.R, local_world_size)
+            caps = {k: int(int(v) * headroom) + 1 for k, v in knobs.items()}
+            for k, v in caps.items():
+                os.environ[k] = str(v)
+            self._hc_caps.append(caps)
+            moe_args = flux.MoeArguments(
+                max_ntokens=ntokens,
+                hidden=self.cfg.H,
+                ffn_hidden=self.ffn_size_shard,
+                nexperts=b.E_virt,
+                topk=b.K_g,
+                input_dtype=self.dtype,
+                output_dtype=self.dtype,
+            )
+            self._hc_ops.append(flux.GemmGroupedV2AGScatterOp(
+                tp_env=tp_env, moe_args=moe_args,
+                a2av_dispatch=True, a2av_hier_compress=True))
+            self._hc_splits_gpu.append(b.meta.splits.cuda())
+            self._hc_scatter_gpu.append(b.meta.scatter_index.cuda())
+        self.hc_enabled = True
+
+    def _rebuild_hc_bundles(self):
+        """Post-migration: bundles are pure functions of (plan, routing);
+        op instances are frozen (capacities + topk) — hard-assert fit."""
+        self._hc_bundles = build_epic_hc_bundles(
+            self.plan, self._topk_all, self.m, self._hc_L,
+            fixed_kg=self._hc_kg)
+        for g, b in enumerate(self._hc_bundles):
+            knobs = epic_hc_required_knobs(b, self.cfg.R, self._hc_L)
+            for k, v in knobs.items():
+                assert int(v) <= self._hc_caps[g][k], (
+                    f"group {g}: post-migration {k} demand {v} exceeds the "
+                    f"ctor capacity {self._hc_caps[g][k]}; raise headroom")
+            self._hc_splits_gpu[g] = b.meta.splits.cuda()
+            self._hc_scatter_gpu[g] = b.meta.scatter_index.cuda()
+
+    def dispatch_group_hc(self, g: int):
+        """hier_compress dispatch for group g: fused-op wire + dense
+        materialization straight into the v1 hidden_buf segment (order
+        theorem: fused dense order == v1 slot-major segment order; pad rows
+        are the block tail and are dropped), plus the v1 per-entry probs
+        side-wire."""
+        b = self._hc_bundles[g]
+        grp = self.elay.groups[g]
+        base = self.elay.seg_start[grp.slot_lo]
+        n_rows = sum(grp.seg_rows)
+        dense, _ssi, _ssc, m_ep = self._hc_ops[g].dispatch_only(
+            self._last_inputs, self._hc_splits_gpu[g],
+            self._hc_scatter_gpu[g],
+            b.meta.splits_per_source, b.meta.a2av_unique_counts,
+        )
+        n_real = int(m_ep) - int(b.pad_rows_per_rank[self.rank])
+        assert n_real == n_rows, (
+            f"group {g}: dense real rows {n_real} != layout rows {n_rows}")
+        if n_rows:
+            self.hidden_buf[base:base + n_rows].copy_(dense[:n_real])
+        s_lo, s_hi = self.elay.send_off[g], self.elay.send_off[g + 1]
+        r_lo, r_hi = self.elay.recv_off[g], self.elay.recv_off[g + 1]
+        self._a2a_probs.forward(
+            self.wsend_buf[s_lo:s_hi].view(-1, 1),
+            self.wrecv_buf[r_lo:r_hi].view(-1, 1),
+            self._g_in_splits[g], self._g_out_splits[g],
+            self._num_comm_sm,
+        )
+
+    def enable_hc_combine(self, n_split: int = 4, pack_blocks: int = 3):
+        """EPIC Mode-2 combine (S3): one flux.TopkReduceScatterOp per group
+        over the group's virtual copy space (topk = K_g; pad rows carry
+        zero data + zero vec_scale). Each group's run() returns the PARTIAL
+        per-token sums [S, H]; final_out accumulates across groups
+        (associative regrouping of the terminal Sum — allclose vs the
+        direct arm, not bitwise). All indices come from the house python
+        builders (flux.testing.a2av_combine_indices) applied verbatim in
+        the virtual space. Compress silently degrades to plain hier at
+        nnodes==1 (gather_rs cc:1504-1505) — 1n runs are plumbing smokes.
+        NO C++: the combine-only op is already pybound."""
+        import os
+
+        import flux
+
+        from .a2av_combine_indices import (
+            build_a2av_combine_indices,
+            build_a2av_compress_indices,
+            build_a2av_unique_counts,
+        )
+
+        assert self.hc_enabled, "enable_hier_compress must run first"
+        assert self.layers == "l01", "hc combine is an l01 phase"
+        W = self.cfg.R
+        L = self._hc_L
+        nn = W // L
+        self._hcc_nsplit = n_split
+        self._hcc_pack_blocks = pack_blocks
+        self._hcc_stream = torch.cuda.Stream(priority=-1)
+        self._hcc_group_barrier = flux.GroupBarrier(self.group, False)
+        self._hcc = []
+        for b in self._hc_bundles:
+            m_full = W * self.cfg.S * b.K_g
+            cpr = m_full // W
+            os.environ["FLUX_A2AV_RS_MAX_SEND_ROWS"] = str(
+                int(b.meta.m_per_rank.max()))
+            os.environ["FLUX_A2AV_RS_MAX_STAGE_ROWS"] = str(cpr)
+            os.environ["FLUX_A2AV_RS_MAX_CONV_ROWS"] = str(cpr)
+            os.environ["FLUX_A2AV_RS_MAX_WIRE_ROWS"] = str(cpr)
+            barriers = flux.create_tensor_list(
+                (2 * n_split,), dtype=torch.int32, pg=self.group,
+                ring_mode=True)
+            op = flux.TopkReduceScatterOp(
+                self.group, m_full, self.cfg.H, b.K_g, self.dtype,
+                b.E_virt, W, barriers, n_split,
+                False,           # do_all_reduce
+                False,           # use_read_mode
+                nn,              # nnodes
+                True,            # a2av_hier
+                nn > 1,          # a2av_compress (degrades at 1n anyway)
+            )
+            routing_cpu = b.meta.scatter_index.flatten().cpu()
+            splits_cpu = b.meta.splits.cpu()
+            pack_idx, red_idx = build_a2av_combine_indices(
+                routing_cpu, splits_cpu, self.rank, W, b.K_g)
+            entry = {
+                "op": op, "barriers": barriers,
+                "routing": routing_cpu.cuda(),
+                "pack": pack_idx, "red": red_idx,
+                "uc": None, "wire": None, "redcsr": None,
+                "m_this": int(b.meta.m_per_rank[self.rank]),
+            }
+            if nn > 1:
+                uc = build_a2av_unique_counts(
+                    b.virtual_choosed, W, nn, b.gpe)
+                wp, wc, rp, rr = build_a2av_compress_indices(
+                    routing_cpu, splits_cpu, uc, self.rank, W, nn, b.K_g)
+                entry.update(uc=uc, wire=[wp, wc], redcsr=[rp, rr])
+            entry["inbuf"] = torch.zeros(
+                max(entry["m_this"], 1), self.cfg.H, dtype=self.dtype,
+                device=self.device)
+            entry["scale"] = torch.zeros(
+                max(entry["m_this"], 1), dtype=torch.float32,
+                device=self.device)
+            entry["partial"] = torch.zeros(
+                self.cfg.S, self.cfg.H, dtype=self.dtype,
+                device=self.device)
+            self._hcc.append(entry)
+        self.hcc_enabled = True
+
     def enable_grouped_gemm(self, backend: str = "grouped"):
         """Build the per-group GEMM ops. 'grouped': one flux.GemmGroupedV2
         per group; 'gemmonly': per-segment flux.GemmOnly loop (parent
@@ -921,14 +1307,20 @@ class EpicLayer0Runner(EPLBLayer0Runner):
             import flux as flux_mod
         self._grouped_ops = []
         self._grouped_splits = []
+        if self.layers == "l01":
+            self._grouped_ops_fc2 = []
         for g, grp in enumerate(self.elay.groups):
             rows = self._group_splits_cpu[g]
             nz = (rows > 0)
             if bool(nz.all()) or int(rows.sum()) == 0:
                 w = self.slot_fc1[grp.slot_lo:grp.slot_hi]
+                w2 = (self.slot_fc2[grp.slot_lo:grp.slot_hi]
+                      if self.layers == "l01" else None)
                 splits = rows
             else:
                 w = self.slot_fc1[grp.slot_lo:grp.slot_hi][nz].contiguous()
+                w2 = (self.slot_fc2[grp.slot_lo:grp.slot_hi][nz].contiguous()
+                      if self.layers == "l01" else None)
                 splits = rows[nz]
             assert w.is_contiguous()
             self._grouped_ops.append(
@@ -936,21 +1328,31 @@ class EpicLayer0Runner(EPLBLayer0Runner):
                     w, int(w.shape[0]), self.dtype, self.dtype)
             )
             self._grouped_splits.append(splits)
+            if self.layers == "l01":
+                assert w2.is_contiguous()
+                self._grouped_ops_fc2.append(
+                    flux_mod.GemmGroupedV2(
+                        w2, int(w2.shape[0]), self.dtype, self.dtype)
+                )
 
     # -- timed phase methods ------------------------------------------------
 
     def pack(self, inputs_shard: torch.Tensor, probs_shard: torch.Tensor):
         """Group-major pack of the whole send window (one launch pair per
-        group keeps it simple; rows land at the group's send_buf offset)."""
+        group keeps it simple; rows land at the group's send_buf offset).
+        Under hier_compress the fused op packs hidden rows internally from
+        inputs_shard, so only the probs side-wire is packed here."""
+        self._last_inputs = inputs_shard
         off = self.elay.send_off
         for g in range(self.m):
             lo, hi = off[g], off[g + 1]
             if hi == lo:
                 continue
-            torch.index_select(
-                inputs_shard, 0, self.g_send_row_index[g],
-                out=self.send_buf[lo:hi],
-            )
+            if not self.hc_enabled:
+                torch.index_select(
+                    inputs_shard, 0, self.g_send_row_index[g],
+                    out=self.send_buf[lo:hi],
+                )
             self.wsend_buf[lo:hi].copy_(
                 probs_shard[self.g_send_row_index[g],
                             self.g_send_entry_logical[g]]
@@ -991,7 +1393,9 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         if r_hi == r_lo:
             return
         slots = self.g_place_slots[g]
-        self.hidden_buf.index_copy_(0, slots, self.recv_buf[r_lo:r_hi])
+        if not self.hc_enabled:
+            # hier_compress places hidden rows in dispatch_group_hc
+            self.hidden_buf.index_copy_(0, slots, self.recv_buf[r_lo:r_hi])
         self.weights_buf.index_copy_(0, slots, self.wrecv_buf[r_lo:r_hi])
 
     def gemm_group(self, g: int, sm_margin: int = 0):
@@ -1019,6 +1423,136 @@ class EpicLayer0Runner(EPLBLayer0Runner):
             sm_margin=sm_margin,
         )
         self.group_outputs[g] = out
+
+    # -- layer1 phase methods (--layers l01) --------------------------------
+
+    def act_group(self, g: int):
+        """Activation between the two expert GEMMs: exact/erf GELU on the
+        native-dtype GEMM0 output (the combined-driver convention,
+        test_moe_l0l1_traffic.py:214)."""
+        out = self.group_outputs[g]
+        self.group_act[g] = (
+            torch.nn.functional.gelu(out) if out is not None else None)
+
+    def gemm1_group(self, g: int, sm_margin: int = 0):
+        grp = self.elay.groups[g]
+        n_rows = sum(grp.seg_rows)
+        if n_rows == 0:
+            self.group1_outputs[g] = None
+            return
+        if self._gemm_backend == "gemmonly":
+            act = self.group_act[g]
+            base = self.elay.seg_start[grp.slot_lo]
+            out = torch.empty(n_rows, self.cfg.H, dtype=self.dtype,
+                              device=self.device)
+            for p, start, end, _l in self.elay.gemm_segments:
+                if not (grp.slot_lo <= p < grp.slot_hi):
+                    continue
+                self._gemm_only_op.forward(
+                    act[start - base:end - base], self.slot_fc2[p],
+                    output_buf=out[start - base:end - base],
+                    fast_accum=False,
+                )
+            self.group1_outputs[g] = out
+            return
+        self.group1_outputs[g] = self._grouped_ops_fc2[g].forward(
+            self.group_act[g], self._grouped_splits[g], sm_margin=sm_margin)
+
+    def combine_pack_group(self, g: int):
+        """Expert-side combine pack: gather GEMM1 rows into recv-stream
+        order (place_slots) and apply the per-row route-prob vec_scale in
+        fp32 math (a2av_combine.cu:107-114 / moe_gather_rs_utils.py:96
+        convention). weights_buf is slot-major = the scale per packed row.
+        Under hc combine: assemble the op's expert-major input (GEMM1 rows
+        + zero pad tail) and the per-row scales; the vec_scale multiply
+        happens inside the op's pack kernel."""
+        grp = self.elay.groups[g]
+        n_rows = sum(grp.seg_rows)
+        if getattr(self, "hcc_enabled", False):
+            if n_rows == 0:
+                return
+            e = self._hcc[g]
+            base = self.elay.seg_start[grp.slot_lo]
+            e["inbuf"][:n_rows].copy_(self.group1_outputs[g])
+            e["scale"][:n_rows].copy_(
+                self.weights_buf[base:base + n_rows])
+            return
+        r_lo, r_hi = self.elay.recv_off[g], self.elay.recv_off[g + 1]
+        if r_hi == r_lo:
+            return
+        rows = self.group1_outputs[g].index_select(0, self.g_comb_pack[g])
+        scale = self.weights_buf.index_select(0, self.g_place_slots[g])
+        self.comb_send_buf[r_lo:r_hi] = (
+            rows.float() * scale.unsqueeze(1)).to(self.dtype)
+
+    def combine_group(self, g: int):
+        """Reverse wire: the SAME All2AllSingle pair (max_pair_rows is
+        transpose-invariant) with swapped splits. Under hc combine: the
+        per-group TopkReduceScatterOp run (triton-precedent protocol —
+        barrier fill/zero bracket, GroupBarrier, side cp_stream)."""
+        if getattr(self, "hcc_enabled", False):
+            e = self._hcc[g]
+            b = self._hc_bundles[g]
+            stream = torch.cuda.current_stream()
+            e["barriers"][self.rank % self._hc_L].fill_(1)
+            self._hcc_group_barrier.barrier_all(stream.cuda_stream)
+            e["op"].run(
+                [e["inbuf"]], e["partial"],
+                self.rank * b.gpe, b.gpe,
+                self._hc_splits_gpu[g], e["routing"],
+                [e["scale"]],
+                self._hcc_pack_blocks,
+                self._hcc_stream.cuda_stream,
+                b.meta.splits_per_source,
+                e["pack"], e["red"],
+                e["uc"], e["wire"], e["redcsr"],
+            )
+            self._hcc_group_barrier.barrier_all(stream.cuda_stream)
+            e["barriers"][self.rank % self._hc_L].zero_()
+            e["op"].reset_buffer()
+            return
+        grp = self.elay.groups[g]
+        r_lo, r_hi = self.elay.recv_off[g], self.elay.recv_off[g + 1]
+        s_lo, s_hi = self.elay.send_off[g], self.elay.send_off[g + 1]
+        if self.transport == "nvshmem":
+            self._a2a_hidden.forward(
+                self.comb_send_buf[r_lo:r_hi], self.comb_recv_buf[s_lo:s_hi],
+                self._g_out_splits[g], self._g_in_splits[g],
+                self._num_comm_sm,
+            )
+            return
+        self.dist.all_to_all_single(
+            self.comb_recv_buf[s_lo:s_hi], self.comb_send_buf[r_lo:r_hi],
+            output_split_sizes=grp.send_counts,
+            input_split_sizes=grp.recv_counts,
+            group=self.comm_group,
+        )
+
+    def accumulate_group(self, g: int):
+        """Deterministic home staging: each combine recv row owns a unique
+        (token, topk-slot) cell (transposition theorem + the comb_dst_slot
+        permutation assert). Under hc combine: accumulate the group's
+        partial per-token sums."""
+        if getattr(self, "hcc_enabled", False):
+            if g == 0:
+                self.final_out.zero_()
+            self.final_out += self._hcc[g]["partial"]
+            return
+        s_lo, s_hi = self.elay.send_off[g], self.elay.send_off[g + 1]
+        if s_hi == s_lo:
+            return
+        self.stage_buf.index_copy_(
+            0, self.g_comb_dst[g], self.comb_recv_buf[s_lo:s_hi])
+
+    def finalize_sum(self):
+        """The single terminal Sum (EPIC Fig 10(b)): fixed (t, j) order ⇒
+        bitwise m-invariant final output; matches the house
+        view(S, K, H).sum(1) convention. Under hc combine the partials were
+        already accumulated per group — no-op."""
+        if getattr(self, "hcc_enabled", False):
+            return
+        self.final_out = self.stage_buf.view(
+            self.cfg.S, self.cfg.K, self.cfg.H).sum(1)
 
     # -- parent overrides (guard against ungrouped-path misuse) -------------
 

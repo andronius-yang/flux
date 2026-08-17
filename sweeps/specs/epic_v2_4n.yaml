@@ -1,0 +1,56 @@
+# EPIC v2 capsule: the full arm matrix on ONE post-S2 binary (the
+# dispatch_only rebuild is a binary boundary — no comparison against the v1
+# capsule's numbers, all arms re-run here).
+#   l0 arms:  epic_m1/m2/m4 (PEO m-sweep, direct nvshmem), epic_m2_mig/
+#             epic_m4_mig (§4.3), epic_m1_place_none (placement control),
+#             epic_hc_m2/m4 (Mode-2 dispatch: dispatch_only + PXN identity
+#             relay + within-group dedup)
+#   l01 arms: epic_l01_m1/m2/m4 (full journey, direct), epic_l01_m2_mig,
+#             epic_l01_hc_m2/m4 (full Mode 2: hc dispatch + per-group
+#             TopkReduceScatterOp combine)
+#   context:  eplb (placement-algorithm A/B, same wire + slot budget),
+#             hier_compress_lb_union (our fused tile-overlap arm — different
+#             mechanism class, same cells)
+# Verdict lens: e2e_ms per layer family; per-group disp/stall/gemm{g} (+
+# gemm1/cpack/comb/acc under l01) for the pipeline story; D4
+# est-vs-actual inter-node facts; epic_dup_stats vs hc wire savings.
+# Run the reversed-arm-order twin before quoting any verdict.
+platform: perlmutter
+nodes: 4
+variants:
+  - epic_m1
+  - epic_m2
+  - epic_m4
+  - epic_m2_mig
+  - epic_m4_mig
+  - epic_m1_place_none
+  - epic_hc_m2
+  - epic_hc_m4
+  - epic_l01_m1
+  - epic_l01_m2
+  - epic_l01_m4
+  - epic_l01_m2_mig
+  - epic_l01_hc_m2
+  - epic_l01_hc_m4
+  - eplb
+  - hier_compress_lb_union
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib: [2, 8]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated, e2e]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 1200
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+notes: "EPIC v2 debut: PEO m-sweep x layers (l0/l01) x transport (direct/hier_compress PXN-identity) x migration + eplb/fused context arms, one post-dispatch_only binary, real Qwen3 trace layer 92, b2+b8/k8, correctness on"

@@ -484,6 +484,72 @@ VARIANTS = {
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),
+    # EPIC v2 arms — full journey (l01: dispatch -> GEMM0 -> GELU -> GEMM1 ->
+    # per-group combine -> terminal Sum) and the Mode-2 hier_compress
+    # transport (dispatch via the additive dispatch_only binding, combine via
+    # per-group TopkReduceScatterOp; requires a post-S2 binary — the
+    # FLUX_A2AV_DISPATCH_ONLY_TAG probe string gates stale builds into
+    # skipped_capability). hc arms default to the faithful PXN identity
+    # relay; migration stays on the direct transport (risk containment).
+    "epic_l01_m1": dict(
+        comm_pattern="epic_peo_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "nvshmem", "--placement", "epic",
+                   "--groups", "1", "--layers", "l01"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"}, requires=[],
+    ),
+    "epic_l01_m2": dict(
+        comm_pattern="epic_peo_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "nvshmem", "--placement", "epic",
+                   "--groups", "2", "--layers", "l01"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"}, requires=[],
+    ),
+    "epic_l01_m4": dict(
+        comm_pattern="epic_peo_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "nvshmem", "--placement", "epic",
+                   "--groups", "4", "--layers", "l01"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"}, requires=[],
+    ),
+    "epic_l01_m2_mig": dict(
+        comm_pattern="epic_peo_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "nvshmem", "--placement", "epic",
+                   "--groups", "2", "--layers", "l01", "--migration", "on"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"}, requires=[],
+    ),
+    "epic_hc_m1": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement", "epic",
+                   "--groups", "1"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_hc_m2": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement", "epic",
+                   "--groups", "2"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_hc_m4": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement", "epic",
+                   "--groups", "4"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_l01_hc_m2": dict(
+        comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "hier_compress", "--placement", "epic",
+                   "--groups", "2", "--layers", "l01"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_l01_hc_m4": dict(
+        comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "hier_compress", "--placement", "epic",
+                   "--groups", "4", "--layers", "l01"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
     # dense baseline and raw a2av modes
     "allgather": dict(comm_pattern="allgather", env={}, requires=[]),
     # a2av family pins CUDA_DEVICE_MAX_CONNECTIONS=8 (2026-08-01 A/B: -2..-8%

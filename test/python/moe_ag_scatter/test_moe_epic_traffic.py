@@ -135,6 +135,9 @@ def perf_epic(
     single_stream: bool,
 ):
     m = runner.m
+    l01 = runner.layers == "l01"
+    disp_fn = (runner.dispatch_group_hc if runner.hc_enabled
+               else runner.dispatch_group)
     total_iters = warmup_iters + iters
     g_names = (
         [f"disp{g}" for g in range(m)]
@@ -142,6 +145,15 @@ def perf_epic(
         + [f"scat{g}" for g in range(m)]
         + [f"gemm{g}" for g in range(m)]
     )
+    if l01:
+        g_names += (
+            [f"act{g}" for g in range(m)]
+            + [f"gemm1_{g}" for g in range(m)]
+            + [f"cpack{g}" for g in range(m)]
+            + [f"comb{g}" for g in range(m)]
+            + [f"acc{g}" for g in range(m)]
+            + ["sum_end"]
+        )
     names = ["start", "plan_comm", "mig", "pack"] + g_names
     ev = {
         name: [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
@@ -188,18 +200,32 @@ def perf_epic(
             ev["pack"][i].record()
             if single_stream:
                 for g in range(m):
-                    runner.dispatch_group(g)
+                    disp_fn(g)
                     ev[f"disp{g}"][i].record()
                     ev[f"gate{g}"][i].record()
                     runner.scatter_group(g)
                     ev[f"scat{g}"][i].record()
                     runner.gemm_group(g, sm_margin=sm_margin)
                     ev[f"gemm{g}"][i].record()
+                    if l01:
+                        runner.act_group(g)
+                        ev[f"act{g}"][i].record()
+                        runner.gemm1_group(g, sm_margin=sm_margin)
+                        ev[f"gemm1_{g}"][i].record()
+                        runner.combine_pack_group(g)
+                        ev[f"cpack{g}"][i].record()
+                        runner.combine_group(g)
+                        ev[f"comb{g}"][i].record()
+                        runner.accumulate_group(g)
+                        ev[f"acc{g}"][i].record()
+                if l01:
+                    runner.finalize_sum()
+                    ev["sum_end"][i].record()
             else:
                 comm_stream.wait_event(ev["pack"][i])
                 with torch.cuda.stream(comm_stream):
                     for g in range(m):
-                        runner.dispatch_group(g)
+                        disp_fn(g)
                         ev[f"disp{g}"][i].record()
                 for g in range(m):
                     torch.cuda.current_stream().wait_event(ev[f"disp{g}"][i])
@@ -208,6 +234,27 @@ def perf_epic(
                     ev[f"scat{g}"][i].record()
                     runner.gemm_group(g, sm_margin=sm_margin)
                     ev[f"gemm{g}"][i].record()
+                    if l01:
+                        runner.act_group(g)
+                        ev[f"act{g}"][i].record()
+                        runner.gemm1_group(g, sm_margin=sm_margin)
+                        ev[f"gemm1_{g}"][i].record()
+                        # combine for group g rides the comm stream, gated
+                        # on this group's GEMM1 (compute staging kept by
+                        # comm-stream in-order execution).
+                        comm_stream.wait_event(ev[f"gemm1_{g}"][i])
+                        with torch.cuda.stream(comm_stream):
+                            runner.combine_pack_group(g)
+                            ev[f"cpack{g}"][i].record()
+                            runner.combine_group(g)
+                            ev[f"comb{g}"][i].record()
+                            runner.accumulate_group(g)
+                            ev[f"acc{g}"][i].record()
+                if l01:
+                    torch.cuda.current_stream().wait_event(
+                        ev[f"acc{m - 1}"][i])
+                    runner.finalize_sum()
+                    ev["sum_end"][i].record()
 
     keys = (
         ["plan_comm_ms", "migration_ms", "pack_ms", "comm_ms", "e2e_ms",
@@ -217,8 +264,19 @@ def perf_epic(
         + [f"scat{g}_ms" for g in range(m)]
         + [f"gemm{g}_ms" for g in range(m)]
     )
+    if l01:
+        # combined-driver-compatible names (check_l01_identity.py reads
+        # e2e_ms + act_ms; l1_ms = e2e - l0 - act by construction).
+        keys += (
+            ["l0_ms", "act_ms", "l1_ms", "sum_ms"]
+            + [f"act{g}_ms" for g in range(m)]
+            + [f"gemm1_{g}_ms" for g in range(m)]
+            + [f"cpack{g}_ms" for g in range(m)]
+            + [f"comb{g}_ms" for g in range(m)]
+            + [f"acc{g}_ms" for g in range(m)]
+        )
     times = {k: [] for k in keys}
-    last = f"gemm{m - 1}"
+    last = "sum_end" if l01 else f"gemm{m - 1}"
     for i in range(total_iters):
         ev[last][i].synchronize()
         if i < warmup_iters:
@@ -244,6 +302,29 @@ def perf_epic(
                 ev[f"gate{g}"][i].elapsed_time(ev[f"scat{g}"][i]))
             times[f"gemm{g}_ms"].append(
                 ev[f"scat{g}"][i].elapsed_time(ev[f"gemm{g}"][i]))
+        if l01:
+            act_total = 0.0
+            for g in range(m):
+                span = ev[f"gemm{g}"][i].elapsed_time(ev[f"act{g}"][i])
+                times[f"act{g}_ms"].append(span)
+                act_total += span
+                times[f"gemm1_{g}_ms"].append(
+                    ev[f"act{g}"][i].elapsed_time(ev[f"gemm1_{g}"][i]))
+                # anchored at the gating event: queueing delay on the comm
+                # stream + the pack work itself
+                times[f"cpack{g}_ms"].append(
+                    ev[f"gemm1_{g}"][i].elapsed_time(ev[f"cpack{g}"][i]))
+                times[f"comb{g}_ms"].append(
+                    ev[f"cpack{g}"][i].elapsed_time(ev[f"comb{g}"][i]))
+                times[f"acc{g}_ms"].append(
+                    ev[f"comb{g}"][i].elapsed_time(ev[f"acc{g}"][i]))
+            l0_span = ev["mig"][i].elapsed_time(ev[f"gemm{m - 1}"][i])
+            e2e_span = times["e2e_ms"][-1]
+            times["l0_ms"].append(l0_span)
+            times["act_ms"].append(act_total)
+            times["l1_ms"].append(e2e_span - l0_span - act_total)
+            times["sum_ms"].append(
+                ev[f"acc{m - 1}"][i].elapsed_time(ev["sum_end"][i]))
     if isolated:
         times["iso_sync_ms"] = iso_sync_times[warmup_iters:]
     if migration:
@@ -362,10 +443,44 @@ def check_correctness(runner, ctx, plan, topk_all, w_all, atol, rtol):
                 print(f"❌ rank {rank}: gemm group {grp.g} slot={p} "
                       f"expert={logical} mismatch")
 
+    # Full-journey check (--layers l01): final [S, H] vs a torch chain from
+    # the canonical generators, mimicking the pipeline's dtype casts stage
+    # by stage (GEMM0 out bf16 -> gelu bf16 -> GEMM1 out bf16 -> fp32 scale
+    # -> bf16 wire) so tolerances stay the house bf16 thresholds. Home-side
+    # accumulation in fp32. Staging coverage is structurally guaranteed by
+    # the comb_dst_slot permutation assert in the layout builder.
+    if runner.layers == "l01":
+        x = ctx.inputs_shard.float()
+        topk = topk_all[rank].long()
+        ref = torch.zeros(cfg.S, cfg.H, dtype=torch.float32,
+                          device=runner.device)
+        for l in range(cfg.G):
+            toks = (topk == l).any(dim=1).nonzero(as_tuple=True)[0]
+            if toks.numel() == 0:
+                continue
+            toks_dev = toks.to(runner.device)
+            fc1 = runner.make_canonical_fc1(l).to(runner.device).float()
+            fc2 = runner.make_canonical_fc2(l).to(runner.device).float()
+            h0 = (x[toks_dev] @ fc1.t()).to(runner.dtype)
+            a = torch.nn.functional.gelu(h0)
+            y1 = (a.float() @ fc2.t()).to(runner.dtype)
+            wgt = w_all[rank][toks, l].to(runner.device).unsqueeze(1)
+            contrib = (y1.float() * wgt).to(runner.dtype).float()
+            ref.index_add_(0, toks_dev, contrib)
+        try:
+            flux.torch_allclose(runner.final_out.float(), ref,
+                                atol=atol, rtol=rtol)
+        except Exception:
+            ok_allclose = False
+            diff = (runner.final_out.float() - ref).abs()
+            print(f"❌ rank {rank}: l01 final output mismatch "
+                  f"(max abs {float(diff.max()):.4f})")
+
     status = "✅" if (ok_bitwise and ok_allclose) else "❌"
+    what = ("full journey" if runner.layers == "l01" else "gemm")
     print(f"{status} rank {rank}: epic dispatch content "
           f"{'bitwise-exact' if ok_bitwise else 'MISMATCH'}, "
-          f"gemm {'allclose' if ok_allclose else 'MISMATCH'}")
+          f"{what} {'allclose' if ok_allclose else 'MISMATCH'}")
     RECORDER.emit_correctness(bitwise=ok_bitwise, allclose=ok_allclose)
     assert ok_bitwise and ok_allclose
     return ok_bitwise and ok_allclose
@@ -380,9 +495,15 @@ def _tensor_bytes(t: torch.Tensor) -> bytes:
 
 def output_sha(runner) -> str:
     """Digest of the received rows + all group GEMM outputs (cross-m and
-    single-stream-vs-two-stream identity lever)."""
+    single-stream-vs-two-stream identity lever). Under l01 the digest is of
+    the FINAL [S, H] output (bitwise m-invariant by the staging design) —
+    emitted under a DIFFERENT info key (epic_out_sha_l01) so cross-layer
+    sha comparisons are impossible by construction."""
     h = hashlib.sha256()
     torch.cuda.synchronize()
+    if runner.layers == "l01":
+        h.update(_tensor_bytes(runner.final_out))
+        return h.hexdigest()[:16]
     h.update(_tensor_bytes(runner.hidden_buf[:runner.n_recv]))
     for out in runner.group_outputs:
         if out is not None:
@@ -447,6 +568,10 @@ def parse_args():
     parser.add_argument("--groups", type=int, default=2, choices=[1, 2, 4],
                         help="m: PEO expert groups (paper's values; m=1 = "
                         "no-overlap anchor)")
+    parser.add_argument("--layers", default="l0", choices=["l0", "l01"],
+                        help="l0 = dispatch + GEMM0 (v1); l01 = full journey"
+                        " dispatch -> GEMM0 -> GELU -> GEMM1 -> per-group"
+                        " combine -> terminal Sum (EPIC Fig 10(b))")
     parser.add_argument("--placement", default="epic",
                         choices=["none", "epic"],
                         help="epic = §4.2 (redundancy + GPU greedy + NIC "
@@ -472,7 +597,20 @@ def parse_args():
     parser.add_argument("--weight_place", default="fc1fc2",
                         choices=["fc1fc2", "fc1"])
     parser.add_argument("--transport", default="nccl",
-                        choices=["nccl", "nvshmem"])
+                        choices=["nccl", "nvshmem", "hier_compress"],
+                        help="nccl/nvshmem = direct per-entry wire (EPIC "
+                        "Mode 1 analog); hier_compress = fused-op "
+                        "dispatch_only over the virtual slot space (EPIC "
+                        "Mode 2: PXN relay + de-redundancy; probs ride the "
+                        "nvshmem side-wire; needs a post-S2 binary)")
+    parser.add_argument("--hc_relay", default="identity",
+                        choices=["identity", "balanced"],
+                        help="hier_compress relay shape: identity = "
+                        "same-index-GPU PXN (faithful Mode 2), balanced = "
+                        "our chunked-relay ablation")
+    parser.add_argument("--hc_headroom", type=float, default=1.5,
+                        help="capacity headroom for the per-group fused-op "
+                        "instances (migration-proofing)")
     parser.add_argument("--num_comm_sm", type=int, default=8)
     parser.add_argument("--a2a_split_headroom", type=float, default=2.0,
                         help="All2AllSingle max_split = headroom * initial "
@@ -495,7 +633,13 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     init_ep_group(DIST_ENV.WORLD_SIZE)
-    if args.transport == "nvshmem":
+    if args.transport == "hier_compress" and not hasattr(
+            flux.GemmGroupedV2AGScatterOp, "dispatch_only"):
+        print("SKIP: this libflux binary lacks "
+              "GemmGroupedV2AGScatterOp.dispatch_only (pre-S2 build); "
+              "hier_compress arms need a rebuilt binary")
+        sys.exit(0)
+    if args.transport in ("nvshmem", "hier_compress"):
         assert DTYPE_MAP[args.dtype] != torch.float16, (
             "All2AllSingle instantiates BF16/FP32 only"
         )
@@ -592,6 +736,8 @@ if __name__ == "__main__":
     # two streams).
     comm_group = DIST_ENV.new_group(list(range(W)))
 
+    if args.layers == "l01":
+        assert args.weight_place == "fc1fc2", "--layers l01 needs fc1fc2"
     runner = EpicLayer0Runner(
         plan, rank, TP_GROUP, torch.cuda.current_device(), topk_all,
         m=args.groups, dtype=input_dtype,
@@ -599,10 +745,20 @@ if __name__ == "__main__":
         place_fc2=(args.weight_place == "fc1fc2"),
         ranks_per_node=DIST_ENV.LOCAL_WORLD_SIZE,
         comm_group=comm_group,
+        layers=args.layers,
     )
-    if args.transport == "nvshmem":
+    if args.transport in ("nvshmem", "hier_compress"):
         runner.enable_nvshmem(DIST_ENV.LOCAL_WORLD_SIZE, args.num_comm_sm,
                               split_headroom=args.a2a_split_headroom)
+    if args.transport == "hier_compress":
+        tp_env = flux.DistEnvTPWithEP(
+            tp_group=TP_GROUP, nnodes=num_nodes, ep_group=EP_GROUP)
+        runner.enable_hier_compress(
+            tp_env, DIST_ENV.LOCAL_WORLD_SIZE,
+            headroom=args.hc_headroom, relay=args.hc_relay)
+        if args.layers == "l01":
+            # Mode-2 combine: per-group TopkReduceScatterOp (S3)
+            runner.enable_hc_combine()
 
     place_bytes, place_ms = runner.place_weights(TP_GROUP)
     # AFTER place_weights: the grouped backend snapshots compacted weight
@@ -693,6 +849,15 @@ if __name__ == "__main__":
         epic_est_internode_send_pool=est_send,
         epic_est_internode_recv_pool=est_recv,
     )
+    if args.transport == "hier_compress":
+        RECORDER.emit_info(
+            epic_hc_relay=args.hc_relay,
+            epic_hc_kg=[b.K_g for b in runner._hc_bundles],
+            epic_hc_pad_rows_total=[
+                int(b.pad_rows_per_rank.sum()) for b in runner._hc_bundles],
+            epic_hc_m_per_rank=[
+                b.meta.m_per_rank.tolist() for b in runner._hc_bundles],
+        )
 
     TP_GROUP.barrier()
     torch.cuda.synchronize()
@@ -719,6 +884,9 @@ if __name__ == "__main__":
     def fmt(times):
         keys = ["plan_comm_ms", "migration_ms", "pack_ms", "comm_ms",
                 "e2e_ms", "total_ms"]
+        if args.layers == "l01":
+            keys = ["plan_comm_ms", "migration_ms", "l0_ms", "act_ms",
+                    "l1_ms", "e2e_ms", "total_ms"]
         return ", ".join(
             f"{k[:-3]} {sum(times[k]) / max(len(times[k]), 1):.3f} ms"
             for k in keys
@@ -733,7 +901,10 @@ if __name__ == "__main__":
     flux.exec_in_rank_order(
         TP_GROUP, lambda: print(f"epic #{rank}: out_sha {sha}")
     )
-    RECORDER.emit_info(epic_out_sha=sha)
+    if args.layers == "l01":
+        RECORDER.emit_info(epic_out_sha_l01=sha, epic_layers="l01")
+    else:
+        RECORDER.emit_info(epic_out_sha=sha, epic_layers="l0")
 
     if input_dtype == torch.float16:
         atol, rtol = 1e-2, 1e-3

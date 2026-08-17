@@ -60,6 +60,15 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("a2av_hier_compress") = false)
         .def("clear_buffers", &GemmGroupedV2AGScatterOpCls::clear_buffers)
         .def(
+            "dispatch_only",
+            &GemmGroupedV2AGScatterOpCls::dispatch_only,
+            py::arg("inputs_shard"),
+            py::arg("splits_gpu"),
+            py::arg("scatter_index"),
+            py::arg("splits_per_source") = py::none(),
+            py::arg("a2av_unique_counts") = py::none(),
+            py::arg("dense_out") = py::none())
+        .def(
             "forward",
             &GemmGroupedV2AGScatterOpCls::forward,
             py::arg("inputs_shard"),

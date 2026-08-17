@@ -93,6 +93,17 @@ class GemmGroupedV2AGScatterOp {
       c10::optional<torch::Tensor> weight_signal = c10::nullopt,
       int64_t weight_signal_epoch = 0,
       int64_t weight_gate_group_start = -1);
+  // Dispatch-only entry (EPIC baseline, a2av modes): runs the dispatch wire
+  // WITHOUT the fused GEMM and materializes the received rows densely.
+  // Returns (dense_rows [M_this_ep, hidden], sorted_scatter_index,
+  // sorted_splits_cumsum [ep_nexperts, world_size], M_this_ep).
+  std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, int64_t> dispatch_only(
+      torch::Tensor inputs_shard,
+      torch::Tensor splits_gpu,
+      torch::Tensor scatter_index,
+      c10::optional<torch::Tensor> splits_per_source = c10::nullopt,
+      c10::optional<torch::Tensor> a2av_unique_counts = c10::nullopt,
+      c10::optional<torch::Tensor> dense_out = c10::nullopt);
   torch::Tensor forward_triton_aot(
       torch::Tensor inputs_shard,
       torch::Tensor weights,
