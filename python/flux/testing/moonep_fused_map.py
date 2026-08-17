@@ -272,6 +272,60 @@ def required_a2av_knobs(meta: FusedMeta, W: int, local_world_size: int) -> dict:
     }
 
 
+def required_a2av_rs_knobs(meta: FusedMeta, W: int, local_world_size: int) -> dict:
+    """Exact LAYER1 (gather-rs combine) capacity knobs for the moonep virtual
+    space, in ROWS. Same expressions as sweeps/gen_matrix.py
+    a2av_rs_knob_demands (duplicated here because the flux package cannot
+    import from sweeps/; the transcription parity is pinned by
+    test_moonep_virtual_rs_demands in sweeps/test_knob_demands.py), fed the
+    dispatch-orientation inputs the virtual space provides: chunks[s][o] =
+    splits_per_source summed over the owner rank's virtual experts, U[s][m] =
+    the same [W, nn] dedup matrix the layer0 sizing uses. Set these in the
+    environment BEFORE GemmGroupedV2GatherRSOp construction (ctor-read); the
+    sweep runner deliberately never pre-sets them for moonep drivers."""
+    L = local_world_size
+    nn = W // L
+    E_virt = meta.splits.numel()
+    gpe = E_virt // W
+    chunks = meta.splits_per_source.long().view(W, W, gpe).sum(2)  # [s][owner]
+    U = meta.a2av_unique_counts[:, W:].long()  # [s][owner node]
+    rs_send = int(chunks.sum(0).max())
+    rs_stage = rs_conv = rs_wire = 0
+    if nn > 1:
+        for gn in range(nn):
+            for gl in range(L):
+                rs_stage = max(
+                    rs_stage,
+                    sum(
+                        int(chunks[h][ns * L + gl])
+                        for ns in range(nn)
+                        if ns != gn
+                        for h in range(gn * L, (gn + 1) * L)
+                    ),
+                )
+        for n2 in range(nn):
+            for dl in range(L):
+                rs_conv = max(
+                    rs_conv,
+                    sum(
+                        int(chunks[tn * L + dl][n2 * L + ls])
+                        for tn in range(nn)
+                        if tn != n2
+                        for ls in range(L)
+                    ),
+                )
+                rs_wire = max(
+                    rs_wire,
+                    sum(int(U[tn * L + dl][n2]) for tn in range(nn) if tn != n2),
+                )
+    return {
+        "FLUX_A2AV_RS_MAX_SEND_ROWS": str(max(rs_send, 1)),
+        "FLUX_A2AV_RS_MAX_STAGE_ROWS": str(max(rs_stage, 1)),
+        "FLUX_A2AV_RS_MAX_CONV_ROWS": str(max(rs_conv, 1)),
+        "FLUX_A2AV_RS_MAX_WIRE_ROWS": str(max(rs_wire, 1)),
+    }
+
+
 def fused_row_map(vmap: MoonEPVirtualMap, rank: int) -> tuple:
     """(fused_rows, plan_slots): 1:1 correspondence between this rank's fused
     output rows (virtual-expert-major, no padding) and the staged harness's

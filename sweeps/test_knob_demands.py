@@ -231,10 +231,77 @@ def test_rs_scale_knobs_env():
     print("OK rs_scale_knobs_env")
 
 
+def test_moonep_virtual_rs_demands():
+    """Layer1 knob parity for the MOONEP VIRTUAL SPACE: the package-side
+    transcription (flux.testing.moonep_fused_map.required_a2av_rs_knobs) must
+    equal gen_matrix.a2av_rs_knob_demands on the virtual-space inputs, for
+    real MoonEP plans — multi-node, single-node (all inter-node demands 0),
+    and a hot-expert routing that leaves EMPTY virtual slots (the c9b82b6
+    empty-expert territory the l1 integration must survive)."""
+    try:
+        import torch
+        from flux.testing.moonep_fused_map import (
+            build_fused_metadata,
+            build_virtual_map,
+            required_a2av_rs_knobs,
+        )
+        from flux.testing.moonep_semantics import MoonEPConfig, compute_moonep_plan
+    except Exception as e:  # noqa: BLE001
+        print(f"SKIP moonep_virtual_rs_demands (torch/flux unavailable: {e})")
+        return
+    rng = random.Random(19)
+
+    def topk_all_random(R, S, G, K, hot=False):
+        rows = []
+        for _ in range(R * S):
+            if hot and rng.random() < 0.8:
+                # hot routing: 80% of tokens pick from the first K+1 experts
+                # -> most virtual slots on most ranks end up with ZERO rows
+                rows.append(rng.sample(range(K + 1), K))
+            else:
+                rows.append(rng.sample(range(G), K))
+        return torch.tensor(rows, dtype=torch.int32).view(R, S, K)
+
+    for name, (W, L, S, G, K, hot) in {
+        "4n16r": (16, 4, 32, 64, 4, False),
+        "2n8r": (8, 4, 24, 32, 4, False),
+        "1n4r": (4, 4, 16, 16, 4, False),
+        "2n8r_hot": (8, 4, 24, 32, 4, True),
+    }.items():
+        topk_all = topk_all_random(W, S, G, K, hot)
+        cfg = MoonEPConfig(S=S, K=K, E=G, R=W, token_padding=128)
+        plan = compute_moonep_plan(cfg, topk_all)
+        vmap = build_virtual_map(plan, topk_all)
+        meta = build_fused_metadata(vmap, L)
+        if hot:
+            assert bool((meta.splits == 0).any()), "hot case must have empty slots"
+        got = required_a2av_rs_knobs(meta, W, L)
+        gpe = meta.splits.numel() // W
+        chunks_t = meta.splits_per_source.long().view(W, W, gpe).sum(2)
+        chunks = [[int(chunks_t[s][o]) for o in range(W)] for s in range(W)]
+        U = [
+            [int(meta.a2av_unique_counts[s, W + m]) for m in range(W // L)]
+            for s in range(W)
+        ]
+        ref = gen_matrix.a2av_rs_knob_demands(chunks, U, L)
+        for knob, key in (
+            ("FLUX_A2AV_RS_MAX_SEND_ROWS", "rs_send"),
+            ("FLUX_A2AV_RS_MAX_STAGE_ROWS", "rs_stage"),
+            ("FLUX_A2AV_RS_MAX_CONV_ROWS", "rs_conv"),
+            ("FLUX_A2AV_RS_MAX_WIRE_ROWS", "rs_wire"),
+        ):
+            assert int(got[knob]) == max(ref[key], 1), (name, knob, got, ref)
+        if W // L == 1:
+            for key in ("rs_stage", "rs_conv", "rs_wire"):
+                assert ref[key] == 0, (name, key, ref)
+    print("OK moonep_virtual_rs_demands")
+
+
 if __name__ == "__main__":
     test_dealer_closed_form()
     test_small_budget_env_stable()
     test_rs_demands_brute()
     test_rs_scale_knobs_env()
     test_parity_vs_torch()
+    test_moonep_virtual_rs_demands()
     print("ALL OK")
