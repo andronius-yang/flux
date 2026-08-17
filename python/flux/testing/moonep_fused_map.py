@@ -347,6 +347,111 @@ def assign_gateways(plan: MoonEPPlan, local_world_size: int) -> torch.Tensor:
     return torch.tensor(pairs, dtype=torch.int32).reshape(-1, 6)
 
 
+def _wire_legs(pairs: torch.Tensor, local_world_size: int, mode: str) -> list:
+    """The (home, dst_rank, dst_slot) NIC puts actually emitted in the
+    resolved --weight_push_mode. mode='direct': every cross-node pair.
+    mode='mcast': cross-node pairs with gw_rank == -1 only (singletons plus
+    each group's single inter-node leg into the gateway's slot; gw >= 0 rows
+    are the gateway's NVLink forwards, never NIC legs). Intra-node pairs are
+    CE copies over NVLink in both modes and never count as wire legs."""
+    assert mode in ("direct", "mcast"), mode
+    L = local_world_size
+    legs = []
+    for d, b, home, src, gw, gws in pairs.tolist():
+        if home // L == d // L:
+            continue
+        if mode == "mcast" and gw >= 0:
+            continue
+        legs.append((home, d, b))
+    return legs
+
+
+def plan_weight_shards(
+    pairs: torch.Tensor,
+    local_world_size: int,
+    expert_bytes: int,
+    mode: str = "direct",
+    min_bytes: int = 8 << 20,
+    n_shards: int = 0,
+) -> torch.Tensor:
+    """Replicated, deterministic egress NIC-shard plan for the cross-node
+    wire legs of a weight-push plan (assign_gateways output).
+
+    Returns shards_cpu int32 [n_shard_legs, 8] =
+        (home_rank, dst_rank, dst_slot, shard_idx, egress_rank, ingress_rank,
+         byte_off, byte_len)
+
+    Every wire leg (see _wire_legs for the per-mode enumeration) with
+    expert_bytes >= min_bytes is byte-split into n_shards (default L)
+    near-equal ranges; shard i rides the same-local-rank wire
+    (home_node, i) -> (dst_node, i) with dest-side NVLink reassembly into the
+    final slot at byte_off. Legs below the threshold are absent from the
+    table and keep the unsharded single-NIC path. The C++ (set_shard_plan)
+    derives the fast paths from the row itself: egress == home skips the
+    NVLink staging hop; ingress == dst lands directly in the final slot.
+    The symmetric spread is the point — sharding only the egress side would
+    still funnel into the dst rank's single NIC.
+    """
+    L = local_world_size
+    SL = n_shards if n_shards > 0 else L
+    assert 1 <= SL <= L, (SL, L)
+    assert 0 < expert_bytes < 2**31, expert_bytes  # byte_off/len are int32
+    rows = []
+    if expert_bytes >= min_bytes:
+        base, rem = expert_bytes // SL, expert_bytes % SL
+        off = 0
+        cuts = []
+        for i in range(SL):
+            ln = base + (1 if i < rem else 0)
+            cuts.append((off, ln))
+            off += ln
+        for home, d, b in _wire_legs(pairs, L, mode):
+            hn, dn = home // L, d // L
+            for i, (boff, blen) in enumerate(cuts):
+                if blen == 0:
+                    continue
+                rows.append((home, d, b, i, hn * L + i, dn * L + i, boff, blen))
+    return torch.tensor(rows, dtype=torch.int32).reshape(-1, 8)
+
+
+def egress_byte_stats(
+    pairs: torch.Tensor,
+    local_world_size: int,
+    world_size: int,
+    expert_bytes: int,
+    mode: str = "direct",
+    shards: torch.Tensor = None,
+) -> dict:
+    """Byte-level per-rank NIC egress census of a push plan (the companion of
+    push_plan_stats, which counts legs/groups). Pre-shard, every wire leg's
+    expert_bytes sit on the home rank's NIC; with a shard table each shard's
+    byte_len moves to its egress rank, and below-threshold legs (absent from
+    the table) stay on the home. NVLink hops (intra-node pairs, gateway
+    forwards, staging, reassembly) carry no NIC bytes and are excluded."""
+    legs = _wire_legs(pairs, local_world_size, mode)
+    pre = [0] * world_size
+    for home, _, _ in legs:
+        pre[home] += expert_bytes
+    out = {
+        "n_wire_legs": len(legs),
+        "egress_bytes_per_rank": pre,
+        "max_rank_egress_bytes": max(pre) if pre else 0,
+    }
+    if shards is not None:
+        sharded_keys = set()
+        post = [0] * world_size
+        for home, d, b, i, eg, ing, boff, blen in shards.tolist():
+            sharded_keys.add((home, d, b))
+            post[eg] += blen
+        for home, d, b in legs:
+            if (home, d, b) not in sharded_keys:
+                post[home] += expert_bytes
+        out["n_shard_legs"] = int(shards.shape[0])
+        out["sharded_egress_bytes_per_rank"] = post
+        out["sharded_max_rank_egress_bytes"] = max(post) if post else 0
+    return out
+
+
 def push_plan_stats(pairs: torch.Tensor, local_world_size: int) -> dict:
     """Replicated wire-shape census of a weight-push plan (assign_gateways
     output): cross-node legs, multi-member (expert, dest-node) groups, max

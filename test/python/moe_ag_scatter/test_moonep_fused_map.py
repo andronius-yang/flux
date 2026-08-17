@@ -366,3 +366,126 @@ def test_push_plan_stats(case, R):
     # gateway legs exist exactly when a multi group exists (the F-C auto rule)
     has_gw = any(int(p[4]) >= 0 for p in pairs.tolist())
     assert has_gw == (stats["n_multi_groups"] > 0)
+
+
+# ---- egress NIC-shard planner ------------------------------------------------
+
+EXPERT_BYTES = 32 << 20  # one bf16 fc1 expert shard at the production shape
+
+
+def _shard_grid():
+    return [(c, r) for c, r in GRID if r >= 4]
+
+
+@pytest.mark.parametrize(
+    "case,R", _shard_grid(), ids=[f"{c.name}-R{r}" for c, r in _shard_grid()]
+)
+def test_shard_planner_determinism_and_coverage(case, R):
+    from flux.testing.moonep_fused_map import _wire_legs, plan_weight_shards
+
+    cfg, topk_all, plan, vmap, _ = _build(case, R)
+    L = _L(R)
+    pairs = assign_gateways(plan, L)
+    shards = plan_weight_shards(pairs, L, EXPERT_BYTES, mode="direct", min_bytes=1)
+    # determinism
+    assert torch.equal(shards, plan_weight_shards(pairs, L, EXPERT_BYTES, mode="direct", min_bytes=1))
+    legs = _wire_legs(pairs, L, "direct")
+    if R // L < 2:
+        assert legs == []  # single node: no wire legs at all
+    by_leg = {}
+    for home, d, b, i, eg, ing, boff, blen in shards.tolist():
+        # role consistency: shard i rides the same-local-rank wire
+        assert eg == (home // L) * L + i and ing == (d // L) * L + i
+        assert home // L != d // L, "only cross-node wire legs shard"
+        by_leg.setdefault((home, d, b), []).append((i, boff, blen))
+    # every wire leg sharded (min_bytes=1), and only wire legs
+    assert set(by_leg) == set(legs)
+    for ranges in by_leg.values():
+        ranges.sort()
+        # exact partition of [0, EXPERT_BYTES): contiguous, no overlap, no gap
+        off = 0
+        for i, boff, blen in ranges:
+            assert boff == off and blen > 0
+            off += blen
+        assert off == EXPERT_BYTES
+        # near-equal split across at most L shards
+        lens = [blen for _, _, blen in ranges]
+        assert len(lens) <= L and max(lens) - min(lens) <= 1
+
+
+@pytest.mark.parametrize(
+    "case,R",
+    [(c, r) for c, r in _shard_grid() if r // _L(r) >= 2][:4],
+    ids=[f"{c.name}-R{r}" for c, r in [(c, r) for c, r in _shard_grid() if r // _L(r) >= 2][:4]],
+)
+def test_shard_threshold_and_shard_count(case, R):
+    from flux.testing.moonep_fused_map import _wire_legs, plan_weight_shards
+
+    cfg, topk_all, plan, vmap, _ = _build(case, R)
+    L = _L(R)
+    pairs = assign_gateways(plan, L)
+    n_legs = len(_wire_legs(pairs, L, "direct"))
+    # below threshold: nothing shards
+    below = plan_weight_shards(pairs, L, EXPERT_BYTES, min_bytes=EXPERT_BYTES + 1)
+    assert below.shape == (0, 8)
+    # at threshold: everything shards
+    at = plan_weight_shards(pairs, L, EXPERT_BYTES, min_bytes=EXPERT_BYTES)
+    assert at.shape[0] == n_legs * L
+    # explicit n_shards < L
+    two = plan_weight_shards(pairs, L, EXPERT_BYTES, min_bytes=1, n_shards=2)
+    assert two.shape[0] == n_legs * 2
+    assert all(int(r[3]) < 2 for r in two)
+
+
+def test_shard_empty_plan():
+    from flux.testing.moonep_fused_map import plan_weight_shards
+
+    empty = torch.empty((0, 6), dtype=torch.int32)
+    assert plan_weight_shards(empty, 4, EXPERT_BYTES, min_bytes=1).shape == (0, 8)
+
+
+@pytest.mark.parametrize(
+    "case,R", _shard_grid(), ids=[f"{c.name}-R{r}" for c, r in _shard_grid()]
+)
+def test_shard_gateway_composition(case, R):
+    """mcast mode shards exactly the emitted NIC legs: the gw==-1 cross-node
+    rows (singletons + each group's single inter-node leg into the gateway's
+    slot); the gateway's NVLink forwards never appear."""
+    from flux.testing.moonep_fused_map import plan_weight_shards, push_plan_stats
+
+    cfg, topk_all, plan, vmap, _ = _build(case, R)
+    L = _L(R)
+    pairs = assign_gateways(plan, L)
+    stats = push_plan_stats(pairs, L)
+    shards = plan_weight_shards(pairs, L, EXPERT_BYTES, mode="mcast", min_bytes=1)
+    sharded_legs = {(int(r[0]), int(r[1]), int(r[2])) for r in shards}
+    assert len(sharded_legs) == stats["n_cross_groups"]
+    fwd = {(int(p[2]), int(p[0]), int(p[1])) for p in pairs.tolist() if int(p[4]) >= 0}
+    assert not (sharded_legs & fwd)
+    # direct mode shards every cross leg instead
+    direct = plan_weight_shards(pairs, L, EXPERT_BYTES, mode="direct", min_bytes=1)
+    assert len({(int(r[0]), int(r[1]), int(r[2])) for r in direct}) == stats["n_cross_legs"]
+
+
+@pytest.mark.parametrize(
+    "case,R", _shard_grid(), ids=[f"{c.name}-R{r}" for c, r in _shard_grid()]
+)
+def test_egress_census_bytes(case, R):
+    from flux.testing.moonep_fused_map import egress_byte_stats, plan_weight_shards
+
+    cfg, topk_all, plan, vmap, _ = _build(case, R)
+    L = _L(R)
+    pairs = assign_gateways(plan, L)
+    shards = plan_weight_shards(pairs, L, EXPERT_BYTES, min_bytes=1)
+    stats = egress_byte_stats(pairs, L, R, EXPERT_BYTES, shards=shards)
+    # conservation: total NIC bytes unchanged by sharding
+    assert sum(stats["egress_bytes_per_rank"]) == stats["n_wire_legs"] * EXPERT_BYTES
+    assert sum(stats["sharded_egress_bytes_per_rank"]) == sum(stats["egress_bytes_per_rank"])
+    # sharding never concentrates: the busiest NIC only gets lighter
+    assert stats["sharded_max_rank_egress_bytes"] <= stats["max_rank_egress_bytes"]
+    # below-threshold legs stay on the home rank
+    none = egress_byte_stats(
+        pairs, L, R, EXPERT_BYTES,
+        shards=plan_weight_shards(pairs, L, EXPERT_BYTES, min_bytes=EXPERT_BYTES + 1),
+    )
+    assert none["sharded_egress_bytes_per_rank"] == none["egress_bytes_per_rank"]
