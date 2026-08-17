@@ -1242,7 +1242,8 @@ class EpicLayer0Runner(EPLBLayer0Runner):
                 ring_mode=True)
             op = flux.TopkReduceScatterOp(
                 self.group, m_full, self.cfg.H, b.K_g, self.dtype,
-                b.E_virt, W, barriers, n_split,
+                b.gpe,           # num_experts is PER-RANK (nex_total = *W)
+                W, barriers, n_split,
                 False,           # do_all_reduce
                 False,           # use_read_mode
                 nn,              # nnodes
