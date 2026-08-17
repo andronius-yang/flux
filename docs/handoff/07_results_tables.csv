@@ -1,0 +1,115 @@
+Comm-only layer-axis campaign 2026-08-16 - latency tables (ms).
+Cell value = mean over iterations of per-iteration MAX across ranks of e2e_ms; main table = mean across runs; spread table = max-min across runs.
+Authority: docs/handoff/07_comm_only_layer_axis_campaign.md; raw per-run values: 07_results_tidy.csv.
+
+TABLE 1: LAYER0 dispatch, W=16 (4 nodes), binary A. Runs: fwd/revA/revB (fast: single driver, dealer-routing arm, e2e==isolated).
+algorithm,timing_mode,b1_MiB,b2_MiB,b4_MiB,b8_MiB,b16_MiB,b32_MiB,b64_MiB
+torch_unfused,,1.934,3.341,6.420,12.734,25.516,OOM,OOM
+fast,,4.644,5.085,7.275,11.624,20.731,40.085,heap-fail
+allgather,,1.664,2.285,3.524,6.339,11.605,23.918,51.857
+hier_compress_lb_union,,1.593,2.052,2.841,4.733,9.124,19.770,45.496
+hier_compress_lb_union_fused,,1.327,1.710,2.498,4.457,8.850,19.314,44.636
+hier_compress_lb_union_eager,,1.662,2.188,3.124,4.743,10.103,20.473,47.912
+hier_compress_lb_union_early,,1.644,2.070,2.946,4.884,9.178,19.906,45.600
+hier_compress_lb_union_fused_eager,,1.356,1.911,2.772,4.902,9.740,19.514,46.075
+hier_compress_lb_union_fused_early,,1.240,1.677,2.667,4.522,8.965,19.322,44.643
+hier_compress_lb_union_eager_early,,1.547,2.065,2.983,4.875,9.184,19.289,44.559
+hier_compress_lb_union_fused_eager_early,,1.238,1.755,2.624,4.455,8.809,18.911,44.208
+spread (max-min across runs) for table above:
+algorithm,timing_mode,b1_MiB,b2_MiB,b4_MiB,b8_MiB,b16_MiB,b32_MiB,b64_MiB
+torch_unfused,,0.022,0.004,0.007,0.086,0.081,,
+fast,,,,,,,,
+allgather,,0.030,0.027,0.039,0.533,0.262,0.370,0.843
+hier_compress_lb_union,,0.045,0.179,0.006,0.031,0.053,0.248,0.515
+hier_compress_lb_union_fused,,0.253,0.035,0.016,0.031,0.079,0.143,0.496
+hier_compress_lb_union_eager,,0.008,0.127,0.038,0.038,1.281,0.052,6.769
+hier_compress_lb_union_early,,0.172,0.196,0.016,0.016,0.085,0.121,0.106
+hier_compress_lb_union_fused_eager,,0.024,0.118,0.006,0.056,1.456,0.060,6.978
+hier_compress_lb_union_fused_early,,0.006,0.006,0.184,0.242,0.309,0.171,0.299
+hier_compress_lb_union_eager_early,,0.010,0.137,0.124,0.042,0.041,0.031,0.697
+hier_compress_lb_union_fused_eager_early,,0.013,0.094,0.023,0.022,0.089,0.349,0.542
+
+TABLE 2: LAYER1 combine, W=8 (2 nodes), binary C. Runs: fwd/rev. timing_mode: isolated=index build in-forward; amortized=inherited indices (never compare across).
+algorithm,timing_mode,b1_MiB,b2_MiB,b4_MiB,b8_MiB,b16_MiB,b32_MiB,b64_MiB
+torch_unfused,,3.427,4.354,6.051,9.454,16.448,OOM,OOM
+l1_dense,amortized,3.622,4.004,7.050,11.178,22.738,43.086,89.538
+l1_dense,isolated,3.638,3.926,7.090,11.146,22.628,43.056,90.404
+l1_hier,amortized,1.293,1.897,3.092,5.707,11.627,23.566,48.946
+l1_hier,isolated,1.596,2.195,3.418,6.012,11.957,24.011,50.788
+l1_hier_eager,amortized,1.438,2.243,3.902,7.517,15.578,31.750,65.768
+l1_hier_eager,isolated,1.769,2.540,4.169,7.832,15.987,32.201,67.761
+l1_compress,amortized,1.291,1.853,3.102,5.697,11.461,23.414,49.869
+l1_compress,isolated,2.783,3.421,4.574,7.473,13.550,26.191,53.691
+l1_compress_eager,amortized,1.337,1.966,3.277,6.294,12.584,25.740,54.214
+l1_compress_eager,isolated,2.833,3.474,4.814,8.111,14.911,28.953,57.913
+spread (max-min across runs) for table above:
+algorithm,timing_mode,b1_MiB,b2_MiB,b4_MiB,b8_MiB,b16_MiB,b32_MiB,b64_MiB
+torch_unfused,,0.024,0.025,0.040,0.009,0.003,,
+l1_dense,amortized,0.005,0.134,0.119,0.000,0.074,0.137,0.155
+l1_dense,isolated,0.023,0.001,0.012,0.151,0.022,0.935,0.874
+l1_hier,amortized,0.020,0.051,0.090,0.068,0.019,0.854,1.498
+l1_hier,isolated,0.010,0.012,0.101,0.031,0.090,0.709,1.175
+l1_hier_eager,amortized,0.061,0.012,0.041,0.041,0.081,0.542,1.678
+l1_hier_eager,isolated,0.176,0.046,0.034,0.023,0.166,0.099,0.844
+l1_compress,amortized,0.006,0.000,0.120,0.021,0.046,0.126,0.434
+l1_compress,isolated,0.014,0.076,0.036,0.003,0.120,0.504,0.428
+l1_compress_eager,amortized,0.013,0.010,0.004,0.140,0.244,0.016,1.114
+l1_compress_eager,isolated,0.007,0.001,0.046,0.051,0.160,0.236,0.040
+
+TABLE 3: LAYER1 combine, W=16 (4 nodes), binary C (l1_fast row: binary A, dealer arm). Runs: fwd/rev.
+algorithm,timing_mode,b1_MiB,b2_MiB,b4_MiB,b8_MiB,b16_MiB,b32_MiB,b64_MiB
+torch_unfused,,2.860,3.995,6.590,11.875,22.303,OOM,OOM
+l1_fast,,3.957,5.131,6.275,11.108,21.027,42.416,heap-fail
+l1_dense,amortized,5.187,5.340,10.108,15.558,31.236,59.871,122.030
+l1_dense,isolated,5.173,5.389,10.104,15.654,31.346,59.757,122.477
+l1_hier,amortized,1.623,2.369,3.869,7.461,14.575,29.954,61.550
+l1_hier,isolated,1.943,2.601,4.190,7.699,14.484,29.370,61.294
+l1_hier_eager,amortized,2.044,2.378,4.161,7.803,15.537,33.088,67.037
+l1_hier_eager,isolated,2.351,2.725,4.400,7.889,15.968,32.476,68.156
+l1_compress,amortized,1.465,2.027,3.218,5.949,12.128,25.108,53.410
+l1_compress,isolated,2.996,3.673,4.994,7.962,14.684,28.270,57.523
+l1_compress_eager,amortized,1.558,2.397,4.047,7.614,15.594,31.893,65.356
+l1_compress_eager,isolated,3.030,3.936,5.642,9.659,17.986,35.025,70.509
+spread (max-min across runs) for table above:
+algorithm,timing_mode,b1_MiB,b2_MiB,b4_MiB,b8_MiB,b16_MiB,b32_MiB,b64_MiB
+torch_unfused,,0.008,0.006,0.055,0.071,0.046,,
+l1_fast,,,,,,,,
+l1_dense,amortized,0.002,0.018,0.031,0.039,0.175,0.434,1.091
+l1_dense,isolated,0.029,0.071,0.089,0.079,0.102,0.165,0.068
+l1_hier,amortized,0.039,0.029,0.102,0.076,0.349,0.018,0.045
+l1_hier,isolated,0.018,0.116,0.118,0.062,0.296,0.095,0.105
+l1_hier_eager,amortized,0.832,0.064,0.248,0.445,0.021,0.198,0.412
+l1_hier_eager,isolated,0.810,0.090,0.078,0.046,0.206,0.806,0.339
+l1_compress,amortized,0.000,0.046,0.015,0.044,0.066,0.389,0.486
+l1_compress,isolated,0.106,0.313,0.076,0.058,0.667,0.584,1.213
+l1_compress_eager,amortized,0.070,0.069,0.016,0.133,0.216,0.159,0.396
+l1_compress_eager,isolated,0.005,0.078,0.079,0.271,0.245,0.815,0.744
+
+TABLE 4: COMBINED layer0+GELU+layer1 continuous pass, W=8 (2 nodes), binary C. Runs: fwd/rev.
+algorithm,timing_mode,b1_MiB,b2_MiB,b4_MiB,b8_MiB,b16_MiB,b32_MiB,b64_MiB
+l01_torch,,6.389,6.941,10.866,17.444,32.058,OOM,OOM
+l01_allgather_dense,,4.986,5.700,9.873,15.849,31.907,not-run,not-run
+l01_lbunion_hier_eager,,2.848,4.547,7.832,14.512,23.872,not-run,not-run
+l01_lbunion_hier,,2.470,3.461,5.542,9.953,20.110,not-run,not-run
+spread (max-min across runs) for table above:
+algorithm,timing_mode,b1_MiB,b2_MiB,b4_MiB,b8_MiB,b16_MiB,b32_MiB,b64_MiB
+l01_torch,,0.262,0.046,1.045,0.108,0.037,,
+l01_allgather_dense,,0.152,0.051,0.051,0.044,0.228,,
+l01_lbunion_hier_eager,,0.028,0.068,0.075,0.130,0.196,,
+l01_lbunion_hier,,0.010,0.010,0.071,0.056,0.026,,
+
+TABLE 5: COMBINED continuous pass, W=16 (4 nodes), binary C. Runs: fwd/rev. Includes the best-pairing A/B.
+algorithm,timing_mode,b1_MiB,b2_MiB,b4_MiB,b8_MiB,b16_MiB,b32_MiB,b64_MiB
+l01_torch,,4.962,7.553,13.282,24.729,48.109,OOM,OOM
+l01_allgather_dense,,6.877,7.688,13.539,21.806,43.134,84.874,177.248
+l01_lbunion_hier_eager,,3.309,4.649,8.058,15.135,25.008,53.084,112.993
+l01_lbunion_hier,,2.888,4.431,6.762,12.508,24.843,51.919,112.055
+l01_lbunion_compress,,2.729,3.643,5.873,10.599,21.212,45.730,99.986
+spread (max-min across runs) for table above:
+algorithm,timing_mode,b1_MiB,b2_MiB,b4_MiB,b8_MiB,b16_MiB,b32_MiB,b64_MiB
+l01_torch,,0.011,0.116,0.207,0.062,0.438,,
+l01_allgather_dense,,0.081,0.063,0.174,0.220,0.060,0.655,0.146
+l01_lbunion_hier_eager,,0.454,0.025,0.105,0.072,0.085,1.599,0.345
+l01_lbunion_hier,,0.052,0.748,0.206,0.066,0.059,0.208,0.616
+l01_lbunion_compress,,0.061,0.034,0.025,0.072,0.047,0.881,0.831
+
