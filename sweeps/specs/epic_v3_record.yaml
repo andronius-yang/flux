@@ -1,0 +1,32 @@
+# v3 record capsule: the formerly-stuck cells green on the fixed binary
+# (priming fix commit 49e059f + compaction removal ffe404a). Perf deltas vs
+# the v2 capsules are expected ~0 (all three v3 fixes are ctor-time /
+# zero-split-only) but this is a NEW binary boundary — compare only inside
+# this capsule.
+platform: perlmutter
+nodes: 4
+variants:
+  - epic_l01_hc_m2
+  - epic_l01_hc_m4
+  - epic_l01_m4
+  - hier_compress_lb_union
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib: [2, 8]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+notes: "EPIC v3 record: formerly-stuck epic_l01_hc_m4 b2 cells green on the priming-fixed binary (49e059f+ffe404a); hc m2/m4 + direct m4 + fused context, isolated only"
