@@ -1284,15 +1284,14 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         per group; 'gemmonly': per-segment flux.GemmOnly loop (parent
         semantics).
 
-        ZERO-SPLIT WORKAROUND (upstream bug, documented in the plan's open
-        items): GemmGroupedV2's problem loop `continue`s on Mi == 0 BEFORE
-        advancing its weight pointer (src/comm_none/ths_op/
-        gemm_grouped_v2.cc:133-140), so every expert after a zero-split one
-        silently reads the previous expert's weights. Groups containing
-        zero-row slots therefore get a COMPACTED contiguous weight copy
-        (zero-row slots removed) and nonzero-only splits; groups without
-        zero-row slots keep the storage-sharing slot_fc1 view. Compaction
-        state is rebuilt by rebuild_after_migration()."""
+        Zero-row slots are legal: GemmGroupedV2's zero-split weight-pointer
+        skew was FIXED upstream 2026-08-17 (gemm_grouped_v2.cc — the loop
+        now advances the per-expert weight pointer past skipped experts),
+        so all groups use storage-sharing slot views with full per-slot
+        rows. Requires a binary at or after that fix; the sha-identity A/B
+        against the old compacted-copy workaround proved equivalence before
+        the workaround was removed. Splits refresh via
+        rebuild_after_migration() (per-slot rows change when slots move)."""
         import flux
 
         assert backend in ("grouped", "gemmonly")
@@ -1304,40 +1303,29 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         self._build_grouped_ops(flux)
 
     def _build_grouped_ops(self, flux_mod=None):
-        import os
-
         if flux_mod is None:
             import flux as flux_mod
-        # FLUX_EPIC_NO_COMPACTION=1: bypass the zero-split compaction
-        # workaround (valid ONLY on a binary carrying the 2026-08-17
-        # GemmGroupedV2 zero-split fix). A/B lever for the fix's
-        # sha-identity proof; the compaction is removed for good once the
-        # gate passes.
-        no_compact = os.environ.get("FLUX_EPIC_NO_COMPACTION", "0") == "1"
+        # Storage-sharing slot views + full per-slot rows: zero-row slots are
+        # legal since the 2026-08-17 GemmGroupedV2 zero-split fix (the
+        # earlier compacted-weight-copy workaround was removed after the
+        # same-binary sha-identity A/B proved the fix; requires a binary at
+        # or after that fix). Views share storage with slot_fc1/2, so
+        # migration weight swaps need no GEMM-op rebuild.
         self._grouped_ops = []
         self._grouped_splits = []
         if self.layers == "l01":
             self._grouped_ops_fc2 = []
         for g, grp in enumerate(self.elay.groups):
             rows = self._group_splits_cpu[g]
-            nz = (rows > 0)
-            if no_compact or bool(nz.all()) or int(rows.sum()) == 0:
-                w = self.slot_fc1[grp.slot_lo:grp.slot_hi]
-                w2 = (self.slot_fc2[grp.slot_lo:grp.slot_hi]
-                      if self.layers == "l01" else None)
-                splits = rows
-            else:
-                w = self.slot_fc1[grp.slot_lo:grp.slot_hi][nz].contiguous()
-                w2 = (self.slot_fc2[grp.slot_lo:grp.slot_hi][nz].contiguous()
-                      if self.layers == "l01" else None)
-                splits = rows[nz]
+            w = self.slot_fc1[grp.slot_lo:grp.slot_hi]
             assert w.is_contiguous()
             self._grouped_ops.append(
                 flux_mod.GemmGroupedV2(
                     w, int(w.shape[0]), self.dtype, self.dtype)
             )
-            self._grouped_splits.append(splits)
+            self._grouped_splits.append(rows)
             if self.layers == "l01":
+                w2 = self.slot_fc2[grp.slot_lo:grp.slot_hi]
                 assert w2.is_contiguous()
                 self._grouped_ops_fc2.append(
                     flux_mod.GemmGroupedV2(
