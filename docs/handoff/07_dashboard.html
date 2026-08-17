@@ -1,0 +1,290 @@
+<title>Comet Layer-Axis Sweep</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface: #fbfbfa; --card: #ffffff; --ink: #14161a; --ink-2: #565b63;
+    --ink-3: #8a8f98; --grid: #e4e6e9; --edge: #d8dadd; --accent: #2a78d6;
+    --s-opt: #2a78d6; --s-stock: #eb6834; --s-torch: #eda100; --s-eager: #e87ba4;
+    --s-compress: #1baf7a; --s-fast: #4a3aa7; --s-base: #008300;
+    --good: #0b7a3e; --bad: #b3341f; --good-bg: #e7f3ec; --bad-bg: #f9e9e5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface: #17181b; --card: #1e2024; --ink: #f2f3f5; --ink-2: #b7bcc4;
+      --ink-3: #7d828b; --grid: #2c2f34; --edge: #34373d; --accent: #3987e5;
+      --s-opt: #3987e5; --s-stock: #d95926; --s-torch: #c98500; --s-eager: #d55181;
+      --s-compress: #199e70; --s-fast: #9085e9; --s-base: #4caf50;
+      --good: #4cc27d; --bad: #e06a52; --good-bg: #17301f; --bad-bg: #3a201a;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface: #17181b; --card: #1e2024; --ink: #f2f3f5; --ink-2: #b7bcc4;
+    --ink-3: #7d828b; --grid: #2c2f34; --edge: #34373d; --accent: #3987e5;
+    --s-opt: #3987e5; --s-stock: #d95926; --s-torch: #c98500; --s-eager: #d55181;
+    --s-compress: #199e70; --s-fast: #9085e9; --s-base: #4caf50;
+    --good: #4cc27d; --bad: #e06a52; --good-bg: #17301f; --bad-bg: #3a201a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--surface); color: var(--ink);
+    font: 15px/1.55 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 36px 22px 80px; }
+  .eyebrow { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  h1 { font-size: 30px; margin: 6px 0 4px; letter-spacing: -.01em; text-wrap: balance; }
+  .sub { color: var(--ink-2); max-width: 68ch; margin: 0 0 8px; }
+  h2 { font-size: 19px; margin: 40px 0 4px; letter-spacing: -.005em; }
+  h2 .tag { font-size: 11px; vertical-align: 2px; letter-spacing: .08em; color: var(--ink-3); font-weight: 600; margin-left: 8px; }
+  .cap { color: var(--ink-2); font-size: 13.5px; max-width: 76ch; margin: 2px 0 14px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 22px 0 6px; }
+  .tile { background: var(--card); border: 1px solid var(--edge); border-radius: 8px; padding: 14px 16px; }
+  .tile .k { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  .tile .v { font-size: 25px; font-weight: 650; margin: 3px 0 1px; font-variant-numeric: tabular-nums; }
+  .tile .d { font-size: 12.5px; color: var(--ink-2); }
+  .card { background: var(--card); border: 1px solid var(--edge); border-radius: 8px; padding: 16px 16px 8px; margin: 12px 0; }
+  .chartbox { position: relative; }
+  svg text { font: 11.5px -apple-system, "Segoe UI", sans-serif; fill: var(--ink-2); }
+  svg .axis text { fill: var(--ink-3); }
+  svg .dlabel { font-weight: 600; font-size: 11.5px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 6px 2px 10px; font-size: 12.5px; color: var(--ink-2); }
+  .legend .it { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 14px; height: 0; border-top: 2.5px solid; border-radius: 2px; display: inline-block; }
+  .sw.dash { border-top-style: dashed; }
+  .tip { position: absolute; pointer-events: none; background: var(--card); border: 1px solid var(--edge);
+         border-radius: 6px; padding: 7px 10px; font-size: 12px; box-shadow: 0 3px 12px rgba(0,0,0,.14);
+         display: none; min-width: 150px; z-index: 5; }
+  .tip b { font-variant-numeric: tabular-nums; }
+  .tip .r { display: flex; justify-content: space-between; gap: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  .tblwrap { overflow-x: auto; }
+  th { text-align: left; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; padding: 6px 10px; border-bottom: 1px solid var(--edge); white-space: nowrap; }
+  td { padding: 6px 10px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.num { text-align: right; }
+  .chip { display: inline-block; font-size: 11px; font-weight: 650; border-radius: 999px; padding: 1px 9px; }
+  .chip.win { color: var(--good); background: var(--good-bg); }
+  .chip.loss { color: var(--bad); background: var(--bad-bg); }
+  .chip.mixed { color: var(--ink-2); background: var(--grid); }
+  .bugs { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+  .bug { border-left: 3px solid var(--accent); }
+  .bug h3 { margin: 0 0 4px; font-size: 15px; }
+  .bug p { margin: 4px 0; font-size: 13.5px; color: var(--ink-2); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; }
+  .foot { color: var(--ink-3); font-size: 12.5px; margin-top: 34px; max-width: 80ch; }
+</style>
+<body data-palette="#eda100,#eb6834,#2a78d6,#e87ba4,#1baf7a,#4a3aa7">
+<div class="wrap">
+  <div class="eyebrow">Perlmutter · A100 · real Qwen3-235B trace · 2026-08-16</div>
+  <h1>Comet Layer-Axis Sweep</h1>
+  <p class="sub">Communication-only optimizations measured across the MoE layer axis — dispatch (layer0),
+  combine (layer1), and the continuous layer0+GELU+layer1 pass — against un-overlapped torch, FAST, and
+  stock Flux. Isolated mode, budgets 1–64&nbsp;MiB pre-topk, topk 8, G 128. Every number traces to a
+  committed capsule; verdicts require sign agreement across independent orderings.</p>
+
+  <div class="tiles">
+    <div class="tile"><div class="k">Layer0 winner · W16</div><div class="v">−27%</div>
+      <div class="d">lb_union + fused_stage2 + early_launch vs stock flux at b1–b8 (−15% at b64)</div></div>
+    <div class="tile"><div class="k">Layer1 winner</div><div class="v">2×</div>
+      <div class="d">a2av hier vs dense ring-RS at both scales; compress crosses over to win at W16 b32/b64; eager regresses everywhere</div></div>
+    <div class="tile"><div class="k">Combined pass · W16</div><div class="v">10.6 ms</div>
+      <div class="d">b8 with the compress pairing — −52% vs stock, −57% vs torch; wins every budget</div></div>
+    <div class="tile"><div class="k">Bugs root-caused</div><div class="v">2</div>
+      <div class="d">lazy-load spin deadlock · empty-expert split-cascade hang — both fixed</div></div>
+  </div>
+
+  <h2>Layer0 dispatch <span class="tag">W=16 · 4 NODES · BINARY A</span></h2>
+  <p class="cap">Isolated latency (mean over iterations of per-iteration max across ranks). Flux arms shown
+  from the forward capsule; two independent reversed-order repeats agree within ~2% (single-cell transients
+  excluded by the three-run sign rule). torch is the un-overlapped reference riding the same cells; FAST is
+  its own e2e driver (host-synchronous ≡ isolated) on the dealer arm and carries a ~0.9 ms schedule floor.</p>
+  <div class="card"><div class="chartbox" id="c0"></div></div>
+
+  <h2>Factorial verdicts <span class="tag">2³ ON THE LB_UNION BASE</span></h2>
+  <p class="cap">Main effect of each knob (ms, on-minus-off averaged over the four corner pairs), fwd / revA / revB.
+  A verdict requires the same sign in all three runs.</p>
+  <div class="card tblwrap"><table>
+    <tr><th>Budget</th><th>F fused_stage2</th><th></th><th>N fanout</th><th></th><th>E early_launch</th><th></th></tr>
+    <tr><td>b1</td><td class="num">−0.32/−0.28/−0.36</td><td><span class="chip win">win</span></td><td class="num">+0.04/−0.04/+0.00</td><td><span class="chip mixed">mixed</span></td><td class="num">−0.06/−0.12/−0.02</td><td><span class="chip win">win</span></td></tr>
+    <tr><td>b2</td><td class="num">−0.30/−0.39/−0.30</td><td><span class="chip win">win</span></td><td class="num">+0.14/+0.06/+0.11</td><td><span class="chip loss">loss</span></td><td class="num">−0.09/−0.07/−0.06</td><td><span class="chip win">win</span></td></tr>
+    <tr><td>b4</td><td class="num">−0.37/−0.32/−0.31</td><td><span class="chip win">win</span></td><td class="num">+0.17/+0.13/+0.12</td><td><span class="chip loss">loss</span></td><td class="num">−0.01/−0.02/+0.02</td><td><span class="chip mixed">mixed</span></td></tr>
+    <tr><td>b8</td><td class="num">−0.24/−0.19/−0.24</td><td><span class="chip win">win</span></td><td class="num">+0.11/+0.05/+0.13</td><td><span class="chip loss">loss</span></td><td class="num">−0.03/+0.01/−0.05</td><td><span class="chip mixed">mixed</span></td></tr>
+    <tr><td>b16</td><td class="num">+0.09/−0.33/−0.67</td><td><span class="chip mixed">mixed</span></td><td class="num">+0.51/+0.22/+0.56</td><td><span class="chip loss">loss</span></td><td class="num">−0.52/−0.20/−0.55</td><td><span class="chip win">win</span></td></tr>
+    <tr><td>b32</td><td class="num">−0.58/−0.71/−0.49</td><td><span class="chip win">win</span></td><td class="num">+0.05/−0.14/−0.01</td><td><span class="chip mixed">mixed</span></td><td class="num">−0.36/−0.48/−0.39</td><td><span class="chip win">win</span></td></tr>
+    <tr><td>b64</td><td class="num">−2.90/−1.12/+1.02</td><td><span class="chip mixed">mixed</span></td><td class="num">+1.30/−0.67/+1.16</td><td><span class="chip mixed">mixed</span></td><td class="num">−1.78/−0.28/−1.78</td><td><span class="chip win">win</span></td></tr>
+  </table></div>
+  <p class="cap">Verdict: <b>fused_stage2 and early_launch canonical-on; fanout off</b> (the long-pending
+  lb_union_eager A/B closes as a loss). The mixed cells at b16/b64 are single-cell transients — visible as
+  isolated 10.7 / 50.6 ms outliers in one run each — which is exactly what the three-run rule is for.</p>
+
+  <h2>Layer1 combine <span class="tag">W=8 · 2 NODES · BINARY C</span></h2>
+  <p class="cap">Five arms plus the unfused torch reference (in-forward index build, tmiso). Forward and
+  reversed capsules agree ≤2%. Plain hier wins; the eager arrival-order reduce regresses 15–35%; compress
+  breaks even with hier at two nodes, where inter-node fan-in gives dedup little to remove. The 4-node
+  story unblocks with the empty-expert fix (in flight).</p>
+  <div class="card"><div class="chartbox" id="c1"></div></div>
+
+  <h2>Layer1 combine at scale <span class="tag">W=16 · 4 NODES · BINARY C</span></h2>
+  <p class="cap">The 4-node rerun on the fixed binary (fwd/rev agree ≤2%). Eager's regression generalizes
+  (+2%→+11%). Compress crosses over: the in-forward CSR build costs it b1–b4, but the wire dedup wins −4%
+  (b32) and −6% (b64) — −17%/−14% with inherited indices — answering the standing dedup-at-scale question.
+  dense reaches 122.5 ms at b64 (clipped ↗).</p>
+  <div class="card"><div class="chartbox" id="c3"></div></div>
+
+  <h2>Combined layer0+1 pass <span class="tag">W=8 · 2 NODES · BINARY C</span></h2>
+  <p class="cap">One timed window per iteration: layer0 forward (routing + schedule computed once, in-window)
+  → GELU → layer1 on inherited inverse indices. The corrected pairing (eager off) beats the stock pairing by
+  37–51% at every budget and satisfies the decomposition identity (combined ≈ L0 + GELU + L1-amortized,
+  −1% at b8); the eager pairing violated it (+18% at b8) — ablation pinned the entire penalty on the eager
+  persistent reduce kernel, exonerating early_launch. (Pairing choice at scale is settled by the W=16 A/B
+  below, which W=8 predates.)</p>
+  <div class="card"><div class="chartbox" id="c2"></div></div>
+
+  <h2>Combined at scale — the campaign headline <span class="tag">W=16 · 4 NODES · BINARY C</span></h2>
+  <p class="cap">Best-pairing A/B (fwd + rev capsules): <b>the compress pairing wins at every budget</b> —
+  the combined window inherits compress's CSR indices from layer0's schedule, so its build penalty vanishes
+  and the wire dedup remains: 10.6 ms at b8 (−52% vs stock, −57% vs torch), −45…−52% vs stock across
+  b2–b64. hier-pairing b2 uses the clean reversed cell (the forward one carried a single-iteration
+  transient). stock reaches 177 ms at b64 (clipped ↗).</p>
+  <div class="card"><div class="chartbox" id="c4"></div></div>
+
+  <h2>The two bugs the ladder caught</h2>
+  <div class="bugs">
+    <div class="card bug"><h3>Lazy-load spin deadlock</h3>
+      <p><span class="mono">CUDA_MODULE_LOADING=LAZY</span> enqueues first-launch module loads behind the
+      never-exiting persistent spin kernels that eager and compress introduce; NVSHMEM 3.2.5 delivers every
+      on-stream signal via a device kernel, so the producer can never load — circular wait.</p>
+      <p>Fix: ctor-time kernel preload + transport priming (<span class="mono">1550b67</span>, binary B).
+      Caught because compress's first-ever GPU run was gated by the 2-node bring-up ladder.</p></div>
+    <div class="card bug"><h3>Empty-expert split-cascade hang</h3>
+      <p><span class="mono">set_barrier_ptr</span> divides the full problem list by the non-empty problem
+      count; any local expert with zero routed rows mis-buckets completions and the per-split barrier never
+      fires. Hangs every layer1 arm — dense included — on any matrix with empty experts, i.e. all real-trace
+      matrices at these shapes, at any node count.</p>
+      <p>Fix: <span class="mono">c9b82b6</span> (binary C). Masqueraded as an “NN&gt;2 bug” because synthetic
+      bring-up matrices have no empty experts. Audit rule: when trace cells hang, bincount the routing first.</p></div>
+  </div>
+
+  <h2>Capsule ledger</h2>
+  <p class="cap">All capsules committed under <span class="mono">sweeps/results/runs/</span>; comparisons stay
+  within one build. W=8 and W=16 results are never mixed.</p>
+  <div class="card tblwrap"><table>
+    <tr><th>Set</th><th>Capsules (20260816-…)</th><th>Build</th><th>Status</th></tr>
+    <tr><td>P2 bring-up 2n</td><td class="mono">123413 · 125015 · 131627</td><td>A</td><td>hier green; eager+compress hangs found</td></tr>
+    <tr><td>L0 4n fwd + rev×2</td><td class="mono">132227 · 133612 · 161551 · 161758 · 162940 · 163134</td><td>A</td><td>126 cells ok, verdict-grade</td></tr>
+    <tr><td>FAST l0 / l1 (4n)</td><td class="mono">134133 · 134308 · 163504 · 163640</td><td>A</td><td>b64 heap-ceiling losses documented</td></tr>
+    <tr><td>Negatives</td><td class="mono">134402 · 170140</td><td>A/B</td><td>l1 trace hangs → bug #2 discriminator</td></tr>
+    <tr><td>L1 2n fwd+rev</td><td class="mono">172012 · 185918 · 191205 · 192706</td><td>C</td><td>140 cells ok (172012: pure-C data, audited)</td></tr>
+    <tr><td>L0 companion + L01 2n</td><td class="mono">190517 · 190804 · 193310 · 194533 · 194705</td><td>C</td><td>identity checks pass on corrected pairing</td></tr>
+    <tr><td>L1 4n fwd+rev</td><td class="mono">96f807d1 · 9725d5e0 · a13c43be · 0c055e74</td><td>C</td><td>five arms all green; compress crossover</td></tr>
+    <tr><td>L01 4n + pairing A/B</td><td class="mono">537522b3 · 5282d34f · 9bd629be · b002806a · 9378fed5 · 397ac0fa</td><td>C</td><td>compress pairing wins every budget</td></tr>
+  </table></div>
+
+  <p class="foot">Method: sweeps/SCHEMA.md governs; isolated mode = per-iteration device sync + rank barrier,
+  quoted as mean over iterations of max across ranks; FLUX_TEST_DETERMINISTIC=0 audited per cell. Palette:
+  categorical slots from the validated reference set (fixed entity→hue mapping; baselines additionally dashed
+  so no pair relies on color alone). Full narrative: docs/handoff/07_comm_only_layer_axis_campaign.md.</p>
+</div>
+
+<script>
+const BUDGETS = [1, 2, 4, 8, 16, 32, 64];
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const CHARTS = [
+  { el: "c0", ymax: 55, note: "isolated e2e ms",
+    series: [
+      { n: "torch unfused", v: "--s-torch", dash: 1, d: [1.92, 3.34, 6.42, 12.78, 25.48, null, null] },
+      { n: "FAST", v: "--s-fast", dash: 1, d: [4.64, 5.09, 7.27, 11.62, 20.73, 40.09, null] },
+      { n: "stock flux (allgather)", v: "--s-stock", d: [1.66, 2.30, 3.53, 6.11, 11.77, 23.84, 52.20] },
+      { n: "lb_union base", v: "--s-base", d: [1.58, 2.00, 2.85, 4.72, 9.09, 19.71, 45.70] },
+      { n: "lb_union+F+E (winner)", v: "--s-opt", w: 3, d: [1.24, 1.67, 2.59, 4.47, 9.15, 19.23, 44.45] },
+    ] },
+  { el: "c1", ymax: 92, note: "isolated e2e ms (tmiso)",
+    series: [
+      { n: "torch unfused", v: "--s-torch", dash: 1, d: [3.44, 4.35, 6.10, 9.47, 16.49, null, null] },
+      { n: "dense ring-RS (stock)", v: "--s-stock", d: [3.63, 3.93, 7.10, 11.07, 22.62, 43.52, 89.97] },
+      { n: "hier (winner)", v: "--s-opt", w: 3, d: [1.60, 2.20, 3.47, 6.00, 11.91, 23.66, 50.20] },
+      { n: "hier + eager", v: "--s-eager", d: [1.86, 2.56, 4.19, 7.82, 15.90, 32.15, 67.34] },
+      { n: "compress", v: "--s-compress", d: [2.78, 3.46, 4.59, 7.47, 13.61, 25.94, 53.48] },
+    ] },
+  { el: "c2", ymax: 34, note: "isolated e2e ms, full l0+GELU+l1 window", xmax: 16,
+    series: [
+      { n: "torch + torch", v: "--s-torch", dash: 1, d: [6.52, 6.96, 11.39, 17.50, 32.08] },
+      { n: "stock pairing", v: "--s-stock", d: [5.06, 5.73, 9.90, 15.87, 32.02] },
+      { n: "lbunion(F+E) + hier eager", v: "--s-eager", d: [2.83, 4.58, 7.79, 14.58, 23.97] },
+      { n: "lbunion(F+E) + hier (winner)", v: "--s-opt", w: 3, d: [2.47, 3.46, 5.51, 9.93, 20.12] },
+    ] },
+  { el: "c3", ymax: 70, note: "isolated e2e ms (tmiso), W=16",
+    series: [
+      { n: "torch unfused", v: "--s-torch", dash: 1, d: [2.86, null, 6.62, 11.9, 22.3, null, null] },
+      { n: "FAST", v: "--s-fast", dash: 1, d: [3.96, 5.13, 6.27, 11.1, 21.0, 42.4, null] },
+      { n: "dense ring-RS (stock)", v: "--s-stock", d: [5.19, null, 10.1, 15.7, 31.4, 59.8, 122.5] },
+      { n: "hier", v: "--s-opt", w: 3, d: [1.95, null, 4.25, 7.73, 14.6, 29.4, 61.4] },
+      { n: "hier + eager", v: "--s-eager", d: [1.95, null, 4.44, 7.91, 15.9, 32.9, 68.0] },
+      { n: "compress (wins b32+)", v: "--s-compress", d: [3.05, null, 5.03, 7.93, 14.4, 28.6, 58.1] },
+    ] },
+  { el: "c4", ymax: 120, note: "isolated e2e ms, full window, W=16",
+    series: [
+      { n: "torch + torch", v: "--s-torch", dash: 1, d: [4.96, 7.49, 13.4, 24.8, 48.3, null, null] },
+      { n: "stock pairing", v: "--s-stock", d: [6.84, 7.66, 13.5, 21.9, 43.1, 85.2, 177.3] },
+      { n: "lbunion(F+E) + hier eager", v: "--s-eager", d: [3.54, 4.64, 8.00, 15.2, 25.1, 53.9, 113.2] },
+      { n: "lbunion(F+E) + hier", v: "--s-base", d: [2.86, 4.06, 6.87, 12.5, 24.9, 52.0, 112.4] },
+      { n: "lbunion(F+E) + compress (winner)", v: "--s-opt", w: 3, d: [2.76, 3.63, 5.89, 10.6, 21.2, 46.2, 99.6] },
+    ] },
+];
+function draw(cfg) {
+  const box = document.getElementById(cfg.el);
+  const budgets = BUDGETS.slice(0, cfg.xmax ? BUDGETS.indexOf(cfg.xmax) + 1 : BUDGETS.length);
+  const W = Math.min(1020, Math.max(560, box.clientWidth)), H = 300;
+  const L = 46, R = 150, T = 12, B = 34;
+  const x = i => L + i * (W - L - R) / (budgets.length - 1);
+  const y = v => T + (H - T - B) * (1 - v / cfg.ymax);
+  let s = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="latency vs budget">`;
+  const steps = 5;
+  for (let g = 0; g <= steps; g++) {
+    const gv = cfg.ymax * g / steps, gy = y(gv);
+    s += `<line x1="${L}" y1="${gy}" x2="${W - R}" y2="${gy}" stroke="${css("--grid")}" stroke-width="1"/>`;
+    s += `<text class="axis" x="${L - 7}" y="${gy + 4}" text-anchor="end">${gv}</text>`;
+  }
+  budgets.forEach((b, i) => {
+    s += `<text class="axis" x="${x(i)}" y="${H - 12}" text-anchor="middle">b${b}</text>`;
+  });
+  s += `<text class="axis" x="${L}" y="${H - 12}" text-anchor="end" font-size="10"></text>`;
+  cfg.series.forEach(sr => {
+    const col = css(sr.v);
+    const pts = sr.d.map((v, i) => v == null ? null : [x(i), y(Math.min(v, cfg.ymax))]).filter(Boolean);
+    const path = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+    s += `<path d="${path}" fill="none" stroke="${col}" stroke-width="${sr.w || 2}"${sr.dash ? ' stroke-dasharray="5 4"' : ""} stroke-linecap="round"/>`;
+    pts.forEach(p => { s += `<circle cx="${p[0]}" cy="${p[1]}" r="3" fill="${col}" stroke="${css("--card")}" stroke-width="2"/>`; });
+    const last = pts[pts.length - 1];
+    const clipped = sr.d.some(v => v != null && v > cfg.ymax);
+    s += `<text class="dlabel" x="${last[0] + 8}" y="${last[1] + 4}" fill="${col}">${sr.n.split(" (")[0]}${clipped ? " ↗" : ""}</text>`;
+  });
+  s += `<line id="${cfg.el}-cross" x1="0" y1="${T}" x2="0" y2="${H - B}" stroke="${css("--ink-3")}" stroke-width="1" stroke-dasharray="2 3" visibility="hidden"/>`;
+  s += `</svg>`;
+  let legend = `<div class="legend">` + cfg.series.map(sr =>
+    `<span class="it"><span class="sw${sr.dash ? " dash" : ""}" style="border-top-color:${css(sr.v)}"></span>${sr.n}</span>`).join("") + `</div>`;
+  box.innerHTML = s + legend + `<div class="tip" id="${cfg.el}-tip"></div>`;
+  const svg = box.querySelector("svg"), tip = document.getElementById(cfg.el + "-tip"),
+        cross = document.getElementById(cfg.el + "-cross");
+  svg.addEventListener("mousemove", ev => {
+    const r = svg.getBoundingClientRect(), sx = W / r.width;
+    const mx = (ev.clientX - r.left) * sx;
+    let bi = 0, best = 1e9;
+    budgets.forEach((b, i) => { const d = Math.abs(x(i) - mx); if (d < best) { best = d; bi = i; } });
+    cross.setAttribute("x1", x(bi)); cross.setAttribute("x2", x(bi));
+    cross.setAttribute("visibility", "visible");
+    tip.style.display = "block";
+    tip.style.left = Math.min(ev.clientX - r.left + 14, r.width - 180) + "px";
+    tip.style.top = "18px";
+    tip.innerHTML = `<div class="r"><span>budget</span><b>${budgets[bi]} MiB</b></div>` +
+      cfg.series.map(sr => sr.d[bi] == null ? "" :
+        `<div class="r"><span style="color:${css(sr.v)}">${sr.n.split(" (")[0]}</span><b>${sr.d[bi].toFixed(2)}</b></div>`).join("");
+  });
+  svg.addEventListener("mouseleave", () => { tip.style.display = "none"; cross.setAttribute("visibility", "hidden"); });
+}
+function drawAll() { CHARTS.forEach(draw); }
+drawAll();
+let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(drawAll, 150); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", drawAll);
+</script>
+</body>
