@@ -168,6 +168,8 @@ def weight_placement_pairs(plan: UltraEPPlan) -> list:
     pairs = []
     for p in range(cfg.P):
         l = int(p2l[p])
+        if l < 0:
+            continue  # unused slot (plans that don't fill all P slots)
         host = p // cfg.nlp
         orig_home = l // cfg.epn
         if host != orig_home:

@@ -419,6 +419,71 @@ VARIANTS = {
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),
+    # EPIC baseline (flux/EPIC.pdf, SIGCOMM'26 Alibaba; semantics in
+    # python/flux/testing/epic_semantics.py, driver test_moe_epic_traffic.py,
+    # invariants test_epic_planner.py). Faithful launch-granularity port:
+    # §5.2 PEO (m expert groups pipelined dispatch -> un-overlapped
+    # GemmGroupedV2 on two streams; dispatch/compute staging = stream
+    # in-order; NO flux GEMM-overlap machinery), §4.2 placement with
+    # replication (redundancy greedy + GPU greedy + NIC-stage greedy, pool
+    # oracle via the same .eplb_load.json sidecar as the eplb arm), §4.3
+    # dynamic intra-host migration (_mig arms; per-step decision subsumed
+    # by plan_comm, tau-gated swaps converge in warmup under the static
+    # per-cell routing — steady-state decision cost is the measurement).
+    # Transport = Mode-1/DeepEP-default analog: staged per-entry wire, NO
+    # dedup (One row per (token, instance); dup counterfactuals emitted as
+    # epic_dup_stats). Replica rule: src mod C (recorded assumption).
+    # Heap via epic_sym_size (eplb row-sum bound x split headroom).
+    # epic_m1 = no-overlap anchor (D9); epic_m1_place_none = fixed-placement
+    # control. conn=8 pin inherited from the EP-arm family A/B.
+    "epic_m1": dict(
+        comm_pattern="epic_peo_a2av",  # cells.csv label only, never a CLI flag
+        driver="epic",
+        test_args=["--transport", "nvshmem", "--placement", "epic",
+                   "--groups", "1"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    "epic_m2": dict(
+        comm_pattern="epic_peo_a2av",
+        driver="epic",
+        test_args=["--transport", "nvshmem", "--placement", "epic",
+                   "--groups", "2"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    "epic_m4": dict(
+        comm_pattern="epic_peo_a2av",
+        driver="epic",
+        test_args=["--transport", "nvshmem", "--placement", "epic",
+                   "--groups", "4"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    "epic_m2_mig": dict(
+        comm_pattern="epic_peo_a2av",
+        driver="epic",
+        test_args=["--transport", "nvshmem", "--placement", "epic",
+                   "--groups", "2", "--migration", "on"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    "epic_m4_mig": dict(
+        comm_pattern="epic_peo_a2av",
+        driver="epic",
+        test_args=["--transport", "nvshmem", "--placement", "epic",
+                   "--groups", "4", "--migration", "on"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
+    "epic_m1_place_none": dict(
+        comm_pattern="epic_peo_a2av",
+        driver="epic",
+        test_args=["--transport", "nvshmem", "--placement", "none",
+                   "--groups", "1"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
     # dense baseline and raw a2av modes
     "allgather": dict(comm_pattern="allgather", env={}, requires=[]),
     # a2av family pins CUDA_DEVICE_MAX_CONNECTIONS=8 (2026-08-01 A/B: -2..-8%

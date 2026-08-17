@@ -1,0 +1,51 @@
+# First EPIC-baseline capsule (flux/EPIC.pdf §4-§5): the PEO m-sweep +
+# placement/migration factorial on the same real Qwen3 trace as the EPLB
+# debut capsule, plus the eplb arm (same transport, same pool oracle) and
+# hier_compress_lb_union (our canonical fused arm) as context — all in ONE
+# capsule so every comparison is build-clean.
+#   epic_m1             no-overlap anchor (D9): sequential dispatch -> one
+#                       grouped GEMM; EPIC placement from the pool sidecar
+#   epic_m2 / epic_m4   PEO pipelining (dispatch/compute staging on two
+#                       streams); the m-sweep IS the §5.2 measurement
+#   epic_m2_mig/_m4_mig +§4.3 dynamic intra-host migration (swaps converge
+#                       in warmup; steady-state decision cost + book-kept
+#                       warmup swap facts are the measurement)
+#   epic_m1_place_none  fixed-placement control (placement ablation)
+#   eplb                same wire + slot budget, deepseek-EPLB placement —
+#                       the placement-algorithm A/B
+#   hier_compress_lb_union  our fused tile-overlap arm (context only:
+#                       different mechanism class, same cell)
+# Read epic per-group phases (disp{g}/stall{g}/gemm{g}) for the pipeline
+# story; e2e_ms (pack->last GEMM) is the headline; D4 diagnostic =
+# epic_est_internode_* (pool units) vs epic_internode_*_rows facts.
+platform: perlmutter
+nodes: 4
+variants:
+  - epic_m1
+  - epic_m2
+  - epic_m4
+  - epic_m2_mig
+  - epic_m4_mig
+  - epic_m1_place_none
+  - eplb
+  - hier_compress_lb_union
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib: [2, 8]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+modes: [isolated, e2e]
+matrix_instance: "001"
+skip_correctness: false
+timeout_s: 900
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+notes: "EPIC baseline debut: PEO m-sweep (1/2/4) x placement (epic/none) x migration (off/on) + eplb placement A/B + fused context arm, real Qwen3 trace layer 92 b2+b8/k8, correctness on"

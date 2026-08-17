@@ -42,6 +42,7 @@ TEST_MOONEP = "test/python/moe_ag_scatter/test_moe_moonep_traffic.py"
 TEST_ULTRAEP = "test/python/moe_ag_scatter/test_moe_ultraep_traffic.py"
 TEST_MOONEP_FUSED = "test/python/moe_ag_scatter/test_moe_moonep_fused_traffic.py"
 TEST_EPLB = "test/python/moe_ag_scatter/test_moe_eplb_traffic.py"
+TEST_EPIC = "test/python/moe_ag_scatter/test_moe_epic_traffic.py"
 TEST_GATHER_RS = "test/python/moe_gather_rs/test_moe_gather_rs_traffic.py"
 TEST_FAST_GATHER_RS = "test/python/moe_gather_rs/test_moe_gather_rs_fast_baseline.py"
 TEST_L01 = "test/python/moe_combined/test_moe_l0l1_traffic.py"
@@ -476,7 +477,8 @@ def expand_cells(spec, plat):
                                 " alltoallv); --profile/nsys unsupported"
                             )
                             continue
-                    if driver in ("moonep", "ultraep", "eplb") and mode == "phases":
+                    if (driver in ("moonep", "ultraep", "eplb", "epic")
+                            and mode == "phases"):
                         print(
                             f"NOTE: {vname} x phases not generated — its phase"
                             " metrics (plan_comm/pack/comm/scatter/prefetch/gemm)"
@@ -749,6 +751,34 @@ def eplb_sym_size(matrix_path, plat, spec):
     return f"{sym_g}G"
 
 
+def epic_sym_size(matrix_path, plat, spec, v):
+    """Symmetric-heap sizing for the epic nvshmem arm: the eplb row-sum
+    bound (global re-homing, no dedup — a source can send its whole
+    post-topk emission to one dest) scaled by the runner's All2AllSingle
+    split headroom (--a2a_split_headroom, default 2.0): the runner sizes
+    max_split = headroom * initial max per-(group, pair) rows, and
+    max-pair-rows <= row sum. Floor 2G, plat cap (same policy as eplb)."""
+    headroom = 2.0
+    ta = v.get("test_args") or []
+    if "--a2a_split_headroom" in ta:
+        headroom = float(ta[ta.index("--a2a_split_headroom") + 1])
+    with open(matrix_path) as f:
+        toks = f.read().split()
+    w = int(toks[0])
+    vals = [int(x) for x in toks[1 : 1 + w * w]]
+    max_pair_bytes = max(
+        sum(vals[src * w : (src + 1) * w]) for src in range(w)
+    ) * headroom
+    chunk = int(spec["chunk_bytes"])
+    hidden = 2 * w * max_pair_bytes
+    probs = 2 * w * (max_pair_bytes // chunk) * 4
+    sym_g = max(2, math.ceil(2 * (hidden + probs) / (1 << 30)))
+    sym_max = plat.get("sym_size_max_g")
+    if sym_max:
+        sym_g = min(sym_g, int(sym_max))
+    return f"{sym_g}G"
+
+
 def build_cell_env(spec, plat, cell, staging, matrix):
     v = VARIANTS[cell["variant"]]
     matrix_path = matrix.get("path")
@@ -800,7 +830,7 @@ def build_cell_env(spec, plat, cell, staging, matrix):
         # (setdefault -- never pre-set them here); heap must hold the fused
         # a2av buffers plus the permanent weight tensor
         env["NVSHMEM_SYMMETRIC_SIZE"] = moonep_fused_sym_size(matrix_path, plat, spec)
-    elif v.get("driver", "flux") in ("moonep", "ultraep", "eplb"):
+    elif v.get("driver", "flux") in ("moonep", "ultraep", "eplb", "epic"):
         # no FLUX_A2AV_* scale knobs ever; NVSHMEM heap only for the
         # one-sided-transport arms (All2AllSingle symmetric staging is
         # 2 ops x 2 bufs of max_split*W rows). moonep bounds max_split by
@@ -823,6 +853,10 @@ def build_cell_env(spec, plat, cell, staging, matrix):
             elif v.get("driver") == "eplb":
                 env["NVSHMEM_SYMMETRIC_SIZE"] = eplb_sym_size(
                     matrix_path, plat, spec
+                )
+            elif v.get("driver") == "epic":
+                env["NVSHMEM_SYMMETRIC_SIZE"] = epic_sym_size(
+                    matrix_path, plat, spec, v
                 )
             else:
                 env["NVSHMEM_SYMMETRIC_SIZE"] = moonep_sym_size(matrix_path, plat)
@@ -1048,20 +1082,25 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         # union-broadcast modes forward with pure CE puts and are exempt
         # (layer0 flux driver only — gather_rs returned above)
         sm_margin = max(1, sm_margin)
-    if v.get("driver", "flux") in ("moonep", "ultraep", "moonep_fused", "eplb"):
+    if v.get("driver", "flux") in ("moonep", "ultraep", "moonep_fused",
+                                   "eplb", "epic"):
         # same CLI as the flux driver minus --comm_pattern; variant-specific
         # flags (--transport nvshmem / --overlap_prefetch / --nvl_domain_size
-        # / --weight_path) ride test_args
+        # / --weight_path / --groups / --migration) ride test_args
         test = {
             "moonep": TEST_MOONEP,
             "ultraep": TEST_ULTRAEP,
             "moonep_fused": TEST_MOONEP_FUSED,
             "eplb": TEST_EPLB,
+            "epic": TEST_EPIC,
         }[v["driver"]]
         test_args = [test, "--traffic_matrix", matrix_path]
         test_args += list(v.get("test_args") or [])
         if v["driver"] == "eplb" and eplb_load_path:
             test_args += ["--eplb_load_file", eplb_load_path]
+        if v["driver"] == "epic" and eplb_load_path:
+            # same pool-oracle sidecar convention as the eplb arm (D7)
+            test_args += ["--epic_load_file", eplb_load_path]
     else:
         test_args = [
             TEST,
@@ -1560,7 +1599,7 @@ def cmd_run(spec, jobid_arg, dry):
                 with open(os.path.join(plat["matrices_root"], f"{mid}.meta.json")) as f:
                     rsha = json.load(f)["routing_sha256"]
                 matrices[cell["cell_id"]].update({"routing": rpath, "routing_sha": rsha})
-            if VARIANTS[cell["variant"]].get("driver") == "eplb":
+            if VARIANTS[cell["variant"]].get("driver") in ("eplb", "epic"):
                 # predicted-load sidecar: the cell's exact full pools (the
                 # oracle-ceiling prediction). Placement input only — matrix
                 # identity is unchanged; the driver records the sha as a
