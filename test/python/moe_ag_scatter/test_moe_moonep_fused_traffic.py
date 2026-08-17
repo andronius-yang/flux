@@ -681,9 +681,13 @@ if __name__ == "__main__":
         # it, so the aliasing mechanism (NR-02 Class-B / NR-13 fact 4) is
         # the live hypothesis; conn=32 is the designated probe. Gated until
         # then — tokens_first is a closed non-default ablation anyway.
-        assert args.weight_issue_order != "tokens_first", (
+        assert args.weight_issue_order != "tokens_first" or (
+            os.getenv("MOONEP_ALLOW_TOKFIRST_SHARD") == "1"
+        ), (
             "--weight_shard x tokens_first is gated (2n hang, channel-"
-            "aliasing hypothesis — see the sharding ledger entry)"
+            "aliasing hypothesis — see the sharding ledger entry)."
+            " MOONEP_ALLOW_TOKFIRST_SHARD=1 overrides for hang-diagnosis"
+            " probes ONLY — never in a capsule"
         )
     if args.weight_path == "push":
         op_w = flux.WeightPushMulticast(

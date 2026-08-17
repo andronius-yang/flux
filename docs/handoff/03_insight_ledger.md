@@ -873,15 +873,26 @@ predicted win). Design + validation facts:
 4. **Balance is exact by construction:** at 2n8r trace b2 the per-rank NIC
    egress census went from 64 MiB on one rank per node to 16 MiB on every
    rank (RECORDER `wshard_*` fields audit it per run). Confidence: measured.
-5. **OPEN: tokens_first x sharding hangs (gated).** With kernel priming in
-   place (the 1550b67 pattern, now also applied at set_shard_plan) the 2n
-   hang persists: under tokens_first the fused forward enqueues before the
-   shard chain, and with the conn=8 pin a chain op can land behind the
-   resident spinning GEMM on an aliased issue channel — an NR-02 Class-B
-   cycle the weights_first order cannot form (identical kernels pass there).
-   The driver asserts the combination away; **falsifier/probe: a conn=32 run
-   where the hang persists kills the aliasing hypothesis.** tokens_first is a
-   closed non-default ablation (NR-14), so this gates nothing canonical.
+5. **RESOLVED (root-caused 2026-08-17b): the tokens_first x sharding "hang"
+   was CUDA_DEVICE_MAX_CONNECTIONS=1, full stop.** The original repro ran
+   through `launch.sh`, whose default is `CONNECTIONS=1` when the env is
+   unset (manual smokes — every capsule pins conn=8 and was never at risk).
+   At conn=1 every stream shares ONE hardware issue channel, so channel work
+   executes in ENQUEUE order: under tokens_first the spinning GEMM is
+   enqueued first and the shard chain's finalize SET — the very signal the
+   GEMM's slot tiles spin on — sits behind it on the same channel. That is a
+   guaranteed resource cycle, not probabilistic aliasing; weights_first
+   passes at conn=1 only because the chain enqueues first. Probe ladder
+   (2n, 2026-08-17b): conn=1 HANG; conn=8 PASS; conn=32 PASS; conn=8 +
+   sm_margin=32 PASS; conn=8 + EARLY_LAUNCH=0 PASS — kernel priming (added
+   at set_shard_plan, kept as hygiene) was neither necessary nor sufficient.
+   Consequence: the mechanism is sound at every capsule configuration; the
+   driver's blanket tokens_first x shard gate can be replaced by a
+   conn > 1 requirement (decision pending). Note the general lesson: ANY
+   configuration where a first-enqueued kernel spins on a later-enqueued
+   stream op deadlocks at conn=1 — the lb_union ctor's conn > 1 FLUX_CHECK
+   already guards the token side; the weight-gate side now needs the same
+   guard if the blanket gate is lifted.
 6. **Follow-ups named, not built:** leg-level fan-out assignment across
    node-mates (composes with the gateway census for multi-leg hot experts);
    lazy w2 send + gemm2 tile gating in gather_rs (v1 pushes both matrices
