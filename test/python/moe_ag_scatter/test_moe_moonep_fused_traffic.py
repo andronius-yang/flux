@@ -61,7 +61,9 @@ from flux.testing.moonep_fused_map import (
     assign_gateways,
     build_fused_metadata,
     build_virtual_map,
+    egress_byte_stats,
     fused_row_map,
+    plan_weight_shards,
     preflight_metadata_checks,
     push_plan_stats,
     required_a2av_knobs,
@@ -139,6 +141,21 @@ def parse_args():
                         " auto (F-C) = mcast iff the plan census finds a"
                         " real fan-out group, else direct (NR-13 fact 1:"
                         " MoonEP-planner plans are usually fan-out-free)")
+    parser.add_argument("--weight_shard", default="off",
+                        choices=["off", "auto", "on"],
+                        help="egress NIC-sharding of cross-node weight legs"
+                        " (push only): byte-split each wire leg across the"
+                        " home node's same-local-rank wires with dest-side"
+                        " NVLink reassembly, so all L NICs carry it on both"
+                        " ends. auto = shard iff expert_bytes >="
+                        " --weight_shard_min_bytes and cross legs exist;"
+                        " on = shard every cross leg regardless of size")
+    parser.add_argument("--weight_shard_min_bytes", type=int, default=8 << 20,
+                        help="auto-mode threshold (microbench-calibrated;"
+                        " below it a leg keeps the single-NIC path)")
+    parser.add_argument("--weight_shard_chunk_bytes", type=int, default=0,
+                        help="per-chunk staging signals pipeline the NVLink"
+                        " stage against the NIC push; 0 = whole-shard chunks")
     parser.add_argument("--weight_gate", default="join",
                         choices=["join", "tiles"],
                         help="how the GEMM observes weight landing. join:"
@@ -167,19 +184,40 @@ def parse_args():
 
 @torch.no_grad()
 def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
-                      meta, out_buf, epn):
+                      meta, out_buf, epn, sharded=False):
     total_iters = args.warmup_iters + args.iters
     ev = {
         name: [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
         for name in ("start", "pref_start", "pref_end", "gw_end", "gate", "end")
     }
     w_stream = torch.cuda.Stream(priority=-1)
+    # NR-13 F-B extended to sharding: every shard-machinery wait (egress
+    # chunk waits, ingress chunk waits, the dest finalize) lives on its own
+    # late-drained stream, never in any issue window. The gateway fan-out
+    # rides AFTER the finalize when sharding is on, since gateway slots may
+    # themselves be shard-fed (its GEQ-epoch wait is satisfied by the
+    # finalize SET).
+    shard_stream = torch.cuda.Stream(priority=-1) if sharded else None
     isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))
     iso_sync_times = []
     push = args.weight_path == "push"
     mcast = args.weight_push_mode == "mcast"
     tiles = push and args.weight_gate == "tiles"
     tokens_first = args.weight_issue_order == "tokens_first"  # implies push+tiles
+
+    def emit_shard_chain(i):
+        # DEADLOCK RULE compliance under tokens_first: shard_stream waits
+        # only on pref_end, which w_stream records after its own wait-free
+        # issue window — nothing here is ordered after op.forward's
+        # completion, and every CUStreamWaitValue's satisfying writer is a
+        # remote rank's wait-free issue (or an earlier op on this stream).
+        with torch.cuda.stream(shard_stream):
+            shard_stream.wait_event(ev["pref_end"][i])
+            op_w.forward_egress()
+            op_w.forward_ingress()
+            op_w.forward_shard_join()
+            op_w.forward_gateway()
+            ev["gw_end"][i].record()
     torch.cuda.synchronize()
     torch.distributed.barrier()
     for i in range(total_iters):
@@ -233,8 +271,11 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
                     assert got == epoch == i + 1, \
                         f"epoch skew: {got} vs peeked {epoch} vs iter {i + 1}"
                     ev["pref_end"][i].record()
-                    op_w.forward_gateway()
-                    ev["gw_end"][i].record()
+                    if not sharded:
+                        op_w.forward_gateway()
+                        ev["gw_end"][i].record()
+                if sharded:
+                    emit_shard_chain(i)
                 torch.cuda.current_stream().wait_event(ev["gw_end"][i])
                 ev["end"][i].record()
                 continue
@@ -257,7 +298,7 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
                         args.prefetch_impl == "kernel",
                     )
                 ev["pref_end"][i].record()
-                if push:
+                if push and not sharded:
                     # NR-13 F-B: the gateway's slot-arrival wait + NVLink
                     # fan-out run AFTER pref_end, so the forward launch never
                     # waits on weight ARRIVAL — pref_end now means "home puts
@@ -265,6 +306,8 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
                     # forward; gw_end is joined back in after it (below).
                     op_w.forward_gateway()
                     ev["gw_end"][i].record()
+            if push and sharded:
+                emit_shard_chain(i)
             # nbi-issue ordering: the fused forward's end-of-iteration
             # barrier_all only quiets puts already issued in stream order
             torch.cuda.current_stream().wait_event(ev["pref_end"][i])
@@ -306,10 +349,17 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
             ev["end"][i].record()
 
     times = {"e2e_ms": [], "prefetch_ms": [], "gate_ms": [], "fused_ms": []}
+    if sharded:
+        # the shard machinery window: pref_end (home issue done) -> gw_end
+        # (egress + reassembly + finalize + gateway drained). Overlaps the
+        # fused window under the tiles gate; serial ahead of gate under join.
+        times["shard_ms"] = []
     for i in range(total_iters):
         ev["end"][i].synchronize()
         if i < args.warmup_iters:
             continue
+        if sharded:
+            times["shard_ms"].append(ev["pref_end"][i].elapsed_time(ev["gw_end"][i]))
         # bracket semantics under tokens_first (E1): prefetch_ms = the weight
         # ISSUE window, now concurrent with the fused window; gate_ms = 0 by
         # definition (no serialization point exists); fused_ms spans the whole
@@ -497,6 +547,9 @@ if __name__ == "__main__":
     # prefetch slots) -- the op's single weight group AND the weight-movement
     # source/destination. Exactly one weight op is live per run.
     push_mode_requested = args.weight_push_mode
+    weight_sharded = False
+    if args.weight_shard != "off":
+        assert args.weight_path == "push", "--weight_shard needs --weight_path push"
     if args.weight_path == "push":
         op_w = flux.WeightPushMulticast(
             TP_GROUP, epn, B, ffn_shard, args.H, input_dtype,
@@ -524,6 +577,43 @@ if __name__ == "__main__":
                 wpush_internode_bytes_direct=pstats["n_cross_legs"] * ebytes,
                 wpush_internode_bytes_mcast=pstats["n_cross_groups"] * ebytes,
             )
+        if args.weight_shard != "off":
+            # egress NIC-sharding: byte-split cross-node wire legs of the
+            # RESOLVED mode across same-local-rank wires (replicated table,
+            # collective set_shard_plan). auto respects the size threshold;
+            # on shards every cross leg regardless.
+            ebytes = ffn_shard * args.H * input_dtype.itemsize
+            shard_min = args.weight_shard_min_bytes if args.weight_shard == "auto" else 1
+            shard_table = plan_weight_shards(
+                push_pairs, DIST_ENV.LOCAL_WORLD_SIZE, ebytes,
+                mode=args.weight_push_mode, min_bytes=shard_min,
+            )
+            weight_sharded = shard_table.shape[0] > 0
+            if weight_sharded:
+                op_w.set_shard_plan(
+                    shard_table, args.weight_shard_chunk_bytes,
+                    DIST_ENV.LOCAL_WORLD_SIZE,
+                )
+            bstats = egress_byte_stats(
+                push_pairs, DIST_ENV.LOCAL_WORLD_SIZE, W, ebytes,
+                mode=args.weight_push_mode,
+                shards=shard_table if weight_sharded else None,
+            )
+            if rank == 0:
+                print(f"weight shard: requested {args.weight_shard} ->"
+                      f" {'on' if weight_sharded else 'off'}"
+                      f" ({shard_table.shape[0]} shard legs); egress census:"
+                      f" {bstats}")
+                RECORDER.emit_info(
+                    wshard_requested=args.weight_shard,
+                    wshard_resolved="on" if weight_sharded else "off",
+                    wshard_n_legs=int(shard_table.shape[0]),
+                    wshard_max_rank_egress_bytes=bstats["max_rank_egress_bytes"],
+                    wshard_sharded_max_rank_egress_bytes=bstats.get(
+                        "sharded_max_rank_egress_bytes",
+                        bstats["max_rank_egress_bytes"],
+                    ),
+                )
     else:
         assert args.weight_push_mode == "direct", "--weight_push_mode needs --weight_path push"
         op_w = flux.WeightPrefetchGetmem(
@@ -586,11 +676,13 @@ if __name__ == "__main__":
             weight_push_mode=args.weight_push_mode,
             weight_gate=args.weight_gate,
             weight_issue_order=args.weight_issue_order,
+            weight_shard=args.weight_shard,
             **{f"knob_{k}": v for k, v in knobs.items()},
         )
 
     times = perf_moonep_fused(
-        args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu, meta, out_buf, epn
+        args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu, meta, out_buf, epn,
+        sharded=weight_sharded,
     )
     RECORDER.emit_iters("flux", times)
     e2e = sum(times["e2e_ms"]) / len(times["e2e_ms"])

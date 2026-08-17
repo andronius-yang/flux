@@ -267,6 +267,29 @@ VARIANTS = {
         env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_SCHED_PREFETCH_LAST"],
     ),
+    # EGRESS NIC-SHARDING (2026-08-17): cross-node weight legs byte-split
+    # across the home node's same-local-rank wires with dest-side NVLink
+    # reassembly (all L NICs on BOTH ends; SIGNAL_ADD arrival + dest-side
+    # finalize SET keeps join()/tile gates unchanged). --weight_shard auto
+    # shards legs >= the threshold; census + resolution RECORDER-audited
+    # (wshard_*). The shard machinery waits ride a dedicated late-drained
+    # stream (NR-13 F-B extended); shard_ms brackets its window.
+    "moonep_fused_push_auto_shard": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_push_mode", "auto",
+                   "--weight_shard", "auto"],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION"],
+    ),
+    "moonep_fused_push_auto_gated_shard": dict(
+        comm_pattern="moonep_fused_a2av",
+        driver="moonep_fused",
+        test_args=["--weight_path", "push", "--weight_push_mode", "auto",
+                   "--weight_gate", "tiles", "--weight_shard", "auto"],
+        env={"FLUX_A2AV_LB_UNION": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_SCHED_PREFETCH_LAST"],
+    ),
     # Explicit interleaved (stage-major) order — same as the default, pinned so
     # an A/B pair states its schedule on both sides instead of relying on the
     # binary default. This is the FAST arm at b64 (~22.2 ms vs slot-last ~28.7).

@@ -474,10 +474,19 @@ static int reg_weight_push_multicast [[maybe_unused]] = []() {
             .def("signals", &WeightPushMulticastCls::signals)
             .def("set_plan", &WeightPushMulticastCls::set_plan, py::arg("pairs_cpu"))
             .def(
+                "set_shard_plan",
+                &WeightPushMulticastCls::set_shard_plan,
+                py::arg("shards_cpu"),
+                py::arg("chunk_bytes") = 0,
+                py::arg("local_world_size") = 4)
+            .def(
                 "forward",
                 &WeightPushMulticastCls::forward,
                 py::arg("multicast") = false)
             .def("forward_gateway", &WeightPushMulticastCls::forward_gateway)
+            .def("forward_egress", &WeightPushMulticastCls::forward_egress)
+            .def("forward_ingress", &WeightPushMulticastCls::forward_ingress)
+            .def("forward_shard_join", &WeightPushMulticastCls::forward_shard_join)
             .def("join", &WeightPushMulticastCls::join)
             .def("epoch", &WeightPushMulticastCls::epoch);
       });

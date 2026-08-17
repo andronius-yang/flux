@@ -49,6 +49,21 @@ struct FwdLeg {
   int32_t dst_rank;  // same-node peer
   int32_t dst_slot;
 };
+struct ShardLeg {
+  int32_t home_rank;
+  int32_t dst_rank;
+  int32_t dst_slot;
+  int32_t shard_idx;
+  int32_t egress_rank;
+  int32_t ingress_rank;
+  int64_t byte_off;
+  int64_t byte_len;
+  // staging positions on the egress/ingress rank, derived by every rank from
+  // the replicated table scan (writer and owner agree with no exchange)
+  int32_t eg_slot_idx = -1;
+  int32_t in_slot_idx = -1;
+  int32_t src_row = -1;  // home legs only: joined from the pair plan
+};
 }  // namespace
 
 class WeightPushMulticast::WeightPushMulticastImpl {
@@ -72,6 +87,35 @@ class WeightPushMulticast::WeightPushMulticastImpl {
   std::vector<PushLeg> mcast_out_;    // home == me && gw < 0: multicast legs
   std::vector<FwdLeg> mcast_fwd_;     // gw == me: NVLink forwards
   std::vector<int32_t> my_in_slots_;  // dst == me: slots join() waits on
+
+  // egress NIC-sharding state (see set_shard_plan; empty => disabled)
+  std::vector<ShardLeg> shard_home_;     // home == me: wait-free stage/push
+  std::vector<ShardLeg> shard_egress_;   // egress == me != home
+  std::vector<ShardLeg> shard_ingress_;  // ingress == me != dst
+  std::vector<uint64_t> sharded_out_keys_;  // (dst<<32)|slot of MY sharded legs
+  std::vector<int32_t> my_shard_slots_;     // dst == me: sharded in-slots
+  std::vector<uint64_t> arrive_quota_;      // [n_slots] chunk adds per forward
+  std::vector<uint64_t> expected_arrive_;   // [n_slots] cumulative host mirror
+  int64_t shard_chunk_bytes_ = 0;
+  int64_t shard_maxc_ = 0;        // max chunks per shard (sig stride)
+  int64_t max_shard_bytes_ = 0;   // staging row pitch
+  torch::Tensor egress_stage_;    // symmetric [cap_e, max_shard_bytes_] bytes
+  torch::Tensor ingress_stage_;   // symmetric [cap_i, max_shard_bytes_] bytes
+  torch::Tensor eg_sig_;          // symmetric u64[cap_e * shard_maxc_]
+  torch::Tensor in_sig_;          // symmetric u64[cap_i * shard_maxc_]
+  torch::Tensor shard_arrive_;    // symmetric u64[n_slots], ADD, never reset
+
+  bool
+  is_sharded_out(int32_t d, int32_t b) const {
+    uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(d)) << 32) |
+                   static_cast<uint32_t>(b);
+    return std::binary_search(this->sharded_out_keys_.begin(), this->sharded_out_keys_.end(), key);
+  }
+
+  int64_t
+  chunks_of(int64_t byte_len) const {
+    return (byte_len + this->shard_chunk_bytes_ - 1) / this->shard_chunk_bytes_;
+  }
 
  public:
   WeightPushMulticastImpl(
@@ -97,6 +141,13 @@ class WeightPushMulticast::WeightPushMulticastImpl {
     this->weight_home_ = this->weight_full_.narrow(0, 0, n_experts_local);
     this->prefetch_slots_ = this->weight_full_.narrow(0, n_experts_local, n_slots);
     this->signals_ = nvshmem_create_tensor({n_slots}, at::ScalarType::Long, true);
+    // multi-writer arrival counter for sharded legs (SIGNAL_ADD): its
+    // correctness depends on an exact zero start, so zero it explicitly
+    // (local device memset, uniform across ranks, before any use).
+    this->shard_arrive_ = nvshmem_create_tensor({n_slots}, at::ScalarType::Long, true);
+    this->shard_arrive_.zero_();
+    this->expected_arrive_.assign(n_slots, 0);
+    this->arrive_quota_.assign(n_slots, 0);
     this->expert_bytes_ = row_dim0 * row_dim1 * this->weight_full_.element_size();
   }
 
@@ -161,6 +212,111 @@ class WeightPushMulticast::WeightPushMulticastImpl {
         [](const FwdLeg &a, const FwdLeg &b) { return a.gw_slot < b.gw_slot; });
   }
 
+  void
+  set_shard_plan(torch::Tensor shards_cpu, int64_t chunk_bytes, int64_t local_world_size) {
+    CHECK_NDIM(shards_cpu, 2);
+    FLUX_CHECK(shards_cpu.size(1) == 8);
+    FLUX_CHECK(shards_cpu.dtype() == at::ScalarType::Int);
+    FLUX_CHECK(shards_cpu.device().is_cpu());
+    FLUX_CHECK(shards_cpu.is_contiguous());
+    const int64_t L = local_world_size;
+    FLUX_CHECK(L > 0 && this->world_size_ % L == 0);
+    this->shard_home_.clear();
+    this->shard_egress_.clear();
+    this->shard_ingress_.clear();
+    this->sharded_out_keys_.clear();
+    this->my_shard_slots_.clear();
+    this->arrive_quota_.assign(this->n_slots_, 0);
+    const int32_t *p = shards_cpu.data_ptr<int32_t>();
+    const int64_t n = shards_cpu.size(0);
+    this->max_shard_bytes_ = 0;
+    for (int64_t i = 0; i < n; ++i) {
+      this->max_shard_bytes_ = std::max(this->max_shard_bytes_, (int64_t)p[i * 8 + 7]);
+    }
+    this->shard_chunk_bytes_ =
+        (chunk_bytes > 0 && chunk_bytes < this->max_shard_bytes_) ? chunk_bytes
+                                                                  : this->max_shard_bytes_;
+    this->shard_maxc_ = this->max_shard_bytes_ > 0 ? this->chunks_of(this->max_shard_bytes_) : 0;
+    // one replicated scan: every rank derives the same staging slot indices
+    // for every row, so writer and owner agree with zero metadata exchange
+    std::vector<int32_t> eg_count(this->world_size_, 0), in_count(this->world_size_, 0);
+    for (int64_t i = 0; i < n; ++i) {
+      ShardLeg s;
+      s.home_rank = p[i * 8 + 0];
+      s.dst_rank = p[i * 8 + 1];
+      s.dst_slot = p[i * 8 + 2];
+      s.shard_idx = p[i * 8 + 3];
+      s.egress_rank = p[i * 8 + 4];
+      s.ingress_rank = p[i * 8 + 5];
+      s.byte_off = p[i * 8 + 6];
+      s.byte_len = p[i * 8 + 7];
+      FLUX_CHECK(s.home_rank >= 0 && s.home_rank < this->world_size_) << "row " << i;
+      FLUX_CHECK(s.dst_rank >= 0 && s.dst_rank < this->world_size_) << "row " << i;
+      FLUX_CHECK(s.dst_slot >= 0 && s.dst_slot < this->n_slots_) << "row " << i;
+      FLUX_CHECK(s.home_rank / L != s.dst_rank / L) << "only cross-node legs shard, row " << i;
+      FLUX_CHECK(s.shard_idx >= 0 && s.shard_idx < L) << "row " << i;
+      FLUX_CHECK(s.egress_rank == (s.home_rank / L) * L + s.shard_idx) << "row " << i;
+      FLUX_CHECK(s.ingress_rank == (s.dst_rank / L) * L + s.shard_idx) << "row " << i;
+      FLUX_CHECK(s.byte_off >= 0 && s.byte_len > 0) << "row " << i;
+      FLUX_CHECK(s.byte_off + s.byte_len <= this->expert_bytes_) << "row " << i;
+      if (s.egress_rank != s.home_rank) {
+        s.eg_slot_idx = eg_count[s.egress_rank]++;
+      }
+      if (s.ingress_rank != s.dst_rank) {
+        s.in_slot_idx = in_count[s.ingress_rank]++;
+      }
+      if (s.home_rank == this->rank_) {
+        // join src_row from the pair plan (set_plan must have run): the
+        // shard table carries only the leg identity (dst_rank, dst_slot)
+        s.src_row = -1;
+        for (const auto &leg : this->direct_all_) {
+          if (leg.dst_rank == s.dst_rank && leg.dst_slot == s.dst_slot) {
+            s.src_row = leg.src_row;
+            break;
+          }
+        }
+        FLUX_CHECK(s.src_row >= 0)
+            << "shard row " << i << " has no matching pair in set_plan (call set_plan first)";
+        this->shard_home_.push_back(s);
+        this->sharded_out_keys_.push_back(
+            (static_cast<uint64_t>(static_cast<uint32_t>(s.dst_rank)) << 32) |
+            static_cast<uint32_t>(s.dst_slot));
+      }
+      if (s.egress_rank == this->rank_ && s.egress_rank != s.home_rank) {
+        this->shard_egress_.push_back(s);
+      }
+      if (s.ingress_rank == this->rank_ && s.ingress_rank != s.dst_rank) {
+        this->shard_ingress_.push_back(s);
+      }
+      if (s.dst_rank == this->rank_) {
+        if (this->arrive_quota_[s.dst_slot] == 0) {
+          this->my_shard_slots_.push_back(s.dst_slot);
+        }
+        this->arrive_quota_[s.dst_slot] += static_cast<uint64_t>(this->chunks_of(s.byte_len));
+      }
+    }
+    std::sort(this->sharded_out_keys_.begin(), this->sharded_out_keys_.end());
+    // staging capacity = replicated max over ranks => identical symmetric
+    // allocs on every rank (collective safety with no exchange). Fresh sig
+    // arrays start at 0; SET-epoch/GEQ stays correct since epochs only grow.
+    int64_t cap_e = n ? *std::max_element(eg_count.begin(), eg_count.end()) : 0;
+    int64_t cap_i = n ? *std::max_element(in_count.begin(), in_count.end()) : 0;
+    if (cap_e > 0) {
+      this->egress_stage_ =
+          nvshmem_create_tensor({cap_e, this->max_shard_bytes_}, at::ScalarType::Byte, true);
+      this->eg_sig_ =
+          nvshmem_create_tensor({cap_e * this->shard_maxc_}, at::ScalarType::Long, true);
+      this->eg_sig_.zero_();
+    }
+    if (cap_i > 0) {
+      this->ingress_stage_ =
+          nvshmem_create_tensor({cap_i, this->max_shard_bytes_}, at::ScalarType::Byte, true);
+      this->in_sig_ =
+          nvshmem_create_tensor({cap_i * this->shard_maxc_}, at::ScalarType::Long, true);
+      this->in_sig_.zero_();
+    }
+  }
+
   int64_t
   forward(bool multicast) {
     cudaStream_t stream = c10::cuda::getCurrentCUDAStream();
@@ -194,8 +350,70 @@ class WeightPushMulticast::WeightPushMulticastImpl {
             stream);
       }
     };
+    // Sharded legs leave the single-NIC path entirely: their home emission
+    // here is the wait-free NVLink staging (or the shard-idx==home_lr NIC
+    // fast path); the NIC/reassembly hops live in forward_egress/ingress.
+    // The dest-side expectation accrues HERE so forward_shard_join() of the
+    // same iteration waits the exact cumulative count (host mirror of the
+    // never-reset device SIGNAL_ADD counter).
+    const bool sharding = !this->shard_home_.empty() || !this->shard_egress_.empty() ||
+                          !this->shard_ingress_.empty() || !this->my_shard_slots_.empty();
+    if (sharding) {
+      for (int32_t b : this->my_shard_slots_) {
+        this->expected_arrive_[b] += this->arrive_quota_[b];
+      }
+      char *eg_stage_base = this->egress_stage_.defined()
+                                ? static_cast<char *>(this->egress_stage_.data_ptr())
+                                : nullptr;
+      char *in_stage_base = this->ingress_stage_.defined()
+                                ? static_cast<char *>(this->ingress_stage_.data_ptr())
+                                : nullptr;
+      uint64_t *eg_sig_base = this->eg_sig_.defined()
+                                  ? reinterpret_cast<uint64_t *>(this->eg_sig_.data_ptr())
+                                  : nullptr;
+      uint64_t *arrive_base = reinterpret_cast<uint64_t *>(this->shard_arrive_.data_ptr());
+      for (const auto &s : this->shard_home_) {
+        char *src_row_base = home_base + static_cast<int64_t>(s.src_row) * this->expert_bytes_;
+        const int64_t nch = this->chunks_of(s.byte_len);
+        for (int64_t c = 0; c < nch; ++c) {
+          const int64_t coff = c * this->shard_chunk_bytes_;
+          const int64_t b = std::min(this->shard_chunk_bytes_, s.byte_len - coff);
+          char *src = src_row_base + s.byte_off + coff;
+          if (s.egress_rank == this->rank_) {
+            // fast path shard_idx == home_lr: my own NIC carries this shard
+            if (s.ingress_rank == s.dst_rank) {
+              // ...and it lands directly in the final slot (dst_lr match)
+              char *dst = slots_base + static_cast<int64_t>(s.dst_slot) * this->expert_bytes_ +
+                          s.byte_off + coff;
+              nvshmemx_putmem_signal_nbi_on_stream(
+                  dst, src, b, arrive_base + s.dst_slot, 1, NVSHMEM_SIGNAL_ADD, s.dst_rank,
+                  stream);
+            } else {
+              char *dst = in_stage_base +
+                          static_cast<int64_t>(s.in_slot_idx) * this->max_shard_bytes_ + coff;
+              nvshmemx_putmem_signal_nbi_on_stream(
+                  dst, src, b,
+                  reinterpret_cast<uint64_t *>(this->in_sig_.data_ptr()) +
+                      s.in_slot_idx * this->shard_maxc_ + c,
+                  epoch, NVSHMEM_SIGNAL_SET, s.ingress_rank, stream);
+            }
+          } else {
+            // NVLink CE stage to the node-mate egress rank, per-chunk signal
+            // so its NIC push of chunk c overlaps my stage of chunk c+1
+            char *dst = eg_stage_base +
+                        static_cast<int64_t>(s.eg_slot_idx) * this->max_shard_bytes_ + coff;
+            nvshmemx_putmem_signal_nbi_on_stream(
+                dst, src, b, eg_sig_base + s.eg_slot_idx * this->shard_maxc_ + c, epoch,
+                NVSHMEM_SIGNAL_SET, s.egress_rank, stream);
+          }
+        }
+      }
+    }
     if (!multicast) {
       for (const auto &leg : this->direct_all_) {
+        if (sharding && this->is_sharded_out(leg.dst_rank, leg.dst_slot)) {
+          continue;
+        }
         emit_home_leg(leg);
       }
       return this->run_id_;
@@ -205,6 +423,9 @@ class WeightPushMulticast::WeightPushMulticastImpl {
     // group's single inter-node leg (into the gateway's own slot). The
     // gateway fan-out moved to forward_gateway() (NR-13 F-B): no waits here.
     for (const auto &leg : this->mcast_out_) {
+      if (sharding && this->is_sharded_out(leg.dst_rank, leg.dst_slot)) {
+        continue;
+      }
       emit_home_leg(leg);
     }
     return this->run_id_;
@@ -249,6 +470,115 @@ class WeightPushMulticast::WeightPushMulticastImpl {
           NVSHMEM_SIGNAL_SET,
           f.dst_rank,
           stream);
+    }
+  }
+
+  void
+  forward_egress() {
+    // EGRESS role: per staged chunk one zero-SM wait (writer = the home
+    // rank's wait-free NVLink stage — remote, NR-02 Class-B safe), then the
+    // NIC push over my same-local-rank wire. Chunks of one shard are issued
+    // in order; different legs' shards share the stream (same NIC anyway).
+    if (this->shard_egress_.empty()) {
+      return;
+    }
+    cudaStream_t stream = c10::cuda::getCurrentCUDAStream();
+    const uint64_t epoch = static_cast<uint64_t>(this->run_id_);
+    char *eg_stage_base = static_cast<char *>(this->egress_stage_.data_ptr());
+    uint64_t *eg_sig_base = reinterpret_cast<uint64_t *>(this->eg_sig_.data_ptr());
+    uint64_t *arrive_base = reinterpret_cast<uint64_t *>(this->shard_arrive_.data_ptr());
+    char *slots_base = static_cast<char *>(this->prefetch_slots_.data_ptr());
+    char *in_stage_base = this->ingress_stage_.defined()
+                              ? static_cast<char *>(this->ingress_stage_.data_ptr())
+                              : nullptr;
+    for (const auto &s : this->shard_egress_) {
+      char *my_stage = eg_stage_base + static_cast<int64_t>(s.eg_slot_idx) * this->max_shard_bytes_;
+      const int64_t nch = this->chunks_of(s.byte_len);
+      for (int64_t c = 0; c < nch; ++c) {
+        const int64_t coff = c * this->shard_chunk_bytes_;
+        const int64_t b = std::min(this->shard_chunk_bytes_, s.byte_len - coff);
+        CU_CHECK(CUStreamWaitValue64(
+            stream,
+            reinterpret_cast<CUdeviceptr>(eg_sig_base + s.eg_slot_idx * this->shard_maxc_ + c),
+            epoch,
+            CU_STREAM_WAIT_VALUE_GEQ));
+        if (s.ingress_rank == s.dst_rank) {
+          // fast path shard_idx == dst_lr: land directly in the final slot
+          char *dst = slots_base + static_cast<int64_t>(s.dst_slot) * this->expert_bytes_ +
+                      s.byte_off + coff;
+          nvshmemx_putmem_signal_nbi_on_stream(
+              dst, my_stage + coff, b, arrive_base + s.dst_slot, 1, NVSHMEM_SIGNAL_ADD,
+              s.dst_rank, stream);
+        } else {
+          char *dst = in_stage_base +
+                      static_cast<int64_t>(s.in_slot_idx) * this->max_shard_bytes_ + coff;
+          nvshmemx_putmem_signal_nbi_on_stream(
+              dst, my_stage + coff, b,
+              reinterpret_cast<uint64_t *>(this->in_sig_.data_ptr()) +
+                  s.in_slot_idx * this->shard_maxc_ + c,
+              epoch, NVSHMEM_SIGNAL_SET, s.ingress_rank, stream);
+        }
+      }
+    }
+  }
+
+  void
+  forward_ingress() {
+    // INGRESS role: per landed chunk one zero-SM wait (writer = the previous
+    // node's egress rank — remote), then the NVLink CE reassembly copy into
+    // the dest rank's slot at the shard's byte offset, +1 on its arrive
+    // counter. Rows with ingress == dst never reach here (the writer lands
+    // them in the final slot directly).
+    if (this->shard_ingress_.empty()) {
+      return;
+    }
+    cudaStream_t stream = c10::cuda::getCurrentCUDAStream();
+    const uint64_t epoch = static_cast<uint64_t>(this->run_id_);
+    char *in_stage_base = static_cast<char *>(this->ingress_stage_.data_ptr());
+    uint64_t *in_sig_base = reinterpret_cast<uint64_t *>(this->in_sig_.data_ptr());
+    uint64_t *arrive_base = reinterpret_cast<uint64_t *>(this->shard_arrive_.data_ptr());
+    char *slots_base = static_cast<char *>(this->prefetch_slots_.data_ptr());
+    for (const auto &s : this->shard_ingress_) {
+      char *my_stage = in_stage_base + static_cast<int64_t>(s.in_slot_idx) * this->max_shard_bytes_;
+      const int64_t nch = this->chunks_of(s.byte_len);
+      for (int64_t c = 0; c < nch; ++c) {
+        const int64_t coff = c * this->shard_chunk_bytes_;
+        const int64_t b = std::min(this->shard_chunk_bytes_, s.byte_len - coff);
+        CU_CHECK(CUStreamWaitValue64(
+            stream,
+            reinterpret_cast<CUdeviceptr>(in_sig_base + s.in_slot_idx * this->shard_maxc_ + c),
+            epoch,
+            CU_STREAM_WAIT_VALUE_GEQ));
+        char *dst = slots_base + static_cast<int64_t>(s.dst_slot) * this->expert_bytes_ +
+                    s.byte_off + coff;
+        nvshmemx_putmem_signal_nbi_on_stream(
+            dst, my_stage + coff, b, arrive_base + s.dst_slot, 1, NVSHMEM_SIGNAL_ADD, s.dst_rank,
+            stream);
+      }
+    }
+  }
+
+  void
+  forward_shard_join() {
+    // DEST role finalize: wait the cumulative arrive count (multi-writer
+    // SIGNAL_ADD — the L reassembly writers are different ranks, so a
+    // last-writer SET is impossible without cross-rank ordering), then
+    // publish the ordinary epoch SET on signals_ so join()/tile gates see
+    // sharded and unsharded slots identically.
+    if (this->my_shard_slots_.empty()) {
+      return;
+    }
+    cudaStream_t stream = c10::cuda::getCurrentCUDAStream();
+    uint64_t *arrive_base = reinterpret_cast<uint64_t *>(this->shard_arrive_.data_ptr());
+    uint64_t *sig_base = reinterpret_cast<uint64_t *>(this->signals_.data_ptr());
+    const uint64_t epoch = static_cast<uint64_t>(this->run_id_);
+    for (int32_t b : this->my_shard_slots_) {
+      CU_CHECK(CUStreamWaitValue64(
+          stream,
+          reinterpret_cast<CUdeviceptr>(arrive_base + b),
+          this->expected_arrive_[b],
+          CU_STREAM_WAIT_VALUE_GEQ));
+      nvshmemx_signal_op_on_stream(sig_base + b, epoch, NVSHMEM_SIGNAL_SET, this->rank_, stream);
     }
   }
 
@@ -311,6 +641,31 @@ void
 WeightPushMulticast::set_plan(torch::Tensor pairs_cpu) {
   FLUX_CHECK(impl_ != nullptr) << "WeightPushMulticast is not initialized!";
   impl_->set_plan(pairs_cpu);
+}
+
+void
+WeightPushMulticast::set_shard_plan(
+    torch::Tensor shards_cpu, int64_t chunk_bytes, int64_t local_world_size) {
+  FLUX_CHECK(impl_ != nullptr) << "WeightPushMulticast is not initialized!";
+  impl_->set_shard_plan(shards_cpu, chunk_bytes, local_world_size);
+}
+
+void
+WeightPushMulticast::forward_egress() {
+  FLUX_CHECK(impl_ != nullptr) << "WeightPushMulticast is not initialized!";
+  impl_->forward_egress();
+}
+
+void
+WeightPushMulticast::forward_ingress() {
+  FLUX_CHECK(impl_ != nullptr) << "WeightPushMulticast is not initialized!";
+  impl_->forward_ingress();
+}
+
+void
+WeightPushMulticast::forward_shard_join() {
+  FLUX_CHECK(impl_ != nullptr) << "WeightPushMulticast is not initialized!";
+  impl_->forward_shard_join();
 }
 
 int64_t

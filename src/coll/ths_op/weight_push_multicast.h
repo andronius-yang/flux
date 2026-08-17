@@ -94,6 +94,52 @@ class WeightPushMulticast {
   // on each of MY incoming slots, on the current torch stream.
   void join();
 
+  // ---- egress NIC-sharding (symmetric spread of cross-node wire legs) ----
+  //
+  // A sharded leg is byte-split across same-local-rank wires so all of the
+  // home node's NICs carry it AND all of the dest node's NICs receive it
+  // (egress-only spread would refunnel into the dest rank's single NIC):
+  //   home --NVLink CE stage--> egress (home_node, i)     [SET epoch sig]
+  //   egress --NIC--> ingress (dst_node, i) staging       [SET epoch sig]
+  //   ingress --NVLink CE--> dst slot @byte_off           [SIGNAL_ADD +1]
+  // Fast paths collapse hops: egress == home skips the staging (home pushes
+  // its own shard over its NIC), ingress == dst lands directly in the final
+  // slot. The multi-writer final slot cannot reuse the SET-epoch contract
+  // (the L reassembly copies come from L different ranks — ordering them
+  // would itself need cross-rank signaling), so arrivals ACCUMULATE on a
+  // separate symmetric u64[n_slots] counter and forward_shard_join()
+  // publishes the ordinary epoch SET on signals_ once the cumulative
+  // host-tracked expectation is met — join() and the fused GEMM's weight
+  // gate see sharded and unsharded slots identically.
+
+  // Replicated shard table (plan_weight_shards in
+  // flux.testing.moonep_fused_map): int32 CPU [n_shard_legs, 8] =
+  // (home_rank, dst_rank, dst_slot, shard_idx, egress_rank, ingress_rank,
+  // byte_off, byte_len). Collective when staging capacity changes (symmetric
+  // allocs are derived from the replicated table, so all ranks re-alloc
+  // identically). chunk_bytes splits each shard into per-chunk signalled
+  // hops so the NVLink stage of chunk k+1 overlaps the NIC push of chunk k
+  // (0 => whole-shard chunks). The table must be built for the SAME push
+  // mode forward() will run (sharded home legs are skipped there; python
+  // enumerated the wire legs of the resolved mode). An empty table disables
+  // sharding.
+  void set_shard_plan(torch::Tensor shards_cpu, int64_t chunk_bytes, int64_t local_world_size);
+
+  // EGRESS role (wait staged chunk -> NIC push), INGRESS role (wait landed
+  // chunk -> NVLink copy into the dst slot + arrive ADD). Both hold zero-SM
+  // waits whose satisfying writers are other ranks' wait-free issue windows
+  // (NR-02 Class-B safe; NR-13 F-B: run them on a dedicated side stream
+  // drained late, NEVER in the issue window). No-ops when the rank has no
+  // legs of that role.
+  void forward_egress();
+  void forward_ingress();
+
+  // DEST role: per sharded in-slot, wait the cumulative arrive count then
+  // locally SET signals_[slot] = current epoch, making join()/tile gates
+  // oblivious to sharding. Issue AFTER forward() of the same iteration (the
+  // expectation is accrued there), on the same late-drained side stream.
+  void forward_shard_join();
+
   int64_t epoch() const;
 
  private:
