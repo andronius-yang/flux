@@ -188,6 +188,7 @@ __launch_bounds__(512, 1) a2av_combine_eager_reduce_kernel(
         acc[i] = 0.0f;
       }
       uint32_t remaining = (count >= 32) ? ~0u : ((1u << count) - 1u);
+      uint64_t spins = 0;
       while (remaining != 0) {
         bool made_progress = false;
         for (int j = 0; j < count; j++) {
@@ -211,6 +212,16 @@ __launch_bounds__(512, 1) a2av_combine_eager_reduce_kernel(
         }
         if (!made_progress) {
           __nanosleep(200);
+          if (args.spin_limit != 0 && ++spins >= args.spin_limit) {
+            printf(
+                "[a2av-combine] eager reduce SPIN LIMIT: t %lld sid %d "
+                "remaining 0x%x run_id %llu\n",
+                (long long)t, sid, remaining,
+                (unsigned long long)args.run_id);
+            __trap();
+          }
+        } else {
+          spins = 0;
         }
       }
       PackU<T> out;
@@ -247,8 +258,17 @@ __launch_bounds__(512, 1) a2av_combine_prereduce_kernel(A2AVCombinePreReduceArgu
         for (int ls = 0; ls < L; ls++) {
           uint64_t const *sig =
               args.conv_signals + ((int64_t)ls * NN + tn) * args.n_split + sid;
+          uint64_t spins = 0;
           while (load_acquire_sys_u64(sig) < args.run_id) {
             __nanosleep(200);
+            if (args.spin_limit != 0 && ++spins >= args.spin_limit) {
+              printf(
+                  "[a2av-combine] prereduce conv-signal SPIN LIMIT: node %d "
+                  "tn %d ls %d sid %d run_id %llu\n",
+                  args.node_idx, tn, ls, sid,
+                  (unsigned long long)args.run_id);
+              __trap();
+            }
           }
         }
       }

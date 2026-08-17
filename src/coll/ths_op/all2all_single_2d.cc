@@ -90,6 +90,41 @@ class All2AllSingle::All2AllSingleImpl {
     this->nnodes_ = world_size_ / local_world_size_;
     this->node_id_ = this->rank_ / this->local_world_size_;
     this->local_rank_ = this->rank_ % this->local_world_size_;
+    {
+      // Cross-rank contract check (2026-08-17): the wire kernel computes the
+      // REMOTE staging offset with the SENDER's max_split/n_dim while the
+      // receiver lays out staging with its OWN — per-rank-divergent ctor
+      // values silently corrupt the wire (found in EPIC bring-up
+      // 2026-08-16). One host allgather at construction turns that class
+      // into a loud, hang-free abort on every rank. Ctor is already
+      // collective (nvshmem_create_tensor below), so this adds no new
+      // synchronization requirement.
+      struct A2ASingleConfig {
+        int64_t max_split;
+        int64_t n_dim;
+        int64_t local_world_size;
+        int64_t dtype;
+      };
+      A2ASingleConfig mine{
+          max_split, n_dim, local_world_size, (int64_t)input_dtype};
+      std::vector<A2ASingleConfig> all(world_size_);
+      pg_->all_gather_cpu(&mine, all.data(), sizeof(A2ASingleConfig));
+      for (int r = 0; r < world_size_; ++r) {
+        FLUX_CHECK(
+            all[r].max_split == mine.max_split && all[r].n_dim == mine.n_dim &&
+            all[r].local_world_size == mine.local_world_size &&
+            all[r].dtype == mine.dtype)
+            << "All2AllSingle ctor config diverges across ranks: rank " << r
+            << " passed (max_split=" << all[r].max_split << ", n_dim="
+            << all[r].n_dim << ", local_world_size=" << all[r].local_world_size
+            << ", dtype=" << all[r].dtype << ") vs my rank " << rank_
+            << " (max_split=" << mine.max_split << ", n_dim=" << mine.n_dim
+            << ", local_world_size=" << mine.local_world_size
+            << ", dtype=" << mine.dtype
+            << ") — the wire offset math requires identical values on every "
+               "rank (silent corruption otherwise)";
+      }
+    }
     int64_t max_m = max_split * world_size_;
     this->input_comm_buf_ = nvshmem_create_tensor({max_m, n_dim}, input_dtype_, false);
     this->output_comm_buf_ = nvshmem_create_tensor({max_m, n_dim}, input_dtype_, false);

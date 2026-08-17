@@ -703,6 +703,11 @@ class BlockScaleGemm::BlockScaleGemmImpl {
       for (int i = 0; i < E; ++i) {
         int Mi = input_list[i].item().toInt();
         if (Mi == 0) {
+          // KNOWN LATENT BUG (documented 2026-08-17, deliberately not fixed
+          // here — fp8 blockscale path, out of the audited sm80 scope):
+          // neither ptr_B_cur NOR ptr_scale_B_cur advance past the skipped
+          // expert, skewing weights AND weight scales for every subsequent
+          // expert. See the fixed twin in gemm_grouped_v2.cc.
           continue;
         }
         problem_sizes.emplace_back(Mi, N, K);

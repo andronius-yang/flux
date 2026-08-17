@@ -291,6 +291,11 @@ struct A2AVCombinePreReduceArguments {
   int node_idx;
   int local_world_size;
   int threadblock_count;
+  // 0 = unlimited (default). >0: trap after this many no-progress sleep
+  // iterations in the conv-signal wait — converts a missing-signal bug into
+  // a loud abort instead of a hang (FLUX_A2AV_RS_SPIN_LIMIT). LAST field
+  // with default: launch sites use positional aggregate init.
+  uint64_t spin_limit = 0;
 };
 
 // Legacy-gate destination reduce under compress: per-token contribution count
@@ -330,6 +335,10 @@ struct A2AVCombineEagerReduceArguments {
   int n_split;
   int topk;
   int threadblock_count;
+  // 0 = unlimited (default). >0: trap after this many consecutive
+  // no-progress sleeps (FLUX_A2AV_RS_SPIN_LIMIT). LAST field with default:
+  // launch sites use positional aggregate init.
+  uint64_t spin_limit = 0;
 };
 
 }  // namespace bytedance::flux

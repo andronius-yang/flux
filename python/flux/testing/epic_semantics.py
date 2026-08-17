@@ -1304,8 +1304,16 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         self._build_grouped_ops(flux)
 
     def _build_grouped_ops(self, flux_mod=None):
+        import os
+
         if flux_mod is None:
             import flux as flux_mod
+        # FLUX_EPIC_NO_COMPACTION=1: bypass the zero-split compaction
+        # workaround (valid ONLY on a binary carrying the 2026-08-17
+        # GemmGroupedV2 zero-split fix). A/B lever for the fix's
+        # sha-identity proof; the compaction is removed for good once the
+        # gate passes.
+        no_compact = os.environ.get("FLUX_EPIC_NO_COMPACTION", "0") == "1"
         self._grouped_ops = []
         self._grouped_splits = []
         if self.layers == "l01":
@@ -1313,7 +1321,7 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         for g, grp in enumerate(self.elay.groups):
             rows = self._group_splits_cpu[g]
             nz = (rows > 0)
-            if bool(nz.all()) or int(rows.sum()) == 0:
+            if no_compact or bool(nz.all()) or int(rows.sum()) == 0:
                 w = self.slot_fc1[grp.slot_lo:grp.slot_hi]
                 w2 = (self.slot_fc2[grp.slot_lo:grp.slot_hi]
                       if self.layers == "l01" else None)

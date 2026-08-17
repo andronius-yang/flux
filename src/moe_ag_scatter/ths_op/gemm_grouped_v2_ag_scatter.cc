@@ -879,6 +879,37 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             (long)(tokens_per_rank_max * topk),
             sym_mb);
       }
+      {
+        // NVSHMEM transport-kernel priming (the gather_rs 1550b67 fix,
+        // audited across to the dispatch op 2026-08-17): under
+        // CUDA_MODULE_LOADING=LAZY a transport kernel's module loads at its
+        // FIRST launch; the persistent GEMM (and EARLY_LAUNCH's deferred
+        // wire replayed behind it) can otherwise strand that first load
+        // behind resident spin kernels. One real op per transport path —
+        // self signal, P2P put+signal, P2P bare signal, inter-node
+        // put+signal, inter-node bare signal (the zero-row-lane primitive)
+        // — SET 0 over a zero-initialized slot, idle device, collective.
+        cudaStream_t pstream = c10::cuda::getCurrentCUDAStream();
+        uint64_t *psig = reinterpret_cast<uint64_t *>(this->a2av_signal_buffer.data_ptr());
+        nvshmemx_signal_op_on_stream(psig, 0, NVSHMEM_SIGNAL_SET, this->rank, pstream);
+        if (dist_env.local_world_size > 1) {
+          int peer = dist_env.node_idx * dist_env.local_world_size +
+                     (dist_env.local_rank + 1) % dist_env.local_world_size;
+          nvshmemx_putmem_signal_nbi_on_stream(
+              psig, psig, sizeof(uint64_t), psig + 1, 0, NVSHMEM_SIGNAL_SET, peer, pstream);
+          nvshmemx_signal_op_on_stream(psig, 0, NVSHMEM_SIGNAL_SET, peer, pstream);
+        }
+        if (nnodes > 1) {
+          int peer = ((dist_env.node_idx + 1) % nnodes) * dist_env.local_world_size +
+                     dist_env.local_rank;
+          nvshmemx_putmem_signal_nbi_on_stream(
+              psig, psig, sizeof(uint64_t), psig + 1, 0, NVSHMEM_SIGNAL_SET, peer, pstream);
+          nvshmemx_signal_op_on_stream(psig, 0, NVSHMEM_SIGNAL_SET, peer, pstream);
+        }
+        nvshmemx_quiet_on_stream(pstream);
+        CUDA_CHECK(cudaStreamSynchronize(pstream));
+        nvshmem_barrier_all();
+      }
     } else if (nnodes == 1) {
       ag_op.emplace(this->tp_group, 1, max_ntokens, hidden, input_dtype);
     } else {

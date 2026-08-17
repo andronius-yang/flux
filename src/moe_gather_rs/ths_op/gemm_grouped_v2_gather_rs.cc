@@ -120,6 +120,16 @@ get_a2av_prered_blocks() {
   static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_PRERED_BLOCKS", 2);
   return v;
 }
+// Debug watchdog for the combine's device spin loops: 0 (default) =
+// unlimited, historical behavior. >0 = trap after N no-progress sleeps
+// (~200ns each) so a missing-signal bug aborts loudly instead of hanging
+// (the 2026-08-17 epic_l01_hc_m4 b2 hang class).
+uint64_t
+get_a2av_spin_limit() {
+  static uint64_t v =
+      (uint64_t)bytedance::flux::get_int_from_env("FLUX_A2AV_RS_SPIN_LIMIT", 0);
+  return v;
+}
 }  // namespace
 
 namespace bytedance::flux::ths_op {
@@ -305,12 +315,24 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
                      (this->local_rank + 1) % this->local_world_size;
           nvshmemx_putmem_signal_nbi_on_stream(
               sig, sig, sizeof(uint64_t), sig + 1, 0, NVSHMEM_SIGNAL_SET, peer, stream);
+          // BARE signal_op to a P2P peer is a DISTINCT transport kernel from
+          // both the self signal_op and putmem_signal — it is what the
+          // ladders emit for ZERO-ROW intra-node lanes (always-signal
+          // invariant). Unprimed, its first launch deadlocks behind the
+          // resident pack/pre-reduce spin kernels (the 2026-08-16 class;
+          // recurred 2026-08-17 as the epic_l01_hc_m4 b2 hang).
+          nvshmemx_signal_op_on_stream(sig, 0, NVSHMEM_SIGNAL_SET, peer, stream);
         }
         if (this->nnodes > 1) {
           int peer = ((this->node_idx + 1) % this->nnodes) * this->local_world_size +
                      this->local_rank;
           nvshmemx_putmem_signal_nbi_on_stream(
               sig, sig, sizeof(uint64_t), sig + 1, 0, NVSHMEM_SIGNAL_SET, peer, stream);
+          // Same for the INTER-NODE bare signal_op (NIC/proxy transport):
+          // emitted iff a remote lane has zero rows — U[d][n] == 0 in the
+          // compress wire ladder, node_chunk == 0 in plain hier — which is
+          // exactly the small-budget small-K_g regime. THE 20260817 fix.
+          nvshmemx_signal_op_on_stream(sig, 0, NVSHMEM_SIGNAL_SET, peer, stream);
         }
         nvshmemx_quiet_on_stream(stream);
         CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -846,7 +868,8 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           .nnodes = NN,
           .node_idx = my_node,
           .local_world_size = L,
-          .threadblock_count = get_a2av_prered_blocks()};
+          .threadblock_count = get_a2av_prered_blocks(),
+          .spin_limit = get_a2av_spin_limit()};
       for (int tn = 0, seg = 0; tn < NN; tn++) {
         if (tn == my_node) {
           continue;
@@ -905,7 +928,8 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           .n_per = (int)n_per,
           .n_split = this->n_split,
           .topk = this->topk,
-          .threadblock_count = get_a2av_reduce_blocks()};
+          .threadblock_count = get_a2av_reduce_blocks(),
+          .spin_limit = get_a2av_spin_limit()};
       if (this->a2av_compress_) {
         // per-token contributions <= topk own-node copies + NN-1 merged rows
         FLUX_CHECK_LE(this->topk + NN - 1, 31)
@@ -1783,6 +1807,13 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
           << "compress wire rows disagree with a2av_unique_counts (transposed U)";
       wire_ptr = torch::cat({torch::zeros({1}, opt_i64), counts.cumsum(0)}).to(torch::kInt);
     } else {
+      // conv_total == 0 mathematically implies wire_total == 0; assert it so
+      // an inconsistent externally-supplied U aborts here instead of driving
+      // the pre-reduce kernel past wire_ptr's single element (2026-08-17
+      // hardening, epic combine-only entry).
+      FLUX_CHECK_EQ(wire_total, 0)
+          << "compress: conv_total == 0 but a2av_unique_counts claims "
+          << wire_total << " wire rows (inconsistent transposed U)";
       wire_ptr = torch::zeros({1}, opt_i32);
       wire_copy = torch::empty({0}, opt_i32);
     }

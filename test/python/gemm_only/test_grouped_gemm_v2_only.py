@@ -149,6 +149,15 @@ def parse_args():
     parser.add_argument("--warmup_iters", default=5, type=int, help="warmup iterations")
     parser.add_argument("--sm_margin", default=0, type=int, help="sm margin")
     parser.add_argument(
+        "--zero_splits",
+        default=False,
+        action="store_true",
+        help="regression mode for the 2026-08-17 zero-split fix: interleave "
+        "zero buckets (odd experts emptied into their left neighbor) so "
+        "experts AFTER a zero split must still read THEIR OWN weights (and, "
+        "under fp8 per-expert scales, their own scales)",
+    )
+    parser.add_argument(
         "--dtype", default="bfloat16", choices=list(DTYPE_MAP.keys()), type=str, help="data type"
     )
 
@@ -174,6 +183,13 @@ if __name__ == "__main__":
         weight = torch.rand((args.G, args.N, args.K), dtype=dtype).cuda() / 10
 
     split_cpu = torch.tensor(randomList(args.G, args.M)).cpu().to(torch.int32)
+    if args.zero_splits:
+        # interleaved zeros, conserving M: every odd expert's rows move to
+        # its left neighbor; the buggy loop would then feed experts 2,4,...
+        # the WRONG (previous nonzero) weight tile
+        for i in range(1, args.G, 2):
+            split_cpu[i - 1] += split_cpu[i]
+            split_cpu[i] = 0
     print(split_cpu)
 
     input_scale = None

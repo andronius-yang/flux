@@ -115,6 +115,17 @@ def build_a2av_compress_indices(
         _, counts = torch.unique_consecutive(wkey[worder], return_counts=True)
         wire_ptr = torch.cat([torch.zeros(1, dtype=torch.long), counts.cumsum(0)])
     else:
+        # conv_total == 0 implies zero wire rows; assert so an inconsistent
+        # externally-supplied U fails here, mirroring the C++ builder's
+        # hardening (2026-08-17).
+        wire_total = sum(
+            int(U[tn * L + my_lr, my_node])
+            for tn in range(NN) if tn != my_node
+        )
+        assert wire_total == 0, (
+            f"compress: conv_total == 0 but unique_counts claims "
+            f"{wire_total} wire rows (inconsistent transposed U)"
+        )
         wire_ptr = torch.zeros(1, dtype=torch.long)
         wire_copy = torch.empty(0, dtype=torch.long)
 

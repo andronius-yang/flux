@@ -162,3 +162,28 @@ within one capsule/one BUILD (manifest `flux_libs` sha, not git_sha);
 ordering-sensitive claims need fwd+rev sign agreement; trace cells with
 `routing_mode=''` are dealer-poisoned; W=8 and W=16 never mix; when trace
 cells hang, bincount the routing for empty experts before anything else.
+
+## v3 fixes (2026-08-17, branch epic-v3-fixes)
+
+- **FIXED**: the epic_l01_hc_m4 b2 deterministic hang — root cause was NOT a
+  missing ladder signal (the combine always signals zero-row lanes) but an
+  UNPRIMED NVSHMEM transport kernel: the bare inter-node signal_op, emitted
+  iff a lane has zero rows (U[d][n]==0), first-launch module-loads behind
+  the resident pack/pre-reduce spin kernels (the 1550b67 lazy-load class).
+  Fix: two signal_op primes added to the TopkReduceScatterOp ctor priming
+  block; the same block was ported to the dispatch op's ctor (which had
+  NONE — latent for the fused flux arms under EARLY_LAUNCH). Hardening:
+  FLUX_A2AV_RS_SPIN_LIMIT (0=off) traps the two combine spin loops instead
+  of hanging; wire_total-vs-U consistency asserts in both compress-CSR
+  builders.
+- **FIXED**: GemmGroupedV2 zero-split skew (weights AND fp8 per-expert
+  scales now stay associated with their own expert across zero splits);
+  regression mode `--zero_splits` in test_grouped_gemm_v2_only.py.
+- **DOCUMENTED, NOT FIXED** (out of sm80 scope, marked with code comments
+  pointing at the V2 fix): identical weight-pointer skew in
+  gemm_grouped_v3.cc (Hopper) and blockscale_gemm.cc::forward_grouped
+  (fp8; weight AND weight-scale pointers).
+- **FIXED**: All2AllSingle cross-rank contract — ctor now allgathers
+  {max_split, n_dim, local_world_size, dtype} and FLUX_CHECKs equality
+  (loud, hang-free abort); debug-build device asserts guard per-call
+  splits <= max_split; probe_a2a_single.py --mismatch is the negative test.

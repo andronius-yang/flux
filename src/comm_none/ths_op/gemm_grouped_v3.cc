@@ -123,6 +123,11 @@ class GemmGroupedV3::GemmGroupedV3Impl {
       for (int i = 0; i < this->num_experts; ++i) {
         int Mi = splits_cpu[i].item().toInt();
         if (Mi == 0) {
+          // KNOWN LATENT BUG (documented 2026-08-17, deliberately not fixed
+          // here — Hopper path, out of the audited sm80 scope): ptr_B_cur is
+          // NOT advanced past the skipped expert's [N, K] tile, so every
+          // expert after a zero-split one reads the previous expert's
+          // weights. See the fixed twin in gemm_grouped_v2.cc.
           continue;
         }
         problem_sizes.emplace_back(N, Mi, K);

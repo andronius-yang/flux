@@ -129,9 +129,29 @@ class GemmGroupedV2::GemmGroupedV2Impl {
     uint8_t *ptr_D_cur = reinterpret_cast<uint8_t *>(output.data_ptr());
 
     int problem_count = this->num_experts;
+    // Per-expert scale association must follow the COMPACTED problem list
+    // (the impl memcpys and consumes exactly problem_count'=problem_sizes
+    // .size() entries by compacted index), so scales are pushed inside the
+    // same loop that skips Mi==0 experts.
+    const bool has_in_scale = input_scale.has_value() && !input_scale->empty();
+    const bool in_scale_one = has_in_scale && input_scale->size() == 1;
+    const bool has_w_scale = weight_scale.has_value() && !weight_scale->empty();
+    const bool w_scale_one = has_w_scale && weight_scale->size() == 1;
+    std::vector<float *> input_scale_vec;
+    std::vector<float *> weight_scale_vec;
+    input_scale_vec.reserve(problem_count);
+    weight_scale_vec.reserve(problem_count);
     for (int i = 0; i < problem_count; ++i) {
       int Mi = splits_cpu[i].item().toInt();
       if (Mi == 0) {
+        // 2026-08-17 fix: the weight pointer is PER-EXPERT INDEXED and must
+        // advance past the skipped expert's [N, K] tile — the old code fell
+        // through without advancing, so every expert AFTER a zero-split one
+        // silently computed with the previous expert's weights. ptr_A/ptr_D
+        // are row-compacted (zero rows contribute nothing) and correctly do
+        // NOT advance. Same latent skew documented (not fixed) in
+        // gemm_grouped_v3.cc and blockscale_gemm.cc::forward_grouped.
+        ptr_B_cur += N * K * c10::elementSize(weight.scalar_type());
         continue;
       }
       problem_sizes.emplace_back(cutlass::gemm::GemmCoord(Mi, N, K));
@@ -144,21 +164,14 @@ class GemmGroupedV2::GemmGroupedV2Impl {
       ptr_D_cur += Mi * N * c10::elementSize(output.scalar_type());
       ptr_Aux.emplace_back(nullptr);     // null
       ptr_Vector.emplace_back(nullptr);  // null
-    }
-
-    std::vector<float *> input_scale_vec(problem_count, nullptr);
-    if (input_scale.has_value() && !input_scale->empty()) {
-      bool has_one_scale = input_scale->size() == 1;
-      for (int i = 0; i < problem_count; ++i) {
-        input_scale_vec[i] = (float *)(input_scale->at(has_one_scale ? 0 : i).data_ptr());
-      }
-    }
-    std::vector<float *> weight_scale_vec(problem_count, nullptr);
-    if (weight_scale.has_value() && !weight_scale->empty()) {
-      bool has_one_scale = weight_scale->size() == 1;
-      for (int i = 0; i < problem_count; ++i) {
-        weight_scale_vec[i] = (float *)(weight_scale->at(has_one_scale ? 0 : i).data_ptr());
-      }
+      input_scale_vec.emplace_back(
+          has_in_scale
+              ? (float *)(input_scale->at(in_scale_one ? 0 : i).data_ptr())
+              : nullptr);
+      weight_scale_vec.emplace_back(
+          has_w_scale
+              ? (float *)(weight_scale->at(w_scale_one ? 0 : i).data_ptr())
+              : nullptr);
     }
     float *output_scale_ptr =
         (float *)(output_scale.has_value() ? output_scale->data_ptr() : nullptr);

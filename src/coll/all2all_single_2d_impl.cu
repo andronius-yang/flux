@@ -199,6 +199,10 @@ __launch_bounds__(1024, 1) a2a_single_kernel_v2(const All2AllSingleParams params
     for (int32_t j = 0; j < tgt_rank; j++) {
       input_offset += params.input_splits[j];
     }
+    // a pair split beyond max_split would overwrite the NEXT source's
+    // staging slot on the destination (debug-build guard; the ctor's
+    // cross-rank config check is the always-on layer)
+    assert(params.input_splits[tgt_rank] <= params.max_split);
     size_t msg_sz = size_per_m * params.input_splits[tgt_rank];
     Element *dest_ptr = reinterpret_cast<Element *>(params.output_comm_ptr) +
                         params.max_split * params.n_dim * params.rank;
@@ -220,6 +224,9 @@ __launch_bounds__(1024, 1) perform_data_copy(const All2AllSingleParams params) {
   for (int j = 0; j < bid; j++) {
     output_offset += params.output_splits[j];
   }
+  // twin of the send-side guard: a recv split beyond max_split would read
+  // past this source's staging slot (debug builds only)
+  assert(params.output_splits[bid] <= params.max_split);
   Element *dst = reinterpret_cast<Element *>(params.output_ptr) + output_offset * params.n_dim;
   Element *src =
       reinterpret_cast<Element *>(params.output_comm_ptr) + params.max_split * params.n_dim * bid;
