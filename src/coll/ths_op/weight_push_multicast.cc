@@ -104,6 +104,36 @@ class WeightPushMulticast::WeightPushMulticastImpl {
   torch::Tensor eg_sig_;          // symmetric u64[cap_e * shard_maxc_]
   torch::Tensor in_sig_;          // symmetric u64[cap_i * shard_maxc_]
   torch::Tensor shard_arrive_;    // symmetric u64[n_slots], ADD, never reset
+  torch::Tensor prime_buf_;       // symmetric scratch for kernel priming
+  torch::Tensor prime_sig_;       // symmetric u64[1] priming signal (stays 0)
+
+  void
+  prime_shard_kernels(int64_t local_world_size) {
+    // 2026-08-16 lazy-load lesson (ctor-priming fix 1550b67): NVSHMEM
+    // on-stream signal/put ops to P2P peers are DEVICE KERNELS whose first
+    // launch must never happen under a resident spinning GEMM
+    // (CUDA_MODULE_LOADING=LAZY module loads deadlock behind persistent
+    // kernels). Under weights_first issue order the shard chain enqueues
+    // before the GEMM, hiding the first launch; under tokens_first the GEMM
+    // is already resident and spinning on the very signals these kernels
+    // deliver (observed 2n hang, 2026-08-17). Prime every kernel class the
+    // shard chain uses — P2P putmem_signal SET, P2P putmem_signal ADD (add
+    // value 0), local signal_op SET — against dedicated scratch on an
+    // intranode peer, then synchronize. Values are chosen so all signals
+    // stay 0; the scratch payload is meaningless by construction.
+    cudaStream_t stream = c10::cuda::getCurrentCUDAStream();
+    const int64_t L = local_world_size;
+    int peer = static_cast<int>((this->rank_ / L) * L + (this->rank_ + 1) % L);
+    char *buf = static_cast<char *>(this->prime_buf_.data_ptr());
+    uint64_t *sig = reinterpret_cast<uint64_t *>(this->prime_sig_.data_ptr());
+    nvshmemx_putmem_signal_nbi_on_stream(
+        buf, buf, 16, sig, 0, NVSHMEM_SIGNAL_SET, peer, stream);
+    nvshmemx_putmem_signal_nbi_on_stream(
+        buf, buf, 16, sig, 0, NVSHMEM_SIGNAL_ADD, peer, stream);
+    nvshmemx_signal_op_on_stream(sig, 0, NVSHMEM_SIGNAL_SET, this->rank_, stream);
+    nvshmemx_quiet_on_stream(stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+  }
 
   bool
   is_sharded_out(int32_t d, int32_t b) const {
@@ -146,6 +176,10 @@ class WeightPushMulticast::WeightPushMulticastImpl {
     // (local device memset, uniform across ranks, before any use).
     this->shard_arrive_ = nvshmem_create_tensor({n_slots}, at::ScalarType::Long, true);
     this->shard_arrive_.zero_();
+    // kernel-priming scratch (see prime_shard_kernels)
+    this->prime_buf_ = nvshmem_create_tensor({16}, at::ScalarType::Byte, true);
+    this->prime_sig_ = nvshmem_create_tensor({1}, at::ScalarType::Long, true);
+    this->prime_sig_.zero_();
     this->expected_arrive_.assign(n_slots, 0);
     this->arrive_quota_.assign(n_slots, 0);
     this->expert_bytes_ = row_dim0 * row_dim1 * this->weight_full_.element_size();
@@ -314,6 +348,9 @@ class WeightPushMulticast::WeightPushMulticastImpl {
       this->in_sig_ =
           nvshmem_create_tensor({cap_i * this->shard_maxc_}, at::ScalarType::Long, true);
       this->in_sig_.zero_();
+    }
+    if (n > 0) {
+      this->prime_shard_kernels(L);
     }
   }
 

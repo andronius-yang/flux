@@ -673,6 +673,18 @@ if __name__ == "__main__":
     weight_sharded = False
     if args.weight_shard != "off":
         assert args.weight_path == "push", "--weight_shard needs --weight_path push"
+        # OPEN FOLLOW-UP (2026-08-17, observed 2n hang): under tokens_first
+        # the fused forward is enqueued before the shard chain, and with the
+        # conn=8 pin a shard-chain op can land BEHIND the resident spinning
+        # GEMM on an aliased issue channel — a cycle the weights_first order
+        # cannot form (chain enqueues first). Kernel priming did not clear
+        # it, so the aliasing mechanism (NR-02 Class-B / NR-13 fact 4) is
+        # the live hypothesis; conn=32 is the designated probe. Gated until
+        # then — tokens_first is a closed non-default ablation anyway.
+        assert args.weight_issue_order != "tokens_first", (
+            "--weight_shard x tokens_first is gated (2n hang, channel-"
+            "aliasing hypothesis — see the sharding ledger entry)"
+        )
     if args.weight_path == "push":
         op_w = flux.WeightPushMulticast(
             TP_GROUP, epn, B, ffn_shard, args.H, input_dtype,
