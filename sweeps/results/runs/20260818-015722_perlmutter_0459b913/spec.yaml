@@ -1,0 +1,35 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 2
+  - 8
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 4
+nodes: 4
+notes: "EPIC Mode-2 m-ladder completion, attempt 2: exact per-group stage/conv/wire RS knob demands in enable_hc_combine (cpr is not a valid conv bound under lane skew; bit only at m=1) — first attempt 20260818-014619 had epic_l01_hc_m1 conv-panel overflow"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+skip_correctness: false
+sm_margin: 8
+timeout_s: 900
+topk: 8
+variants:
+  - epic_hc_m1
+  - epic_hc_m2
+  - epic_hc_m4
+  - epic_l01_hc_m1
+  - epic_l01_hc_m2
+  - epic_l01_hc_m4
+warmup_iters: 5
