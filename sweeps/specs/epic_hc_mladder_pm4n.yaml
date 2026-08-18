@@ -1,0 +1,35 @@
+platform: perlmutter
+nodes: 4
+variants:
+  - epic_hc_m1
+  - epic_hc_m2
+  - epic_hc_m4
+  - epic_l01_hc_m1
+  - epic_l01_hc_m2
+  - epic_l01_hc_m4
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib:
+  - 2
+  - 8
+topk: 8
+G: 128
+H: 4096
+ffn_hidden: 4096
+chunk_bytes: 8192
+dtype: bfloat16
+modes:
+  - isolated
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+n_split_l1: 4
+matrix_instance: "001"
+retries: 1
+timeout_s: 900
+idle_timeout_s: 180
+skip_correctness: false
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+notes: "EPIC Mode-2 m-ladder completion: hc m1 debut (l0 + l01; epic_l01_hc_m1 variant added this change) alongside same-capsule hc m2/m4 re-anchors — closes the PEO m-verdict on EPIC's own transport (m1 existed only on the direct wire in the v2 capsules)"

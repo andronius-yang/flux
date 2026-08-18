@@ -5,19 +5,24 @@ Parallelism", Alibaba Cloud, SIGCOMM'26; flux/EPIC.pdf is ground truth — no
 open-source release) is implemented here as a faithful, launch-granularity
 baseline: §5.2 PEO (per-expert-group pipelining of dispatch -> grouped GEMM,
 m in {1,2,4} groups), §4.2 EPIC-EPLB placement with replication (one-shot,
-pool-oracle), and §4.3 dynamic intra-host expert migration. Layer0 only
-(dispatch + expert GEMM); the combine mirror is a later phase.
+pool-oracle), and §4.3 dynamic intra-host expert migration. Layer0
+(dispatch + expert GEMM) plus the --layers l01 full journey (GELU -> GEMM1
+-> per-group combine -> terminal Sum), with the combine wire mirroring the
+dispatch transport (v2).
 
 Fidelity contract (decisions ledger in the 2026-08-16 plan):
   * PEO pipelines UNMODIFIED kernels at kernel-launch granularity — no flux
     GEMM-overlap machinery anywhere. Per group: comm-only a2av (the staged
     ultraep/eplb wire) then one un-overlapped flux.GemmGroupedV2 launch over
     that group's contiguous slot range.
-  * Transport is EPIC Mode 1 (DeepEP-default analog): per-entry wire, NO
-    dedup — one row per (token, physical expert instance), matching both the
-    paper's description of DeepEP's send behavior and the existing staged
-    wire (ultraep_semantics: "There is NO wire dedup"). The Mode-2
-    (hier_compress) transport with within-group dedup is a later phase.
+  * Transports: hier_compress (the driver default) is EPIC's own Mode 2
+    (§5.1 Fig 8(d), PXN relay + de-redundancy) — dispatch via the fused op's
+    dispatch_only over the virtual slot space, l01 combine via per-group
+    TopkReduceScatterOp. nvshmem is the Mode-1 (DeepEP-default) analog:
+    per-entry wire, NO dedup — one row per (token, physical expert
+    instance), matching both the paper's description of DeepEP's send
+    behavior and the existing staged wire (ultraep_semantics: "There is NO
+    wire dedup"). nccl is a debug/parity fallback, never a faithful arm.
   * Groups partition LOCAL PHYSICAL SLOTS [0, nlp) by index, identically on
     every rank, applied after placement and unchanged by migration
     (migration swaps slot CONTENTS). Under replication an expert's
@@ -1232,11 +1237,45 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         for b in self._hc_bundles:
             m_full = W * self.cfg.S * b.K_g
             cpr = m_full // W
+            # Exact stage/conv/wire demands, replicating the op's collective
+            # FLUX_CHECKs (gemm_grouped_v2_gather_rs.cc; same expressions as
+            # sweeps/gen_matrix.a2av_rs_knob_demands) on THIS group's virtual
+            # wire. cpr is NOT a valid conv/wire bound: conv aggregates a
+            # source node's L ranks per remote dest LANE, so lane skew (EPIC
+            # replica placement) can exceed S*K_g — bites at m=1 where the
+            # whole batch shares one panel (m>=2 splits the skew).
+            vc = b.virtual_choosed.long().cpu()
+            ntok, kg = vc.shape
+            tpr = ntok // W
+            owner = (vc // b.gpe).flatten()
+            home = (torch.arange(ntok, dtype=torch.long)
+                    // tpr).repeat_interleave(kg)
+            chunks = torch.zeros(W, W, dtype=torch.long)
+            chunks.index_put_((home, owner),
+                              torch.ones_like(home), accumulate=True)
+            stage_d = conv_d = wire_d = cpr  # nn==1: plumbing-smoke fallback
+            if nn > 1:
+                Ug = build_a2av_unique_counts(
+                    b.virtual_choosed, W, nn, b.gpe).long()
+                stage_d = max(
+                    int(chunks[gn * L:(gn + 1) * L,
+                               [ns * L + gl for ns in range(nn)
+                                if ns != gn]].sum())
+                    for gn in range(nn) for gl in range(L))
+                conv_d = max(
+                    int(chunks[[tn * L + dl for tn in range(nn)
+                                if tn != n2],
+                               n2 * L:(n2 + 1) * L].sum())
+                    for n2 in range(nn) for dl in range(L))
+                wire_d = max(
+                    int(Ug[[tn * L + dl for tn in range(nn)
+                            if tn != n2], n2].sum())
+                    for n2 in range(nn) for dl in range(L))
             os.environ["FLUX_A2AV_RS_MAX_SEND_ROWS"] = str(
                 int(b.meta.m_per_rank.max()))
-            os.environ["FLUX_A2AV_RS_MAX_STAGE_ROWS"] = str(cpr)
-            os.environ["FLUX_A2AV_RS_MAX_CONV_ROWS"] = str(cpr)
-            os.environ["FLUX_A2AV_RS_MAX_WIRE_ROWS"] = str(cpr)
+            os.environ["FLUX_A2AV_RS_MAX_STAGE_ROWS"] = str(max(stage_d, 1))
+            os.environ["FLUX_A2AV_RS_MAX_CONV_ROWS"] = str(max(conv_d, 1))
+            os.environ["FLUX_A2AV_RS_MAX_WIRE_ROWS"] = str(max(wire_d, 1))
             barriers = flux.create_tensor_list(
                 (2 * n_split,), dtype=torch.int32, pg=self.group,
                 ring_mode=True)

@@ -24,9 +24,13 @@ GEMMs are un-overlapped flux.GemmGroupedV2 launches, one per group, over the
 contiguous slot-weight slice — launch-granularity faithful. m=1 is the
 no-overlap arm and the validation anchor.
 
-Transport is EPIC Mode 1 (DeepEP-default analog): the staged per-entry wire
-(NO dedup), NCCL alltoallv or flux's one-sided NVSHMEM All2AllSingle. The
-Mode-2 (hier_compress) transport is a later phase.
+Transport (--transport, default hier_compress = EPIC's own Mode 2, §5.1
+Figure 8(d): PXN relay + de-redundancy — the paper's distinctive transport):
+hier_compress = fused-op dispatch_only over the virtual slot space (l01
+combine via per-group TopkReduceScatterOp); nvshmem = Mode-1/DeepEP-default
+analog, the staged per-entry wire (NO dedup) over flux's one-sided NVSHMEM
+All2AllSingle; nccl = debug/parity-only NCCL alltoallv fallback (never a
+faithful EPIC arm — pin it explicitly if you really want it).
 
 Migration (--migration on) runs between plan_comm and pack, per Figure 5:
 replicated host decision (per-node heaviest/lightest pairing, tau-gated
@@ -596,13 +600,15 @@ def parse_args():
                         "comparable configurations)")
     parser.add_argument("--weight_place", default="fc1fc2",
                         choices=["fc1fc2", "fc1"])
-    parser.add_argument("--transport", default="nccl",
+    parser.add_argument("--transport", default="hier_compress",
                         choices=["nccl", "nvshmem", "hier_compress"],
-                        help="nccl/nvshmem = direct per-entry wire (EPIC "
-                        "Mode 1 analog); hier_compress = fused-op "
-                        "dispatch_only over the virtual slot space (EPIC "
-                        "Mode 2: PXN relay + de-redundancy; probs ride the "
-                        "nvshmem side-wire; needs a post-S2 binary)")
+                        help="hier_compress (DEFAULT — EPIC's own Mode 2, "
+                        "PXN relay + de-redundancy) = fused-op "
+                        "dispatch_only over the virtual slot space (probs "
+                        "ride the nvshmem side-wire; needs a post-S2 "
+                        "binary); nvshmem = direct per-entry wire (Mode-1/"
+                        "DeepEP-default analog); nccl = debug/parity "
+                        "fallback only, never a faithful EPIC arm")
     parser.add_argument("--hc_relay", default="identity",
                         choices=["identity", "balanced"],
                         help="hier_compress relay shape: identity = "

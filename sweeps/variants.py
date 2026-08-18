@@ -608,6 +608,13 @@ VARIANTS = {
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
     ),
+    "epic_l01_hc_m1": dict(
+        comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "hier_compress", "--placement", "epic",
+                   "--groups", "1", "--layers", "l01"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
     "epic_l01_hc_m2": dict(
         comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
         test_args=["--transport", "hier_compress", "--placement", "epic",
