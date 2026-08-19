@@ -81,6 +81,7 @@ from flux.testing.epic_semantics import (
 )
 from flux.testing.loccap_semantics import (
     d6_route,
+    evensplit_route,
     incidence_stats,
     loccap_route,
     route_hash,
@@ -671,7 +672,8 @@ def parse_args():
                         help="<mid>.placement.json sidecar "
                         "(sweeps/predict_placement.py); required for "
                         "--placement nodeaware")
-    parser.add_argument("--router", default="d6", choices=["d6", "loccap"],
+    parser.add_argument("--router", default="d6",
+                        choices=["d6", "loccap", "evensplit"],
                         help="replica selection: d6 = src mod lcnts (the "
                         "EPIC baseline rule); loccap = per-token tiered "
                         "locality under compute caps (1+eps)*S*K, the "
@@ -867,14 +869,19 @@ if __name__ == "__main__":
             topk_all.long(), plan.p2l, plan.l2p, plan.lcnts, cfg.nlp,
             DIST_ENV.LOCAL_WORLD_SIZE, args.eps).cpu()
         plan.phys_override = phys_all_route
+    elif args.router == "evensplit":
+        phys_all_route = evensplit_route(topk_all.long(), plan.l2p,
+                                         plan.lcnts).cpu()
+        plan.phys_override = phys_all_route
     else:
         phys_all_route = d6_route(topk_all.long(), plan.l2p, plan.lcnts)
     loccap_plan_host_ms = (time.perf_counter() - t_r) * 1e3
     route_stats = incidence_stats(phys_all_route, cfg.nlp,
                                   DIST_ENV.LOCAL_WORLD_SIZE)
     r_hash = route_hash(phys_all_route)
-    if args.placement == "nodeaware" and args.router == "loccap":
-        want = f"loccap_eps{args.eps:g}"
+    if args.placement == "nodeaware" and args.router != "d6":
+        want = ("evensplit" if args.router == "evensplit"
+                else f"loccap_eps{args.eps:g}")
         pred = [p for p in pblob.get("predicted", [])
                 if p.get("router") == want]
         if pred:

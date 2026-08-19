@@ -1800,6 +1800,7 @@ def cmd_run(spec, jobid_arg, dry):
                         placement_cache[rc_key] = \
                             predict_placement.ensure_placement(
                                 dict(params), mode="rankconc",
+                                eps_ladder=(),  # rankconc arms are d6-routed
                                 target_slots=na_blob["planner"][
                                     "replica_slots_spent"],
                                 **pp_kwargs)

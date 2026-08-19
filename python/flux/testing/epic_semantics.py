@@ -382,7 +382,7 @@ def build_nodeaware_plan(cfg: UltraEPConfig, tpe: torch.Tensor,
     driver assert, not a hope). cfg is MUTATED (max_replicas_dim) like the
     sibling builders."""
     assert tuple(tpe.shape) == (cfg.R, cfg.G)
-    assert int(blob.get("version", -1)) == 1, "unknown placement version"
+    assert int(blob.get("version", -1)) in (1, 2), "unknown placement version"
     for key, want in (("G", cfg.G), ("W", cfg.R), ("nlp", cfg.nlp)):
         got = int(blob[key])
         assert got == want, (
@@ -1220,6 +1220,7 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         self._hc_splits_gpu = []
         self._hc_scatter_gpu = []
         self._hc_caps = []
+        self._canon_checked = {}  # per-group one-shot injectivity guard
         self._inkernel_swap = inkernel_swap
         self._swap_seq = 0        # GLOBAL swap-round sequence (replicated)
         self._pending_swap = None
@@ -1294,6 +1295,18 @@ class EpicLayer0Runner(EPLBLayer0Runner):
                 swap_fc2=(self.slot_fc2[slot] if self.place_fc2 else None),
                 swap_peer=peer, swap_epoch=seq)
             self._pending_swap = None
+        import os as _os
+        nan_canary = _os.environ.get("FLUX_EPIC_CANON_NAN", "0") == "1"
+        if nan_canary:
+            # D1 discriminator: prefill the dense output with NaN so a recv
+            # row the wire never wrote survives as NaN (wire hole), while a
+            # canon-permutation hole shows as a non-NaN wrong row — the two
+            # 8n hypotheses separate in one run (diagnostic only).
+            m_exp = int(b.meta.splits[
+                self.rank * b.gpe:(self.rank + 1) * b.gpe].sum())
+            swap_kw["dense_out"] = torch.full(
+                (m_exp, self.cfg.H), float("nan"), dtype=self.dtype,
+                device=self.device)
         dense, ssi, _ssc, m_ep = self._hc_ops[g].dispatch_only(
             self._last_inputs, self._hc_splits_gpu[g],
             self._hc_scatter_gpu[g],
@@ -1301,6 +1314,11 @@ class EpicLayer0Runner(EPLBLayer0Runner):
             **swap_kw,
         )
         m = int(m_ep)
+        if nan_canary:
+            bad = torch.isnan(dense[:m]).any(dim=1)
+            print(f"[canon-nan] rank {self.rank} g{g}: "
+                  f"{int(bad.sum())}/{m} recv rows never written by the "
+                  "wire", flush=True)
         n_real = m - int(b.pad_rows_per_rank[self.rank])
         assert n_real == n_rows, (
             f"group {g}: dense real rows {n_real} != layout rows {n_rows}")
@@ -1320,6 +1338,19 @@ class EpicLayer0Runner(EPLBLayer0Runner):
             seg = torch.bucketize(
                 torch.arange(m, device=dense.device), bounds, right=True)
             canon_pos = (bounds - sl)[seg] + ssi[:m].long()
+            if not self._canon_checked.get(g, False):
+                # W32 lesson (NR-16 amendment): index_copy_ into empty_like
+                # silently corrupts if canon_pos is not a permutation
+                # (allocator garbage in uncovered rows — zeros on fresh
+                # blocks, stale bytes on recycled ones). Routing is static
+                # per cell, so ONE injectivity check per group per cell is
+                # a complete guard at zero steady-state cost.
+                assert bool(torch.equal(
+                    canon_pos.sort().values,
+                    torch.arange(m, device=canon_pos.device))), (
+                    f"group {g}: canon_pos is not a permutation of [0,{m}) "
+                    "— ssi contract violated (see NR-16 8n amendment)")
+                self._canon_checked[g] = True
             canon = torch.empty_like(dense[:m])
             canon.index_copy_(0, canon_pos, dense[:m])
             self.hidden_buf[base:base + n_rows].copy_(canon[:n_real])

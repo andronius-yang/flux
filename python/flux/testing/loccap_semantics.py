@@ -195,13 +195,36 @@ def loccap_route(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps):
         return [r for r in range(n * L, (n + 1) * L)
                 if int(inst_phys_of_rank[g, r]) >= 0]
 
+    # Vectorized bucket build (bit-identical to the per-token loop it
+    # replaces: same membership, same within-bucket canonical (src, s)
+    # order via stable sorts; bucket iteration order comes from
+    # sorted(buckets) below either way).
     buckets = {}  # (home_node, tuple(experts)) -> list of (src, s)
-    for src in range(R):
-        mask = phys_all[src].eq(REMOTE)           # [S, K]
-        toks = mask.any(dim=1).nonzero(as_tuple=True)[0]
-        for s in toks.tolist():
-            gs = tuple(sorted(topk[src, s, mask[s]].tolist()))
-            buckets.setdefault((int(node_of_rank[src]), gs), []).append((src, s))
+    rem_mask = phys_all.eq(REMOTE)                    # [R, S, K]
+    srcs, toks = rem_mask.any(dim=2).nonzero(as_tuple=True)
+    if srcs.numel():
+        sel = topk[srcs, toks]                        # [N, K]
+        gsel = torch.where(rem_mask[srcs, toks], sel,
+                           torch.full_like(sel, G))  # pad sorts LAST
+        gsorted = gsel.sort(dim=1).values
+        keyexp = torch.where(gsorted < G, gsorted + 1,
+                             torch.zeros_like(gsorted))  # pad field = 0
+        keys = torch.cat([node_of_rank[srcs].unsqueeze(1), keyexp], dim=1)
+        order = torch.arange(srcs.numel())
+        for col in range(K, -1, -1):                  # lexicographic stable
+            order = order[torch.argsort(keys[order, col], stable=True)]
+        ks = keys[order]
+        newgrp = torch.ones(order.numel(), dtype=torch.bool)
+        if order.numel() > 1:
+            newgrp[1:] = (ks[1:] != ks[:-1]).any(dim=1)
+        srcs_o, toks_o = srcs[order].tolist(), toks[order].tolist()
+        starts = newgrp.nonzero(as_tuple=True)[0].tolist() + [order.numel()]
+        for bi in range(len(starts) - 1):
+            lo, hi = starts[bi], starts[bi + 1]
+            row = ks[lo].tolist()
+            gs = tuple(int(x) - 1 for x in row[1:] if int(x) > 0)
+            buckets[(int(row[0]), gs)] = list(
+                zip(srcs_o[lo:hi], toks_o[lo:hi]))
 
     def best_cover(home, gs):
         """Exact min cover of expert set gs by non-home nodes with currently
@@ -351,9 +374,11 @@ def _repair_overflow(phys_all, topk, inst_phys_of_rank, nlp, L, cap, load, R):
         under = {r for r in range(R) if load[r] < cap}
         if not under:
             break
+        serve_rank_pass = phys_all // nlp  # refreshed once per sweep; the
+        # per-entry mutations below are tracked through `load` and the
+        # entries list is re-derived next sweep
         for r in over:
-            serve_rank = phys_all // nlp
-            ent = (serve_rank == r).nonzero()  # [(src, s, k)] canonical order
+            ent = (serve_rank_pass == r).nonzero()  # [(src,s,k)] canonical
             for src, s, k in ent.tolist():
                 if load[r] <= cap:
                     break
@@ -392,22 +417,34 @@ def _repair_overflow(phys_all, topk, inst_phys_of_rank, nlp, L, cap, load, R):
         parent = {r0: None}       # rank -> (prev_rank, witness (src,s,k))
         frontier = [r0]
         goal = None
+        # phys_all is immutable during the BFS (mutations happen only on
+        # the walk-back below), so derive the serving map ONCE per call.
+        # The per-expert first-witness extraction is vectorized
+        # (bit-identical: flat nonzero order IS the canonical (src, s, k)
+        # order; stable argsort keeps the first canonical entry per expert;
+        # the unique-expert iteration is ascending = sorted(seen_g)).
+        serve_rank = phys_all // nlp
+        serve_flat = serve_rank.reshape(-1)
+        topk_flat = topk.reshape(-1)
+        S_, K_ = topk.shape[1], topk.shape[2]
         while frontier and goal is None:
             nxt = []
             for ri in frontier:
-                serve_rank = phys_all // nlp
-                ent = (serve_rank == ri).nonzero().tolist()
-                seen_g = {}
-                for src, s, k in ent:
-                    g = int(topk[src, s, k])
-                    if g in seen_g:
-                        continue
-                    seen_g[g] = (src, s, k)
-                for g in sorted(seen_g):
-                    for rj in hosts(g):
+                flat = (serve_flat == ri).nonzero(as_tuple=True)[0]
+                gs_all = topk_flat[flat]
+                o = torch.argsort(gs_all, stable=True)
+                gs_s = gs_all[o]
+                first = torch.ones_like(gs_s, dtype=torch.bool)
+                if gs_s.numel() > 1:
+                    first[1:] = gs_s[1:] != gs_s[:-1]
+                uniq = gs_s[first].tolist()
+                wits = flat[o[first]].tolist()
+                for g, wf in zip(uniq, wits):
+                    witness = (wf // (S_ * K_), (wf // K_) % S_, wf % K_)
+                    for rj in hosts(int(g)):
                         if rj in parent or rj == ri:
                             continue
-                        parent[rj] = (ri, seen_g[g])
+                        parent[rj] = (ri, witness)
                         if load[rj] < cap:
                             goal = rj
                             break
@@ -499,6 +536,38 @@ def d6_route(topk_all, l2p, lcnts):
         phys[src] = torch.gather(l2p_l[topk[src].reshape(-1)], 1,
                                  j.reshape(-1, 1)).reshape(S, K)
     return phys.to(torch.int32)
+
+
+def evensplit_route(topk_all, l2p, lcnts):
+    """The brute-force even-sharding baseline (user-specified 2026-08-19):
+    per expert l, take its tokens in canonical global order (src-major,
+    token asc — the same per-expert order reroute_expand produces) and
+    split CONTIGUOUSLY into lcnts[l] equal chunks (largest-remainder: the
+    first `rem` chunks get one extra), chunk j -> instance j (l2p column
+    j). 'First half to replica 0, next half to replica 1.' Source- and
+    token-oblivious; distinct from BOTH d6's per-source modding and
+    UltraEP's per-(source,expert) quota interleave. [R, S, K] -> int32."""
+    R, S, K = topk_all.shape
+    topk = topk_all.cpu().long()
+    l2p_l = l2p.cpu().long()
+    lcnts_l = lcnts.cpu().long().tolist()
+    G = int(lcnts.numel())
+    phys_flat = torch.zeros(R * S * K, dtype=torch.int64)
+    flat_g = topk.reshape(-1)
+    for g in range(G):
+        idx = (flat_g == g).nonzero(as_tuple=True)[0]  # canonical order
+        n = idx.numel()
+        if n == 0:
+            continue
+        C = int(lcnts_l[g])
+        base, rem = divmod(n, C)
+        pos = 0
+        for j in range(C):
+            c = base + (1 if j < rem else 0)
+            if c:
+                phys_flat[idx[pos:pos + c]] = int(l2p_l[g, j])
+                pos += c
+    return phys_flat.reshape(R, S, K).to(torch.int32)
 
 
 def incidence_stats(phys_all, nlp, ranks_per_node):

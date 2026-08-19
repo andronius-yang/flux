@@ -48,7 +48,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gen_matrix  # noqa: E402
 import gen_trace_routing  # noqa: E402
 
-PLACEMENT_VERSION = 1
+PLACEMENT_VERSION = 2
+# v2 (2026-08-19): extended ladder (adds eps=0.0 "perfect-balance locality")
+# + the evensplit router baseline; NEW filename suffix .v2.json — v1 files
+# are never touched, so committed capsule shas stay reproducible. The
+# v2-vs-v1 shared-rung route_hash comparison doubles as the router
+# vectorization's bit-identity proof.
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _LOCCAP_PATH = os.path.join(_REPO, "python", "flux", "testing",
                             "loccap_semantics.py")
@@ -57,7 +62,7 @@ _spec = importlib.util.spec_from_file_location("loccap_semantics",
 LC = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(LC)
 
-EPS_LADDER_DEFAULT = (0.0625, 0.125, 0.25, 0.5, 1.0, math.inf)
+EPS_LADDER_DEFAULT = (0.0, 0.0625, 0.125, 0.25, 0.5, 1.0, math.inf)
 
 
 def load_platform(name):
@@ -327,6 +332,8 @@ def simulate_arm(topk_all, hosts, nlp, L, router, eps=None):
     p2l, l2p, lcnts = LC.plan_tensors_from_hosts(hosts, W, nlp)
     if router == "d6":
         phys = LC.d6_route(topk_all, l2p, lcnts)
+    elif router == "evensplit":
+        phys = LC.evensplit_route(topk_all, l2p, lcnts)
     else:
         phys = LC.loccap_route(topk_all, p2l, l2p, lcnts, nlp, L, eps)
     st = LC.incidence_stats(phys, nlp, L)
@@ -387,7 +394,7 @@ def ensure_placement(params, W, L, budget_mib, topk, chunk_bytes,
     # hard-asserts each cell's realized route_hash/incidence against the
     # sidecar's predicted entries, so ladder integrity is enforced per run
     # anyway. Delete the sidecar to force a full regeneration.
-    suffix_early = f"placement_{mode}_r{redundant_per_rank}"
+    suffix_early = f"placement_{mode}_r{redundant_per_rank}.v2"
     path_early = os.path.join(out_root, f"{mid}.{suffix_early}.json")
     if os.path.exists(path_early):
         with open(path_early) as f:
@@ -420,7 +427,9 @@ def ensure_placement(params, W, L, budget_mib, topk, chunk_bytes,
         out_root, traces_root=traces_root, nexperts=nexperts)
     topk_all = routing_tensor(rpath, W)
 
-    predicted = [simulate_arm(topk_all, placed["hosts"], nlp, L, "d6")]
+    predicted = [simulate_arm(topk_all, placed["hosts"], nlp, L, "d6"),
+                 simulate_arm(topk_all, placed["hosts"], nlp, L,
+                              "evensplit")]
     for eps in eps_ladder:
         predicted.append(simulate_arm(topk_all, placed["hosts"], nlp, L,
                                       "loccap", eps))
@@ -446,9 +455,10 @@ def ensure_placement(params, W, L, budget_mib, topk, chunk_bytes,
         "predicted": predicted,
     }
     body = json.dumps(blob, indent=1, sort_keys=True) + "\n"
-    # mode + redundancy are part of the sidecar identity (a different
-    # redundant_per_rank is a different placement; never a silent overwrite)
-    suffix = f"placement_{mode}_r{redundant_per_rank}"
+    # mode + redundancy + version are part of the sidecar identity (a
+    # different redundant_per_rank is a different placement; a different
+    # version is a different ladder; never a silent overwrite)
+    suffix = f"placement_{mode}_r{redundant_per_rank}.v2"
     path = os.path.join(out_root, f"{mid}.{suffix}.json")
     if os.path.exists(path):
         with open(path) as f:
@@ -548,7 +558,9 @@ def cmd_table(args):
             args.matrix_instance, plat["matrices_root"],
             plat["traces_root"], args.G,
             redundant_per_rank=args.redundant_per_rank, mode="rankconc",
-            eps_ladder=eps_ladder,
+            # loccap provably cannot improve a coverage-free placement
+            # (measured flat at every eps) — skip its ladder, keep d6+es
+            eps_ladder=(),
             target_slots=na_blob["planner"]["replica_slots_spent"])
         for pred in rc_blob["predicted"]:
             rows.append(("rankconc", pred))
