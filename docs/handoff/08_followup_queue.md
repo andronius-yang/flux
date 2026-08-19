@@ -187,3 +187,26 @@ cells hang, bincount the routing for empty experts before anything else.
   {max_split, n_dim, local_world_size, dtype} and FLUX_CHECKs equality
   (loud, hang-free abort); debug-build device asserts guard per-call
   splits <= max_split; probe_a2a_single.py --mismatch is the negative test.
+
+## nodeaware/LocCap campaign follow-ups (2026-08-19, session 8.19.theory)
+
+- **Terminology, recorded per user note: "D6" = the MODDED replica-selection
+  rule** — source rank src sends ALL its tokens for expert l to instance
+  `src mod lcnts[l]` (EPIC port design decision #6; the paper is silent on
+  replica selection). Token-oblivious; the LocCap baseline anchor.
+- **DEFERRED baseline arm (user-requested, run after the current program):
+  `evensplit` router** — per expert l, order its tokens canonically (global
+  token id ascending) and split CONTIGUOUSLY into lcnts[l] equal chunks,
+  chunk j -> instance j ("first 1/2 to replica 0, next 1/2 to replica 1";
+  brute-force even sharding, source-oblivious — distinct from BOTH d6's
+  per-source modding AND UltraEP's per-(source,expert) largest-remainder
+  quota interleave). Implement as a third --router option emitting
+  plan.phys_override (~20 lines beside loccap_route; offline-simulable in
+  predict_placement identically, so it gets pre-registered incidence
+  numbers for free). Compare within one capsule against d6 + loccap.
+- lc0625@b64 cell: blocked on the bit-identical router vectorization
+  (repair-phase python loops; >25 min on login node — sidecar route_hash is
+  the identity oracle). Then a b64-only patch twin pair.
+- 8n stage: blocked on the epic dispatch_only W32 delivery race (NR-16
+  amendment); needs its own 2n->4n->8n bring-up after the 4n program and
+  any rebuild boundary.
