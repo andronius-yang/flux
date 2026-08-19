@@ -1149,3 +1149,49 @@ part of what P1–P6 must justify before any kernel is built.
 - "Prior work either moves the bound or closes the gap. A good scheduler must do
   both, because the placement that minimizes the bound is not the one that is
   easiest to overlap."
+
+### 7.7b Phase-2 addendum: lc00 + evensplit rungs (pre-registered before the closure/conn session)
+
+Recorded 2026-08-19 before any Phase-2 GPU cell. Router vectorization is
+bit-identity-PROVEN (route_hash equality vs every committed v1 sidecar rung,
+4n b2/b8/b64 + 8n b8) — Phase-1 and Phase-2 capsules run literally identical
+routing decisions. Sidecars move to `.v2.json` (extended ladder: +eps=0,
++evensplit; v1 files untouched, their shas stay reproducible).
+
+New-rung incidence (4n, r2; internode dedup rows vs fixed/d6 baseline):
+
+| arm | b8 | imb | b64 | imb |
+|---|---|---|---|---|
+| nodeaware / d6 | −35.4% | 1.30 | −35.4% | 1.29 |
+| nodeaware / evensplit | −45.2% | 1.28 | −45.3% | 1.28 |
+| nodeaware / loccap ε=0 | −39.1% | 1.06 | −40.1% | 1.08 |
+| nodeaware / loccap ε=0.0625 | −43.5% | 1.06 | −43.6% | 1.08 |
+| nodeaware / loccap ε=0.125 | −47.0% | 1.13 | −47.4% | 1.13 |
+
+8n b8 (from the verification run): loccap ε=0 → −41.9% at imb **1.000**
+(perfect balance — forced spill vanishes at 8 nodes); evensplit → −45.1%
+at imb 1.32.
+
+Structural findings, pre-registered as predictions:
+
+- **P7 (ε=0 dominated at 4n)**: loccap ε=0 carries MORE bytes than ε=0.0625
+  at the SAME imbalance floor (~1.06–1.08, set by forced spill from
+  single-hosted hot experts) — pure downside. Prediction: lc00 latency ≥
+  lc0625 at both budgets, 4n. At 8n ε=0 is NOT dominated (perfect balance
+  at a ~10pp byte premium vs ε=0.0625) — a genuine frontier point whose
+  winner is decided by κ(8n); pre-registered as an open comparison.
+- **P8 (evensplit = accidental locality, no balance)**: the contiguous
+  chunk j → instance j split approximates locality because l2p replica
+  columns are node-ascending while token order is source-major — hence
+  byte-competitive with tight LocCap (−45.2%) at d6-class imbalance
+  (1.28). Prediction: latency lands between d6 and the LocCap valley —
+  ≈ d6 at b8 (balance-dominated regime; its good bytes barely convert),
+  strictly worse than lc125 at b64 DESPITE similar bytes (the balance
+  channel), and below d6 at b64 by roughly κ(b64)·10pp ≈ 1–2%.
+- **P9 (Capsule C, conn ladder)**: the (conn8 − conn32) penalty shrinks on
+  locality arms vs their non-locality bases (fan-out is issue-channel-
+  denominated; locality reduces distinct peers).
+
+Falsification note: if evensplit ≈ lc0625 at b8 (i.e. its byte advantage
+converts without balance), the two-channel model's b8 balance-dominance is
+wrong — that outcome would be MORE interesting than the predicted one.

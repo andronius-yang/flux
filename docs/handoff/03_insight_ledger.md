@@ -990,3 +990,12 @@ BLOCKED on an epic-driver 8n bring-up (own campaign: 2n->4n->8n ladder on
 dispatch_only completion ordering) and the 4n program continues unchanged.
 The loccap router itself is exonerated at 8n: realized incidence matched
 the sidecar exactly (63072) before the wire raced.
+
+### NR-16 Phase-2 note (2026-08-19): vectorization bit-identity + new-rung pre-registration
+
+Router vectorization proven bit-identical (route_hash vs all committed v1
+sidecar rungs); worst rung 25+ min -> 6/18 min. New rungs pre-registered in
+formalization §7.7b (P7 eps=0 dominated at 4n / frontier at 8n; P8
+evensplit = accidental locality without balance; P9 conn-ladder shrink).
+D1 discriminators for the W32 corruption are in the driver (canon_pos
+injectivity assert, once per cell; FLUX_EPIC_CANON_NAN canary).
