@@ -3353,6 +3353,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       int64_t swap_epoch) {
     (void)get_int_from_env("FLUX_A2AV_DISPATCH_ONLY_TAG", 0);
     (void)get_int_from_env("FLUX_A2AV_INKERNEL_SWAP_TAG", 0);
+    (void)get_int_from_env("FLUX_A2AV_DELIVERY_GATE_TAG", 0);  // NR-16 D1 fix
     FLUX_CHECK(a2av_dispatch_) << "dispatch_only requires an a2av-mode op";
     FLUX_CHECK(!pack_overlap_)
         << "dispatch_only is untested with FLUX_A2AV_PACK_OVERLAP";
@@ -3400,6 +3401,28 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     CUDA_CHECK(cudaStreamWaitEvent(stream, this->all_gather_event));
     if (a2av_hier_compress_ && nnodes > 1 && !relay_identity_ && !union_bcast_) {
       CUDA_CHECK(cudaStreamWaitEvent(stream, this->signal_done_event_));
+    }
+    // NR-16 D1 fix (2026-08-19): dispatch_only had NO receiver-side
+    // delivery gate — the barrier alone raced at W32 (per-epoch transient
+    // missing rows; masked by static payloads in multi-epoch runs, so 4n
+    // always looked clean). Gate exactly like the fused path's proven 8n
+    // contract: wait every source slot's epoch signal (the always-signal
+    // invariant covers zero-row lanes on every compress wire) as zero-SM
+    // front-end memops. The preceding quiet folds this PE's outstanding
+    // nbi tails into the proxy first — all_gather_event already ordered us
+    // after both cp streams' issue points — which also closes the
+    // epoch-close reuse hazard (H-a) for the next iteration's staging.
+    if (a2av_hier_compress_ && nnodes > 1) {
+      nvshmemx_quiet_on_stream(stream);
+      uint64_t *sig =
+          reinterpret_cast<uint64_t *>(this->a2av_signal_buffer.data_ptr());
+      for (int s = 0; s < this->world_size; s++) {
+        CU_CHECK(CUStreamWaitValue64(
+            stream,
+            reinterpret_cast<CUdeviceptr>(sig + s),
+            this->run_id_,
+            CU_STREAM_WAIT_VALUE_GEQ));
+      }
     }
     // delivery barrier: after this, every rank's epoch-n puts have landed
     nvshmemx_barrier_all_on_stream(stream);
