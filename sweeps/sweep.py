@@ -198,6 +198,13 @@ CELLS_COLUMNS = [
     "nsys_path",
     "prof_path",
     "notes",
+    # appended 2026-08-18 (nodeaware/LocCap campaign): old capsules simply
+    # lack the columns — readers use csv.DictReader, never positional
+    "router",
+    "eps",
+    "placement_sha",
+    "incidence_remote",
+    "mean_nodes_per_token",
     # appended 2026-08-16 (layer-axis campaign): old capsules simply lack the
     # columns — readers use csv.DictReader, never positional indexing
     "layer",
@@ -995,7 +1002,7 @@ def cell_launcher(cell, plat, staging):
 
 
 def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=None,
-                   eplb_load_path=None):
+                   eplb_load_path=None, placement_path=None):
     v = VARIANTS[cell["variant"]]
     profiling = cell["mode"] in ("torchprof", "nsys")
     iters = spec["profile_iters"] if profiling else spec["iters"]
@@ -1217,6 +1224,10 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         if v["driver"] == "epic" and eplb_load_path:
             # same pool-oracle sidecar convention as the eplb arm (D7)
             test_args += ["--epic_load_file", eplb_load_path]
+        if v["driver"] == "epic" and placement_path:
+            # PLACE-lambda sidecar (predict_placement.py): placement input
+            # only — matrix identity unchanged, sha recorded as a cell fact
+            test_args += ["--placement_file", placement_path]
     else:
         test_args = [
             TEST,
@@ -1283,6 +1294,7 @@ def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
         staging,
         routing_path=matrix.get("routing") if cell.get("routing_mode") == "real" else None,
         eplb_load_path=matrix.get("eplb_load"),
+        placement_path=matrix.get("placement"),
     )
     env_delta = build_cell_env(spec, plat, cell, staging, matrix)
     sym_g_required = env_delta.pop("_A2AV_SYM_G_REQUIRED", None)
@@ -1592,6 +1604,11 @@ def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, s
                 ("wire_ratio", "wire_ratio"),
                 ("relay_ident_bytes", "relay_ident_bytes"),
                 ("relay_balanced_bytes", "relay_balanced_bytes"),
+                ("epic_router", "router"),
+                ("epic_loccap_eps", "eps"),
+                ("epic_placement_sha", "placement_sha"),
+                ("epic_incidence_remote", "incidence_remote"),
+                ("epic_mean_nodes_per_token", "mean_nodes_per_token"),
             ]:
                 if k_src in info:
                     row[k_dst] = info[k_src]
@@ -1742,6 +1759,44 @@ def cmd_run(spec, jobid_arg, dry):
                         " has no pool prediction — the driver falls back to"
                         " the batch's own load (self-oracle)"
                     )
+            vdef = VARIANTS[cell["variant"]]
+            targs = list(vdef.get("test_args") or [])
+            if vdef.get("driver") == "epic" and "nodeaware" in targs:
+                # PLACE-lambda placement sidecar (predict_placement.py).
+                # rankconc arms (placement_mode key) spend the SAME slot
+                # count as the nodeaware placement — the P4 equal-slot
+                # ablation — so the nodeaware sidecar is built first.
+                assert cell["family"] == "trace", (
+                    f"{cell['cell_id']}: --placement nodeaware is defined "
+                    "for trace cells only")
+                import predict_placement
+                red = 2  # the epic driver's --redundant_per_rank default
+                if "--redundant_per_rank" in targs:
+                    red = int(targs[targs.index("--redundant_per_rank") + 1])
+                pp_kwargs = dict(
+                    W=cell["world_size"], L=plat["ranks_per_node"],
+                    budget_mib=cell["budget_mib"], topk=spec["topk"],
+                    chunk_bytes=spec["chunk_bytes"],
+                    matrix_instance=spec["matrix_instance"],
+                    out_root=plat["matrices_root"],
+                    traces_root=plat.get("traces_root"),
+                    nexperts=spec["G"], redundant_per_rank=red,
+                )
+                params = dict(gen_matrix.FAMILY_DEFAULT_PARAMS["trace"],
+                              **mparams)
+                na_path, na_sha, na_blob = predict_placement.ensure_placement(
+                    dict(params), mode="nodeaware", **pp_kwargs)
+                mode = vdef.get("placement_mode", "nodeaware")
+                if mode == "rankconc":
+                    p_path, p_sha, _ = predict_placement.ensure_placement(
+                        dict(params), mode="rankconc",
+                        target_slots=na_blob["planner"][
+                            "replica_slots_spent"],
+                        **pp_kwargs)
+                else:
+                    p_path, p_sha = na_path, na_sha
+                matrices[cell["cell_id"]].update(
+                    {"placement": p_path, "placement_sha": p_sha})
 
     needed = sorted({k for v in spec["variants"] for k in VARIANTS[v]["requires"]})
     try:

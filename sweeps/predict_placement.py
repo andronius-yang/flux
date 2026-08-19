@@ -419,7 +419,9 @@ def ensure_placement(params, W, L, budget_mib, topk, chunk_bytes,
         "predicted": predicted,
     }
     body = json.dumps(blob, indent=1, sort_keys=True) + "\n"
-    suffix = "placement" if mode == "nodeaware" else f"placement_{mode}"
+    # mode + redundancy are part of the sidecar identity (a different
+    # redundant_per_rank is a different placement; never a silent overwrite)
+    suffix = f"placement_{mode}_r{redundant_per_rank}"
     path = os.path.join(out_root, f"{mid}.{suffix}.json")
     if os.path.exists(path):
         with open(path) as f:

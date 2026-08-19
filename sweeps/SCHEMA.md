@@ -333,6 +333,25 @@ Highlights (full list = header row):
   git_sha is not a build identity).
 - `wire_ratio`, `relay_ident_bytes`, `relay_balanced_bytes` — compress-only
   cell facts from the pre-run analysis block.
+- `router`, `eps`, `placement_sha`, `incidence_remote`,
+  `mean_nodes_per_token` — appended 2026-08-18 (nodeaware/LocCap campaign;
+  epic-driver arms only, empty elsewhere). `router` ∈ {`d6`, `loccap`};
+  `eps` = the LocCap balance slack (caps `(1+eps)*S*K` rows/rank; `inf` =
+  pure locality). `incidence_remote` = Σ over tokens of distinct non-home
+  serving nodes — under the node-dedup transports this IS the inter-node
+  wire rows per direction, the campaign's objective. Placement comes from
+  the `<mid>.placement_<mode>_r<red>.json` sidecar
+  (`sweeps/predict_placement.py`, PLACE-lambda: pool co-occurrence
+  partition + per-node-first coverage replication; `rankconc` = the
+  equal-slot concentration ablation). Same contract as `.eplb_load.json`:
+  placement INPUT only, matrix identity unchanged, never-overwrite, sha
+  recorded here. The sidecar carries the pre-registered simulated
+  incidence per (router, eps); the driver hard-asserts the realized
+  `route_hash`/`incidence_remote` equal the simulation (same code by
+  file-path import — a mismatch is a determinism bug, not noise). Both
+  routers are computed once per cell under the untimed-metadata contract
+  (`epic_loccap_plan_host_ms` cell fact; routing is static per cell — the
+  production router is a reroute.cu-class GPU kernel, ~0.1 ms).
 - `correct_bitwise`, `correct_allclose` — AND over ranks; empty when
   `skip_correctness` ran. Note bitwise may legitimately be 0 with determinism
   off; allclose is the correctness verdict.

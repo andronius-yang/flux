@@ -664,6 +664,157 @@ VARIANTS = {
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
     ),
+    # ----- nodeaware placement + LocCap router (8.19.theory campaign) -----
+    # PLACE-lambda co-occurrence placement from the <mid>.placement_*.json
+    # sidecar (sweeps/predict_placement.py — the runner generates it per
+    # cell) + per-token replica selection: --router d6 = the EPIC baseline
+    # rule on the nodeaware placement; --router loccap eps = tiered
+    # locality under per-rank caps (1+eps)*S*K, minimizing token-node
+    # incidence (= the hc wire rows). _rankconc = equal-slot home-node-
+    # concentrated replication, the P4 coverage-vs-concentration ablation.
+    # _lbu = the Tier-B fused lb_union dispatch wire over the same virtual
+    # slot space (replicas x lb_union integration; EARLY_LAUNCH +
+    # FUSED_STAGE2 pinned inside enable_hier_compress). conn32 clones exist
+    # for the fan-out-elimination ladder — never compare across conn.
+    "epic_hc_m1_na": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "nodeaware", "--groups", "1", "--router", "d6"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_hc_m1_na_rankconc": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        placement_mode="rankconc",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "nodeaware", "--groups", "1", "--router", "d6"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_hc_m1_na_lc0625": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "nodeaware", "--groups", "1", "--router", "loccap",
+                   "--eps", "0.0625"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_hc_m1_na_lc125": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "nodeaware", "--groups", "1", "--router", "loccap",
+                   "--eps", "0.125"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_hc_m1_na_lc25": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "nodeaware", "--groups", "1", "--router", "loccap",
+                   "--eps", "0.25"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_hc_m1_na_lc50": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "nodeaware", "--groups", "1", "--router", "loccap",
+                   "--eps", "0.5"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_hc_m1_na_lcinf": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "nodeaware", "--groups", "1", "--router", "loccap",
+                   "--eps", "inf"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_l01_hc_m1_na": dict(
+        comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "nodeaware", "--groups", "1", "--layers", "l01",
+                   "--router", "d6"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_l01_hc_m1_na_lc25": dict(
+        comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "nodeaware", "--groups", "1", "--layers", "l01",
+                   "--router", "loccap", "--eps", "0.25"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_l01_hc_m1_na_lcinf": dict(
+        comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "nodeaware", "--groups", "1", "--layers", "l01",
+                   "--router", "loccap", "--eps", "inf"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_hc_m1_na_lbu": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "nodeaware", "--groups", "1", "--router", "d6",
+                   "--hc_wire", "lb_union"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG", "FLUX_A2AV_LB_UNION"],
+    ),
+    "epic_hc_m1_na_lbu_lc25": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "nodeaware", "--groups", "1", "--router", "loccap",
+                   "--eps", "0.25", "--hc_wire", "lb_union"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG", "FLUX_A2AV_LB_UNION"],
+    ),
+    "epic_hc_m1_na_lbu_lcinf": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "nodeaware", "--groups", "1", "--router", "loccap",
+                   "--eps", "inf", "--hc_wire", "lb_union"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG", "FLUX_A2AV_LB_UNION"],
+    ),
+    "epic_l01_hc_m1_na_lbu_lc25": dict(
+        comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "nodeaware", "--groups", "1", "--layers", "l01",
+                   "--router", "loccap", "--eps", "0.25",
+                   "--hc_wire", "lb_union"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG", "FLUX_A2AV_LB_UNION"],
+    ),
+    # conn-ladder clones (Capsule C): identical to their base arms except
+    # the conn pin. Relay-identity arms never enable EARLY_LAUNCH (its
+    # default is LB_UNION-conditioned); lbu arms pin it inside
+    # enable_hier_compress — both stay single-axis across conn.
+    "epic_hc_m1_conn32": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement", "epic",
+                   "--groups", "1"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "32"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_hc_m1_na_lc25_conn32": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "nodeaware", "--groups", "1", "--router", "loccap",
+                   "--eps", "0.25"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "32"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_hc_m1_na_lbu_lc25_conn32": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "nodeaware", "--groups", "1", "--router", "loccap",
+                   "--eps", "0.25", "--hc_wire", "lb_union"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "32"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG", "FLUX_A2AV_LB_UNION"],
+    ),
     # dense baseline and raw a2av modes
     "allgather": dict(comm_pattern="allgather", env={}, requires=[]),
     # a2av family pins CUDA_DEVICE_MAX_CONNECTIONS=8 (2026-08-01 A/B: -2..-8%
