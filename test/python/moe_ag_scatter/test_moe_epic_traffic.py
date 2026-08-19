@@ -76,7 +76,14 @@ from flux.testing.epic_semantics import (
     EpicLayer0Runner,
     build_epic_plan,
     build_fixed_plan,
+    build_nodeaware_plan,
     plan_migration_swaps,
+)
+from flux.testing.loccap_semantics import (
+    d6_route,
+    incidence_stats,
+    loccap_route,
+    route_hash,
 )
 from flux.testing.ultraep_semantics import (
     UltraEPConfig,
@@ -604,10 +611,27 @@ def parse_args():
                         " dispatch -> GEMM0 -> GELU -> GEMM1 -> per-group"
                         " combine -> terminal Sum (EPIC Fig 10(b))")
     parser.add_argument("--placement", default="epic",
-                        choices=["none", "epic"],
+                        choices=["none", "epic", "nodeaware"],
                         help="epic = §4.2 (redundancy + GPU greedy + NIC "
                         "stage) from the pool load; none = fixed contiguous "
-                        "homing, empty redundant slots")
+                        "homing, empty redundant slots; nodeaware = "
+                        "PLACE-lambda co-occurrence partition + per-node-"
+                        "first coverage replication from --placement_file")
+    parser.add_argument("--placement_file", type=str, default=None,
+                        help="<mid>.placement.json sidecar "
+                        "(sweeps/predict_placement.py); required for "
+                        "--placement nodeaware")
+    parser.add_argument("--router", default="d6", choices=["d6", "loccap"],
+                        help="replica selection: d6 = src mod lcnts (the "
+                        "EPIC baseline rule); loccap = per-token tiered "
+                        "locality under compute caps (1+eps)*S*K, the "
+                        "token-node-incidence minimizer. Both are computed "
+                        "once per cell under the untimed-metadata contract "
+                        "(routing is static per cell; the host port cost is "
+                        "the epic_loccap_plan_host_ms cell fact, the "
+                        "production cost is a reroute.cu-class GPU kernel)")
+    parser.add_argument("--eps", type=float, default=0.25,
+                        help="LocCap balance slack; 'inf' = pure locality")
     parser.add_argument("--migration", default="off",
                         choices=["off", "on", "inkernel"],
                         help="§4.3 per-step intra-host expert migration. "
@@ -650,6 +674,14 @@ def parse_args():
                         help="hier_compress relay shape: identity = "
                         "same-index-GPU PXN (faithful Mode 2), balanced = "
                         "our chunked-relay ablation")
+    parser.add_argument("--hc_wire", default="relay_identity",
+                        choices=["relay_identity", "lb_union"],
+                        help="hier_compress dispatch wire: relay_identity = "
+                        "faithful Mode-2 PXN gateway; lb_union = the Tier-B "
+                        "fused lb_union wire (balanced chunked inter-node + "
+                        "union-broadcast gateway) over the same virtual "
+                        "slot space — the replicas x lb_union integration "
+                        "arm")
     parser.add_argument("--hc_headroom", type=float, default=1.5,
                         help="capacity headroom for the per-group fused-op "
                         "instances (migration-proofing)")
@@ -748,12 +780,59 @@ if __name__ == "__main__":
             print("epic: NO --epic_load_file; placement from the batch's own"
                   " load (self-oracle — fine for smoke, not a headline cell)")
 
+    placement_sha = ""
     t0 = time.perf_counter()
     if args.placement == "epic":
         plan = build_epic_plan(cfg, tpe, pool_load, num_nodes)
+    elif args.placement == "nodeaware":
+        assert args.placement_file, "--placement nodeaware needs --placement_file"
+        assert args.routing_file, (
+            "--placement nodeaware is defined for trace cells only "
+            "(--routing_file; the sidecar was simulated on that routing)")
+        with open(args.placement_file, "rb") as f:
+            raw_p = f.read()
+        pblob = json.loads(raw_p)
+        placement_sha = hashlib.sha256(raw_p).hexdigest()[:16]
+        plan = build_nodeaware_plan(cfg, tpe, pblob)
     else:
         plan = build_fixed_plan(cfg, tpe)
     plan_host_ms = (time.perf_counter() - t0) * 1e3
+
+    # Replica selection (once per cell — untimed-metadata contract, same
+    # treatment as the D6/quota rule it replaces; routing is static per
+    # cell, and the loccap host port is a reroute.cu-class GPU kernel in a
+    # production implementation).
+    assert args.router == "d6" or args.migration == "off", (
+        "--router loccap is incompatible with --migration: K_g and the RS "
+        "capacity caps are frozen from the loccap layout at ctor")
+    t_r = time.perf_counter()
+    if args.router == "loccap":
+        phys_all_route = loccap_route(
+            topk_all.long(), plan.p2l, plan.l2p, plan.lcnts, cfg.nlp,
+            DIST_ENV.LOCAL_WORLD_SIZE, args.eps).cpu()
+        plan.phys_override = phys_all_route
+    else:
+        phys_all_route = d6_route(topk_all.long(), plan.l2p, plan.lcnts)
+    loccap_plan_host_ms = (time.perf_counter() - t_r) * 1e3
+    route_stats = incidence_stats(phys_all_route, cfg.nlp,
+                                  DIST_ENV.LOCAL_WORLD_SIZE)
+    r_hash = route_hash(phys_all_route)
+    if args.placement == "nodeaware" and args.router == "loccap":
+        want = f"loccap_eps{args.eps:g}"
+        pred = [p for p in pblob.get("predicted", [])
+                if p.get("router") == want]
+        if pred:
+            # the pre-registration gate: the sidecar's offline simulation
+            # must equal the realized routing bit-for-bit (same code, same
+            # inputs) — a mismatch is a determinism bug, never noise
+            assert pred[0]["route_hash"] == r_hash, (
+                "realized loccap routing != the sidecar's pre-registered "
+                "simulation (route_hash mismatch)")
+            assert pred[0]["incidence_remote"] == \
+                route_stats["incidence_remote"]
+        elif rank == 0:
+            print(f"loccap: eps {args.eps:g} not in the sidecar's predicted "
+                  "ladder — no pre-registration cross-check for this cell")
 
     h = torch.tensor([plan.plan_hash()], dtype=torch.int64, device="cuda")
     h_all = torch.zeros(W, dtype=torch.int64, device="cuda")
@@ -799,10 +878,14 @@ if __name__ == "__main__":
     if args.transport == "hier_compress":
         tp_env = flux.DistEnvTPWithEP(
             tp_group=TP_GROUP, nnodes=num_nodes, ep_group=EP_GROUP)
+        assert args.hc_wire == "relay_identity" or \
+            args.migration != "inkernel", (
+                "--hc_wire lb_union x --migration inkernel is untested")
         runner.enable_hier_compress(
             tp_env, DIST_ENV.LOCAL_WORLD_SIZE,
             headroom=args.hc_headroom, relay=args.hc_relay,
-            inkernel_swap=(args.migration == "inkernel"))
+            inkernel_swap=(args.migration == "inkernel"),
+            wire=args.hc_wire)
         if args.layers == "l01":
             # Mode-2 combine: per-group TopkReduceScatterOp (S3)
             runner.enable_hc_combine()
@@ -853,6 +936,12 @@ if __name__ == "__main__":
         print(f"epic gemm rows per rank: {gemm_rows}")
         print(f"imbalance max/mean: before {imb_before:.3f} -> after "
               f"{imb_after:.3f}")
+        print(f"router: {args.router}"
+              + (f" (eps {args.eps:g})" if args.router == "loccap" else "")
+              + f"; incidence_remote {route_stats['incidence_remote']} "
+              f"(mean nodes/token {route_stats['mean_nodes_per_token']:.3f});"
+              f" loccap_plan_host_ms {loccap_plan_host_ms:.1f} "
+              "(untimed-metadata contract)")
         print(f"replicas: {rep}; dup counterfactual: {dup}")
         print(f"one-time weight placement: {place_ms:.1f} ms "
               f"(recv {place_bytes} B on rank 0); plan_host_ms: "
@@ -880,6 +969,16 @@ if __name__ == "__main__":
             epic_load_sha=load_sha,
             epic_transport=args.transport,
             epic_gemm_backend=args.gemm_backend,
+            epic_router=args.router,
+            epic_loccap_eps=(f"{args.eps:g}" if args.router == "loccap"
+                             else ""),
+            epic_loccap_plan_host_ms=loccap_plan_host_ms,
+            epic_incidence_remote=route_stats["incidence_remote"],
+            epic_mean_nodes_per_token=route_stats["mean_nodes_per_token"],
+            epic_route_imbalance=route_stats["imbalance_max_over_mean"],
+            epic_route_hash=str(r_hash),
+            epic_placement_file=args.placement_file or "",
+            epic_placement_sha=placement_sha,
             epic_weight_place_ms_oneshot=place_ms,
             epic_single_stream=bool(args.single_stream),
             epic_migration_collective="subsumed_by_plan_comm",
@@ -900,6 +999,7 @@ if __name__ == "__main__":
     if args.transport == "hier_compress":
         RECORDER.emit_info(
             epic_hc_relay=args.hc_relay,
+            epic_hc_wire=args.hc_wire,
             epic_hc_kg=[b.K_g for b in runner._hc_bundles],
             epic_hc_pad_rows_total=[
                 int(b.pad_rows_per_rank.sum()) for b in runner._hc_bundles],

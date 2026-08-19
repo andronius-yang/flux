@@ -67,6 +67,7 @@ from .ultraep_semantics import (
     reroute_expand,
 )
 from .eplb_semantics import EPLBLayer0Runner
+from .loccap_semantics import plan_tensors_from_hosts
 
 EPIC_GROUPS = (1, 2, 4)
 
@@ -363,6 +364,59 @@ def build_fixed_plan(cfg: UltraEPConfig, tpe: torch.Tensor) -> UltraEPPlan:
     plan.epic_est_internode_send = [0.0] * cfg.R
     plan.epic_est_internode_recv = [0.0] * cfg.R
     plan.epic_redundancy = [0] * cfg.G
+    return plan
+
+
+def build_nodeaware_plan(cfg: UltraEPConfig, tpe: torch.Tensor,
+                         blob: dict) -> UltraEPPlan:
+    """--placement nodeaware: PLACE-lambda placement from a
+    <mid>.placement.json sidecar (sweeps/predict_placement.py — pool
+    co-occurrence partition + per-node-first coverage replication).
+
+    Same contract as build_epic_plan: placement from POOL statistics only
+    (the sidecar), quotas informational, rank_quota_prefix = the D6 step
+    function — so nodeaware composes with BOTH routers: --router d6 uses
+    the prefix, --router loccap overrides per token via plan.phys_override.
+    Slot recipe = loccap_semantics.plan_tensors_from_hosts, the EXACT
+    recipe the offline simulator uses (predicted == realized incidence is a
+    driver assert, not a hope). cfg is MUTATED (max_replicas_dim) like the
+    sibling builders."""
+    assert tuple(tpe.shape) == (cfg.R, cfg.G)
+    assert int(blob.get("version", -1)) == 1, "unknown placement version"
+    for key, want in (("G", cfg.G), ("W", cfg.R), ("nlp", cfg.nlp)):
+        got = int(blob[key])
+        assert got == want, (
+            f"placement sidecar {key}={got} != cfg {want} (check "
+            f"--redundant_per_rank against the sidecar's redundant_per_rank)")
+    hosts = blob["hosts"]
+    assert len(hosts) == cfg.G
+    cfg.max_replicas_dim = cfg.R
+    p2l, l2p_small, lcnts = plan_tensors_from_hosts(hosts, cfg.R, cfg.nlp)
+    l2p = torch.full((cfg.G, cfg.max_replicas_dim), -1, dtype=torch.int32)
+    l2p[:, :l2p_small.shape[1]] = l2p_small
+
+    loads_g = tpe.long().sum(dim=0)
+    quota = torch.zeros(cfg.G, cfg.max_replicas_dim, dtype=torch.int32)
+    quota_prefix = torch.zeros(cfg.G, cfg.max_replicas_dim, dtype=torch.int32)
+    for l in range(cfg.G):
+        C = int(lcnts[l])
+        base, rem = divmod(int(loads_g[l]), C)
+        prefix = 0
+        for j in range(C):
+            q = base + (1 if j < rem else 0)
+            quota[l, j] = q
+            prefix += q
+            quota_prefix[l, j] = prefix
+
+    plan = UltraEPPlan(
+        cfg=cfg, tpe=tpe.to(torch.int32), p2l=p2l, l2p=l2p, lcnts=lcnts,
+        quota=quota, quota_prefix=quota_prefix,
+        rank_quota_prefix=epic_rank_quota_prefix(cfg, tpe, lcnts),
+        domain_solutions=[],
+    )
+    plan.epic_est_internode_send = [0.0] * cfg.R
+    plan.epic_est_internode_recv = [0.0] * cfg.R
+    plan.epic_redundancy = (lcnts.long() - 1).tolist()
     return plan
 
 
@@ -1111,7 +1165,8 @@ class EpicLayer0Runner(EPLBLayer0Runner):
     def enable_hier_compress(self, tp_env, local_world_size: int,
                              headroom: float = 1.5,
                              relay: str = "identity",
-                             inkernel_swap: bool = False):
+                             inkernel_swap: bool = False,
+                             wire: str = "relay_identity"):
         """EPIC Mode-2 dispatch transport: per-group GemmGroupedV2AGScatterOp
         instances (a2av_hier_compress) driven through dispatch_only over the
         virtual physical-slot expert space. relay='identity' is the faithful
@@ -1133,9 +1188,27 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         assert self.transport == "nvshmem", (
             "enable_hier_compress requires enable_nvshmem() first")
         assert relay in ("identity", "balanced")
-        os.environ["FLUX_A2AV_RELAY_IDENTITY"] = (
-            "1" if relay == "identity" else "0")
-        os.environ.pop("FLUX_A2AV_LB_UNION", None)  # baseline: no lb_union
+        assert wire in ("relay_identity", "lb_union")
+        if wire == "lb_union":
+            # Tier-B fused wire over the replicated virtual slot space —
+            # valid because Tier-B gating is pure expert-id arithmetic on
+            # any rank-blocked uniform-gpe space (dst_node = e // (E*Lb)).
+            # RELAY_IDENTITY and LB_UNION are ctor-mutually-exclusive.
+            # Pin the LB_UNION-conditioned defaults explicitly (setdefault:
+            # an arm's env pin wins) so conn-rung clones measure one axis.
+            assert not inkernel_swap, (
+                "inkernel_swap x lb_union wire is untested — use the "
+                "relay_identity wire for migration arms")
+            os.environ["FLUX_A2AV_RELAY_IDENTITY"] = "0"
+            os.environ["FLUX_A2AV_LB_UNION"] = "1"
+            os.environ.pop("FLUX_A2AV_FANOUT", None)  # closed loser
+            os.environ.setdefault("FLUX_A2AV_EARLY_LAUNCH", "1")
+            os.environ.setdefault("FLUX_A2AV_FUSED_STAGE2", "1")
+        else:
+            os.environ["FLUX_A2AV_RELAY_IDENTITY"] = (
+                "1" if relay == "identity" else "0")
+            os.environ.pop("FLUX_A2AV_LB_UNION", None)  # baseline: no union
+        self._hc_wire = wire
         self._hc_relay = relay
         self._hc_L = local_world_size
         self._hc_headroom = headroom

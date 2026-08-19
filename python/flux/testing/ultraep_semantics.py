@@ -131,6 +131,11 @@ class UltraEPPlan:
         for t in (self.tpe, self.p2l, self.l2p, self.lcnts, self.quota,
                   self.quota_prefix, self.rank_quota_prefix):
             h.update(t.contiguous().numpy().tobytes())
+        ov = getattr(self, "phys_override", None)
+        if ov is not None:
+            # LocCap routing is part of the plan identity: the driver's
+            # cross-rank all-gather then also asserts routing SPMD identity
+            h.update(ov.contiguous().to(torch.int32).numpy().tobytes())
         h.update(",".join(
             f"{d.threshold}:{d.path}" for d in self.domain_solutions
         ).encode())
@@ -143,6 +148,10 @@ class UltraEPPlan:
         rank-quota allocations to instances hosted there (the real GEMM
         row counts, which can deviate from `quota` by per-source rounding)."""
         cfg = self.cfg
+        ov = getattr(self, "phys_override", None)
+        if ov is not None:  # LocCap: the override IS the physical routing
+            return torch.bincount((ov.long() // cfg.nlp).reshape(-1),
+                                  minlength=cfg.R).tolist()
         alloc = self.rank_quota_prefix.long().clone()          # [R, G, R]
         alloc[:, :, 1:] -= self.rank_quota_prefix.long()[:, :, :-1]
         rows = [0] * cfg.R
@@ -617,6 +626,9 @@ def reroute_expand(cfg: UltraEPConfig, plan: UltraEPPlan, src: int,
     int64 in the kernel's implicit order (expert-major, token order within
     an expert), n == S*K.
     """
+    ov = getattr(plan, "phys_override", None)
+    if ov is not None:
+        return _expand_from_phys(cfg, plan, src, topk_src, ov[src])
     S, K = cfg.S, cfg.K
     assert tuple(topk_src.shape) == (S, K)
     topk = topk_src.cpu().long()
@@ -654,6 +666,39 @@ def reroute_expand(cfg: UltraEPConfig, plan: UltraEPPlan, src: int,
     entry_token = torch.cat(tokens_out) if tokens_out else torch.zeros(0, dtype=torch.int64)
     entry_phys = torch.cat(phys_out) if phys_out else torch.zeros(0, dtype=torch.int64)
     return entry_token, entry_phys
+
+
+def _expand_from_phys(cfg: UltraEPConfig, plan: UltraEPPlan, src: int,
+                      topk_src: torch.Tensor, phys_src: torch.Tensor):
+    """Per-token replica-selection seam (LocCap): expand one source rank's
+    routing from an explicit [S, K] physical-slot choice
+    (plan.phys_override) instead of the rank-quota prefix. Output order
+    matches reroute_expand exactly (logical-expert-major, token asc within
+    an expert); every downstream consumer re-sorts by (phys, token), the
+    parity just keeps the layouts comparable across routers.
+
+    Contract asserts (the seam self-defends): each entry's slot holds ITS
+    expert (conservation through p2l), each token's experts are distinct,
+    and each token's chosen slots are distinct (one instance per
+    (token, logical))."""
+    S, K = cfg.S, cfg.K
+    assert tuple(topk_src.shape) == (S, K)
+    topk = topk_src.cpu().long()
+    phys = phys_src.cpu().long()
+    assert tuple(phys.shape) == (S, K)
+    p2l = plan.p2l.long()
+    assert bool(p2l[phys].eq(topk).all()), (
+        f"src {src}: phys_override conservation violated")
+    tsrt = topk.sort(dim=1).values
+    assert bool((tsrt[:, 1:] != tsrt[:, :-1]).all()), (
+        "duplicate expert ids within a token")
+    psrt = phys.sort(dim=1).values
+    assert bool((psrt[:, 1:] != psrt[:, :-1]).all()), (
+        "duplicate physical slot within a token")
+    g_flat = topk.reshape(-1)
+    s_flat = torch.arange(S, dtype=torch.int64).repeat_interleave(K)
+    order = torch.argsort(g_flat * S + s_flat)
+    return s_flat[order], phys.reshape(-1)[order]
 
 
 def reroute_expand_dense(cfg: UltraEPConfig, plan: UltraEPPlan, src: int,
