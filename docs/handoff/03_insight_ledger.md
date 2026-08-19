@@ -1024,3 +1024,27 @@ contract) + F2 (explicit quiets before the join events). Evidence is
 unambiguous → per the plan's wire branch: F1+F2, rebuild, 2n->4n
 revalidation ladder BEFORE any 8n perf cell. All Phase-2 4n capsules run
 before the rebuild boundary. Canon guard stays as a permanent invariant.
+
+### NR-16 closure-capsule verdicts (2026-08-19, capsules 20260819-110031/-111255, fwd+rev, pre-maintenance window)
+
+- **P3 refined (twin-stable): the eps valley is a FLAT BASIN over
+  [0, 0.125]**, not a point minimum: at b8 lc00 ≈ lc0625 (4.94-5.01 both
+  twins) with edges rising through lc25 to d6 (+12%); at b64 all three
+  tight rungs cluster at 33.1-34.8 ms, −13..−17% below d6 (39.2-39.8),
+  but the WITHIN-basin ordering FLIPS between twins (fwd lc00 best, rev
+  lc0625 best) — not resolvable at b64 noise. The forward run's "lc00
+  wins at b64 / third-factor" reading is RETRACTED as a transient (the
+  NR-14 order-control lesson, again).
+- **P7 amended**: eps=0's offline byte-dominance (more bytes, same
+  imbalance floor) does NOT convert to a latency penalty at 4n — the
+  extra bytes sit below noise (consistent with low kappa). "Perfect-
+  balance locality" is co-optimal with 0.0625, not dominated.
+- **P8 confirmed (twin-stable)**: evensplit — byte-competitive with the
+  tight rungs (24,940 at b8, FEWER bytes than lc00) but no balance
+  control and no per-token structure — lands at d6-class latency
+  (−2.7/−3.2% vs d6 at b8; −1..−2% at b64), losing to lc00 by 7-15%.
+  The cleanest demonstration yet that BYTES ALONE ARE NOT THE MECHANISM:
+  balance enforcement + per-token cover structure carry the win.
+- Practical default from Phase 2: **eps in [0, 0.0625] on 4n-class
+  fabrics**; the flat basin means the knob is forgiving at the tight end
+  and punishing at the loose end (lcinf +26% at b64 per A2).
