@@ -1064,6 +1064,11 @@ class EpicLayer0Runner(EPLBLayer0Runner):
             self._build_grouped_ops()
         if self.hc_enabled:
             self._rebuild_hc_bundles()
+        if getattr(self, "hcc_enabled", False):
+            # the combine entries (inbuf sizes, pack/red/compress indices)
+            # are routing-dependent too — stale entries were the 2026-08-18
+            # l01xhcxmig failure (inbuf mismatch / splits-vs-gemm-rows abort)
+            self._rebuild_hc_combine()
         return (time.perf_counter() - t0) * 1e3
 
     # -- transports ---------------------------------------------------------
@@ -1105,7 +1110,8 @@ class EpicLayer0Runner(EPLBLayer0Runner):
 
     def enable_hier_compress(self, tp_env, local_world_size: int,
                              headroom: float = 1.5,
-                             relay: str = "identity"):
+                             relay: str = "identity",
+                             inkernel_swap: bool = False):
         """EPIC Mode-2 dispatch transport: per-group GemmGroupedV2AGScatterOp
         instances (a2av_hier_compress) driven through dispatch_only over the
         virtual physical-slot expert space. relay='identity' is the faithful
@@ -1114,7 +1120,12 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         Requires enable_nvshmem() first (the per-entry probs side-wire stays
         on All2AllSingle — the fused op moves token rows only). Capacity env
         knobs are process-global ctor-reads: set per instance, in
-        SPMD-identical group order, BEFORE each ctor."""
+        SPMD-identical group order, BEFORE each ctor.
+
+        inkernel_swap=True (--migration inkernel): the GROUP-0 op is built
+        with FLUX_A2AV_INKERNEL_SWAP = one expert's fc1(+fc2) bytes, so its
+        dispatch_only can run EPIC §4.3's swap as the fused phase 0
+        (symmetric scratch + flag are ctor-allocated, collectively)."""
         import os
 
         import flux
@@ -1136,8 +1147,22 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         self._hc_splits_gpu = []
         self._hc_scatter_gpu = []
         self._hc_caps = []
+        self._inkernel_swap = inkernel_swap
+        self._swap_seq = 0        # GLOBAL swap-round sequence (replicated)
+        self._pending_swap = None
+        swap_bytes = 0
+        if inkernel_swap:
+            swap_bytes = (self.slot_fc1[0].numel()
+                          * self.slot_fc1.element_size())
+            if self.place_fc2:
+                swap_bytes += (self.slot_fc2[0].numel()
+                               * self.slot_fc2.element_size())
         ntokens = self.cfg.R * self.cfg.S
-        for b in self._hc_bundles:
+        for gi, b in enumerate(self._hc_bundles):
+            if inkernel_swap and gi == 0:
+                os.environ["FLUX_A2AV_INKERNEL_SWAP"] = str(swap_bytes)
+            else:
+                os.environ.pop("FLUX_A2AV_INKERNEL_SWAP", None)
             knobs = epic_hc_required_knobs(b, self.cfg.R, local_world_size)
             caps = {k: int(int(v) * headroom) + 1 for k, v in knobs.items()}
             for k, v in caps.items():
@@ -1157,6 +1182,7 @@ class EpicLayer0Runner(EPLBLayer0Runner):
                 a2av_dispatch=True, a2av_hier_compress=True))
             self._hc_splits_gpu.append(b.meta.splits.cuda())
             self._hc_scatter_gpu.append(b.meta.scatter_index.cuda())
+        os.environ.pop("FLUX_A2AV_INKERNEL_SWAP", None)
         self.hc_enabled = True
 
     def _rebuild_hc_bundles(self):
@@ -1184,10 +1210,22 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         grp = self.elay.groups[g]
         base = self.elay.seg_start[grp.slot_lo]
         n_rows = sum(grp.seg_rows)
+        swap_kw = {}
+        if g == 0 and getattr(self, "_pending_swap", None) is not None:
+            # EPIC §4.3 fused phase 0: the exchange kernel runs at the head
+            # of THIS dispatch launch sequence (weights complete, then the
+            # token wire — stream-ordered, no host sync between).
+            peer, slot, seq = self._pending_swap
+            swap_kw = dict(
+                swap_fc1=self.slot_fc1[slot],
+                swap_fc2=(self.slot_fc2[slot] if self.place_fc2 else None),
+                swap_peer=peer, swap_epoch=seq)
+            self._pending_swap = None
         dense, _ssi, _ssc, m_ep = self._hc_ops[g].dispatch_only(
             self._last_inputs, self._hc_splits_gpu[g],
             self._hc_scatter_gpu[g],
             b.meta.splits_per_source, b.meta.a2av_unique_counts,
+            **swap_kw,
         )
         n_real = int(m_ep) - int(b.pad_rows_per_rank[self.rank])
         assert n_real == n_rows, (
@@ -1234,48 +1272,20 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         self._hcc_stream = torch.cuda.Stream(priority=-1)
         self._hcc_group_barrier = flux.GroupBarrier(self.group, False)
         self._hcc = []
+        self._hcc_knob_caps = []
         for b in self._hc_bundles:
             m_full = W * self.cfg.S * b.K_g
-            cpr = m_full // W
-            # Exact stage/conv/wire demands, replicating the op's collective
-            # FLUX_CHECKs (gemm_grouped_v2_gather_rs.cc; same expressions as
-            # sweeps/gen_matrix.a2av_rs_knob_demands) on THIS group's virtual
-            # wire. cpr is NOT a valid conv/wire bound: conv aggregates a
-            # source node's L ranks per remote dest LANE, so lane skew (EPIC
-            # replica placement) can exceed S*K_g — bites at m=1 where the
-            # whole batch shares one panel (m>=2 splits the skew).
-            vc = b.virtual_choosed.long().cpu()
-            ntok, kg = vc.shape
-            tpr = ntok // W
-            owner = (vc // b.gpe).flatten()
-            home = (torch.arange(ntok, dtype=torch.long)
-                    // tpr).repeat_interleave(kg)
-            chunks = torch.zeros(W, W, dtype=torch.long)
-            chunks.index_put_((home, owner),
-                              torch.ones_like(home), accumulate=True)
-            stage_d = conv_d = wire_d = cpr  # nn==1: plumbing-smoke fallback
-            if nn > 1:
-                Ug = build_a2av_unique_counts(
-                    b.virtual_choosed, W, nn, b.gpe).long()
-                stage_d = max(
-                    int(chunks[gn * L:(gn + 1) * L,
-                               [ns * L + gl for ns in range(nn)
-                                if ns != gn]].sum())
-                    for gn in range(nn) for gl in range(L))
-                conv_d = max(
-                    int(chunks[[tn * L + dl for tn in range(nn)
-                                if tn != n2],
-                               n2 * L:(n2 + 1) * L].sum())
-                    for n2 in range(nn) for dl in range(L))
-                wire_d = max(
-                    int(Ug[[tn * L + dl for tn in range(nn)
-                            if tn != n2], n2].sum())
-                    for n2 in range(nn) for dl in range(L))
-            os.environ["FLUX_A2AV_RS_MAX_SEND_ROWS"] = str(
-                int(b.meta.m_per_rank.max()))
-            os.environ["FLUX_A2AV_RS_MAX_STAGE_ROWS"] = str(max(stage_d, 1))
-            os.environ["FLUX_A2AV_RS_MAX_CONV_ROWS"] = str(max(conv_d, 1))
-            os.environ["FLUX_A2AV_RS_MAX_WIRE_ROWS"] = str(max(wire_d, 1))
+            demands = self._hcc_rs_demands(b)
+            # migration-proof headroom (same discipline as the dispatch-side
+            # ctor caps): post-migration demands are hard-asserted against
+            # these frozen values in _rebuild_hc_combine
+            caps = {k: int(v * self._hc_headroom) + 1
+                    for k, v in demands.items()}
+            self._hcc_knob_caps.append(caps)
+            os.environ["FLUX_A2AV_RS_MAX_SEND_ROWS"] = str(caps["send"])
+            os.environ["FLUX_A2AV_RS_MAX_STAGE_ROWS"] = str(caps["stage"])
+            os.environ["FLUX_A2AV_RS_MAX_CONV_ROWS"] = str(caps["conv"])
+            os.environ["FLUX_A2AV_RS_MAX_WIRE_ROWS"] = str(caps["wire"])
             barriers = flux.create_tensor_list(
                 (2 * n_split,), dtype=torch.int32, pg=self.group,
                 ring_mode=True)
@@ -1289,34 +1299,110 @@ class EpicLayer0Runner(EPLBLayer0Runner):
                 True,            # a2av_hier
                 nn > 1,          # a2av_compress (degrades at 1n anyway)
             )
-            routing_cpu = b.meta.scatter_index.flatten().cpu()
-            splits_cpu = b.meta.splits.cpu()
-            pack_idx, red_idx = build_a2av_combine_indices(
-                routing_cpu, splits_cpu, self.rank, W, b.K_g)
-            entry = {
-                "op": op, "barriers": barriers,
-                "routing": routing_cpu.cuda(),
-                "pack": pack_idx, "red": red_idx,
-                "uc": None, "wire": None, "redcsr": None,
-                "m_this": int(b.meta.m_per_rank[self.rank]),
-            }
-            if nn > 1:
-                uc = build_a2av_unique_counts(
-                    b.virtual_choosed, W, nn, b.gpe)
-                wp, wc, rp, rr = build_a2av_compress_indices(
-                    routing_cpu, splits_cpu, uc, self.rank, W, nn, b.K_g)
-                entry.update(uc=uc, wire=[wp, wc], redcsr=[rp, rr])
-            entry["inbuf"] = torch.zeros(
-                max(entry["m_this"], 1), self.cfg.H, dtype=self.dtype,
-                device=self.device)
-            entry["scale"] = torch.zeros(
-                max(entry["m_this"], 1), dtype=torch.float32,
-                device=self.device)
+            entry = {"op": op, "barriers": barriers}
             entry["partial"] = torch.zeros(
                 self.cfg.S, self.cfg.H, dtype=self.dtype,
                 device=self.device)
+            self._refresh_hcc_entry(entry, b)
             self._hcc.append(entry)
         self.hcc_enabled = True
+
+    def _hcc_rs_demands(self, b):
+        """Exact send/stage/conv/wire demands, replicating the op's
+        collective FLUX_CHECKs (gemm_grouped_v2_gather_rs.cc; same
+        expressions as sweeps/gen_matrix.a2av_rs_knob_demands) on THIS
+        group's virtual wire. cpr = S*K_g is NOT a valid conv/wire bound:
+        conv aggregates a source node's L ranks per remote dest LANE, so
+        lane skew (EPIC replica placement) can exceed it — bites at m=1
+        where the whole batch shares one panel (m>=2 splits the skew)."""
+        from .a2av_combine_indices import build_a2av_unique_counts
+
+        W = self.cfg.R
+        L = self._hc_L
+        nn = W // L
+        cpr = self.cfg.S * b.K_g
+        vc = b.virtual_choosed.long().cpu()
+        ntok, kg = vc.shape
+        tpr = ntok // W
+        owner = (vc // b.gpe).flatten()
+        home = (torch.arange(ntok, dtype=torch.long)
+                // tpr).repeat_interleave(kg)
+        chunks = torch.zeros(W, W, dtype=torch.long)
+        chunks.index_put_((home, owner),
+                          torch.ones_like(home), accumulate=True)
+        stage_d = conv_d = wire_d = cpr  # nn==1: plumbing-smoke fallback
+        if nn > 1:
+            Ug = build_a2av_unique_counts(
+                b.virtual_choosed, W, nn, b.gpe).long()
+            stage_d = max(
+                int(chunks[gn * L:(gn + 1) * L,
+                           [ns * L + gl for ns in range(nn)
+                            if ns != gn]].sum())
+                for gn in range(nn) for gl in range(L))
+            conv_d = max(
+                int(chunks[[tn * L + dl for tn in range(nn)
+                            if tn != n2],
+                           n2 * L:(n2 + 1) * L].sum())
+                for n2 in range(nn) for dl in range(L))
+            wire_d = max(
+                int(Ug[[tn * L + dl for tn in range(nn)
+                        if tn != n2], n2].sum())
+                for n2 in range(nn) for dl in range(L))
+        return {
+            "send": max(int(b.meta.m_per_rank.max()), 1),
+            "stage": max(stage_d, 1),
+            "conv": max(conv_d, 1),
+            "wire": max(wire_d, 1),
+        }
+
+    def _refresh_hcc_entry(self, entry, b):
+        """(Re)build the routing-dependent fields of one combine entry —
+        everything except the frozen op/barriers/partial. Called at enable
+        time and again after every migration (per-rank rows and all combine
+        indices change when instances move between ranks)."""
+        from .a2av_combine_indices import (
+            build_a2av_combine_indices,
+            build_a2av_compress_indices,
+            build_a2av_unique_counts,
+        )
+
+        W = self.cfg.R
+        nn = W // self._hc_L
+        routing_cpu = b.meta.scatter_index.flatten().cpu()
+        splits_cpu = b.meta.splits.cpu()
+        pack_idx, red_idx = build_a2av_combine_indices(
+            routing_cpu, splits_cpu, self.rank, W, b.K_g)
+        entry.update(
+            routing=routing_cpu.cuda(), pack=pack_idx, red=red_idx,
+            uc=None, wire=None, redcsr=None,
+            m_this=int(b.meta.m_per_rank[self.rank]),
+        )
+        if nn > 1:
+            uc = build_a2av_unique_counts(
+                b.virtual_choosed, W, nn, b.gpe)
+            wp, wc, rp, rr = build_a2av_compress_indices(
+                routing_cpu, splits_cpu, uc, self.rank, W, nn, b.K_g)
+            entry.update(uc=uc, wire=[wp, wc], redcsr=[rp, rr])
+        entry["inbuf"] = torch.zeros(
+            max(entry["m_this"], 1), self.cfg.H, dtype=self.dtype,
+            device=self.device)
+        entry["scale"] = torch.zeros(
+            max(entry["m_this"], 1), dtype=torch.float32,
+            device=self.device)
+
+    def _rebuild_hc_combine(self):
+        """Post-migration combine refresh: the ops are frozen (m_full, K_g,
+        gpe and the ctor RS capacities are migration-invariant or covered by
+        the headroom caps — hard-asserted here); every routing-dependent
+        entry field is rebuilt from the refreshed bundles."""
+        for g, b in enumerate(self._hc_bundles):
+            demands = self._hcc_rs_demands(b)
+            for k, v in demands.items():
+                assert v <= self._hcc_knob_caps[g][k], (
+                    f"group {g}: post-migration combine {k} demand {v} "
+                    f"exceeds the ctor capacity {self._hcc_knob_caps[g][k]};"
+                    f" raise --hc_headroom")
+            self._refresh_hcc_entry(self._hcc[g], b)
 
     def enable_grouped_gemm(self, backend: str = "grouped"):
         """Build the per-group GEMM ops. 'grouped': one flux.GemmGroupedV2
@@ -1618,6 +1704,40 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         apply_swaps(self.plan, swaps)
         self.migration_swap_bytes += recv_bytes
         relayout_ms = self.rebuild_after_migration()
+        return recv_bytes, relayout_ms
+
+    def apply_migration_inkernel(self, swaps):
+        """EPIC §4.3 faithful path (--migration inkernel): host decision +
+        plan/index rebuild only — NO NCCL, NO host sync. The weight exchange
+        runs as the fused in-kernel phase 0 of the next group-0 hc dispatch
+        (weights complete, then the token wire). Fidelity assumption
+        (recorded as epic_swap_fused_path): the host-rebuilt post-swap
+        indices ARE the 'updated placement' the dispatch routes with — the
+        host-baked analog of the paper's device-resident map update.
+        Returns (recv_bytes, relayout_ms) like apply_migration."""
+        assert self._inkernel_swap and self.hc_enabled, (
+            "inkernel migration needs enable_hier_compress(inkernel_swap=True)")
+        assert self._pending_swap is None, (
+            "previous swap descriptor never consumed by dispatch_group_hc(0)")
+        apply_swaps(self.plan, swaps)
+        relayout_ms = self.rebuild_after_migration()
+        if swaps:
+            # replicated: every rank bumps the round sequence, participant
+            # or not (both pair members must agree on the flag epoch)
+            self._swap_seq += 1
+        mine = [s for s in swaps if self.rank in (s[0], s[2])]
+        assert len(mine) <= 1, mine  # planner invariant sizes the scratch
+        recv_bytes = 0
+        if mine:
+            rh, a, rl, b, _gain = mine[0]
+            peer, slot = (rl, a) if self.rank == rh else (rh, b)
+            self._pending_swap = (peer, slot, self._swap_seq)
+            recv_bytes = (self.slot_fc1[slot].numel()
+                          * self.slot_fc1.element_size())
+            if self.place_fc2:
+                recv_bytes += (self.slot_fc2[slot].numel()
+                               * self.slot_fc2.element_size())
+            self.migration_swap_bytes += recv_bytes
         return recv_bytes, relayout_ms
 
     # -- accounting ---------------------------------------------------------

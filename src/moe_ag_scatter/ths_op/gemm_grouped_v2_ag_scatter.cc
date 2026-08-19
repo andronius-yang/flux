@@ -33,6 +33,7 @@
 #include "flux/ths_op/util.h"
 #include "host/nvshmem_api.h"
 #include "host/nvshmemx_api.h"
+#include "moe_ag_scatter/epic_swap.hpp"
 #include "moe_ag_scatter/sort_util.h"
 #include "moe_ag_scatter/triton_util.h"
 #include "moe_ag_scatter/workspace_util.h"
@@ -450,6 +451,28 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   cudaEvent_t fwd_cnt_event_ = nullptr;      // cnt_in/cnt_before D2H done (host reads)
   cudaEvent_t relay_send_event_ = nullptr;   // relay piece puts issued (GEMM gate)
   cudaEvent_t signal_done_event_ = nullptr;  // dest-side signal aggregation issued
+  // EPIC §4.3 in-kernel expert swap (dispatch_only only, sequential phase 0):
+  // FLUX_A2AV_INKERNEL_SWAP = exchange-scratch BYTES (fc1+fc2 of one expert
+  // slot; 0 = disabled; read in the ctor, set SPMD-identically). One swap per
+  // rank per call max (the EPIC planner's heaviest/lightest pairing
+  // invariant). Scratch/flag are symmetric (ctor-allocated — nvshmem_malloc
+  // is collective); the arrival counter and stamps are LOCAL. The swap epoch
+  // is its own monotone sequence (caller-supplied, checked here), distinct
+  // from run_id_. Scratch reuse across epochs is fenced by dispatch_only's
+  // two end-of-call barrier_all (see epic_swap.cu header comment).
+  int64_t inkernel_swap_bytes_ = 0;
+  torch::Tensor swap_scratch_;        // symmetric byte[inkernel_swap_bytes_]
+  torch::Tensor swap_flag_;           // symmetric u64[1], zero-init, never memset
+  torch::Tensor swap_arrive_;         // LOCAL u64[1], zeroed once, never reset
+  torch::Tensor swap_stamps_;         // LOCAL u64[4] globaltimer stamps
+  torch::Tensor swap_stamps_pinned_;  // pinned mirror for the timing readback
+  uint64_t swap_epoch_seen_ = 0;
+  unsigned long long swap_arrive_base_ = 0;
+  // always-on swap timing: event pairs recorded around each swap launch;
+  // collect_swap_times() drains them after the timed loop
+  static constexpr int kSwapEventPool = 256;
+  std::vector<cudaEvent_t> swap_events_;  // 2 * kSwapEventPool, lazy-none when disabled
+  int swap_events_used_ = 0;
   // FLUX_A2AV_TIMING=1 diagnostics: per-forward segment boundaries on the main stream
   static constexpr int kNumTimingEvents = 6;
   cudaEvent_t timing_events_[kNumTimingEvents] = {};
@@ -910,6 +933,33 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         CUDA_CHECK(cudaStreamSynchronize(pstream));
         nvshmem_barrier_all();
       }
+      // EPIC §4.3 in-kernel swap state. The knob value is the scratch byte
+      // count (one expert's fc1+fc2); it must be set SPMD-identically before
+      // construction — nvshmem_create_tensor is collective, so lazy first-use
+      // allocation would deadlock (non-participating ranks skip swap calls).
+      this->inkernel_swap_bytes_ = get_int_from_env("FLUX_A2AV_INKERNEL_SWAP", 0);
+      if (this->inkernel_swap_bytes_ > 0) {
+        FLUX_CHECK_EQ(this->inkernel_swap_bytes_ % 16, 0)
+            << "swap scratch must be 16B-granular";
+        this->swap_scratch_ =
+            nvshmem_create_tensor({this->inkernel_swap_bytes_}, at::ScalarType::Byte);
+        this->swap_flag_ =
+            nvshmem_create_tensor({1}, at::ScalarType::Long, /*init_zero=*/true);
+        this->swap_arrive_ =
+            torch::zeros({1}, torch::TensorOptions(torch::kCUDA).dtype(torch::kLong));
+        this->swap_stamps_ =
+            torch::zeros({4}, torch::TensorOptions(torch::kCUDA).dtype(torch::kLong));
+        this->swap_stamps_pinned_ = torch::empty(
+            {4}, torch::TensorOptions(torch::kCPU).dtype(torch::kLong).pinned_memory(true));
+        this->swap_events_.resize(2 * kSwapEventPool);
+        for (auto &ev : this->swap_events_) {
+          CUDA_CHECK(cudaEventCreate(&ev));
+        }
+        // the swap kernel is a module of its own — preload it (LAZY-loading
+        // hang class; a2av_combine_preload precedent)
+        epic_swap_preload();
+        nvshmem_barrier_all();
+      }
     } else if (nnodes == 1) {
       ag_op.emplace(this->tp_group, 1, max_ntokens, hidden, input_dtype);
     } else {
@@ -987,6 +1037,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     CUDA_CHECK(cudaEventDestroy(this->fetch_remote_event));
     CUDA_CHECK(cudaEventDestroy(this->ready_event));
     for (auto &ev : this->fanout_events_) {
+      CUDA_CHECK(cudaEventDestroy(ev));
+    }
+    for (auto &ev : this->swap_events_) {
       CUDA_CHECK(cudaEventDestroy(ev));
     }
     for (auto &s : this->fanout_streams_) {
@@ -3164,6 +3217,128 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // reads). EARLY_LAUNCH deferral is neutralized via defer_wire_arg=false.
   // Reads FLUX_A2AV_DISPATCH_ONLY_TAG (a no-op knob whose literal string in
   // the built .so is the sweep runner's capability probe for this method).
+  // EPIC §4.3 phase 0 (in-kernel expert swap): launch the exchange kernel as
+  // the FIRST device op of the dispatch launch sequence. In the dispatch_only
+  // configuration (pack_overlap rejected, defer_wire=false) every subsequent
+  // dispatch op runs on `stream` or on a cp-stream event-gated behind it, so
+  // stream order alone gives the paper's "rebalance phase first, then the
+  // dispatch phase" — sequential, one launch window, zero host sync between.
+  // swap_fc1/swap_fc2 are THIS rank's slot storage views (contiguous; fc2
+  // optional); the peer must be a same-node NVLink peer. One swap per rank
+  // per call (the EPIC planner's pairing invariant sizes the scratch).
+  void
+  maybe_launch_inkernel_swap(
+      c10::optional<torch::Tensor> const &swap_fc1,
+      c10::optional<torch::Tensor> const &swap_fc2,
+      int64_t swap_peer,
+      int64_t swap_epoch,
+      cudaStream_t stream) {
+    if (swap_peer < 0) {
+      return;
+    }
+    FLUX_CHECK(this->inkernel_swap_bytes_ > 0)
+        << "in-kernel swap needs FLUX_A2AV_INKERNEL_SWAP=<scratch bytes> at ctor time";
+    FLUX_CHECK(swap_fc1.has_value()) << "swap_peer set but no swap_fc1 slot view";
+    const int L = world_size / nnodes;
+    FLUX_CHECK(swap_peer != this->rank && swap_peer / L == this->rank / L)
+        << "EPIC §4.3 swaps are strictly intra-node: peer " << swap_peer << " rank "
+        << this->rank;
+    // the epoch is the GLOBAL swap-round sequence (replicated; bumped every
+    // round that has any swaps), shared by both pair members for the GEQ
+    // handshake — a rank may skip rounds it does not participate in, so
+    // monotonicity is strictly-greater, not +1
+    FLUX_CHECK_GT(swap_epoch, (int64_t)this->swap_epoch_seen_)
+        << "swap epoch must be monotone";
+    auto const &fc1 = swap_fc1.value();
+    FLUX_CHECK(fc1.is_cuda() && fc1.is_contiguous());
+    int64_t fc1_bytes = (int64_t)fc1.nbytes();
+    int64_t fc2_bytes = 0;
+    void *fc2_ptr = nullptr;
+    if (swap_fc2.has_value()) {
+      auto const &fc2 = swap_fc2.value();
+      FLUX_CHECK(fc2.is_cuda() && fc2.is_contiguous());
+      fc2_bytes = (int64_t)fc2.nbytes();
+      fc2_ptr = fc2.data_ptr();
+    }
+    FLUX_CHECK_EQ(fc1_bytes % 16, 0);
+    FLUX_CHECK_EQ(fc2_bytes % 16, 0);
+    FLUX_CHECK_LE(fc1_bytes + fc2_bytes, this->inkernel_swap_bytes_)
+        << "swap payload exceeds the ctor-sized scratch";
+    void *peer_scratch = nvshmem_ptr(this->swap_scratch_.data_ptr(), (int)swap_peer);
+    uint64_t *peer_flag =
+        reinterpret_cast<uint64_t *>(nvshmem_ptr(this->swap_flag_.data_ptr(), (int)swap_peer));
+    FLUX_CHECK(peer_scratch != nullptr && peer_flag != nullptr)
+        << "peer " << swap_peer << " not NVLink-reachable (nvshmem_ptr null)";
+    static const bool kSwapTiming = get_int_from_env("FLUX_A2AV_TIMING", 0) != 0;
+    EpicSwapParams p;
+    p.my_fc1_slot = fc1.data_ptr();
+    p.my_fc2_slot = fc2_ptr;
+    p.fc1_bytes = fc1_bytes;
+    p.fc2_bytes = fc2_bytes;
+    p.my_scratch = this->swap_scratch_.data_ptr();
+    p.peer_scratch = peer_scratch;
+    p.my_flag = reinterpret_cast<uint64_t *>(this->swap_flag_.data_ptr());
+    p.peer_flag = peer_flag;
+    p.epoch = (uint64_t)swap_epoch;
+    p.arrive = reinterpret_cast<unsigned long long *>(this->swap_arrive_.data_ptr());
+    p.arrive_base = this->swap_arrive_base_;
+    p.stamps =
+        kSwapTiming ? reinterpret_cast<uint64_t *>(this->swap_stamps_.data_ptr()) : nullptr;
+    FLUX_CHECK(this->swap_events_used_ < kSwapEventPool) << "swap event pool exhausted";
+    CUDA_CHECK(cudaEventRecord(this->swap_events_[2 * this->swap_events_used_], stream));
+    int num_sm = get_int_from_env("FLUX_A2AV_SWAP_NUM_SM", 16);
+    int grid = epic_swap_exchange(p, num_sm, stream);
+    CUDA_CHECK(cudaEventRecord(this->swap_events_[2 * this->swap_events_used_ + 1], stream));
+    this->swap_events_used_ += 1;
+    this->swap_arrive_base_ += 2ULL * (unsigned long long)grid;
+    this->swap_epoch_seen_ = (uint64_t)swap_epoch;
+    if (kSwapTiming) {
+      // instrumented mode only (never compared against clean cells): sync the
+      // stamps back and split the phase into snapshot / peer-wait / pull
+      CUDA_CHECK(cudaMemcpyAsync(
+          this->swap_stamps_pinned_.data_ptr(),
+          this->swap_stamps_.data_ptr(),
+          4 * sizeof(uint64_t),
+          cudaMemcpyDeviceToHost,
+          stream));
+      CUDA_CHECK(cudaStreamSynchronize(stream));
+      auto const *s = reinterpret_cast<const uint64_t *>(this->swap_stamps_pinned_.data_ptr());
+      // t1 (my release, last-arriving block) and t2 (block 0's peer-flag
+      // observation) are unordered across blocks: when the peer released
+      // first, t2 < t1 and the true exposed wait is zero — clamp instead of
+      // wrapping. pull is t3 - max(t1, t2) (phase 4 starts after both).
+      int64_t snap = (int64_t)(s[1] - s[0]);
+      int64_t wait = (int64_t)s[2] - (int64_t)s[1];
+      int64_t pull = (int64_t)s[3] - (int64_t)std::max(s[1], s[2]);
+      fprintf(
+          stderr,
+          "[a2av-swap] rank %d epoch %ld snapshot %.3f wait %.3f pull %.3f ms\n",
+          this->rank,
+          (long)swap_epoch,
+          snap / 1e6,
+          std::max<int64_t>(wait, 0) / 1e6,
+          pull / 1e6);
+    }
+  }
+
+  // Drain the always-on swap timing events. Call once AFTER the timed loop
+  // (values are per-launch, in launch order; same-stream event-elapsed =
+  // kernel residency = snapshot + peer-wait + pull, which under the
+  // sequential-phases design IS the exposed cost).
+  std::vector<double>
+  collect_swap_times() {
+    std::vector<double> out;
+    out.reserve(this->swap_events_used_);
+    for (int i = 0; i < this->swap_events_used_; i++) {
+      CUDA_CHECK(cudaEventSynchronize(this->swap_events_[2 * i + 1]));
+      float ms = 0.f;
+      CUDA_CHECK(
+          cudaEventElapsedTime(&ms, this->swap_events_[2 * i], this->swap_events_[2 * i + 1]));
+      out.push_back((double)ms);
+    }
+    return out;
+  }
+
   std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, int64_t>
   dispatch_only(
       torch::Tensor inputs_shard,
@@ -3171,8 +3346,13 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       torch::Tensor scatter_index,
       c10::optional<torch::Tensor> splits_per_source,
       c10::optional<torch::Tensor> a2av_unique_counts,
-      c10::optional<torch::Tensor> dense_out) {
+      c10::optional<torch::Tensor> dense_out,
+      c10::optional<torch::Tensor> swap_fc1,
+      c10::optional<torch::Tensor> swap_fc2,
+      int64_t swap_peer,
+      int64_t swap_epoch) {
     (void)get_int_from_env("FLUX_A2AV_DISPATCH_ONLY_TAG", 0);
+    (void)get_int_from_env("FLUX_A2AV_INKERNEL_SWAP_TAG", 0);
     FLUX_CHECK(a2av_dispatch_) << "dispatch_only requires an a2av-mode op";
     FLUX_CHECK(!pack_overlap_)
         << "dispatch_only is untested with FLUX_A2AV_PACK_OVERLAP";
@@ -3209,6 +3389,10 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     }
 
     cudaStream_t stream = c10::cuda::getCurrentCUDAStream();
+    // EPIC §4.3 phase 0: the swap kernel is the first device op of this
+    // epoch's launch sequence; the token wire below is stream-ordered
+    // strictly behind it (weights complete, THEN tokens move).
+    this->maybe_launch_inkernel_swap(swap_fc1, swap_fc2, swap_peer, swap_epoch, stream);
     auto st = this->a2av_dispatch(
         inputs_shard, splits_gpu, scatter_index, cnt_host, uc_host, stream,
         /*defer_wire_arg=*/false);
@@ -4415,7 +4599,11 @@ GemmGroupedV2AGScatterOp::dispatch_only(
     torch::Tensor scatter_index,
     c10::optional<torch::Tensor> splits_per_source,
     c10::optional<torch::Tensor> a2av_unique_counts,
-    c10::optional<torch::Tensor> dense_out) {
+    c10::optional<torch::Tensor> dense_out,
+    c10::optional<torch::Tensor> swap_fc1,
+    c10::optional<torch::Tensor> swap_fc2,
+    int64_t swap_peer,
+    int64_t swap_epoch) {
   FLUX_CHECK(impl_ != nullptr) << "GemmGroupedV2AGScatterOp is not initialized";
   return impl_->dispatch_only(
       std::move(inputs_shard),
@@ -4423,7 +4611,17 @@ GemmGroupedV2AGScatterOp::dispatch_only(
       std::move(scatter_index),
       std::move(splits_per_source),
       std::move(a2av_unique_counts),
-      std::move(dense_out));
+      std::move(dense_out),
+      std::move(swap_fc1),
+      std::move(swap_fc2),
+      swap_peer,
+      swap_epoch);
+}
+
+std::vector<double>
+GemmGroupedV2AGScatterOp::collect_swap_times() {
+  FLUX_CHECK(impl_ != nullptr) << "GemmGroupedV2AGScatterOp is not initialized";
+  return impl_->collect_swap_times();
 }
 
 torch::Tensor

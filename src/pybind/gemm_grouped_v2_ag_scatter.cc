@@ -67,7 +67,12 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("scatter_index"),
             py::arg("splits_per_source") = py::none(),
             py::arg("a2av_unique_counts") = py::none(),
-            py::arg("dense_out") = py::none())
+            py::arg("dense_out") = py::none(),
+            py::arg("swap_fc1") = py::none(),
+            py::arg("swap_fc2") = py::none(),
+            py::arg("swap_peer") = -1,
+            py::arg("swap_epoch") = 0)
+        .def("collect_swap_times", &GemmGroupedV2AGScatterOpCls::collect_swap_times)
         .def(
             "forward",
             &GemmGroupedV2AGScatterOpCls::forward,

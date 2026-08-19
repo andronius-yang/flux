@@ -608,6 +608,41 @@ VARIANTS = {
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
     ),
+    # §4.3 migration on the Mode-2 wire: _mig = host-NCCL weight exchange
+    # (the launch-granularity port; exchange cost in migration_ms), _mig_fused
+    # = the paper-faithful in-kernel swap fused as phase 0 of the group-0
+    # dispatch launch (exchange cost inside e2e/disp0, reported as
+    # swap_fused_ms; compare the twins on total_ms). Fused arms need a
+    # binary carrying the swap kernel (FLUX_A2AV_INKERNEL_SWAP_TAG).
+    "epic_hc_m1_mig": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement", "epic",
+                   "--groups", "1", "--migration", "on"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_hc_m1_mig_fused": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement", "epic",
+                   "--groups", "1", "--migration", "inkernel"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_INKERNEL_SWAP_TAG"],
+    ),
+    "epic_l01_hc_m1_mig": dict(
+        comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "hier_compress", "--placement", "epic",
+                   "--groups", "1", "--layers", "l01", "--migration", "on"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "epic_l01_hc_m1_mig_fused": dict(
+        comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "hier_compress", "--placement", "epic",
+                   "--groups", "1", "--layers", "l01", "--migration",
+                   "inkernel"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_INKERNEL_SWAP_TAG"],
+    ),
     "epic_l01_hc_m1": dict(
         comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
         test_args=["--transport", "hier_compress", "--placement", "epic",

@@ -13,6 +13,7 @@ file(GLOB TUNING_CONFIGS tuning_config/*.cu)
 set(CU_FILES
   ${OP_REGS}
   ${TUNING_CONFIGS}
+  epic_swap.cu
   sort_util.cu
   triton_util.cu
   workspace_util.cu

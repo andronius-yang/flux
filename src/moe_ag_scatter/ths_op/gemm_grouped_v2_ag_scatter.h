@@ -103,7 +103,18 @@ class GemmGroupedV2AGScatterOp {
       torch::Tensor scatter_index,
       c10::optional<torch::Tensor> splits_per_source = c10::nullopt,
       c10::optional<torch::Tensor> a2av_unique_counts = c10::nullopt,
-      c10::optional<torch::Tensor> dense_out = c10::nullopt);
+      c10::optional<torch::Tensor> dense_out = c10::nullopt,
+      // EPIC §4.3 in-kernel swap (phase 0, sequential with the wire): this
+      // rank's slot storage views (contiguous; fc2 optional) and the
+      // same-node peer + monotone swap epoch. swap_peer = -1 disables.
+      // Requires FLUX_A2AV_INKERNEL_SWAP=<scratch bytes> at ctor time.
+      c10::optional<torch::Tensor> swap_fc1 = c10::nullopt,
+      c10::optional<torch::Tensor> swap_fc2 = c10::nullopt,
+      int64_t swap_peer = -1,
+      int64_t swap_epoch = 0);
+  // Drain the always-on swap-phase timing events (per-launch ms, launch
+  // order); call once after the timed loop.
+  std::vector<double> collect_swap_times();
   torch::Tensor forward_triton_aot(
       torch::Tensor inputs_shard,
       torch::Tensor weights,

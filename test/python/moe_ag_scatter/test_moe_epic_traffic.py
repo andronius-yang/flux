@@ -134,7 +134,7 @@ def perf_epic(
     warmup_iters: int,
     iters: int,
     sm_margin: int,
-    migration: bool,
+    migration: str,  # "off" | "on" (host NCCL) | "inkernel" (fused phase 0)
     tau_tokens: float,
     single_stream: bool,
 ):
@@ -170,6 +170,7 @@ def perf_epic(
     iso_sync_times = []
     mig_host_times = []
     mig_swaps_per_iter = []
+    mig_mine_per_iter = []  # inkernel: 1 iff THIS rank launched a swap
     relayout_ms_total = 0.0
     for i in range(total_iters):
         if isolated:
@@ -186,17 +187,30 @@ def perf_epic(
                 loads_gather_buf, loads_shard, group=TP_GROUP
             )
             ev["plan_comm"][i].record()
-            if migration:
+            if migration != "off":
                 t_mig = time.perf_counter()
                 swaps = plan_migration_swaps(
                     runner.plan, tau_tokens, runner.ranks_per_node)
-                if swaps:
-                    # A swap stalls the pipeline (faithful: EPIC's in-kernel
-                    # swap phase precedes dispatch). Sync so the exchange
+                if swaps and migration == "inkernel":
+                    # Paper-faithful §4.3: host decision + index rebuild
+                    # only; the weight exchange runs fused as phase 0 of
+                    # this iteration's group-0 hc dispatch (no NCCL, no
+                    # sync — the prior epoch-close barrier already fences
+                    # in-flight iterations from the scratch).
+                    recv_b, relayout_ms = runner.apply_migration_inkernel(
+                        swaps)
+                    relayout_ms_total += relayout_ms
+                    mig_mine_per_iter.append(1 if recv_b > 0 else 0)
+                elif swaps:
+                    # A swap stalls the pipeline (launch-granularity port of
+                    # EPIC's in-kernel swap phase). Sync so the exchange
                     # cannot race in-flight prior iterations in e2e mode.
                     torch.cuda.synchronize()
                     _, relayout_ms = runner.apply_migration(swaps)
                     relayout_ms_total += relayout_ms
+                else:
+                    if migration == "inkernel":
+                        mig_mine_per_iter.append(0)
                 mig_swaps_per_iter.append(len(swaps))
                 mig_host_times.append((time.perf_counter() - t_mig) * 1e3)
             ev["mig"][i].record()
@@ -331,15 +345,28 @@ def perf_epic(
                 ev[f"acc{m - 1}"][i].elapsed_time(ev["sum_end"][i]))
     if isolated:
         times["iso_sync_ms"] = iso_sync_times[warmup_iters:]
-    if migration:
+    if migration != "off":
         times["migration_host_ms"] = mig_host_times[warmup_iters:]
+    if migration == "inkernel":
+        # Always-on swap-phase timing (cudaEvent pair around each fused
+        # launch; same-stream elapsed = kernel residency = snapshot +
+        # peer-wait + pull — under the sequential-phases design that IS the
+        # exposed cost). Values arrive per-launch in launch order; expand to
+        # per-iteration (0.0 when this rank launched nothing).
+        launch_ms = runner._hc_ops[0].collect_swap_times()
+        assert len(launch_ms) == sum(mig_mine_per_iter), (
+            len(launch_ms), sum(mig_mine_per_iter))
+        it_ms = iter(launch_ms)
+        per_iter = [next(it_ms) if mine else 0.0
+                    for mine in mig_mine_per_iter]
+        times["swap_fused_ms"] = per_iter[warmup_iters:]
     mig_facts = {
         "swaps_total": sum(mig_swaps_per_iter),
         "swaps_timed": sum(mig_swaps_per_iter[warmup_iters:]),
         "rounds_to_converge": next(
             (n for n, c in enumerate(mig_swaps_per_iter) if c == 0),
             len(mig_swaps_per_iter),
-        ) if migration else 0,
+        ) if migration != "off" else 0,
         "relayout_ms_total": relayout_ms_total,
     }
     return times, mig_facts
@@ -581,8 +608,17 @@ def parse_args():
                         help="epic = §4.2 (redundancy + GPU greedy + NIC "
                         "stage) from the pool load; none = fixed contiguous "
                         "homing, empty redundant slots")
-    parser.add_argument("--migration", default="off", choices=["off", "on"],
-                        help="§4.3 per-step intra-host expert migration")
+    parser.add_argument("--migration", default="off",
+                        choices=["off", "on", "inkernel"],
+                        help="§4.3 per-step intra-host expert migration. "
+                        "on = host NCCL weight exchange (launch-granularity "
+                        "port; exchange cost lands in migration_ms). "
+                        "inkernel = paper-faithful fused swap: the exchange "
+                        "kernel runs as phase 0 of the group-0 hc dispatch "
+                        "launch (weights complete, then the token wire; no "
+                        "host sync) — hc transport only; the swap cost "
+                        "lands INSIDE e2e_ms/disp0 and is also reported "
+                        "as swap_fused_ms (compare arms on total_ms)")
     parser.add_argument("--tau_tokens", type=float, default=None,
                         help="migration gain threshold in tokens (overrides "
                         "--t_swap_ms/--t_token_us)")
@@ -756,12 +792,17 @@ if __name__ == "__main__":
     if args.transport in ("nvshmem", "hier_compress"):
         runner.enable_nvshmem(DIST_ENV.LOCAL_WORLD_SIZE, args.num_comm_sm,
                               split_headroom=args.a2a_split_headroom)
+    if args.migration == "inkernel":
+        assert args.transport == "hier_compress", (
+            "--migration inkernel is the fused hc-dispatch phase; use the "
+            "hier_compress transport")
     if args.transport == "hier_compress":
         tp_env = flux.DistEnvTPWithEP(
             tp_group=TP_GROUP, nnodes=num_nodes, ep_group=EP_GROUP)
         runner.enable_hier_compress(
             tp_env, DIST_ENV.LOCAL_WORLD_SIZE,
-            headroom=args.hc_headroom, relay=args.hc_relay)
+            headroom=args.hc_headroom, relay=args.hc_relay,
+            inkernel_swap=(args.migration == "inkernel"))
         if args.layers == "l01":
             # Mode-2 combine: per-group TopkReduceScatterOp (S3)
             runner.enable_hc_combine()
@@ -772,7 +813,8 @@ if __name__ == "__main__":
     runner.enable_grouped_gemm(args.gemm_backend)
 
     # tau: explicit tokens, else t_swap/t_token with probed t_swap fallback.
-    swap_probe_ms = probe_swap_ms(runner) if args.migration == "on" else 0.0
+    swap_probe_ms = (
+        probe_swap_ms(runner) if args.migration in ("on", "inkernel") else 0.0)
     if args.tau_tokens is not None:
         tau_tokens = args.tau_tokens
     elif args.t_token_us is not None:
@@ -875,16 +917,21 @@ if __name__ == "__main__":
         iter_times, mig_facts = perf_epic(
             runner, moe_ctx, probs_shard, loads_shard, loads_gather_buf,
             comm_stream, args.warmup_iters, args.iters, args.sm_margin,
-            args.migration == "on", tau_tokens, args.single_stream,
+            args.migration, tau_tokens, args.single_stream,
         )
 
-    if args.migration == "on":
+    if args.migration != "off":
         RECORDER.emit_info(
             epic_migration_swaps_total=mig_facts["swaps_total"],
             epic_migration_swaps_timed=mig_facts["swaps_timed"],
             epic_migration_rounds_to_converge=mig_facts["rounds_to_converge"],
             epic_migration_swap_bytes=runner.migration_swap_bytes,
             epic_relayout_ms_total=mig_facts["relayout_ms_total"],
+            # inkernel = fused §4.3 phase 0 (host-baked post-swap indices
+            # stand in for the paper's device-resident placement map);
+            # nccl_host = the launch-granularity port
+            epic_swap_fused_path=(
+                "inkernel" if args.migration == "inkernel" else "nccl_host"),
         )
 
     def fmt(times):

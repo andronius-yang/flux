@@ -819,6 +819,10 @@ def epic_sym_size(matrix_path, plat, spec, v):
     need = 2 * (hidden + probs)
     if "hier_compress" in ta:
         need += 4 * w * max_pair_bytes  # fused dispatch + combine panels
+    if "inkernel" in ta:
+        # fused §4.3 swap: the g=0 op's ctor-allocated symmetric exchange
+        # scratch (one expert's fc1+fc2) + the u64 flag
+        need += 2 * spec["ffn_hidden"] * spec["H"] * 2 + 4096
     sym_g = max(2, math.ceil(need / (1 << 30)))
     sym_max = plat.get("sym_size_max_g")
     if sym_max:
