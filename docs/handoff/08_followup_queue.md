@@ -210,3 +210,16 @@ cells hang, bincount the routing for empty experts before anything else.
 - 8n stage: blocked on the epic dispatch_only W32 delivery race (NR-16
   amendment); needs its own 2n->4n->8n bring-up after the 4n program and
   any rebuild boundary.
+- **LocCap routing inside the FULLY-FUSED op (user-requested todo,
+  post-session)**: today's loccap arms run on the epic staged-compute class
+  (fused dispatch_only wire, unfused per-group GEMMs). Capsule B's b8
+  verdict shows tile overlap dominates there (fused lb_union 3.93 vs best
+  staged 4.99), while at b64 locality routing wins outright (na_lc125
+  35.58 beats fused 37.84, same capsule). The composition — plan.phys_
+  override-style replica selection feeding the full fused forward
+  (GemmGroupedV2AGScatterOp with GEMM inside, moonep_fused-style virtual
+  space + weights) — is the v2 arm: locality's byte/balance wins on top of
+  tile overlap. Needs: virtual_choosed emission from loccap (exists),
+  weight manifestation for replicas on the fused path (place_weights
+  equivalent), and the pad handling noted in the campaign plan (dummy
+  pad-weight expert or padless m=1 space).
