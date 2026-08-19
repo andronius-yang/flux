@@ -455,6 +455,52 @@ def _cover_pref(nodes, gs, residual, node_ranks_of):
     return (-(worst if worst is not None else 0), tuple(nodes))
 
 
+def plan_tensors_from_hosts(hosts_of_expert, R, nlp):
+    """[G] lists of host rank ids -> (p2l [R*nlp] int32, l2p [G, R] int32,
+    lcnts [G] int32). THE slot recipe shared by the offline simulator and
+    build_nodeaware_plan: each rank's hosted experts in ascending expert id
+    occupy its slots 0..n-1; l2p columns in ascending physical slot id
+    (no master semantics — the PINNED_MASTERS=False family)."""
+    G = len(hosts_of_expert)
+    p2l = torch.full((R * nlp,), -1, dtype=torch.int32)
+    l2p = torch.full((G, R), -1, dtype=torch.int32)
+    lcnts = torch.zeros(G, dtype=torch.int32)
+    per_rank = [[] for _ in range(R)]
+    for g, hosts in enumerate(hosts_of_expert):
+        assert len(set(hosts)) == len(hosts), (g, hosts)
+        for r in hosts:
+            per_rank[r].append(g)
+    slot_of = {}
+    for r in range(R):
+        gs = sorted(per_rank[r])
+        assert len(gs) <= nlp, (r, len(gs), nlp)
+        for j, g in enumerate(gs):
+            phys = r * nlp + j
+            p2l[phys] = g
+            slot_of[(g, r)] = phys
+    for g, hosts in enumerate(hosts_of_expert):
+        slots = sorted(slot_of[(g, r)] for r in hosts)
+        lcnts[g] = len(slots)
+        for j, phys in enumerate(slots):
+            l2p[g, j] = phys
+    return p2l, l2p, lcnts
+
+
+def d6_route(topk_all, l2p, lcnts):
+    """The EPIC D6 baseline: source rank src sends ALL its tokens for
+    expert g to instance src mod lcnts[g]. [R, S, K] -> [R, S, K] int32."""
+    R, S, K = topk_all.shape
+    topk = topk_all.cpu().long()
+    l2p_l = l2p.cpu().long()
+    lcnts_l = lcnts.cpu().long()
+    phys = torch.zeros(R, S, K, dtype=torch.int64)
+    for src in range(R):
+        j = src % lcnts_l[topk[src]]          # [S, K]
+        phys[src] = torch.gather(l2p_l[topk[src].reshape(-1)], 1,
+                                 j.reshape(-1, 1)).reshape(S, K)
+    return phys.to(torch.int32)
+
+
 def incidence_stats(phys_all, nlp, ranks_per_node):
     """Routing -> incidence + load facts (all derived from phys_all only).
 
