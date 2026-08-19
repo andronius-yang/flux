@@ -9,6 +9,8 @@ variants:
   - epic_hc_m1_na_lbu_lc25
   - hier_compress_lb_union
   - epic_hc_m1_na_lc25
+  - epic_hc_m1_na_lc125
+  - epic_hc_m1_na_lc0625
   - epic_hc_m1_na
   - epic_hc_m1
 families:
@@ -26,7 +28,7 @@ profile_iters: 3
 sm_margin: 8
 matrix_instance: "001"
 timeout_s: 900
-idle_timeout_s: 180
+idle_timeout_s: 600
 modes: [isolated]
 skip_correctness: true
 notes: "B REVERSED twin (iso only) hc-m1 vs fused lb_union A/B + P1 slope: 30 cells; correctness banked in smoke"

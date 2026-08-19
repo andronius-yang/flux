@@ -856,6 +856,12 @@ if __name__ == "__main__":
         "--router loccap is incompatible with --migration: K_g and the RS "
         "capacity caps are frozen from the loccap layout at ctor")
     t_r = time.perf_counter()
+    if args.router == "loccap" and rank == 0:
+        # heartbeat: the python router port can be silent for minutes at
+        # b64 tight-eps (repair phase) — keep the runner's idle watchdog
+        # from conflating "computing" with "hung"
+        print(f"loccap: routing {W}x{S}x{args.topk} at eps {args.eps:g} "
+              "(host port, untimed) ...", flush=True)
     if args.router == "loccap":
         phys_all_route = loccap_route(
             topk_all.long(), plan.p2l, plan.l2p, plan.lcnts, cfg.nlp,

@@ -26,7 +26,7 @@ profile_iters: 3
 sm_margin: 8
 matrix_instance: "001"
 timeout_s: 900
-idle_timeout_s: 180
+idle_timeout_s: 600
 modes: [isolated]
 skip_correctness: true
 notes: "A2 REVERSED twin eps ladder (P3): 12 cells iso b8+b64; correctness banked in the smoke capsule (visible skip, not silent)"
