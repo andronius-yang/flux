@@ -999,3 +999,28 @@ formalization §7.7b (P7 eps=0 dominated at 4n / frontier at 8n; P8
 evensplit = accidental locality without balance; P9 conn-ladder shrink).
 D1 discriminators for the W32 corruption are in the driver (canon_pos
 injectivity assert, once per cell; FLUX_EPIC_CANON_NAN canary).
+
+### NR-16 D1 verdict (2026-08-19, 30-min 8n diagnostic grant 57273262): the W32 corruption is PER-EPOCH TRANSIENT DELIVERY MISSES in dispatch_only; canon EXONERATED
+
+Discriminator ladder on w32 b8 nodeaware/loccap-0.25 (one grant, ~25 min):
+(1) canon_pos injectivity assert PASSED (valid permutation at W32);
+(2) the NaN-canary as built was VACUOUS (index_select unconditionally
+writes every dense row — a canary must prefill the op's internal recv
+buffer, python cannot) — its "wire clean" reading is retracted;
+(3) single-epoch runs (iters 1, warmup 0) reproduce all-zero rows
+(~100-1000/rank, nondeterministic across runs) — visible precisely
+because the zero-init symmetric recv buffer exposes epoch-0 misses;
+(4) the SAME cell with 5 epochs (warmup 2 + iters 3) passes the FULL
+bitwise content check on all 32 ranks — later epochs' identical payloads
+mask per-epoch misses, and the bitwise pass through the canon path
+exonerates the reorder completely at 8n.
+
+Conclusion: dispatch_only's delivery barrier does NOT suffice at W32 —
+each epoch independently misses a few hundred rows per rank
+(nondeterministic; masked in multi-epoch static-payload runs, corrupting
+in any real per-iteration-routing use). This CONFIRMS the explored F1 fix
+(receiver-side per-source signal waits — the fused path's proven 8n
+contract) + F2 (explicit quiets before the join events). Evidence is
+unambiguous → per the plan's wire branch: F1+F2, rebuild, 2n->4n
+revalidation ladder BEFORE any 8n perf cell. All Phase-2 4n capsules run
+before the rebuild boundary. Canon guard stays as a permanent invariant.
