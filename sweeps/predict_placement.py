@@ -381,6 +381,33 @@ def ensure_placement(params, W, L, budget_mib, topk, chunk_bytes,
     epn = nexperts // W
     nlp = epn + redundant_per_rank
 
+    # Fast-path revalidation: when the sidecar exists, rebuild only the
+    # PLACEMENT (the code-drift-prone part, ~seconds) and verify it matches;
+    # skip re-simulating the eps ladder (~minutes at b64) — the driver
+    # hard-asserts each cell's realized route_hash/incidence against the
+    # sidecar's predicted entries, so ladder integrity is enforced per run
+    # anyway. Delete the sidecar to force a full regeneration.
+    suffix_early = f"placement_{mode}_r{redundant_per_rank}"
+    path_early = os.path.join(out_root, f"{mid}.{suffix_early}.json")
+    if os.path.exists(path_early):
+        with open(path_early) as f:
+            existing_blob = json.loads(f.read())
+        placed_chk = build_placement(
+            pools_rows, params["sem"], nexperts, W, L, nlp, mode=mode,
+            fm_passes=fm_passes, balance_tol=balance_tol, min_gain=min_gain,
+            target_slots=target_slots)
+        if (existing_blob.get("hosts") != placed_chk["hosts"]
+                or existing_blob.get("planner") != placed_chk["stats"]):
+            raise RuntimeError(
+                f"placement sidecar {path_early} does not match a placement"
+                " regeneration — refusing to overwrite; delete it to"
+                " regenerate")
+        with open(path_early) as f:
+            existing = f.read()
+        return (path_early,
+                hashlib.sha256(existing.encode()).hexdigest(),
+                existing_blob)
+
     placed = build_placement(pools_rows, params["sem"], nexperts, W, L, nlp,
                              mode=mode, fm_passes=fm_passes,
                              balance_tol=balance_tol, min_gain=min_gain,

@@ -970,3 +970,23 @@ formalization §7.7 carries the full tables and κ_conv calibration.
    (sem=pernode asserts pools==nnodes; nodes i and i+4 share a topic —
    chosen so cross-node co-occurrence exists for the partition to exploit,
    recorded here BEFORE the run).
+
+### NR-16 amendment (2026-08-19, S4 bring-up): EPIC dispatch_only is NOT 8n-clean — pre-existing, placement-independent
+
+The 8n manual gate (the mandatory pre-capsule deterministic pass) caught
+missing dispatch rows at W32 on the EPIC driver: all 32 ranks lose rows
+nondeterministically (all-zero recv rows, no capacity FLUX_CHECK trips;
+4 ranks passed one run, 0 the next — a delivery race, not indexing), on
+BOTH the relay_identity and lb_union hc wires, and the epic-placement/D6
+baseline itself does not complete at 8n. No EPIC arm had ever run beyond
+4n; the u/U lane structure has no zero lanes (hypothesis rejected), and
+the suspect is the dispatch_only completion contract at scale (note the
+signal_done wait is skipped for relay_identity in dispatch_only; the flux
+driver's own 8n arms — hier_compress_lb_union et al. — are historically
+8n-green through forward_impl). Confidence: measured (probe histograms in
+the session scratchpad; capsules unaffected — no 8n perf cell ran).
+Action: 8n allocation released after ~2.3 node-hours; the 8n stage is
+BLOCKED on an epic-driver 8n bring-up (own campaign: 2n->4n->8n ladder on
+dispatch_only completion ordering) and the 4n program continues unchanged.
+The loccap router itself is exonerated at 8n: realized incidence matched
+the sidecar exactly (63072) before the wire raced.
