@@ -1,0 +1,32 @@
+# Capsule B — the missing baseline A/B (best-EPIC staged hc m1 vs fused
+# hier_compress_lb_union, same capsule, one binary) + the P1 slope set:
+# latency vs measured incidence across router arms at three budgets.
+# b2 = negative control, b8 = conversion midpoint, b64 = max-conversion /
+# NR-14-parking regime (b32 has no distinct falsification role).
+platform: perlmutter
+nodes: 4
+variants:
+  - epic_hc_m1_na_lbu_lc25
+  - hier_compress_lb_union
+  - epic_hc_m1_na_lc25
+  - epic_hc_m1_na
+  - epic_hc_m1
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib: [2, 8, 64]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+matrix_instance: "001"
+timeout_s: 900
+idle_timeout_s: 180
+modes: [isolated]
+skip_correctness: true
+notes: "B REVERSED twin (iso only) hc-m1 vs fused lb_union A/B + P1 slope: 30 cells; correctness banked in smoke"

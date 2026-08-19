@@ -908,3 +908,65 @@ the twin e2e journeys (`moonep_l01_nvshmem_getmem` authentic staged;
 metadata) GPU-validated 1n->2n->4n with capsules, the MoonEP port and our
 optimizations are COMPLETE as scoped 2026-08-17; everything further lives in
 fact 6's follow-up list.
+
+## NR-16 — Token–node incidence: node-aware placement (PLACE-λ) + per-token capped locality routing (LocCap) — PRE-REGISTRATION
+
+Relitigation risk: low (predictions committed before any GPU time; every
+number below is deterministic offline math, reproducible byte-for-byte from
+the sidecars). Campaign 8.19.theory; implementation commits 71cdbd6..53ae4ad
+(Python-only — binary identity preserved across the whole campaign);
+formalization §7.7 carries the full tables and κ_conv calibration.
+
+1. **The objective is token–node incidence.** Under the hc Mode-2 transports
+   (dedup both directions) the inter-node wire rows of a token equal
+   |S_t| = #distinct non-home serving nodes. The measured dedup ceilings on
+   real routing (75.1/53.3/35.7/17.5% at 2/4/8/16n) match the
+   incidence-random closed form `1 − N(1−(1−1/N)^k)/k` within ~2pp —
+   current placement is provably incidence-random, i.e. all co-occurrence
+   structure is wasted today. Confidence: measured + mechanism.
+2. **Correction absorbed:** m1/m2/m4 = PEO pipeline group count, NOT a
+   replica split; no per-token replica-selection baseline existed anywhere
+   (D6 `src mod lcnts` / quota splits are the strawmen). Confidence:
+   code-verified.
+3. **Offline pre-registration (exact, zero GPU):** at r2 slots, nodeaware
+   placement + LocCap removes 43–61% of internode dedup rows vs the fixed
+   baseline at 4n (budget-flat b2→b64) and 48–60% at 8n b8 — headline:
+   **ε=0.0625 takes −43.5% (4n b8) / −48.4% (8n b8) at imbalance 1.06,
+   strictly dominating the d6 anchor on both axes** (d6: −35% at imb 1.30).
+   rankconc (equal slots, no coverage) stalls at −27%/−34% flat across ε;
+   at 8n coverage without the router ≈ concentration (34.5 vs 34.4%) — the
+   per-token router IS the mechanism at scale. Hot-node egress −33..−41%.
+   Confidence: computed-exact (deterministic; in-driver hard-assert closes
+   the loop on GPU).
+4. **ε* prediction (the sharp one):** measured κ_conv (Δlat%/Δwire%) from
+   committed twins stays ≤ 0.17 through b32 — latency is never
+   wire-dominated on this fabric — so the compute term stays binding and
+   **ε* ∈ [0.0625, 0.125] at ALL budgets**, contra the naive model where
+   ε* rises with budget. Falsifier: the A2 ladder valley lands at ε ≥ 0.25
+   at b64, or `lcinf` wins anywhere.
+5. **Falsifiers (P1–P6, capsules A1/A2/B/C):** P1 latency-vs-incidence slope
+   ≈ κ(b) {~0, 0.12–0.14, ≥0.17} at {b2, b8, b64}; P2 realized bytes equal
+   the sidecar tables exactly (assert-enforced); P3 the U-valley at
+   0.0625–0.125 both budgets; P4 nodeaware > rankconc at equal slots via
+   the loccap arms (~17pp bytes at 4n, ~25pp at 8n); P5 wire_ratio improves
+   ≈ −35% class under nodeaware placement; P6 b2 latency unmoved by the
+   largest byte shift (negative control). Predicted magnitudes vs
+   fixed-placement hc at ε*: ≈ −5.7% iso at b8, ≈ −7.4% at b64 via κ alone,
+   plus the unpriced balance channel (imb 1.85 → 1.06).
+6. **NR-01 compliance (what serialized work is removed):** placement is
+   one-shot static (EPLB-class place_weights, ~0 recurring); LocCap shrinks
+   the NR-14 inter-node head-of-line prefix, the per-destination fan-out
+   resource (eager +27.6%@conn8 → +2%@conn32), and the hot node's max
+   egress. Router cost: python port 0.1–1 s ONCE PER CELL under the
+   untimed-metadata contract (`epic_loccap_plan_host_ms` cell fact — same
+   class as the other EP planner ports, 72–142 ms); production projection
+   is a reroute.cu-class GPU kernel (~0.1–0.5 ms). The projection is a
+   CLAIM this campaign's wins must justify before any kernel is built.
+7. **Method guards:** same-capsule/one-binary comparisons only (all-Python
+   changes keep the m-ladder binary); forward+reversed twins for headline
+   capsules; conn ladder {8,32} with EARLY_LAUNCH pinned (conn=64 is not a
+   real rung — CUDA clamps at 32 silently); spec extra_env never sets conn;
+   the 8n pernode family needs the 8-entry interleaved pools list
+   (sem=pernode asserts pools==nnodes; nodes i and i+4 share a topic —
+   chosen so cross-node co-occurrence exists for the partition to exploit,
+   recorded here BEFORE the run).

@@ -1711,6 +1711,9 @@ def cmd_run(spec, jobid_arg, dry):
             }
     else:
         os.makedirs(plat["matrices_root"], exist_ok=True)
+        placement_cache = {}  # (mid, mode, red) -> (path, sha, blob); the
+        # never-overwrite regeneration check (a full re-simulation) runs
+        # once per run per sidecar, not once per cell
         for cell in cells:
             mparams = {k: v for k, v in cell["family_params"].items() if k != "dealer"}
             mid, path, sha = gen_matrix.ensure_matrix(
@@ -1784,15 +1787,23 @@ def cmd_run(spec, jobid_arg, dry):
                 )
                 params = dict(gen_matrix.FAMILY_DEFAULT_PARAMS["trace"],
                               **mparams)
-                na_path, na_sha, na_blob = predict_placement.ensure_placement(
-                    dict(params), mode="nodeaware", **pp_kwargs)
+                na_key = (mid, "nodeaware", red)
+                if na_key not in placement_cache:
+                    placement_cache[na_key] = \
+                        predict_placement.ensure_placement(
+                            dict(params), mode="nodeaware", **pp_kwargs)
+                na_path, na_sha, na_blob = placement_cache[na_key]
                 mode = vdef.get("placement_mode", "nodeaware")
                 if mode == "rankconc":
-                    p_path, p_sha, _ = predict_placement.ensure_placement(
-                        dict(params), mode="rankconc",
-                        target_slots=na_blob["planner"][
-                            "replica_slots_spent"],
-                        **pp_kwargs)
+                    rc_key = (mid, "rankconc", red)
+                    if rc_key not in placement_cache:
+                        placement_cache[rc_key] = \
+                            predict_placement.ensure_placement(
+                                dict(params), mode="rankconc",
+                                target_slots=na_blob["planner"][
+                                    "replica_slots_spent"],
+                                **pp_kwargs)
+                    p_path, p_sha, _ = placement_cache[rc_key]
                 else:
                     p_path, p_sha = na_path, na_sha
                 matrices[cell["cell_id"]].update(

@@ -1,0 +1,37 @@
+# 8n stage — needs -q regular (interactive caps at 4 nodes) and the
+# 8-entry pernode pools list (sem=pernode asserts pools==nnodes; the 4
+# topics duplicated INTERLEAVED so nodes i and i+4 share a topic —
+# pre-registered: creates cross-node co-occurrence only the lambda
+# partition can exploit). What 8n uniquely tests: higher wire slope
+# (kappa up -> strongest P1), lower transport dedup ceiling (placement
+# headroom relatively larger -> P5 bigger). One manual deterministic
+# correctness pass at 8n precedes this capsule (new W, new matrix).
+platform: perlmutter
+nodes: 8
+variants:
+  - epic_hc_m1
+  - epic_hc_m1_na
+  - epic_hc_m1_na_rankconc
+  - epic_hc_m1_na_lc25
+  - epic_hc_m1_na_lcinf
+  - hier_compress_lb_union
+  - epic_hc_m1_na_lbu_lc25
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history+mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib: [8, 64]
+topk: 8
+G: 128
+H: 4096
+chunk_bytes: 8192
+ffn_hidden: 4096
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+matrix_instance: "001"
+timeout_s: 900
+idle_timeout_s: 180
+modes: [isolated]
+skip_correctness: true
+notes: "8n stage: 14 cells iso b8+b64; eps* rung per the pre-registered 8n table (adjust the lc rung if eps*(8n) != 0.25 at G0)"

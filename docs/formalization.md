@@ -1007,6 +1007,98 @@ opportunity actually verified present.
 
 ---
 
+### 7.7 Pre-registration: node-aware placement + LocCap router (recorded before the run)
+
+Campaign 8.19.theory (plan: node-aware PLACE-λ placement + per-token LocCap
+replica routing + hier_compress/lb_union transports; implementation commits
+71cdbd6..53ae4ad, all Python, binary identity preserved). Everything below
+was computed offline (`sweeps/predict_placement.py`, zero GPU) and committed
+BEFORE the first allocation. The simulator file-path-imports the exact
+router module the GPU driver runs; the driver hard-asserts realized
+`route_hash`/`incidence_remote` equal these simulations, so predicted ≠
+realized is a determinism bug, never noise. Placement sidecars
+(`<mid>.placement_{nodeaware,rankconc}_r2.json`, never-overwrite) carry the
+per-(router, ε) numbers; `placement_sha` is the per-cell provenance fact.
+
+**κ_conv calibration** (byte→latency conversion, `Δlat% / Δwirebytes%`,
+from the committed same-capsule pairs hier vs hier_compress_union, 8n trace,
+capsules 20260815-082516/-084642, iso mean-of-max, wire Δ = 33.3%):
+
+| budget | κ (capsule 1) | κ (capsule 2) |
+|---|---|---|
+| b1 | −0.068 | −0.052 |
+| b2 | −0.018 | −0.030 |
+| b8 | +0.144 | +0.120 |
+| b16 | +0.171 | +0.173 |
+| b32 | +0.161 | +0.054 |
+
+κ(b64) is EXTRAPOLATED ≥ 0.17 (monotone trend; Capsule B measures it
+directly). Key structural reading: κ stays ≤ 0.17 even at b32 — latency is
+never wire-dominated on this fabric — so the compute term stays binding and
+the predicted ε* sits at the TIGHT end of the ladder (0.0625–0.125) at all
+budgets, not rising with budget as the naive max-form model suggested.
+
+**Predicted incidence tables** (internode dedup rows vs the fixed/d6
+baseline; imb = max/mean rank rows; sidecars carry full ladders):
+
+4n (W16, r2): baseline rows 11350 / 45510 / 363732 at b2 / b8 / b64; fixed
+imb 1.87 / 1.852 / 1.86 (the b8 value reproduces the EPLB capsule's
+1.852-before exactly — same matrix, independent code path).
+
+| arm | b2 | b8 | b64 | imb (b8) |
+|---|---|---|---|---|
+| nodeaware / d6 | −35.7% | −35.4% | −35.4% | 1.30 |
+| nodeaware / loccap ε=0.0625 | −44.5% | −43.5% | −43.6% | 1.06 |
+| nodeaware / loccap ε=0.125 | −47.7% | −47.0% | −47.4% | 1.13 |
+| nodeaware / loccap ε=0.25 | −54.3% | −52.8% | −53.6% | 1.25 |
+| nodeaware / loccap ε=∞ | −60.8% | −60.6% | −60.6% | 1.60 |
+| rankconc (any router) | −27.0% | −26.6% | −26.8% | 1.21 |
+
+8n (W32, 8-entry interleaved pernode pools, r2): baseline rows 152534 at
+b8; fixed imb 2.42. nodeaware/d6 −34.5% (imb 1.31); loccap ε=0.0625
+**−48.4% at imb 1.062**; ε=0.25 −58.7%; ε=∞ −59.7% (imb 1.44); rankconc
+−34.4% flat. Hot-node egress −41% at ε=0.0625. (8n b64 block appended in a
+follow-up commit before the 8n capsule runs — its own pre-registration
+precedes its own measurement.)
+
+Structure is budget-flat (f_loc varies < 1pp across b2→b64 at 4n), matching
+§7.6's ceiling-flatness: locality is a property of the routing, budget only
+sets conversion.
+
+**Falsifiable predictions** (all iso, same-capsule, twin-confirmed):
+
+- **P1** (Capsule B): latency monotone in measured `incidence_remote` at
+  fixed budget/transport; slope ≈ κ(b): ~0 at b2, 0.12–0.14 at b8,
+  ≥ 0.17 at b64.
+- **P2** (A2/B): realized byte reductions equal the table above EXACTLY
+  (deterministic math; the in-driver assert enforces it cell by cell).
+- **P3** (A2): ε ladder valley at 0.0625–0.125 for BOTH b8 and b64 (the
+  κ-stays-low prediction); `lcinf` strictly worse than the valley at b64.
+- **P4** (A1, 8n): nodeaware beats rankconc at equal slots through the
+  loccap arms (predicted byte gap ~17pp at 4n, ~25pp at 8n); at 8n the
+  gap opens ONLY through the router (d6 coverage ≈ concentration, 34.5 vs
+  34.4%) — coverage without per-token routing is nearly worthless at 8n.
+- **P5** (A1/B): `wire_ratio` on hc cells improves under nodeaware
+  placement by ≈ the d6 rows above (−35% class) vs fixed/epic placement.
+- **P6** (A1/B, b2): the largest byte-shift arm moves latency by less than
+  the within-capsule spread (κ(b2) ≈ 0).
+- **Magnitudes**: vs fixed-placement hc at ε*: ≈ −5.7% latency at b8
+  (κ·44%), ≈ −7.4% at b64; vs nodeaware/d6 (router-only effect): ≈ −1% at
+  b8 via κ, PLUS the balance channel (imb 1.29 → 1.08) that κ does not
+  price — the two-channel decomposition is exactly what A1 vs A2 separates.
+
+**NR-01 statement (which serialized work is removed):** placement is
+one-shot/static (EPLB-class; `place_weights` bracket, ~0 recurring);
+LocCap removes inter-node wire rows from the NR-14 head-of-line prefix,
+reduces per-destination fan-out (the eager +27.6%@conn8 → +2%@conn32
+resource), and cuts the hot node's max egress (−33..−41% predicted — the
+max-rank latency setter). LocCap's own cost: the python port runs
+once-per-cell under the untimed-metadata contract
+(`epic_loccap_plan_host_ms` cell fact; measured 0.1–1 s at 4n scales —
+same class as the other EP planner ports); the production implementation
+is a reroute.cu-class GPU kernel (~0.1–0.5 ms), and this projection is
+part of what P1–P6 must justify before any kernel is built.
+
 ## 8. Open questions
 
 1. ~~**Does de-coupling the gateway recover the dead dedup benefit at n≥8?**~~

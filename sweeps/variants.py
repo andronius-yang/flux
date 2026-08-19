@@ -676,6 +676,13 @@ VARIANTS = {
     # slot space (replicas x lb_union integration; EARLY_LAUNCH +
     # FUSED_STAGE2 pinned inside enable_hier_compress). conn32 clones exist
     # for the fan-out-elimination ladder — never compare across conn.
+    "epic_hc_m1_place_none": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement", "none",
+                   "--groups", "1"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
     "epic_hc_m1_na": dict(
         comm_pattern="epic_hc_a2av", driver="epic",
         test_args=["--transport", "hier_compress", "--placement",
