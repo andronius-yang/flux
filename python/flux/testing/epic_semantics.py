@@ -1294,17 +1294,35 @@ class EpicLayer0Runner(EPLBLayer0Runner):
                 swap_fc2=(self.slot_fc2[slot] if self.place_fc2 else None),
                 swap_peer=peer, swap_epoch=seq)
             self._pending_swap = None
-        dense, _ssi, _ssc, m_ep = self._hc_ops[g].dispatch_only(
+        dense, ssi, _ssc, m_ep = self._hc_ops[g].dispatch_only(
             self._last_inputs, self._hc_splits_gpu[g],
             self._hc_scatter_gpu[g],
             b.meta.splits_per_source, b.meta.a2av_unique_counts,
             **swap_kw,
         )
-        n_real = int(m_ep) - int(b.pad_rows_per_rank[self.rank])
+        m = int(m_ep)
+        n_real = m - int(b.pad_rows_per_rank[self.rank])
         assert n_real == n_rows, (
             f"group {g}: dense real rows {n_real} != layout rows {n_rows}")
         if n_rows:
-            self.hidden_buf[base:base + n_rows].copy_(dense[:n_real])
+            # dense rows arrive segment-major in the WIRE's within-segment
+            # order; ssi[i] is the row's SEGMENT-RELATIVE canonical index
+            # ("sorted-D row -> per-expert D row": ascending under the
+            # relay wire, a real permutation under lb_union's window
+            # order — verified empirically 2026-08-18). canonical position
+            # = segment base + ssi restores the v1 slot-major (src, token)
+            # layout that the probs pairing and GEMM segments assume, for
+            # any wire; a no-op permutation on the relay path.
+            sl = self._hc_splits_gpu[g][
+                self.rank * b.gpe:(self.rank + 1) * b.gpe].long()
+            bounds = torch.cumsum(sl, 0)
+            assert int(bounds[-1]) == m, (int(bounds[-1]), m)
+            seg = torch.bucketize(
+                torch.arange(m, device=dense.device), bounds, right=True)
+            canon_pos = (bounds - sl)[seg] + ssi[:m].long()
+            canon = torch.empty_like(dense[:m])
+            canon.index_copy_(0, canon_pos, dense[:m])
+            self.hidden_buf[base:base + n_rows].copy_(canon[:n_real])
         s_lo, s_hi = self.elay.send_off[g], self.elay.send_off[g + 1]
         r_lo, r_hi = self.elay.recv_off[g], self.elay.recv_off[g + 1]
         self._a2a_probs.forward(

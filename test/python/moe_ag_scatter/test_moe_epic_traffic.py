@@ -417,24 +417,74 @@ def check_correctness(runner, ctx, plan, topk_all, w_all, atol, rtol):
         f"rank {rank}: recomputed {n_rows_check} rows != runner {runner.n_recv}"
     )
 
-    # Wire-quota audit vs the D6 allocation.
-    alloc = plan.rank_quota_prefix.long().clone()
-    alloc[:, :, 1:] -= plan.rank_quota_prefix.long()[:, :, :-1]
-    for l in range(cfg.G):
-        for j in range(int(plan.lcnts[l])):
-            p = int(plan.l2p[l, j])
-            if p // cfg.nlp == rank:
-                expect = int(alloc[:, l, j].sum())
-                got = per_instance_rows[p % cfg.nlp]
-                if got != expect:
-                    ok_bitwise = False
-                    print(f"❌ rank {rank}: instance ({l},{j}) rows {got} != "
-                          f"D6 rank-quota total {expect}")
+    # Wire-quota audit. Under --router d6 the allocation IS the D6 table;
+    # under a per-token router (plan.phys_override) the table is not the
+    # allocation — audit the expansion against the override's own per-slot
+    # counts instead (a cross-check of _expand_from_phys vs the raw
+    # routing, not a tautology: the expansion path re-derives entries).
+    ov = getattr(plan, "phys_override", None)
+    if ov is not None:
+        counts = torch.bincount(ov.reshape(-1).long(), minlength=cfg.P)
+        for b in range(cfg.nlp):
+            p = rank * cfg.nlp + b
+            if int(plan.p2l[p]) < 0:
+                continue
+            expect = int(counts[p])
+            got = per_instance_rows[b]
+            if got != expect:
+                ok_bitwise = False
+                print(f"❌ rank {rank}: slot {b} rows {got} != router "
+                      f"override count {expect}")
+    else:
+        alloc = plan.rank_quota_prefix.long().clone()
+        alloc[:, :, 1:] -= plan.rank_quota_prefix.long()[:, :, :-1]
+        for l in range(cfg.G):
+            for j in range(int(plan.lcnts[l])):
+                p = int(plan.l2p[l, j])
+                if p // cfg.nlp == rank:
+                    expect = int(alloc[:, l, j].sum())
+                    got = per_instance_rows[p % cfg.nlp]
+                    if got != expect:
+                        ok_bitwise = False
+                        print(f"❌ rank {rank}: instance ({l},{j}) rows "
+                              f"{got} != D6 rank-quota total {expect}")
 
     if not torch.equal(runner.hidden_buf[:runner.n_recv],
                        expected_hidden[:runner.n_recv]):
         ok_bitwise = False
         print(f"❌ rank {rank}: dispatched rows differ from plan prediction")
+        if os.environ.get("FLUX_EPIC_CHECK_PROBE", "0") == "1":
+            got = runner.hidden_buf[:runner.n_recv]
+            exp = expected_hidden[:runner.n_recv]
+            bad = (got != exp).any(dim=1)
+            n_bad = int(bad.sum())
+            zero_bad = int((got[bad] == 0).all(dim=1).sum())
+            # multiset check: is the buffer a permutation of the expectation?
+            gs = got.float().sum(dim=1).sort().values
+            es = exp.float().sum(dim=1).sort().values
+            perm = bool(torch.allclose(gs, es))
+            # provenance of expected content for the bad rows: which source
+            # NODE was supposed to fill them
+            src_node = torch.full((expected_hidden.shape[0],), -1,
+                                  dtype=torch.int64)
+            fill_p = list(runner.elay.seg_start)
+            for src in range(cfg.R):
+                tok_p, phys_p = reroute_expand(cfg, plan, src,
+                                               topk_all[src])
+                order_p = torch.argsort(phys_p * (S + 1) + tok_p,
+                                        stable=True)
+                phys_p = phys_p[order_p]
+                msk_p = (phys_p // cfg.nlp) == rank
+                for p in phys_p[msk_p].tolist():
+                    pl = p - rank * cfg.nlp
+                    src_node[fill_p[pl]] = src // runner.ranks_per_node
+                    fill_p[pl] += 1
+            from collections import Counter
+            bad_idx = bad.nonzero(as_tuple=True)[0].cpu()
+            cnt = Counter(src_node[bad_idx].tolist())
+            print(f"  probe rank {rank}: bad {n_bad}/{runner.n_recv} rows, "
+                  f"{zero_bad} all-zero, permutation={perm}, "
+                  f"bad-by-src-node {dict(sorted(cnt.items()))}")
     if not torch.equal(runner.weights_buf[:runner.n_recv],
                        expected_probs[:runner.n_recv]):
         ok_bitwise = False
