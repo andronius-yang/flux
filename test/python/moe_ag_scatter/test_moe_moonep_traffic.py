@@ -21,16 +21,25 @@ Pipeline per iteration (each phase bracketed with CUDA events):
              (reported separately: weight traffic, not token traffic)
   gemm       per-segment GEMM over cu_seqlens[E+B] (padded rows computed)
 
-The plan itself is deterministic integer math computed identically on every
-rank at setup (untimed-metadata contract, like splits_per_source in
-test_moe_ag_traffic.py; reported as plan_host_ms): routing is static per
-cell, so per-iteration planning would time redundant host work, not the
-algorithm. plan_comm is still measured every iteration because it is the
-recurring per-layer wire cost of replicated planning.
+Timing accounting = per_iter_gpu (SCHEMA protocol rule 5, 2026-08-20): the
+AUTHENTIC upstream planner — MoonEP's single fused cooperative planning
+kernel, ported to the replicated multi-node setting in
+moonep_oracle/planning_port.py (only its cross-rank-sync sites replaced) —
+runs PER ITERATION on device inside the `plan` event bracket, followed by
+the on-device layout derivation (derive_moonep_layout_gpu). Nothing
+routing-derived is cached across iterations; upstream fuses planning into
+one kernel, so plan_ms is one bracket, un-separated by design. The CPU
+compute_moonep_plan survives only as buffer sizing, the correctness
+reference, the cross-rank plan-hash guard, and the loud setup-time
+bitwise drift check against the kernel outputs (reported as
+plan_host_ms — the setup reference build, NOT the timed planner).
+plan_comm is measured every iteration as before: it is the recurring
+per-layer wire cost of replicated planning.
 """
 
 import argparse
 import os
+import sys
 import time
 from functools import partial
 
@@ -51,9 +60,16 @@ from flux.testing import (
 from flux.testing.moonep_semantics import (
     MoonEPConfig,
     MoonEPLayer0Runner,
+    check_moonep_iter_plan,
     compute_moonep_plan,
+    derive_moonep_layout_gpu,
 )
 from flux.testing.recorder import RECORDER
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from moonep_oracle.planning_port import (  # noqa: E402  (ported planner)
+    ReplicatedPlannerWorkspace,
+)
 
 DIST_ENV = flux.get_dist_env()
 TP_GROUP = DIST_ENV.get_world()
@@ -82,9 +98,30 @@ def init_ep_group(ep_size: int):
             EP_GROUP = group
 
 
+def plan_iteration(runner, plan_ws, topk_gather_buf):
+    """Rule-5 timed planning: per-iteration [R, E] histogram of the
+    gathered routing, the authentic ported planner kernel, the on-device
+    layout derivation, and the bind — all inside the `plan` bracket."""
+    cfg = runner.cfg
+    R, E, N = cfg.R, cfg.E, cfg.N
+    topk_flat = topk_gather_buf.view(R, N)
+    src_base = torch.arange(R, device=topk_flat.device,
+                            dtype=torch.int64).unsqueeze(1) * E
+    tpe_all = torch.bincount(
+        (src_base + topk_flat.long()).reshape(-1), minlength=R * E
+    ).view(R, E).to(torch.int32)
+    dst_all, cu_all, etc_all, zfr_all, _stats = plan_ws.launch(
+        topk_flat.contiguous(), tpe_all.contiguous())
+    ip = derive_moonep_layout_gpu(cfg, runner.rank, dst_all, zfr_all,
+                                  cu_all, etc_all)
+    runner.bind_iter_plan(ip)
+    return ip
+
+
 @torch.no_grad()
 def perf_moonep(
     runner: MoonEPLayer0Runner,
+    plan_ws: ReplicatedPlannerWorkspace,
     ctx: MoeMlp1Ctx,
     route_weights: torch.Tensor,
     topk_shard: torch.Tensor,
@@ -102,7 +139,8 @@ def perf_moonep(
 ):
     l01 = layers == "l01"
     total_iters = warmup_iters + iters
-    names = ["start", "plan_comm", "pack", "comm", "scatter", "prefetch", "gemm"]
+    names = ["start", "plan_comm", "plan", "pack", "comm", "scatter",
+             "prefetch", "gemm"]
     if l01:
         names += ["act", "gemm2", "cpack", "comb", "acc"]
     if overlap_prefetch:
@@ -135,6 +173,11 @@ def perf_moonep(
                 topk_gather_buf, topk_shard, group=TP_GROUP
             )
             ev["plan_comm"][i].record()
+            # Per-iteration authentic planning (rule 5): the ported fused
+            # planner kernel + on-device layout derivation + bind. NOTHING
+            # routing-derived crosses iterations.
+            plan_iteration(runner, plan_ws, topk_gather_buf)
+            ev["plan"][i].record()
             if overlap_prefetch and do_prefetch and not shared_comm:
                 # fork right after plan_comm: weight movement overlaps
                 # pack + wire + scatter on the main stream (FINER than
@@ -189,7 +232,7 @@ def perf_moonep(
                 runner.combine_place_reduce()
                 ev["acc"][i].record()
 
-    keys = ["plan_comm_ms", "pack_ms", "comm_ms", "scatter_ms",
+    keys = ["plan_comm_ms", "plan_ms", "pack_ms", "comm_ms", "scatter_ms",
             "prefetch_ms", "gemm_ms", "total_ms"]
     if l01:
         keys += ["act_ms", "gemm2_ms", "cpack_ms", "comb_ms", "acc_ms"]
@@ -201,7 +244,7 @@ def perf_moonep(
         ev[last][i].synchronize()
         if i < warmup_iters:
             continue
-        seq = ["plan_comm", "pack", "comm", "scatter"]
+        seq = ["plan_comm", "plan", "pack", "comm", "scatter"]
         prev = ev["start"][i]
         for name in seq:
             times[f"{name}_ms"].append(prev.elapsed_time(ev[name][i]))
@@ -496,9 +539,10 @@ if __name__ == "__main__":
         token_padding=args.token_padding,
     )
 
-    # Replicated planning: identical integer plan on every rank from the
-    # (globally known) routing. Wall time reported as plan_host_ms under the
-    # untimed-metadata contract.
+    # Setup reference plan (CPU): buffer sizing, correctness reference,
+    # plan-hash guard, and the drift check against the ported kernel. The
+    # TIMED planner is the per-iteration plan_iteration() (rule 5); wall
+    # time here is book-kept as plan_host_ms only.
     topk_all = choosed_experts.reshape(W, S, args.topk).cpu().int()
     t0 = time.perf_counter()
     plan = compute_moonep_plan(cfg, topk_all)
@@ -532,7 +576,8 @@ if __name__ == "__main__":
     if args.prefetch_transport == "getmem":
         # collective (symmetric weight-home alloc); runs after enable_nvshmem
         # so all ranks perform the same symmetric allocations in the same
-        # order. Copies this rank's weights onto the heap once (untimed).
+        # order. Copies this rank's weights onto the heap once (one-shot
+        # deployment scope, rule-5 boundary).
         runner.enable_getmem_prefetch(
             moe_ctx.weights[0],
             num_comm_sm=args.num_comm_sm,
@@ -568,6 +613,28 @@ if __name__ == "__main__":
                 chunk_bytes=args.prefetch_chunk_bytes,
                 device_kernel=args.prefetch_impl == "kernel",
             )
+
+    # Ported authentic planner (rule 5): JIT-compile at SETUP (legal
+    # toolchain cost — minutes-scale on first use, lru-cached after) so
+    # warmup iterations only pay kernel launches; then ONE untimed drift
+    # check — the kernel outputs must be bitwise-equal to the CPU
+    # reference plan, and the derived layout must match runner.lay.
+    if rank == 0:
+        print("planner port: compiling the replicated MoonEP planning "
+              "kernel (CuTe DSL JIT; first-ever compile can take a while)"
+              " ...", flush=True)
+    plan_ws = ReplicatedPlannerWorkspace(
+        cfg, torch.device(torch.cuda.current_device()))
+    setup_lay = runner.lay          # snapshot BEFORE the bind swaps it
+    topk_gather_buf_setup = topk_all.reshape(W * S, args.topk).to(
+        torch.int32).cuda()
+    ip0 = plan_iteration(runner, plan_ws, topk_gather_buf_setup)
+    torch.cuda.synchronize()
+    assert torch.equal(plan_ws.dst_all.cpu(), plan.dst.to(torch.int32)), (
+        "ported planner dst != CPU reference plan (see planning_port.py "
+        "fallback ladder)")
+    check_moonep_iter_plan(ip0, setup_lay, plan, rank)
+    del topk_gather_buf_setup
 
     prefetch_group = None
     prefetch_stream = None
@@ -631,8 +698,12 @@ if __name__ == "__main__":
         print(f"moonep z (home-group -> dest migrations):\n{plan.z}")
         print(f"logical send bytes per rank:  {logical_send}")
         print(f"realized wire send bytes per rank (dedup'd reps): {realized_send}")
-        print(f"plan_host_ms (untimed-metadata contract): {plan_host_ms:.1f}")
+        print(f"plan_host_ms (setup reference build; the timed planner is "
+              f"the per-iteration ported kernel, plan_ms — SCHEMA rule 5): "
+              f"{plan_host_ms:.1f}")
         RECORDER.emit_info(
+            timing_accounting="per_iter_gpu",
+            moonep_planner_impl="cute_port",
             ntokens=ntokens,
             tokens_per_rank=S,
             gemm_rows_per_rank=gemm_rows,
@@ -666,8 +737,8 @@ if __name__ == "__main__":
         group=TP_GROUP,
     ):
         iter_times = perf_moonep(
-            runner, moe_ctx, route_weights, topk_shard, topk_gather_buf,
-            gemm_only_op, args.warmup_iters, args.iters,
+            runner, plan_ws, moe_ctx, route_weights, topk_shard,
+            topk_gather_buf, gemm_only_op, args.warmup_iters, args.iters,
             do_prefetch=not args.no_prefetch,
             overlap_prefetch=args.overlap_prefetch,
             shared_comm=args.shared_comm_stream,

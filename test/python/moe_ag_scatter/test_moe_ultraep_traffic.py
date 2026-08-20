@@ -42,7 +42,7 @@ Pipeline per iteration (each phase bracketed with CUDA events):
              (gemm_rows_per_rank is per-rank, unlike moonep's constant S*K)
 
 The plan is deterministic integer math computed identically on every rank at
-setup (untimed-metadata contract, reported as ultraep_plan_host_ms): routing
+setup (pre-rule-5 legacy_untimed_plan accounting; see SCHEMA protocol rule 5, reported as ultraep_plan_host_ms): routing
 is static per cell, so per-iteration planning would time redundant host
 work. plan_comm is still measured every iteration as the recurring per-layer
 wire cost of replicated planning.
@@ -509,7 +509,7 @@ if __name__ == "__main__":
 
     # Replicated planning: identical integer plan on every rank from the
     # (globally known) routing. Wall time reported as plan_host_ms under the
-    # untimed-metadata contract.
+    # pre-rule-5 legacy_untimed_plan accounting; see SCHEMA protocol rule 5.
     topk_all = choosed_experts.reshape(W, S, args.topk).cpu().int()
     t0 = time.perf_counter()
     tpe = loads_from_topk(cfg, topk_all)
@@ -607,8 +607,9 @@ if __name__ == "__main__":
         print(f"replicas: {rep}")
         print(f"remote token fraction: locality {remote_with:.4f} vs "
               f"no-locality {remote_without:.4f}")
-        print(f"plan_host_ms (untimed-metadata contract): {plan_host_ms:.1f}")
+        print(f"plan_host_ms (pre-rule-5 legacy_untimed_plan accounting; see SCHEMA protocol rule 5): {plan_host_ms:.1f}")
         RECORDER.emit_info(
+            timing_accounting="legacy_untimed_plan",
             ntokens=ntokens,
             tokens_per_rank=S,
             gemm_rows_per_rank=gemm_rows,

@@ -37,9 +37,17 @@ Hard constraints inherited from the shared machinery:
 """
 
 import time
+from dataclasses import dataclass, replace as _dc_replace
 
 import torch
 
+from .ep_gpu_plan import (
+    comb_dst_slot_from_topk,
+    direct_layout_entries,
+    largest_remainder_split,
+    rank_quota_prefix_nonlocal,
+    reroute_expand_all_gpu,
+)
 from .ultraep_semantics import (
     UltraEPConfig,
     UltraEPPlan,
@@ -192,6 +200,151 @@ def predicted_rows_per_rank(plan: UltraEPPlan, pool_load) -> list:
     return rows
 
 
+@dataclass
+class EplbIterPlan:
+    """One iteration's routing-derived plan, produced on-device by
+    EplbIterPlanner.derive inside the timed `plan` bracket (SCHEMA rule 5).
+    Device tensors feed the phase methods directly; the host fields are the
+    single batched D2H the phase pays (GemmOnly needs host segment bounds,
+    the NCCL fallback needs host split lists)."""
+
+    send_row_index: torch.Tensor      # [n_send] int64 device
+    send_entry_logical: torch.Tensor  # [n_send] int64 device
+    place_slots: torch.Tensor         # [n_recv] int64 device
+    in_splits: torch.Tensor           # [R] int32 device
+    out_splits: torch.Tensor          # [R] int32 device
+    comb_dst_slot: torch.Tensor       # [n_send] int64 device (l01) or None
+    send_counts: list
+    recv_counts: list
+    seg_rows: list
+    seg_start: list
+    gemm_segments: list
+    n_recv: int
+    max_pair_rows: int
+
+
+class EplbIterPlanner:
+    """Per-iteration GPU planner for the eplb arm (SCHEMA rule 5): every
+    batch-derived quantity — quotas, rank-quota prefixes, the reroute
+    expansion, splits, placement scatter indices, combine slots — is
+    recomputed each iteration on device from the gathered loads and the
+    routing, inside the timed `plan` event.
+
+    One-shot ctor state is limited to what rule 5 exempts or the locked
+    accounting boundary declares deployment-scope: the static placement
+    tensors (p2l/l2p/lcnts — pool-derived, not batch-derived) and the
+    replicated routing itself (gating metadata, the harness stand-in for
+    the model's gate).
+
+    Bit-parity contract: derive() reproduces build_comm_layout's fields
+    exactly (check_against is the loud guard the driver runs at setup).
+    Known in-phase syncs, both honest timed cost: the ragged boolean
+    gather for the receiver rows, and the single batched D2H at the end.
+    """
+
+    def __init__(self, plan: UltraEPPlan, rank: int, device,
+                 topk_all: torch.Tensor, want_comb: bool = False):
+        cfg = plan.cfg
+        self.cfg = cfg
+        self.rank = rank
+        self.device = device
+        self.want_comb = want_comb
+        # deployment-scope placement (rule-5 legal one-shot)
+        self.l2p = plan.l2p.to(device)
+        self.lcnts = plan.lcnts.to(device)
+        self.p2l = plan.p2l.long().to(device)
+        self._p2l_host = plan.p2l.long()
+        # gating metadata (the rule-5 exempt input): replicated routing
+        self.topk_all = topk_all.long().to(device)
+
+    def local_loads(self) -> torch.Tensor:
+        """[G] int32 this-rank load histogram — the plan_comm payload,
+        derived from routing per iteration (timed)."""
+        return torch.bincount(self.topk_all[self.rank].reshape(-1),
+                              minlength=self.cfg.G).to(torch.int32)
+
+    def derive(self, loads_gather_buf: torch.Tensor) -> EplbIterPlan:
+        cfg = self.cfg
+        R, G, S, K, nlp = cfg.R, cfg.G, cfg.S, cfg.K, cfg.nlp
+        tpe_all = loads_gather_buf.view(R, G)
+
+        quota, _ = largest_remainder_split(
+            tpe_all.long().sum(0), self.lcnts, cfg.max_replicas_dim)
+        rqp = rank_quota_prefix_nonlocal(tpe_all, quota, self.lcnts)
+        tok_all, phys_all = reroute_expand_all_gpu(
+            rqp, self.l2p, self.lcnts, self.topk_all, cfg.interleave)
+
+        # canonical (phys, token) order per source == dest-major for free
+        order = torch.argsort(phys_all * (S + 1) + tok_all, dim=1,
+                              stable=True)
+        ent_tok = torch.gather(tok_all, 1, order)
+        ent_phys = torch.gather(phys_all, 1, order)
+
+        lay = direct_layout_entries(ent_tok, ent_phys, self.rank, nlp, R)
+        my_tok = lay["my_tok"]
+        send_entry_logical = self.p2l[lay["my_phys"]]
+        in_splits, out_splits = lay["in_splits"], lay["out_splits"]
+        all_local = lay["all_local"]
+        place_slots = lay["place_slots"]
+        seg_rows, seg_start = lay["seg_rows"], lay["seg_start"]
+        comb_dst = (
+            comb_dst_slot_from_topk(self.topk_all[self.rank], my_tok,
+                                    send_entry_logical, G)
+            if self.want_comb else None
+        )
+
+        # the ONE batched D2H of the phase
+        blob = torch.cat([
+            seg_rows, seg_start, in_splits.long(), out_splits.long(),
+            lay["pair_max"].reshape(1),
+        ]).cpu()
+        seg_rows_h = blob[:nlp].tolist()
+        seg_start_h = blob[nlp:2 * nlp].tolist()
+        send_counts = blob[2 * nlp:2 * nlp + R].tolist()
+        recv_counts = blob[2 * nlp + R:2 * nlp + 2 * R].tolist()
+        max_pair_rows = int(blob[-1])
+
+        segments = []
+        base = self.rank * nlp
+        for p in range(nlp):
+            rows = seg_rows_h[p]
+            if rows == 0:
+                continue
+            logical = int(self._p2l_host[base + p])
+            assert logical >= 0, f"rank {self.rank}: rows in unused slot {p}"
+            start = seg_start_h[p]
+            segments.append((p, start, start + rows, logical))
+
+        return EplbIterPlan(
+            send_row_index=my_tok,
+            send_entry_logical=send_entry_logical,
+            place_slots=place_slots,
+            in_splits=in_splits,
+            out_splits=out_splits,
+            comb_dst_slot=comb_dst,
+            send_counts=send_counts,
+            recv_counts=recv_counts,
+            seg_rows=seg_rows_h,
+            seg_start=seg_start_h,
+            gemm_segments=segments,
+            n_recv=int(all_local.numel()),
+            max_pair_rows=max_pair_rows,
+        )
+
+    def check_against(self, ip: EplbIterPlan, lay) -> None:
+        """Loud bitwise drift guard vs the setup CPU reference layout
+        (untimed; the driver runs it once at setup)."""
+        assert torch.equal(ip.send_row_index.cpu(), lay.send_row_index)
+        assert torch.equal(ip.send_entry_logical.cpu(),
+                           lay.send_entry_logical)
+        assert torch.equal(ip.place_slots.cpu(), lay.place_slots)
+        assert ip.send_counts == lay.send_counts, "send splits drift"
+        assert ip.recv_counts == lay.recv_counts, "recv splits drift"
+        assert ip.seg_rows == lay.seg_rows, "seg_rows drift"
+        assert ip.seg_start == lay.seg_start, "seg_start drift"
+        assert ip.gemm_segments == lay.gemm_segments, "gemm segments drift"
+
+
 class EPLBLayer0Runner(UltraEPLayer0Runner):
     """UltraEP staged data plane with EPLB's static full re-placement.
 
@@ -228,6 +381,8 @@ class EPLBLayer0Runner(UltraEPLayer0Runner):
             )
         self.weight_place_bytes = 0
         self.weight_place_ms = 0.0
+        self.layers = "l0"
+        self.comb_dst_slot = None
 
     # -- canonical per-logical-expert weights (any rank can generate) -------
 
@@ -315,3 +470,116 @@ class EPLBLayer0Runner(UltraEPLayer0Runner):
                 output_buf=self.out_buf[start:end],
                 fast_accum=False,
             )
+
+    # -- per-iteration plan binding (SCHEMA rule 5) -------------------------
+
+    def bind_iter_plan(self, ip: EplbIterPlan):
+        """Swap the routing-derived index state for this iteration's plan
+        (called inside the timed `plan` bracket, right after
+        EplbIterPlanner.derive). Buffer ALLOCATIONS stay ctor-sized — a
+        declared memory-capacity convenience — so the static-routing
+        contract is asserted loudly instead of silently overflowing."""
+        assert ip.n_recv == self.n_recv, (
+            f"iteration recv rows {ip.n_recv} != ctor sizing {self.n_recv} "
+            "(dynamic routing needs re-sized buffers)"
+        )
+        self.send_row_index = ip.send_row_index
+        self.send_entry_logical = ip.send_entry_logical
+        self.place_slots = ip.place_slots
+        self.lay = _dc_replace(
+            self.lay,
+            send_counts=ip.send_counts,
+            recv_counts=ip.recv_counts,
+            gemm_segments=ip.gemm_segments,
+        )
+        if self.transport == "nvshmem":
+            assert ip.max_pair_rows <= self._a2a_max_split, (
+                f"pair rows {ip.max_pair_rows} exceed All2AllSingle "
+                f"max_split {self._a2a_max_split} (silent wire overflow)"
+            )
+            self._in_splits = ip.in_splits
+            self._out_splits = ip.out_splits
+        if ip.comb_dst_slot is not None:
+            self.comb_dst_slot = ip.comb_dst_slot
+
+    # -- layer1 (gemm2 + combine), the dispatch mirror ----------------------
+    #
+    # The combine reverses the dispatch: gemm2 rows are gathered back to
+    # recv-stream order and fp32-scaled by their route probs at the expert
+    # side (EPIC non-hc convention, epic_semantics.combine_pack_group),
+    # returned over the SAME All2AllSingle pair with swapped splits
+    # (max_split is a global max => transpose-invariant; no new symmetric
+    # memory), and accumulated at the token home deterministically via the
+    # comb_dst_slot permutation (index_copy_ into [S*K, H] staging + one
+    # terminal view(S, K, H).sum(1)). EPLB has NO dedup, so there is no
+    # reverse-dedup partial-sum step (moonep's dup_primary/dup_target).
+
+    def enable_layer1(self):
+        """Allocate the gemm2/combine buffers. Requires the faithful
+        full-expert placement (--weight_place fc1fc2)."""
+        assert self.place_fc2, (
+            "l01 needs slot_fc2 resident: run with --weight_place fc1fc2"
+        )
+        cfg = self.cfg
+        dev, H = self.device, cfg.H
+        self.layers = "l01"
+        self.act_buf = torch.zeros(
+            max(self.n_recv, 1), self.ffn_size_shard, dtype=self.dtype,
+            device=dev)
+        self.comb_hidden_buf = torch.zeros(
+            max(self.n_recv, 1), H, dtype=self.dtype, device=dev)
+        self.comb_send_buf = torch.empty(
+            max(self.n_recv, 1), H, dtype=self.dtype, device=dev)
+        self.comb_recv_buf = torch.empty(
+            cfg.S * cfg.K, H, dtype=self.dtype, device=dev)
+        self.stage_buf = torch.empty(
+            cfg.S * cfg.K, H, dtype=self.dtype, device=dev)
+        self.final_out = torch.zeros(cfg.S, H, dtype=self.dtype, device=dev)
+
+    def act(self):
+        """Exact GELU on the native-dtype GEMM0 output (house convention)."""
+        self.act_buf[:self.n_recv].copy_(
+            torch.nn.functional.gelu(self.out_buf[:self.n_recv]))
+
+    def gemm2(self, gemm_only_op):
+        """Down-projection over the same segments, weights by local slot."""
+        for p, start, end, _logical in self.lay.gemm_segments:
+            gemm_only_op.forward(
+                self.act_buf[start:end], self.slot_fc2[p],
+                output_buf=self.comb_hidden_buf[start:end],
+                fast_accum=False,
+            )
+
+    def combine_pack(self):
+        """Gather gemm2 rows back to recv-stream order and fp32-scale by
+        the per-entry route probs (slot-major weights_buf indexed through
+        place_slots — the EPIC non-hc pack)."""
+        rows = self.comb_hidden_buf.index_select(0, self.place_slots)
+        scale = self.weights_buf.index_select(0, self.place_slots)
+        self.comb_send_buf[:self.n_recv] = (
+            rows.float() * scale.unsqueeze(1)).to(self.dtype)
+
+    def combine_a2av(self):
+        """Reverse wire: dispatch splits swapped on the same op pair."""
+        if self.transport == "nvshmem":
+            self._a2a_hidden.forward(
+                self.comb_send_buf, self.comb_recv_buf,
+                self._out_splits, self._in_splits, self._num_comm_sm,
+            )
+            return
+        self.dist.all_to_all_single(
+            self.comb_recv_buf, self.comb_send_buf,
+            output_split_sizes=self.lay.send_counts,
+            input_split_sizes=self.lay.recv_counts,
+            group=self.group,
+        )
+
+    def combine_place_reduce(self):
+        """Deterministic home accumulation: comb_dst_slot is a permutation
+        of [0, S*K) (every (token, k) cell written exactly once), then one
+        terminal sum over the k axis — bitwise-stable ordering."""
+        assert self.comb_dst_slot is not None, "bind_iter_plan(want_comb)"
+        self.stage_buf.index_copy_(0, self.comb_dst_slot, self.comb_recv_buf)
+        self.final_out.copy_(
+            self.stage_buf.view(self.cfg.S, self.cfg.K, self.cfg.H).sum(1))
+        return self.final_out

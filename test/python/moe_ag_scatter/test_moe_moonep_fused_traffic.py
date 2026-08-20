@@ -907,6 +907,10 @@ if __name__ == "__main__":
         print(f"gemm rows per rank: {meta.m_per_rank.tolist()}")
         print(f"knobs: {knobs}")
         RECORDER.emit_info(
+            # pre-rule-5 accounting: setup-time planning (SCHEMA protocol
+            # rule 5); this driver is ablation-only and keeps the legacy
+            # path until it is next touched
+            timing_accounting="legacy_untimed_plan",
             moonep_plan_host_ms=plan_host_ms,
             moonep_e_virt=vmap.E_virt,
             moonep_gemm_rows=meta.m_per_rank.tolist(),

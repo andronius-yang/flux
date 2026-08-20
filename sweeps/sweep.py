@@ -209,6 +209,10 @@ CELLS_COLUMNS = [
     # columns — readers use csv.DictReader, never positional indexing
     "layer",
     "timing_mode",
+    # appended 2026-08-20 (SCHEMA protocol rule 5): per_iter_gpu |
+    # legacy_untimed_plan — planning-inclusive totals never compare across
+    # the two; old capsules lack the column (== legacy accounting)
+    "timing_accounting",
 ]
 METRICS_COLUMNS = [
     "run_id",
@@ -1609,6 +1613,7 @@ def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, s
                 ("epic_placement_sha", "placement_sha"),
                 ("epic_incidence_remote", "incidence_remote"),
                 ("epic_mean_nodes_per_token", "mean_nodes_per_token"),
+                ("timing_accounting", "timing_accounting"),
             ]:
                 if k_src in info:
                     row[k_dst] = info[k_src]

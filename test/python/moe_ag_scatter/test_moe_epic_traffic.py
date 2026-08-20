@@ -32,22 +32,35 @@ analog, the staged per-entry wire (NO dedup) over flux's one-sided NVSHMEM
 All2AllSingle; nccl = debug/parity-only NCCL alltoallv fallback (never a
 faithful EPIC arm — pin it explicitly if you really want it).
 
-Migration (--migration on) runs between plan_comm and pack, per Figure 5:
-replicated host decision (per-node heaviest/lightest pairing, tau-gated
-swaps), intra-node weight exchange over batched P2P, plan mutation, layout
-rebuild — then dispatch uses the updated mapping. The decision inputs are
-derived from the SAME counts exchange the arm already pays every iteration
-(plan_comm); adding a second collective would double-count it
-(epic_migration_collective=subsumed_by_plan_comm). Under this harness's
-static per-cell routing the swaps converge during warmup; timed iterations
-measure the honest steady-state per-step cost (decision + zero swaps), and
-the warmup swap costs are book-kept (epic_migration_* facts).
+Timing accounting (SCHEMA protocol rule 5, 2026-08-20): on the m=1 / D6
+arms every batch-derived quantity — D6 quotas, the reroute expansion, wire
+splits, scatter/segment/combine indices, the hc virtual-space metadata and
+combine index sets — is recomputed PER ITERATION on device inside the
+`plan` event bracket (flux.testing.epic_semantics.EpicIterPlanner;
+timing_accounting=per_iter_gpu). m>1 and the loccap router keep the legacy
+setup-time planning and are marked legacy_untimed_plan. Setup-time builds
+survive only as buffer sizing, correctness references, and the loud
+bitwise drift guard (planner.check_against at setup).
 
-Phase metrics (long-format, impl=epic): plan_comm_ms, migration_ms, pack_ms,
+Migration (--migration on|inkernel) runs between plan and pack, per
+Figure 5: replicated decision (per-node heaviest/lightest pairing,
+tau-gated swaps) — on the rule-5 path a VECTORIZED GPU decision consuming
+THIS iteration's derived instance loads (plan_migration_swaps_gpu; the
+pre-2026-08-20 claim that the decision read the plan_comm gather was
+wrong — the buffer was never consumed; it now is) — then intra-node weight
+exchange (batched P2P, or the fused in-kernel phase 0), plan mutation,
+layout rebuild + planner re-derive. Under this harness's static per-cell
+routing the swaps converge during warmup; timed iterations measure the
+honest steady-state per-step cost (decision + zero swaps), and the warmup
+swap costs are book-kept (epic_migration_* facts).
+
+Phase metrics (long-format, impl=epic): plan_comm_ms, plan_ms (the rule-5
+per-iteration planner; ~0 on legacy arms), migration_ms, pack_ms,
 disp{g}_ms (comm stream), stall{g}_ms (exposed wait before group g's
 compute), scat{g}_ms, gemm{g}_ms, comm_ms (whole dispatch window), e2e_ms
-(pack-start -> last GEMM: the comm-start->gemm-finish number, FAST
-convention), total_ms (start -> last GEMM).
+(mig-end -> last GEMM: the comm-start->gemm-finish number, FAST
+convention; planning is inside total_ms, not e2e_ms), total_ms
+(start -> last GEMM).
 """
 
 import argparse
@@ -73,11 +86,13 @@ from flux.testing import (
     traffic_matrix_to_choosed_experts,
 )
 from flux.testing.epic_semantics import (
+    EpicIterPlanner,
     EpicLayer0Runner,
     build_epic_plan,
     build_fixed_plan,
     build_nodeaware_plan,
     plan_migration_swaps,
+    plan_migration_swaps_gpu,
 )
 from flux.testing.loccap_semantics import (
     d6_route,
@@ -134,6 +149,7 @@ def assert_node_major_ranks():
 @torch.no_grad()
 def perf_epic(
     runner: EpicLayer0Runner,
+    iter_planner,  # EpicIterPlanner (rule-5 path) or None (legacy m>1/loccap)
     ctx: MoeMlp1Ctx,
     probs_shard: torch.Tensor,
     loads_shard: torch.Tensor,
@@ -166,7 +182,7 @@ def perf_epic(
             + [f"acc{g}" for g in range(m)]
             + ["sum_end"]
         )
-    names = ["start", "plan_comm", "mig", "pack"] + g_names
+    names = ["start", "plan_comm", "plan", "mig", "pack"] + g_names
     ev = {
         name: [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
         for name in names
@@ -189,16 +205,38 @@ def perf_epic(
         nvtx_tag = f"iter{i}_warmup" if i < warmup_iters else f"iter{i}"
         with torch.cuda.nvtx.range(nvtx_tag):
             ev["start"][i].record()
-            # Recurring counts exchange (recv splits derive from this; also
-            # the migration decision's load carrier).
+            # Recurring counts derivation + exchange (rule 5: the histogram
+            # is batch-derived, so the rule-5 path recomputes it in-bracket;
+            # it is also the migration decision's load carrier).
             torch.distributed.all_gather_into_tensor(
-                loads_gather_buf, loads_shard, group=TP_GROUP
+                loads_gather_buf,
+                (iter_planner.local_loads() if iter_planner is not None
+                 else loads_shard),
+                group=TP_GROUP,
             )
             ev["plan_comm"][i].record()
+            # Per-iteration on-device planning (SCHEMA rule 5): NOTHING
+            # derived from routing is carried across iterations on this
+            # path. Legacy (m>1 / loccap) keeps setup-time planning and
+            # emits timing_accounting=legacy_untimed_plan.
+            ip = None
+            if iter_planner is not None:
+                ip = iter_planner.derive(loads_gather_buf)
+                runner.bind_iter_plan(ip)
+            ev["plan"][i].record()
             if migration != "off":
                 t_mig = time.perf_counter()
-                swaps = plan_migration_swaps(
-                    runner.plan, tau_tokens, runner.ranks_per_node)
+                if iter_planner is not None:
+                    # rule-5 fidelity fix: the decision consumes THIS
+                    # iteration's derived loads (GPU decision, one small
+                    # D2H), not the static plan tensors.
+                    swaps = plan_migration_swaps_gpu(
+                        iter_planner.p2l, ip.slot_loads, tau_tokens,
+                        runner.ranks_per_node, runner.cfg.nlp,
+                        runner.cfg.G)
+                else:
+                    swaps = plan_migration_swaps(
+                        runner.plan, tau_tokens, runner.ranks_per_node)
                 if swaps and migration == "inkernel":
                     # Paper-faithful §4.3: host decision + index rebuild
                     # only; the weight exchange runs fused as phase 0 of
@@ -219,6 +257,16 @@ def perf_epic(
                 else:
                     if migration == "inkernel":
                         mig_mine_per_iter.append(0)
+                if swaps and iter_planner is not None:
+                    # the swap mutated plan.p2l/l2p (host apply +
+                    # rebuild): refresh the planner's placement and
+                    # re-derive so the bound plan matches the new layout
+                    # (swap iterations converge in warmup under static
+                    # per-cell routing — timed iterations pay the
+                    # decision only).
+                    iter_planner.refresh_placement()
+                    ip = iter_planner.derive(loads_gather_buf)
+                    runner.bind_iter_plan(ip)
                 mig_swaps_per_iter.append(len(swaps))
                 mig_host_times.append((time.perf_counter() - t_mig) * 1e3)
             ev["mig"][i].record()
@@ -283,8 +331,8 @@ def perf_epic(
                     ev["sum_end"][i].record()
 
     keys = (
-        ["plan_comm_ms", "migration_ms", "pack_ms", "comm_ms", "e2e_ms",
-         "total_ms"]
+        ["plan_comm_ms", "plan_ms", "migration_ms", "pack_ms", "comm_ms",
+         "e2e_ms", "total_ms"]
         + [f"disp{g}_ms" for g in range(m)]
         + [f"stall{g}_ms" for g in range(m)]
         + [f"scat{g}_ms" for g in range(m)]
@@ -309,8 +357,10 @@ def perf_epic(
             continue
         times["plan_comm_ms"].append(
             ev["start"][i].elapsed_time(ev["plan_comm"][i]))
+        times["plan_ms"].append(
+            ev["plan_comm"][i].elapsed_time(ev["plan"][i]))
         times["migration_ms"].append(
-            ev["plan_comm"][i].elapsed_time(ev["mig"][i]))
+            ev["plan"][i].elapsed_time(ev["mig"][i]))
         times["pack_ms"].append(ev["mig"][i].elapsed_time(ev["pack"][i]))
         times["comm_ms"].append(
             ev["pack"][i].elapsed_time(ev[f"disp{m - 1}"][i]))
@@ -675,13 +725,13 @@ def parse_args():
     parser.add_argument("--router", default="d6",
                         choices=["d6", "loccap", "evensplit"],
                         help="replica selection: d6 = src mod lcnts (the "
-                        "EPIC baseline rule); loccap = per-token tiered "
-                        "locality under compute caps (1+eps)*S*K, the "
-                        "token-node-incidence minimizer. Both are computed "
-                        "once per cell under the untimed-metadata contract "
-                        "(routing is static per cell; the host port cost is "
-                        "the epic_loccap_plan_host_ms cell fact, the "
-                        "production cost is a reroute.cu-class GPU kernel)")
+                        "EPIC baseline rule; re-derived per iteration on "
+                        "device under SCHEMA rule 5); loccap = per-token "
+                        "tiered locality under compute caps (1+eps)*S*K, "
+                        "the token-node-incidence minimizer — still a "
+                        "once-per-cell python port (legacy_untimed_plan "
+                        "accounting; not quotable in new-accounting "
+                        "capsules until its GPU port lands)")
     parser.add_argument("--eps", type=float, default=0.25,
                         help="LocCap balance slack; 'inf' = pure locality")
     parser.add_argument("--migration", default="off",
@@ -850,10 +900,13 @@ if __name__ == "__main__":
         plan = build_fixed_plan(cfg, tpe)
     plan_host_ms = (time.perf_counter() - t0) * 1e3
 
-    # Replica selection (once per cell — untimed-metadata contract, same
-    # treatment as the D6/quota rule it replaces; routing is static per
-    # cell, and the loccap host port is a reroute.cu-class GPU kernel in a
-    # production implementation).
+    # Replica selection. D6 (the rule-5 arms) is re-derived per iteration
+    # on device by EpicIterPlanner; this setup pass builds the CPU
+    # reference for sizing + the drift guard. The loccap/evensplit python
+    # routers still run once per cell (legacy_untimed_plan accounting —
+    # SCHEMA rule 5 makes that amortization illegal for quotable arms, so
+    # loccap arms are not quotable until the router's GPU port lands; it
+    # is being ported in a parallel campaign).
     assert args.router == "d6" or args.migration == "off", (
         "--router loccap is incompatible with --migration: K_g and the RS "
         "capacity caps are frozen from the loccap layout at ctor")
@@ -863,7 +916,7 @@ if __name__ == "__main__":
         # b64 tight-eps (repair phase) — keep the runner's idle watchdog
         # from conflating "computing" with "hung"
         print(f"loccap: routing {W}x{S}x{args.topk} at eps {args.eps:g} "
-              "(host port, untimed) ...", flush=True)
+              "(host port, legacy_untimed_plan accounting) ...", flush=True)
     if args.router == "loccap":
         phys_all_route = loccap_route(
             topk_all.long(), plan.p2l, plan.l2p, plan.lcnts, cfg.nlp,
@@ -978,6 +1031,34 @@ if __name__ == "__main__":
     loads_gather_buf = torch.zeros(W * args.G, dtype=torch.int32,
                                    device="cuda")
 
+    # Per-iteration timed GPU planning (SCHEMA rule 5), scoped to the m=1 /
+    # D6 arms — the sweep's quotable configurations. m>1 and the loccap
+    # router stay on the legacy setup-time path and are marked
+    # legacy_untimed_plan in cells.csv (visible, never silently mixed).
+    per_iter = (args.groups == 1 and args.router == "d6")
+    iter_planner = None
+    if per_iter:
+        iter_planner = EpicIterPlanner(
+            plan, rank, torch.device(torch.cuda.current_device()), topk_all,
+            DIST_ENV.LOCAL_WORLD_SIZE,
+            l01=(args.layers == "l01"),
+            hc=runner.hc_enabled,
+            hcc=getattr(runner, "hcc_enabled", False),
+            kg_frozen=(runner._hc_kg[0] if runner.hc_enabled else None),
+        )
+        # Setup-time drift guard (untimed): one derive from the known
+        # loads must reproduce the CPU reference state bitwise.
+        assert torch.equal(iter_planner.local_loads().cpu(), tpe[rank])
+        loads_gather_buf.copy_(tpe.reshape(-1).to(loads_gather_buf.device))
+        ip0 = iter_planner.derive(loads_gather_buf)
+        iter_planner.check_against(ip0, runner)
+        runner.bind_iter_plan(ip0)
+    elif rank == 0:
+        print("timing_accounting=legacy_untimed_plan (m>1 or non-d6 "
+              "router: the per-iteration GPU planner is scoped to the "
+              "m=1/d6 arms)")
+    timing_accounting = "per_iter_gpu" if per_iter else "legacy_untimed_plan"
+
     comm_stream = torch.cuda.Stream(priority=-1)
 
     if rank == 0:
@@ -1004,12 +1085,14 @@ if __name__ == "__main__":
               + f"; incidence_remote {route_stats['incidence_remote']} "
               f"(mean nodes/token {route_stats['mean_nodes_per_token']:.3f});"
               f" loccap_plan_host_ms {loccap_plan_host_ms:.1f} "
-              "(untimed-metadata contract)")
+              "(setup reference build; rule-5 arms re-derive per "
+              "iteration as plan_ms)")
         print(f"replicas: {rep}; dup counterfactual: {dup}")
         print(f"one-time weight placement: {place_ms:.1f} ms "
               f"(recv {place_bytes} B on rank 0); plan_host_ms: "
               f"{plan_host_ms:.1f}")
         RECORDER.emit_info(
+            timing_accounting=timing_accounting,
             ntokens=ntokens,
             tokens_per_rank=S,
             gemm_rows_per_rank=gemm_rows,
@@ -1078,9 +1161,9 @@ if __name__ == "__main__":
         group=TP_GROUP,
     ):
         iter_times, mig_facts = perf_epic(
-            runner, moe_ctx, probs_shard, loads_shard, loads_gather_buf,
-            comm_stream, args.warmup_iters, args.iters, args.sm_margin,
-            args.migration, tau_tokens, args.single_stream,
+            runner, iter_planner, moe_ctx, probs_shard, loads_shard,
+            loads_gather_buf, comm_stream, args.warmup_iters, args.iters,
+            args.sm_margin, args.migration, tau_tokens, args.single_stream,
         )
 
     if args.migration != "off":
@@ -1098,11 +1181,11 @@ if __name__ == "__main__":
         )
 
     def fmt(times):
-        keys = ["plan_comm_ms", "migration_ms", "pack_ms", "comm_ms",
-                "e2e_ms", "total_ms"]
+        keys = ["plan_comm_ms", "plan_ms", "migration_ms", "pack_ms",
+                "comm_ms", "e2e_ms", "total_ms"]
         if args.layers == "l01":
-            keys = ["plan_comm_ms", "migration_ms", "l0_ms", "act_ms",
-                    "l1_ms", "e2e_ms", "total_ms"]
+            keys = ["plan_comm_ms", "plan_ms", "migration_ms", "l0_ms",
+                    "act_ms", "l1_ms", "e2e_ms", "total_ms"]
         return ", ".join(
             f"{k[:-3]} {sum(times[k]) / max(len(times[k]), 1):.3f} ms"
             for k in keys

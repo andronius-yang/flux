@@ -102,6 +102,16 @@ hygiene OUTSIDE the window — never add it to e2e), `host_e2e_ms` (host-wall
 cross-check). Metric meaning is scoped by `impl` — `gemm_ms` under torch, fast,
 and (phases) flux are three different measurements by design.
 
+`plan_ms` (2026-08-20, protocol rule 5; drivers eplb/epic/moonep): the
+per-iteration on-device plan derivation inside the timed bracket —
+plan_comm-end to plan-end. It is the visibility guard against
+planning-dominated totals: quote plan_ms/total_ms per arm in capsule notes,
+and if it exceeds ~1-2% of the isolated total for an arm, investigate
+before quoting the arm's verdicts (the number stays honest either way; the
+cell facts `timing_accounting` and `moonep_planner_impl` carry the
+caveat). `plan_ms` sits inside `total_ms` but OUTSIDE `e2e_ms` (the
+comm-start anchor is unchanged).
+
 MoonEP-semantics arm (`impl=moonep`, variant `moonep`, driver-swapped test
 `test_moe_moonep_traffic.py` — a semantic port of MoonshotAI/MoonEP
 redundant-expert dispatch; plan bit-equality vs the vendored MoonEP oracle is
@@ -127,9 +137,11 @@ segments), `cpack_ms` (route-weight scale + reverse-dedup partial sums + pack
 top-k completion); `total_ms` then ends at `acc`. Keep `prefetch_ms` a
 separately-quoted column in every l01 comparison — it is the always-rent
 baseline any future persistent-experts (keep-stale) arm is judged against.
-The plan itself is deterministic integer host math computed identically on
-every rank at setup (untimed-metadata contract, like `splits_per_source`;
-reported as cell_info `moonep_plan_host_ms`).
+Since 2026-08-20 (protocol rule 5) the moonep driver plans PER ITERATION
+on device — the authentic ported planner kernel + layout derivation,
+reported as `plan_ms` (`timing_accounting=per_iter_gpu`). The setup CPU
+plan survives as sizing/reference/drift-guard only; `moonep_plan_host_ms`
+is that setup reference build, not the timed planner.
 
 Fused-arm brackets (`driver=moonep_fused`): `e2e_ms`, `prefetch_ms` (the
 weight ISSUE window), `gate_ms` (issue -> forward launch; 0 by definition
@@ -200,8 +212,10 @@ domain-mean / global-mean — the reachable floor), `ultraep_threshold_T` +
 `ultraep_solver_path` per domain (fast/precheck/bisect audit),
 `ultraep_replicas_total/_max_per_expert`, `ultraep_remote_frac_with/
 without_locality`, `ultraep_wire_bytes`, `ultraep_weight_sync_recv_bytes`,
-`ultraep_nvl_domain_size`, `ultraep_plan_host_ms` (untimed-metadata
-contract). `ultraep_domain16` treats the whole EP16 group as one domain
+`ultraep_nvl_domain_size`, `ultraep_plan_host_ms` (setup-time planning —
+pre-rule-5 `legacy_untimed_plan` accounting until this driver is next
+touched; see protocol rule 5). `ultraep_domain16` treats the whole EP16
+group as one domain
 (rack-scale counterfactual: weight_sync crosses nodes, LB floor -> 1.0);
 it prices the fabric assumption and is NOT a faithful Perlmutter
 deployment. `ultraep_overlap[_joingemm]` run weight_sync on a dedicated
@@ -251,8 +265,9 @@ structurally forbidden on EPLB plans (replicas are not NVL-confined);
 pool load — the packing objective), `eplb_replicas_total/_max_per_expert`,
 `eplb_rehomed_slots`, `eplb_remote_frac`, `eplb_wire_bytes`,
 `eplb_load_source` (`pool` for headline cells; `batch` = self-oracle
-fallback, smoke only), `eplb_load_sha`, `eplb_plan_host_ms`
-(untimed-metadata contract), `eplb_transport`. Canonical transport is the
+fallback, smoke only), `eplb_load_sha`, `eplb_plan_host_ms` (the setup
+reference build; the timed planner is the per-iteration `plan_ms`,
+protocol rule 5), `eplb_transport`. Canonical transport is the
 one-sided All2AllSingle (NCCL remains only for plan_comm and the one-time
 setup P2P); heap via `eplb_sym_size` — the ultraep domain bound is UNSAFE
 under global re-homing, so the full row-sum bound is used. No `phases`
@@ -348,10 +363,11 @@ Highlights (full list = header row):
   recorded here. The sidecar carries the pre-registered simulated
   incidence per (router, eps); the driver hard-asserts the realized
   `route_hash`/`incidence_remote` equal the simulation (same code by
-  file-path import — a mismatch is a determinism bug, not noise). Both
-  routers are computed once per cell under the untimed-metadata contract
-  (`epic_loccap_plan_host_ms` cell fact; routing is static per cell — the
-  production router is a reroute.cu-class GPU kernel, ~0.1 ms).
+  file-path import — a mismatch is a determinism bug, not noise). The D6
+  router is re-derived per iteration on device (rule 5); the
+  loccap/evensplit python routers still run once per cell
+  (`legacy_untimed_plan` accounting, `epic_loccap_plan_host_ms` fact) and
+  are NOT quotable in new-accounting capsules until their GPU port lands.
 - `correct_bitwise`, `correct_allclose` — AND over ranks; empty when
   `skip_correctness` ran. Note bitwise may legitimately be 0 with determinism
   off; allclose is the correctness verdict.
@@ -380,8 +396,18 @@ Highlights (full list = header row):
   in-window stage2 and passes it in untimed — the combined-pass proxy).
   Cell_id carries `_tmiso`/`_tmamo`. **Never compare across timing_mode**:
   they measure different regimes by construction. Empty for l0 cells and
-  for `l1_fast` (its index metadata is untimed setup; the BvN schedule
-  recompute stays in-window per the one-shot rule).
+  for `l1_fast` (its index metadata is setup-time — pre-rule-5
+  `legacy_untimed_plan` accounting; the BvN schedule recompute stays
+  in-window per the one-shot rule).
+- `timing_accounting` (appended 2026-08-20, protocol rule 5) —
+  `per_iter_gpu`: every batch-derived plan quantity is recomputed per
+  iteration on device inside the timed bracket (a `plan_ms` metric column
+  reports the planner's share; quote plan_ms/total_ms per arm).
+  `legacy_untimed_plan`: setup-time planning (all pre-2026-08-20 capsules,
+  which simply lack the column, plus arms the per-iteration path does not
+  cover yet — epic m>1, loccap routers, moonep_fused, ultraep, flux
+  drivers). **Never compare planning-inclusive totals across the two
+  accountings** — same never-mix logic as protocol rule 4.
 
 ## Modes — the never-mix rule
 
@@ -581,3 +607,31 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
    manufacture a result of either sign. If you must compare across capsules,
    state the build hashes and treat anything below the same-build spread as
    noise. See `docs/handoff/04_build_ledger.md`.
+5. **Timing accounting: gating metadata is the ONLY untimed work
+   (user directive, 2026-08-20).** The EXCLUSIVE untimed exemption is the
+   one initial step where the harness provides/exchanges the gating
+   metadata (the routing, i.e. the gate's output) so every rank can compute
+   identical plans — it stands in for the model's own gate, which is not
+   the system under test. **Every calculation downstream of gating must be
+   inside the timed region, per iteration, no exceptions**: plan
+   derivation, replication/balancing decisions, dedup and slot maps, split
+   transposes, combine-plan construction, pack metadata. Nothing derived
+   from gating may be cached across iterations or precomputed at setup:
+   static per-cell routing is a harness convenience for re-timing one MoE
+   layer — in production the gating changes every iteration, so a plan
+   computed once at setup is an illegal amortization. (The
+   "`plan_host_ms` untimed-metadata contract" in pre-2026-08-20 drivers is
+   exactly this mistake; totals from those drivers under-charge planning.
+   Driver docstrings are corrected as each driver is touched.) The
+   recurring wire cost of making routing globally known (`plan_comm`) is
+   and stays timed. Implementation corollary: raw python planning must not
+   be what gets timed — it overcharges by orders of magnitude vs
+   production implementations (MoonEP upstream fuses its entire per-step
+   planner into ONE cooperative GPU kernel); plan derivation is
+   implemented on-GPU, fused/grouped as far as possible, and THAT is
+   timed. Baselines with an authentic upstream planner (MoonEP) time the
+   authentic planning cost un-separated if upstream fuses it. Capsules
+   produced under the old accounting must never be compared against
+   new-accounting capsules on any total that contains planning (same
+   never-mix logic as rule 4; the boundary is the driver change, cite it
+   when quoting).

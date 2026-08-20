@@ -229,7 +229,7 @@ def perf_flux(
             # allgather (~10-20 us), declared out of scope by the harness contract
             extra_args["splits_per_source"] = splits_per_source
         if a2av_unique_counts is not None:
-            # compress dedup counts (same untimed-metadata contract): int32 CPU
+            # compress dedup counts (same pre-rule-5 legacy_untimed_plan accounting; see SCHEMA protocol rule 5): int32 CPU
             # [W, W + nnodes], cols [0, W) = unique tokens s -> rank d, cols
             # [W, W + nnodes) = unique tokens s -> node union
             extra_args["a2av_unique_counts"] = a2av_unique_counts

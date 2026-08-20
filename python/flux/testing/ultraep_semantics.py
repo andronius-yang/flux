@@ -773,8 +773,10 @@ def wire_matrix(cfg: UltraEPConfig, plan: UltraEPPlan,
 @dataclass
 class RankCommLayout:
     """Index metadata for one rank, precomputed from the replicated plan
-    (untimed-metadata contract: in the real system this is planner/reroute
-    kernel output)."""
+    (in the real system this is planner/reroute kernel output). Setup-time
+    use is sizing/reference; rule-5 drivers (eplb) re-derive the contents
+    per iteration on device (EplbIterPlanner) — the ultraep driver itself
+    is still pre-rule-5 legacy_untimed_plan accounting."""
 
     rank: int
     # sender side
@@ -992,6 +994,9 @@ class UltraEPLayer0Runner:
 
         rows = wire_matrix(self.cfg, self.plan, self._topk_all)
         max_split = max(1, max(max(r) for r in rows))
+        # kept for per-iteration planners: the op never checks per-pair
+        # splits against max_split, so bind-time overflow asserts need it
+        self._a2a_max_split = max_split
         self._a2a_hidden = flux.All2AllSingle(
             self.group, max_split, self.cfg.H, local_world_size, self.dtype,
         )

@@ -484,6 +484,20 @@ VARIANTS = {
     # NVSHMEM_SYMMETRIC_SIZE via eplb_sym_size (row-sum bound — the ultraep
     # domain bound is unsafe under global re-homing). conn=8 pin inherited
     # from the EP-arm family A/B.
+    # EPLB full journey (2026-08-20): dispatch + GEMM0 + GELU + GEMM1 +
+    # the staged combine mirror (reverse a2av on the same All2AllSingle
+    # pair, swapped splits; deterministic comb_dst_slot home reduce). No
+    # dedup anywhere (direct wire both directions — the authentic
+    # DeepEP-LL/decode transport class). rule-5 accounting: per-iteration
+    # GPU planner (EplbIterPlanner), plan_ms column.
+    "eplb_l01": dict(
+        comm_pattern="eplb_static_a2av",
+        driver="eplb",
+        layer="l01",
+        test_args=["--transport", "nvshmem", "--layers", "l01"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[],
+    ),
     "eplb": dict(
         comm_pattern="eplb_static_a2av",  # cells.csv label only, never a CLI flag
         driver="eplb",

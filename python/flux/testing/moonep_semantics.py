@@ -28,7 +28,7 @@ The planner is pure CPU integer math: identical inputs give identical plans
 on every rank, with no floating-point or device nondeterminism.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as _dc_replace
 
 import torch
 
@@ -375,8 +375,10 @@ def compute_moonep_plan(cfg: MoonEPConfig, topk_all: torch.Tensor) -> MoonEPPlan
 
 @dataclass
 class RankCommLayout:
-    """Index metadata for one rank, precomputed from the replicated plan
-    (untimed-metadata contract: in a real system this is planner output)."""
+    """Index metadata for one rank from the replicated plan (in a real
+    system this is planner output). Since rule 5 (2026-08-20) the setup
+    build is sizing/reference only — the timed per-iteration twin is
+    MoonepIterPlan via derive_moonep_layout_gpu."""
 
     rank: int
     # sender side
@@ -481,6 +483,190 @@ def build_comm_layout(plan: MoonEPPlan, rank: int) -> RankCommLayout:
         dup_target=dup_target,
         gemm_segments=segments,
     )
+
+
+@dataclass
+class MoonepIterPlan:
+    """One iteration's routing-derived layout, produced on-device by
+    derive_moonep_layout_gpu from the replicated planner outputs inside
+    the timed `plan` bracket (SCHEMA rule 5)."""
+
+    # device tensors (feed the phase methods directly)
+    send_row_index: torch.Tensor
+    send_entry_row: torch.Tensor
+    send_entry_k: torch.Tensor
+    place_loffs: torch.Tensor
+    weight_loffs: torch.Tensor
+    zero_rows: torch.Tensor
+    dup_primary: torch.Tensor
+    dup_target: torch.Tensor
+    in_splits_h: torch.Tensor        # [R] int32 (representative rows)
+    out_splits_h: torch.Tensor
+    in_splits_w: torch.Tensor        # [R] int32 (all entries)
+    out_splits_w: torch.Tensor
+    # host (the single batched D2H)
+    send_counts: list
+    recv_counts: list
+    send_entry_counts: list
+    recv_entry_counts: list
+    gemm_segments: list
+    etc_cpu: torch.Tensor            # [R, B] int32 (prefetch drift guard)
+    n_recv: int
+    n_ent_recv: int
+    total_rows: int
+    max_pair_rows: int
+    max_pair_ents: int
+
+
+def derive_moonep_layout_gpu(cfg, rank: int, dst_all: torch.Tensor,
+                             zero_fill_ranges: torch.Tensor,
+                             cu_seqlens: torch.Tensor,
+                             experts_to_copy: torch.Tensor
+                             ) -> MoonepIterPlan:
+    """Device-agnostic per-iteration port of build_comm_layout, consuming
+    the replicated planner outputs (dst_all [R,N], zero_fill_ranges
+    [R,E+B,2], cu_seqlens [R,E+B], experts_to_copy [R,B]) directly on
+    their device. dup pairs are derived from the replicated dst (upstream
+    builds them in the dispatch kernel; their ORDER is documented-unstable
+    there too, so parity with the CPU layout is defined on the pair SET —
+    see dedup_check.py). Ragged boolean gathers + the single batched D2H
+    are the phase's honest syncs."""
+    R, K, E, B, NvS, S = cfg.R, cfg.K, cfg.E, cfg.B, cfg.NvS, cfg.S
+    N = cfg.N
+    dev = dst_all.device
+    enc = dst_all.long()
+    raw = torch.where(enc < 0, -enc - 1, enc)
+    dest = torch.div(raw, NvS, rounding_mode="floor")
+    loff = raw % NvS
+    rep = enc >= 0
+
+    my_dest = dest[rank]
+    rep_idx = rep[rank].nonzero(as_tuple=True)[0]
+    order = torch.argsort(my_dest[rep_idx], stable=True)
+    send_entries = rep_idx[order]
+    send_row_index = torch.div(send_entries, K, rounding_mode="floor")
+    send_counts_d = torch.bincount(my_dest[rep_idx], minlength=R)
+    worder = torch.argsort(my_dest, stable=True)
+    send_entry_row = torch.div(worder, K, rounding_mode="floor")
+    send_entry_k = worder % K
+    send_entry_counts_d = torch.bincount(my_dest, minlength=R)
+
+    m = (dest == rank) & rep
+    place_loffs = loff[m]                       # row-major == src-major
+    recv_counts_d = m.sum(dim=1)
+    wm = dest == rank
+    weight_loffs = loff[wm]
+    recv_entry_counts_d = wm.sum(dim=1)
+
+    zf = zero_fill_ranges[rank].long()
+    reps = zf[:, 1].clamp(min=0)
+    total_zero = int(reps.sum())
+    if total_zero:
+        seg = torch.repeat_interleave(
+            torch.arange(reps.numel(), device=dev, dtype=torch.int64), reps)
+        idx = torch.arange(total_zero, device=dev, dtype=torch.int64)
+        zero_rows = zf[:, 0][seg] + (idx - (reps.cumsum(0) - reps)[seg])
+    else:
+        zero_rows = torch.zeros(0, dtype=torch.int64, device=dev)
+
+    tok_g = (torch.arange(R, device=dev, dtype=torch.int64).unsqueeze(1) * S
+             + torch.arange(N, device=dev,
+                            dtype=torch.int64).unsqueeze(0) // K)
+    prim = torch.full((R * S,), -1, dtype=torch.int64, device=dev)
+    prim[tok_g[m]] = loff[m]                    # one rep per (token, dest)
+    md = wm & ~rep
+    dup_target = loff[md]
+    dup_primary = prim[tok_g[md]]
+
+    src_ids = torch.arange(R, device=dev, dtype=torch.int64).unsqueeze(1)
+    pair_ids = (src_ids * R + dest).reshape(-1)
+    rows_max = torch.bincount(pair_ids[rep.reshape(-1)],
+                              minlength=R * R).max()
+    ents_max = torch.bincount(pair_ids, minlength=R * R).max()
+
+    # the ONE batched D2H of the phase
+    blob = torch.cat([
+        send_counts_d, recv_counts_d, send_entry_counts_d,
+        recv_entry_counts_d, cu_seqlens[rank].long(),
+        experts_to_copy.reshape(-1).long(),
+        rows_max.reshape(1), ents_max.reshape(1),
+    ]).cpu()
+    off = 0
+
+    def take(n):
+        nonlocal off
+        out = blob[off:off + n]
+        off += n
+        return out
+
+    send_counts = take(R).tolist()
+    recv_counts = take(R).tolist()
+    send_entry_counts = take(R).tolist()
+    recv_entry_counts = take(R).tolist()
+    cu = take(E + B).tolist()
+    etc_cpu = take(R * B).int().view(R, B)
+    max_pair_rows = int(take(1))
+    max_pair_ents = int(take(1))
+
+    e2c = etc_cpu[rank].tolist()
+    segments = []
+    prev = 0
+    for g in range(E + B):
+        end = cu[g]
+        if end > prev:
+            expert_id = g if g < E else e2c[g - E]
+            segments.append((g, prev, end, expert_id))
+        prev = end
+
+    return MoonepIterPlan(
+        send_row_index=send_row_index,
+        send_entry_row=send_entry_row,
+        send_entry_k=send_entry_k,
+        place_loffs=place_loffs,
+        weight_loffs=weight_loffs,
+        zero_rows=zero_rows,
+        dup_primary=dup_primary,
+        dup_target=dup_target,
+        in_splits_h=send_counts_d.to(torch.int32),
+        out_splits_h=recv_counts_d.to(torch.int32),
+        in_splits_w=send_entry_counts_d.to(torch.int32),
+        out_splits_w=recv_entry_counts_d.to(torch.int32),
+        send_counts=send_counts,
+        recv_counts=recv_counts,
+        send_entry_counts=send_entry_counts,
+        recv_entry_counts=recv_entry_counts,
+        gemm_segments=segments,
+        etc_cpu=etc_cpu,
+        n_recv=sum(recv_counts),
+        n_ent_recv=sum(recv_entry_counts),
+        total_rows=cu[-1],
+        max_pair_rows=max_pair_rows,
+        max_pair_ents=max_pair_ents,
+    )
+
+
+def check_moonep_iter_plan(ip: MoonepIterPlan, lay: RankCommLayout,
+                           plan, rank: int) -> None:
+    """Loud bitwise drift guard: the iteration plan must reproduce the
+    setup CPU RankCommLayout (dup pairs compared as a SET — their order is
+    documented-unstable upstream, see moonep_oracle/dedup_check.py)."""
+    K = plan.cfg.K
+    assert torch.equal(ip.send_row_index.cpu(), lay.send_row_index)
+    assert torch.equal(ip.send_entry_row.cpu() * K + ip.send_entry_k.cpu(),
+                       lay.send_entry_index)
+    assert torch.equal(ip.place_loffs.cpu(), lay.place_loffs)
+    assert torch.equal(ip.weight_loffs.cpu(), lay.weight_loffs)
+    assert torch.equal(ip.zero_rows.cpu(), lay.zero_rows)
+    got = torch.stack([ip.dup_target.cpu(), ip.dup_primary.cpu()])
+    ref = torch.stack([lay.dup_target, lay.dup_primary])
+    got = got[:, got[0].argsort()]
+    ref = ref[:, ref[0].argsort()]
+    assert torch.equal(got, ref), "dup pair set drift"
+    assert ip.send_counts == lay.send_counts, "send splits drift"
+    assert ip.recv_counts == lay.recv_counts, "recv splits drift"
+    assert ip.send_entry_counts == lay.send_entry_counts
+    assert ip.recv_entry_counts == lay.recv_entry_counts
+    assert ip.gemm_segments == lay.gemm_segments, "gemm segments drift"
 
 
 class MoonEPLayer0Runner:
@@ -615,6 +801,10 @@ class MoonEPLayer0Runner:
         rows, ents = self._pair_count_matrices()
         max_split_rows = max(int(rows.max()), 1)
         max_split_ents = max(int(ents.max()), 1)
+        # kept for bind_iter_plan's overflow asserts (the op never checks
+        # per-call splits against max_split; silent staging overflow)
+        self._a2a_max_rows = max_split_rows
+        self._a2a_max_ents = max_split_ents
         self._a2a_hidden = flux.All2AllSingle(
             self.group, max_split_rows, self.cfg.H, local_world_size,
             self.dtype,
@@ -684,6 +874,48 @@ class MoonEPLayer0Runner:
         self._prefetch_chunk_bytes = chunk_bytes
         self._prefetch_device_kernel = device_kernel
         self.prefetch_impl = "getmem"
+
+    # -- per-iteration plan binding (SCHEMA rule 5) -----------------------
+
+    def bind_iter_plan(self, ip: MoonepIterPlan):
+        """Swap the routing-derived index state for this iteration's plan
+        (called inside the timed `plan` bracket, after the replicated
+        planner kernel + derive_moonep_layout_gpu). Buffer allocations
+        stay ctor-sized; the static-routing contract is asserted loudly."""
+        assert ip.n_recv == self.n_recv, (ip.n_recv, self.n_recv)
+        assert ip.n_ent_recv == self.n_ent_recv, (
+            ip.n_ent_recv, self.n_ent_recv)
+        assert ip.total_rows == self.total_rows, (
+            ip.total_rows, self.total_rows)
+        # prefetch pairs were derived at setup from experts_to_copy; a
+        # drift here would silently mis-prefetch — fail loudly instead.
+        assert torch.equal(ip.etc_cpu, self.plan.experts_to_copy), (
+            "iteration experts_to_copy drifted from the setup plan")
+        self.send_row_index = ip.send_row_index
+        self.send_entry_row = ip.send_entry_row
+        self.send_entry_k = ip.send_entry_k
+        self.place_loffs = ip.place_loffs
+        self.weight_loffs = ip.weight_loffs
+        self.zero_rows = ip.zero_rows
+        self.dup_primary = ip.dup_primary
+        self.dup_target = ip.dup_target
+        self.lay = _dc_replace(
+            self.lay,
+            send_counts=ip.send_counts,
+            recv_counts=ip.recv_counts,
+            send_entry_counts=ip.send_entry_counts,
+            recv_entry_counts=ip.recv_entry_counts,
+            gemm_segments=ip.gemm_segments,
+        )
+        if self.transport == "nvshmem":
+            assert ip.max_pair_rows <= self._a2a_max_rows, (
+                ip.max_pair_rows, self._a2a_max_rows)
+            assert ip.max_pair_ents <= self._a2a_max_ents, (
+                ip.max_pair_ents, self._a2a_max_ents)
+            self._in_splits_h = ip.in_splits_h
+            self._out_splits_h = ip.out_splits_h
+            self._in_splits_w = ip.in_splits_w
+            self._out_splits_w = ip.out_splits_w
 
     # -- timed phases -----------------------------------------------------
 

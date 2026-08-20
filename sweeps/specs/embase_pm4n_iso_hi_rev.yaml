@@ -1,0 +1,45 @@
+# Expert-movement baselines, rule-5 accounting debut — HIGH budget rungs
+# (b16-b64, correctness OFF per protocol rule 3
+# — the torch reference dominates/OOMs at large budgets; b32k8 harness-OOM
+# history noted). Qwen3 architecture (G=128, topk=8, H=4096,
+# layer-92 trace routing). Arms: the three AUTHENTIC baselines only, l0 +
+# l01 each — EPLB (static placement, direct wire = DeepEP-LL/decode
+# transport class; eplb_l01 debut), EPIC (hc m1 + in-kernel fused
+# migration = the paper-faithful system config), MoonEP (staged faithful,
+# ported authentic planner per iteration). NO flux-native arms (user
+# scope 2026-08-20). Reversed twin: embase_pm4n_iso_hi_rev.yaml.
+platform: perlmutter
+nodes: 4
+variants:
+  - moonep_l01_nvshmem_getmem
+  - moonep_nvshmem_getmem
+  - epic_l01_hc_m1_mig_fused
+  - epic_hc_m1_mig_fused
+  - eplb_l01
+  - eplb
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib:
+  - 16
+  - 32
+  - 64
+topk: 8
+G: 128
+H: 4096
+ffn_hidden: 4096
+chunk_bytes: 8192
+dtype: bfloat16
+modes:
+  - isolated
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+matrix_instance: "001"
+retries: 1
+timeout_s: 1800
+idle_timeout_s: 300
+skip_correctness: true
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+notes: "REVERSED-ORDER twin (NR-14 method rule: repeat + reverse arm order). rule-5 new-accounting baselines debut (SCHEMA protocol rule 5): per-iteration GPU planning timed inside the bracket (plan_ms; timing_accounting=per_iter_gpu; moonep runs the AUTHENTIC ported fused planner kernel, moonep_planner_impl=cute_port). eplb_l01 debut (staged combine mirror, comb_dst_slot deterministic reduce). EPIC arm = hc m1 + --migration inkernel (paper-faithful fused swap; timed GPU decision consuming the iteration loads). NEVER compare planning-inclusive totals against pre-2026-08-20 capsules; quote plan_ms/total_ms per arm."

@@ -14,20 +14,32 @@ plus replicas in the same nlp = G/W + R_red slot budget as the ultraep arm —
 from a PREDICTED per-expert load vector (--eplb_load_file: the full trace
 pool histogram; absent = the batch's own load, the degenerate self-oracle).
 Per iteration there is NO solver and NO weight movement; the one-time weight
-placement runs untimed at setup and is book-kept as
+placement is a deployment-scope decision (SCHEMA rule 5 boundary: it is
+pool-derived, not batch-derived), wall-clocked once and book-kept as
 eplb_weight_place_bytes / eplb_weight_place_ms_oneshot.
 
+Timing accounting = per_iter_gpu (SCHEMA protocol rule 5, 2026-08-20):
+every batch-derived quantity is recomputed PER ITERATION on device inside
+the event bracket by flux.testing.eplb_semantics.EplbIterPlanner; nothing
+routing-derived is cached across iterations. The setup-time CPU layout
+build survives only as buffer sizing, the correctness reference, and the
+loud bitwise drift guard (planner.check_against at setup).
+
 Pipeline per iteration (each phase bracketed with CUDA events):
-  plan_comm  all_gather of the [W, G] int32 per-rank expert loads. KEPT per
-             iteration by design: the two-sided a2av needs recv splits, which
-             a real deployment derives from exactly this exchange — EPLB
-             removes the solver and the weight movement from the critical
-             path, not the counts exchange. Never claim plan_comm = 0.
+  plan_comm  local [G] load histogram (bincount of this rank's routing,
+             derived in-bracket) + all_gather to [W, G]. KEPT per iteration
+             by design: the two-sided a2av needs recv splits, which a real
+             deployment derives from exactly this exchange — EPLB removes
+             the solver and the weight movement from the critical path,
+             not the counts exchange. Never claim plan_comm = 0.
+  plan       EplbIterPlanner.derive on device: quotas -> rank-quota
+             prefixes -> reroute expansion -> splits/scatter/segment/
+             combine indices, one batched D2H (reported as plan_ms)
   pack       rerouted-row gather, (physical expert, token)-sorted
   comm       a2av of token rows + per-entry fp32 route probs (NO dedup,
              ultraep-identical wire semantics; eplb_dup_rows audits)
   scatter    placement into per-physical-expert segments
-  prefetch   EMPTY (~0 by construction; the event is kept so the six phase
+  prefetch   EMPTY (~0 by construction; the event is kept so the phase
              names stay capsule-comparable across the EP arms — this
              near-zero column vs moonep prefetch / ultraep weight_sync IS
              EPLB's headline recurring-cost advantage)
@@ -35,6 +47,16 @@ Pipeline per iteration (each phase bracketed with CUDA events):
              residual imbalance of the static placement on THIS batch is the
              measurement (vs moonep's constant S*K and ultraep's per-batch
              re-solve)
+  --layers l01 appends the staged combine mirror:
+  act        exact GELU on the GEMM0 output
+  gemm2      down-projection over the same segments (slot_fc2)
+  cpack      gather to recv order + fp32 route-prob scale (EPIC non-hc form;
+             EPLB has no dedup, so no reverse-dedup step)
+  comb       reverse a2av, dispatch splits swapped on the same op pair
+  acc        deterministic home accumulation (comb_dst_slot permutation
+             index_copy_ + terminal view(S, K, H).sum(1))
+Emitted for check_l01_identity: e2e_ms (plan-end -> last), l0_ms, act_ms,
+l1_ms (l01 runs; e2e_ms also on l0 runs as plan-end -> gemm).
 
 Token -> physical instance split: equal split of each expert's batch load
 across its instances (largest-remainder), decomposed per source by the
@@ -69,6 +91,7 @@ from flux.testing import (
 from flux.testing.eplb_semantics import (
     EPLB_POLICIES,
     EPLBLayer0Runner,
+    EplbIterPlanner,
     build_eplb_plan,
     predicted_rows_per_rank,
     weight_placement_pairs,
@@ -128,16 +151,20 @@ def assert_node_major_ranks():
 @torch.no_grad()
 def perf_eplb(
     runner: EPLBLayer0Runner,
+    planner,
     ctx: MoeMlp1Ctx,
     probs_shard: torch.Tensor,
-    loads_shard: torch.Tensor,
     loads_gather_buf: torch.Tensor,
     gemm_only_op,
     warmup_iters: int,
     iters: int,
 ):
+    l01 = runner.layers == "l01"
     total_iters = warmup_iters + iters
-    names = ["start", "plan_comm", "pack", "comm", "scatter", "prefetch", "gemm"]
+    names = ["start", "plan_comm", "plan", "pack", "comm", "scatter",
+             "prefetch", "gemm"]
+    if l01:
+        names += ["act", "gemm2", "cpack", "comb", "acc"]
     ev = {
         name: [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
         for name in names
@@ -156,12 +183,17 @@ def perf_eplb(
         nvtx_tag = f"iter{i}_warmup" if i < warmup_iters else f"iter{i}"
         with torch.cuda.nvtx.range(nvtx_tag):
             ev["start"][i].record()
-            # Recurring counts exchange: recv splits are derived from this
-            # (the placement itself is static — no solver runs here).
+            # Recurring counts derivation + exchange (rule 5: the histogram
+            # is batch-derived, so it is computed in-bracket every
+            # iteration; the placement itself is static — no solver here).
             torch.distributed.all_gather_into_tensor(
-                loads_gather_buf, loads_shard, group=TP_GROUP
+                loads_gather_buf, planner.local_loads(), group=TP_GROUP
             )
             ev["plan_comm"][i].record()
+            # Per-iteration on-device planning (rule 5): NOTHING derived
+            # from routing is carried across iterations.
+            runner.bind_iter_plan(planner.derive(loads_gather_buf))
+            ev["plan"][i].record()
             runner.pack(ctx.inputs_shard, probs_shard)
             ev["pack"][i].record()
             runner.a2av()
@@ -169,24 +201,51 @@ def perf_eplb(
             runner.place()
             ev["scatter"][i].record()
             # No per-iteration weight movement: prefetch is an empty phase,
-            # recorded for six-name parity (reads ~0 by construction).
+            # recorded for phase-name parity (reads ~0 by construction).
             ev["prefetch"][i].record()
             runner.gemm(gemm_only_op)
             ev["gemm"][i].record()
+            if l01:
+                runner.act()
+                ev["act"][i].record()
+                runner.gemm2(gemm_only_op)
+                ev["gemm2"][i].record()
+                runner.combine_pack()
+                ev["cpack"][i].record()
+                runner.combine_a2av()
+                ev["comb"][i].record()
+                runner.combine_place_reduce()
+                ev["acc"][i].record()
 
-    keys = ["plan_comm_ms", "pack_ms", "comm_ms", "scatter_ms",
-            "prefetch_ms", "gemm_ms", "total_ms"]
+    seq = ["plan_comm", "plan", "pack", "comm", "scatter", "prefetch", "gemm"]
+    if l01:
+        seq += ["act", "gemm2", "cpack", "comb", "acc"]
+    keys = [f"{name}_ms" for name in seq] + ["total_ms", "e2e_ms", "l0_ms"]
+    if l01:
+        keys += ["l1_ms"]
     times = {k: [] for k in keys}
+    last = "acc" if l01 else "gemm"
     for i in range(total_iters):
-        ev["gemm"][i].synchronize()
+        ev[last][i].synchronize()
         if i < warmup_iters:
             continue
-        seq = ["plan_comm", "pack", "comm", "scatter", "prefetch", "gemm"]
         prev = ev["start"][i]
         for name in seq:
             times[f"{name}_ms"].append(prev.elapsed_time(ev[name][i]))
             prev = ev[name][i]
-        times["total_ms"].append(ev["start"][i].elapsed_time(ev["gemm"][i]))
+        times["total_ms"].append(ev["start"][i].elapsed_time(ev[last][i]))
+        # check_l01_identity anchors: e2e = plan-end -> last (the
+        # comm-start -> gemm-finish convention, planning excluded from e2e
+        # but inside total_ms per rule 5).
+        e2e = ev["plan"][i].elapsed_time(ev[last][i])
+        l0 = ev["plan"][i].elapsed_time(ev["gemm"][i])
+        times["e2e_ms"].append(e2e)
+        times["l0_ms"].append(l0)
+        if l01:
+            # act_ms (the gemm -> act phase delta, appended by the seq
+            # loop above) is exactly the activation span the identity
+            # check consumes; l1 = e2e - l0 - act by construction.
+            times["l1_ms"].append(e2e - l0 - times["act_ms"][-1])
     if isolated:
         times["iso_sync_ms"] = iso_sync_times[warmup_iters:]
     return times
@@ -287,10 +346,44 @@ def check_correctness(runner, ctx, plan, topk_all, w_all, gemm_only_op,
             ok_allclose = False
             print(f"❌ rank {rank}: gemm segment slot={p} expert={logical} mismatch")
 
+    # Full-journey check (--layers l01): final [S, H] vs a torch chain from
+    # the canonical generators, mimicking the pipeline's dtype casts stage
+    # by stage (GEMM0 out -> gelu -> GEMM1 out -> fp32 scale -> wire dtype)
+    # so tolerances stay the house thresholds; home accumulation in fp32.
+    # Staging coverage is structurally guaranteed by the comb_dst_slot
+    # permutation (CPU-tier tested in test_ep_gpu_plan.py).
+    if runner.layers == "l01":
+        x = ctx.inputs_shard.float()
+        topk = topk_all[rank].long()
+        ref = torch.zeros(cfg.S, cfg.H, dtype=torch.float32,
+                          device=runner.device)
+        for l in range(cfg.G):
+            toks = (topk == l).any(dim=1).nonzero(as_tuple=True)[0]
+            if toks.numel() == 0:
+                continue
+            toks_dev = toks.to(runner.device)
+            fc1 = runner.make_canonical_fc1(l).to(runner.device).float()
+            fc2 = runner.make_canonical_fc2(l).to(runner.device).float()
+            h0 = (x[toks_dev] @ fc1.t()).to(runner.dtype)
+            a = torch.nn.functional.gelu(h0)
+            y1 = (a.float() @ fc2.t()).to(runner.dtype)
+            wgt = w_all[rank][toks, l].to(runner.device).unsqueeze(1)
+            contrib = (y1.float() * wgt).to(runner.dtype).float()
+            ref.index_add_(0, toks_dev, contrib)
+        try:
+            flux.torch_allclose(runner.final_out.float(), ref,
+                                atol=atol, rtol=rtol)
+        except Exception:
+            ok_allclose = False
+            diff = (runner.final_out.float() - ref).abs()
+            print(f"❌ rank {rank}: l01 final output mismatch "
+                  f"(max abs {float(diff.max()):.4f})")
+
     status = "✅" if (ok_bitwise and ok_allclose) else "❌"
+    what = "full journey" if runner.layers == "l01" else "gemm"
     print(f"{status} rank {rank}: eplb dispatch content "
           f"{'bitwise-exact' if ok_bitwise else 'MISMATCH'}, "
-          f"gemm {'allclose' if ok_allclose else 'MISMATCH'}")
+          f"{what} {'allclose' if ok_allclose else 'MISMATCH'}")
     RECORDER.emit_correctness(bitwise=ok_bitwise, allclose=ok_allclose)
     assert ok_bitwise and ok_allclose
     return ok_bitwise and ok_allclose
@@ -313,6 +406,10 @@ def parse_args():
     parser.add_argument("--dtype", default="bfloat16",
                         choices=["bfloat16", "float16"])
     parser.add_argument("--profile", default=False, action="store_true")
+    parser.add_argument("--layers", default="l0", choices=["l0", "l01"],
+                        help="l0 = dispatch + GEMM0; l01 appends the staged"
+                        " combine mirror (act/gemm2/cpack/comb/acc);"
+                        " requires --weight_place fc1fc2")
     # --- EPLB knobs ---
     parser.add_argument("--eplb_load_file", type=str, default=None,
                         help="predicted per-expert load JSON (the "
@@ -422,9 +519,11 @@ if __name__ == "__main__":
             print("eplb: NO --eplb_load_file; placement from the batch's own "
                   "load (self-oracle — fine for smoke, not a headline cell)")
 
-    # Static placement, computed identically on every rank at setup
-    # (untimed-metadata contract; the vendored algorithm is deterministic
-    # per software stack, and the plan-hash all-gather below is the guard).
+    # Static placement, computed identically on every rank at setup — a
+    # deployment-scope (pool-derived) decision, one-shot by the rule-5
+    # accounting boundary; batch-derived planning is the per-iteration
+    # timed EplbIterPlanner below. The vendored algorithm is deterministic
+    # per software stack, and the plan-hash all-gather below is the guard.
     t0 = time.perf_counter()
     plan = build_eplb_plan(cfg, tpe, pool_load, args.eplb_policy, num_nodes,
                            rebalance_experts)
@@ -456,10 +555,22 @@ if __name__ == "__main__":
     if args.transport == "nvshmem":
         # collective + device-syncing ctor: setup only, never timed
         runner.enable_nvshmem(DIST_ENV.LOCAL_WORLD_SIZE, args.num_comm_sm)
+    if args.layers == "l01":
+        runner.enable_layer1()
 
-    # ONE-TIME weight placement (the whole point of the arm): untimed
-    # w.r.t. the phase loop, wall-clocked once and book-kept.
+    # ONE-TIME weight placement (the whole point of the arm): a
+    # deployment-scope decision (rule-5 boundary), wall-clocked once and
+    # book-kept — never in the phase loop.
     place_bytes, place_ms = runner.place_weights(TP_GROUP)
+
+    # Per-iteration GPU planner (SCHEMA rule 5). The setup CPU layout in
+    # runner.lay stays only for buffer sizing + the correctness reference;
+    # the drift guard below fails loudly if the device planner ever
+    # diverges from it.
+    planner = EplbIterPlanner(
+        plan, rank, torch.device(torch.cuda.current_device()), topk_all,
+        want_comb=(args.layers == "l01"),
+    )
 
     # Per-entry route probs, replicated deterministically so receivers can
     # verify without an extra exchange (values still travel the wire).
@@ -467,9 +578,18 @@ if __name__ == "__main__":
     w_all = torch.rand(W, S, args.G, dtype=torch.float32, generator=gen)
     probs_shard = w_all[rank].cuda()
 
-    # Recurring counts exchange payload: this rank's [G] load histogram.
-    loads_shard = tpe[rank].cuda().contiguous()
+    # Gather buffer for the recurring counts exchange (the payload itself,
+    # planner.local_loads(), is derived in-bracket every iteration).
     loads_gather_buf = torch.zeros(W * args.G, dtype=torch.int32, device="cuda")
+
+    # Setup-time drift guard (untimed): one derive from the known loads
+    # must reproduce the CPU reference layout bitwise, and the histogram
+    # derivation must match loads_from_topk.
+    assert torch.equal(planner.local_loads().cpu(), tpe[rank])
+    loads_gather_buf.copy_(tpe.reshape(-1).to(loads_gather_buf.device))
+    ip0 = planner.derive(loads_gather_buf)
+    planner.check_against(ip0, runner.lay)
+    runner.bind_iter_plan(ip0)
 
     gemm_only_op = flux.GemmOnly(
         moe_ctx.inputs.dtype,
@@ -507,8 +627,11 @@ if __name__ == "__main__":
         print(f"remote token fraction (no-locality split): {remote_frac:.4f}")
         print(f"one-time weight placement: {place_ms:.1f} ms wall "
               f"(recv {place_bytes} B on rank 0)")
-        print(f"plan_host_ms (untimed-metadata contract): {plan_host_ms:.1f}")
+        print(f"plan_host_ms (setup reference build; the timed planner is "
+              f"the per-iteration plan_ms, SCHEMA rule 5): {plan_host_ms:.1f}")
         RECORDER.emit_info(
+            timing_accounting="per_iter_gpu",
+            eplb_layers=args.layers,
             ntokens=ntokens,
             tokens_per_rank=S,
             gemm_rows_per_rank=gemm_rows,
@@ -546,7 +669,7 @@ if __name__ == "__main__":
         group=TP_GROUP,
     ):
         iter_times = perf_eplb(
-            runner, moe_ctx, probs_shard, loads_shard, loads_gather_buf,
+            runner, planner, moe_ctx, probs_shard, loads_gather_buf,
             gemm_only_op, args.warmup_iters, args.iters,
         )
 

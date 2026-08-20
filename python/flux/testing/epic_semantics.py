@@ -57,7 +57,7 @@ ungrouped scatter, and cross-m output identity is a hard invariant.
 """
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as _dc_replace
 
 import torch
 
@@ -985,6 +985,402 @@ def swap_weight_ops(swaps, rank: int, slot_fc1, slot_fc2, dist, group):
 
 
 # ---------------------------------------------------------------------------
+# Per-iteration timed GPU planning (SCHEMA rule 5), m=1 scope
+# ---------------------------------------------------------------------------
+
+
+def slot_loads_from_rqp(rqp_all: torch.Tensor, l2p: torch.Tensor,
+                        lcnts: torch.Tensor, P: int) -> torch.Tensor:
+    """[P] int64 batch tokens per physical slot from the iteration's
+    rank-quota prefixes. Parity target: slot_batch_loads (:827-842) —
+    identical values when rqp_all equals plan.rank_quota_prefix."""
+    dev = rqp_all.device
+    rqp = rqp_all.long()
+    alloc = rqp.clone()
+    alloc[:, :, 1:] -= rqp[:, :, :-1]
+    inst = alloc.sum(dim=0)                          # [G, Cmax]
+    Cmax = inst.shape[1]
+    j = torch.arange(Cmax, device=dev, dtype=torch.int64).unsqueeze(0)
+    valid = j < lcnts.long().unsqueeze(1)
+    out = torch.zeros(P, dtype=torch.int64, device=dev)
+    out[l2p.long()[valid]] = inst[valid]             # l2p injective on valid
+    return out
+
+
+def plan_migration_swaps_gpu(p2l: torch.Tensor, slot_loads: torch.Tensor,
+                             tau_tokens: float, ranks_per_node: int,
+                             nlp: int, G: int):
+    """Device (or cpu-tensor) twin of plan_migration_swaps: identical swap
+    list, tie-breaks reproduced exactly (stable descending rank sort; pair
+    argmax key gain*nlp^2 + (nlp^2-1-flat) == strict-> scan, ties ->
+    lowest (a, b)). One small D2H at the end; the tau gate is applied
+    host-side on the exact integer gains.
+
+    Consumes the ITERATION's slot loads (rule-5 fidelity fix: the decision
+    reads the freshly derived loads, closing the never-read
+    loads_gather_buf gap of the pre-2026-08-20 driver)."""
+    dev = slot_loads.device
+    P = slot_loads.numel()
+    R = P // nlp
+    D = ranks_per_node
+    num_nodes = R // D
+    p2l = p2l.long()
+    sl = slot_loads.long()
+    gl = sl.view(R, nlp).sum(dim=1)
+
+    vals, idx = torch.sort(gl.view(num_nodes, D), dim=1, descending=True,
+                           stable=True)
+    order = idx + (torch.arange(num_nodes, device=dev,
+                                dtype=torch.int64).unsqueeze(1) * D)
+    half = D // 2
+    if half == 0:
+        return []
+    rh = order[:, :half]                             # [nodes, half]
+    rl = order.flip(1)[:, :half]
+    Lh, Ll = gl[rh], gl[rl]
+
+    has = torch.zeros(R, G, dtype=torch.bool, device=dev)
+    valid = p2l >= 0
+    rank_of_slot = torch.arange(P, device=dev, dtype=torch.int64) // nlp
+    has[rank_of_slot[valid], p2l[valid]] = True
+
+    slots = torch.arange(nlp, device=dev, dtype=torch.int64)
+    pa = rh.unsqueeze(-1) * nlp + slots              # [nodes, half, nlp]
+    pb = rl.unsqueeze(-1) * nlp + slots
+    la, lb = p2l[pa], p2l[pb]
+    wa, wb = sl[pa], sl[pb]
+    in_l = has[rl.unsqueeze(-1).expand_as(la), la.clamp(min=0)] & (la >= 0)
+    in_h = has[rh.unsqueeze(-1).expand_as(lb), lb.clamp(min=0)] & (lb >= 0)
+
+    la_e, lb_e = la.unsqueeze(-1), lb.unsqueeze(-2)  # [nodes, half, nlp, nlp]
+    wa_e, wb_e = wa.unsqueeze(-1), wb.unsqueeze(-2)
+    Lh_e = Lh.unsqueeze(-1).unsqueeze(-1)
+    Ll_e = Ll.unsqueeze(-1).unsqueeze(-1)
+    gain = (torch.maximum(Lh_e, Ll_e)
+            - torch.maximum(Lh_e - wa_e + wb_e, Ll_e - wb_e + wa_e))
+    invalid = (
+        (la_e == lb_e)
+        | (in_l.unsqueeze(-1) & (lb_e != la_e))
+        | (in_h.unsqueeze(-2) & (la_e != lb_e))
+        | (gain <= 0)
+        | (Lh_e <= Ll_e)
+    )
+    n2 = nlp * nlp
+    flat_idx = torch.arange(n2, device=dev,
+                            dtype=torch.int64).view(1, 1, nlp, nlp)
+    key = (gain * n2 + (n2 - 1 - flat_idx)).masked_fill(invalid, -1)
+    best_key, best_flat = key.view(num_nodes, half, n2).max(dim=-1)
+    best_gain = torch.gather(gain.view(num_nodes, half, n2), -1,
+                             best_flat.unsqueeze(-1)).squeeze(-1)
+
+    blob = torch.stack([
+        rh, rl, best_flat // nlp, best_flat % nlp, best_gain,
+        (best_key >= 0).long(), (Lh > Ll).long(),
+    ], dim=-1).reshape(-1, 7).cpu()                  # the ONE D2H
+    swaps = []
+    for row in blob.tolist():
+        r_h, r_l, a, b, g_val, found, heavier = row
+        if heavier and found and g_val > tau_tokens:
+            swaps.append((r_h, a, r_l, b, int(g_val)))
+    return swaps
+
+
+@dataclass
+class EpicIterPlan:
+    """One iteration's routing-derived plan for the m=1 EPIC arms, produced
+    on-device by EpicIterPlanner.derive inside the timed `plan` bracket."""
+
+    # direct/probs-wire + gemm + l01 core (group 0 == everything at m=1)
+    send_row_index: torch.Tensor
+    send_entry_logical: torch.Tensor
+    place_slots: torch.Tensor
+    comb_dst_slot: torch.Tensor      # None on l0
+    in_splits: torch.Tensor          # [R] int32 device
+    out_splits: torch.Tensor
+    send_counts: list
+    recv_counts: list
+    seg_rows: list
+    seg_start: list
+    gemm_segments: list
+    n_recv: int
+    max_pair_rows: int
+    # migration decision input (device, from this iteration's rqp)
+    slot_loads: torch.Tensor
+    # hc transport (None-family when hc disabled)
+    hc_splits: torch.Tensor          # [E_virt] int32 device
+    hc_scatter: torch.Tensor         # [ntokens, K_g] int32 device
+    hc_sps_cpu: torch.Tensor         # [R, E_virt] int32 CPU (op host arg)
+    hc_uc_cpu: torch.Tensor          # [R, R+nn] int32 CPU (op host arg)
+    hc_pad_mine: int
+    hc_kg_iter: int
+    hc_m_this: int
+    # hc combine (l01 x hc; None-family otherwise)
+    hcc_routing: torch.Tensor        # flattened scatter int32 device
+    hcc_pack: torch.Tensor
+    hcc_red: torch.Tensor
+    hcc_uc: torch.Tensor             # CPU int32 (op host arg)
+    hcc_wire: list                   # [wire_ptr, wire_copy] device or None
+    hcc_redcsr: list                 # [red_ptr, red_row] device or None
+
+
+class EpicIterPlanner:
+    """Per-iteration device planner for the EPIC m=1 arms (SCHEMA rule 5):
+    quotas (D6), the reroute expansion, wire/scatter/segment indices, the
+    hc virtual-space metadata, and the hc-combine index sets are all
+    recomputed each iteration on device. One-shot ctor state: the (mutable,
+    migration-refreshed) placement tensors and the replicated routing.
+
+    Scope: m == 1 and the D6 router only — the sweep arms. m > 1 / loccap
+    stays on the legacy setup-time path (timing_accounting=
+    legacy_untimed_plan)."""
+
+    def __init__(self, plan: UltraEPPlan, rank: int, device,
+                 topk_all: torch.Tensor, local_world_size: int,
+                 l01: bool = False, hc: bool = False, hcc: bool = False,
+                 kg_frozen: int = None):
+        cfg = plan.cfg
+        self.cfg = cfg
+        self.plan = plan
+        self.rank = rank
+        self.device = device
+        self.l01 = l01
+        self.hc = hc
+        self.hcc = hcc
+        self.L = local_world_size
+        self.nn = cfg.R // local_world_size
+        self.gpe = cfg.nlp + 1
+        self.E_virt = cfg.R * self.gpe
+        self.kg_frozen = kg_frozen
+        self.topk_all = topk_all.long().to(device)
+        ntokens = cfg.R * cfg.S
+        self._home_of_token = (
+            torch.arange(ntokens, device=device, dtype=torch.int64) // cfg.S)
+        self._pad_vslot = self._home_of_token * self.gpe + cfg.nlp
+        self.refresh_placement()
+
+    def refresh_placement(self):
+        """(Re)upload the placement tensors — at ctor and after every
+        applied migration (the swap mutates plan.p2l/l2p in place)."""
+        dev = self.device
+        self.l2p = self.plan.l2p.to(dev)
+        self.lcnts = self.plan.lcnts.to(dev)
+        self.p2l = self.plan.p2l.long().to(dev)
+        self._p2l_host = self.plan.p2l.long().clone()
+
+    def local_loads(self) -> torch.Tensor:
+        return torch.bincount(self.topk_all[self.rank].reshape(-1),
+                              minlength=self.cfg.G).to(torch.int32)
+
+    def derive(self, loads_gather_buf: torch.Tensor) -> EpicIterPlan:
+        from .ep_gpu_plan import (
+            comb_dst_slot_from_topk,
+            d6_rank_quota_prefix,
+            direct_layout_entries,
+            reroute_expand_all_gpu,
+            _run_ordinal,
+        )
+
+        cfg = self.cfg
+        R, G, S, K, nlp = cfg.R, cfg.G, cfg.S, cfg.K, cfg.nlp
+        dev = self.device
+        tpe_all = loads_gather_buf.view(R, G)
+        rqp = d6_rank_quota_prefix(tpe_all, self.lcnts,
+                                   cfg.max_replicas_dim)
+        tok_all, phys_all = reroute_expand_all_gpu(
+            rqp, self.l2p, self.lcnts, self.topk_all, cfg.interleave)
+        order = torch.argsort(phys_all * (S + 1) + tok_all, dim=1,
+                              stable=True)
+        ent_tok = torch.gather(tok_all, 1, order)
+        ent_phys = torch.gather(phys_all, 1, order)
+
+        lay = direct_layout_entries(ent_tok, ent_phys, self.rank, nlp, R)
+        my_tok = lay["my_tok"]
+        send_entry_logical = self.p2l[lay["my_phys"]]
+        comb_dst = (
+            comb_dst_slot_from_topk(self.topk_all[self.rank], my_tok,
+                                    send_entry_logical, G)
+            if self.l01 else None
+        )
+        slot_loads = slot_loads_from_rqp(rqp, self.l2p, self.lcnts, cfg.P)
+
+        d2h = [lay["seg_rows"], lay["seg_start"], lay["in_splits"].long(),
+               lay["out_splits"].long(), lay["pair_max"].reshape(1)]
+
+        hc_state = {}
+        if self.hc:
+            gpe, E_virt = self.gpe, self.E_virt
+            ntokens = R * S
+            kg = self.kg_frozen
+            gts = (torch.arange(R, device=dev,
+                                dtype=torch.int64).unsqueeze(1) * S
+                   + ent_tok).reshape(-1)
+            vsl = ((ent_phys // nlp) * gpe + ent_phys % nlp).reshape(-1)
+            o2 = torch.argsort(gts, stable=True)
+            gts_s, vsl_s = gts[o2], vsl[o2]
+            occ = _run_ordinal(gts_s)
+            kg_iter = occ.max() + 1              # device; asserted via D2H
+            vce = torch.full((ntokens, kg), -1, dtype=torch.int64,
+                             device=dev)
+            vce[gts_s, occ.clamp(max=kg - 1)] = vsl_s
+            pad_mask = vce < 0
+            pad_rows = torch.zeros(R, dtype=torch.int64,
+                                   device=dev).index_add_(
+                0, self._home_of_token, pad_mask.sum(1))
+            vce = torch.where(pad_mask,
+                              self._pad_vslot.unsqueeze(1).expand_as(vce),
+                              vce)
+            vce_flat = vce.reshape(-1)
+            scatter_index = (vce_flat.argsort(stable=True).argsort()
+                             .int().view(ntokens, kg))
+            splits = torch.bincount(vce_flat, minlength=E_virt).int()
+            src_of_copy = self._home_of_token.repeat_interleave(kg)
+            sps = torch.bincount(src_of_copy * E_virt + vce_flat,
+                                 minlength=R * E_virt).view(R, E_virt)
+            owner = vce // gpe
+            flags = torch.zeros(ntokens, R, dtype=torch.bool, device=dev)
+            flags.scatter_(1, owner, True)
+            u_mat = flags.view(R, S, R).sum(1)
+            U_mat = (flags.view(ntokens, self.nn, self.L).any(dim=2)
+                     .view(R, S, self.nn).sum(1))
+            uc = torch.cat([u_mat, U_mat], dim=1)
+            m_per_rank = splits.long().view(R, gpe).sum(1)
+            d2h += [sps.reshape(-1), uc.reshape(-1), pad_rows,
+                    m_per_rank, kg_iter.reshape(1)]
+            hc_state = dict(vce=vce, scatter_index=scatter_index,
+                            splits=splits)
+
+        hcc_state = {}
+        if self.hcc:
+            from .a2av_combine_indices import (
+                build_a2av_combine_indices_dev,
+                build_a2av_compress_indices_dev,
+                build_a2av_unique_counts_dev,
+            )
+            routing = hc_state["scatter_index"].flatten()
+            pack_idx, red_idx = build_a2av_combine_indices_dev(
+                routing, hc_state["splits"], self.rank, R, self.kg_frozen)
+            hcc_state = dict(routing=routing.int(), pack=pack_idx,
+                             red=red_idx, uc=None, wire=None, redcsr=None)
+            if self.nn > 1:
+                uc_t = build_a2av_unique_counts_dev(
+                    hc_state["vce"], R, self.nn, self.gpe)
+                wp, wc, rp, rr = build_a2av_compress_indices_dev(
+                    routing, hc_state["splits"], uc_t, self.rank, R,
+                    self.nn, self.kg_frozen)
+                hcc_state.update(uc=uc_t.cpu(), wire=[wp, wc],
+                                 redcsr=[rp, rr])
+
+        # the batched D2H of the phase
+        blob = torch.cat([t.reshape(-1) for t in d2h]).cpu()
+        off = 0
+
+        def take(n):
+            nonlocal off
+            out = blob[off:off + n]
+            off += n
+            return out
+
+        seg_rows_h = take(nlp).tolist()
+        seg_start_h = take(nlp).tolist()
+        send_counts = take(R).tolist()
+        recv_counts = take(R).tolist()
+        max_pair_rows = int(take(1))
+        hc_kw = dict(hc_splits=None, hc_scatter=None, hc_sps_cpu=None,
+                     hc_uc_cpu=None, hc_pad_mine=0, hc_kg_iter=0,
+                     hc_m_this=0)
+        if self.hc:
+            sps_cpu = (take(R * self.E_virt).view(R, self.E_virt)
+                       .int().contiguous())
+            uc_cpu = (take(R * (R + self.nn)).view(R, R + self.nn)
+                      .int().contiguous())
+            pad_rows_h = take(R)
+            m_per_rank_h = take(R)
+            kg_iter_h = int(take(1))
+            assert kg_iter_h <= self.kg_frozen, (
+                f"iteration K_g {kg_iter_h} exceeds the frozen op topk "
+                f"{self.kg_frozen} — hc arms cannot absorb this routing")
+            hc_kw = dict(
+                hc_splits=hc_state["splits"],
+                hc_scatter=hc_state["scatter_index"],
+                hc_sps_cpu=sps_cpu, hc_uc_cpu=uc_cpu,
+                hc_pad_mine=int(pad_rows_h[self.rank]),
+                hc_kg_iter=kg_iter_h,
+                hc_m_this=int(m_per_rank_h[self.rank]),
+            )
+
+        segments = []
+        base = self.rank * nlp
+        for p in range(nlp):
+            rows = seg_rows_h[p]
+            if rows == 0:
+                continue
+            logical = int(self._p2l_host[base + p])
+            assert logical >= 0, f"rank {self.rank}: rows in unused slot {p}"
+            start = seg_start_h[p]
+            segments.append((p, start, start + rows, logical))
+
+        return EpicIterPlan(
+            send_row_index=my_tok,
+            send_entry_logical=send_entry_logical,
+            place_slots=lay["place_slots"],
+            comb_dst_slot=comb_dst,
+            in_splits=lay["in_splits"],
+            out_splits=lay["out_splits"],
+            send_counts=send_counts,
+            recv_counts=recv_counts,
+            seg_rows=seg_rows_h,
+            seg_start=seg_start_h,
+            gemm_segments=segments,
+            n_recv=int(lay["all_local"].numel()),
+            max_pair_rows=max_pair_rows,
+            slot_loads=slot_loads,
+            hcc_routing=hcc_state.get("routing"),
+            hcc_pack=hcc_state.get("pack"),
+            hcc_red=hcc_state.get("red"),
+            hcc_uc=hcc_state.get("uc"),
+            hcc_wire=hcc_state.get("wire"),
+            hcc_redcsr=hcc_state.get("redcsr"),
+            **hc_kw,
+        )
+
+    def check_against(self, ip: EpicIterPlan, runner) -> None:
+        """Loud setup-time drift guard vs the CPU reference state (m=1)."""
+        grp = runner.elay.groups[0]
+        assert torch.equal(ip.send_row_index.cpu(), grp.send_row_index)
+        assert torch.equal(ip.send_entry_logical.cpu(),
+                           grp.send_entry_logical)
+        assert torch.equal(ip.place_slots.cpu(), grp.place_slots)
+        assert ip.send_counts == grp.send_counts, "send splits drift"
+        assert ip.recv_counts == grp.recv_counts, "recv splits drift"
+        assert ip.seg_rows == runner.elay.seg_rows, "seg_rows drift"
+        assert ip.seg_start == runner.elay.seg_start, "seg_start drift"
+        assert ip.gemm_segments == runner.elay.gemm_segments
+        assert ip.max_pair_rows == runner.elay.max_pair_rows
+        assert torch.equal(ip.slot_loads.cpu(),
+                           slot_batch_loads(self.plan))
+        if self.l01:
+            assert torch.equal(ip.comb_dst_slot.cpu(), grp.comb_dst_slot)
+        if self.hc:
+            b = runner._hc_bundles[0]
+            assert ip.hc_kg_iter == b.K_g or self.kg_frozen == b.K_g
+            assert torch.equal(ip.hc_splits.cpu(), b.meta.splits)
+            assert torch.equal(ip.hc_scatter.cpu(), b.meta.scatter_index)
+            assert torch.equal(ip.hc_sps_cpu, b.meta.splits_per_source)
+            assert torch.equal(ip.hc_uc_cpu, b.meta.a2av_unique_counts)
+            assert ip.hc_pad_mine == int(b.pad_rows_per_rank[self.rank])
+            assert ip.hc_m_this == int(b.meta.m_per_rank[self.rank])
+        if self.hcc:
+            e = runner._hcc[0]
+            assert torch.equal(ip.hcc_pack.cpu(), e["pack"].cpu())
+            assert torch.equal(ip.hcc_red.cpu(), e["red"].cpu())
+            if self.nn > 1:
+                assert torch.equal(ip.hcc_uc, e["uc"])
+                for got, ref in zip(ip.hcc_wire + ip.hcc_redcsr,
+                                    e["wire"] + e["redcsr"]):
+                    assert torch.equal(got.cpu(), ref.cpu())
+
+
+# ---------------------------------------------------------------------------
 # Runner: EPLB data plane + PEO group pipeline
 # ---------------------------------------------------------------------------
 
@@ -1162,6 +1558,61 @@ class EpicLayer0Runner(EPLBLayer0Runner):
             for grp in self.elay.groups
         ]
 
+    # -- per-iteration plan binding (SCHEMA rule 5, m=1 scope) --------------
+
+    def bind_iter_plan(self, ip):
+        """Swap the routing-derived index state for this iteration's
+        EpicIterPlan (m=1). Called inside the timed `plan` bracket every
+        iteration; on swap-applying iterations the driver re-derives after
+        the (host) migration rebuild, so sizes here always match the
+        current buffers — asserted, never silently grown."""
+        assert self.m == 1, "per-iteration planning is scoped to m=1 arms"
+        assert ip.n_recv == self.n_recv, (
+            f"iteration recv rows {ip.n_recv} != current sizing "
+            f"{self.n_recv} (derive must run AFTER any migration rebuild)"
+        )
+        dev = self.device
+        self.g_send_row_index[0] = ip.send_row_index
+        self.g_send_entry_logical[0] = ip.send_entry_logical
+        self.g_place_slots[0] = ip.place_slots
+        if self.layers == "l01":
+            self.g_comb_dst[0] = ip.comb_dst_slot
+            # m=1: seg_start[slot_lo] == 0, so comb_pack == place_slots
+            self.g_comb_pack[0] = ip.place_slots
+        grp = self.elay.groups[0]
+        self.elay = _dc_replace(
+            self.elay,
+            groups=[_dc_replace(grp, send_counts=ip.send_counts,
+                                recv_counts=ip.recv_counts,
+                                seg_rows=ip.seg_rows)],
+            seg_start=ip.seg_start, seg_rows=ip.seg_rows,
+            gemm_segments=ip.gemm_segments,
+        )
+        self._group_splits_cpu[0] = torch.tensor(ip.seg_rows,
+                                                 dtype=torch.int64)
+        if self.transport == "nvshmem":
+            assert ip.max_pair_rows <= self._epic_max_split, (
+                f"pair rows {ip.max_pair_rows} exceed All2AllSingle "
+                f"max_split {self._epic_max_split}; raise "
+                f"--a2a_split_headroom")
+            self._g_in_splits[0] = ip.in_splits
+            self._g_out_splits[0] = ip.out_splits
+        if self.hc_enabled:
+            self._hc_splits_gpu[0] = ip.hc_splits
+            self._hc_scatter_gpu[0] = ip.hc_scatter
+            # host-side op args + pad accounting for dispatch_group_hc
+            self._iter_hc = dict(sps=ip.hc_sps_cpu, uc=ip.hc_uc_cpu,
+                                 pad_mine=ip.hc_pad_mine)
+        if getattr(self, "hcc_enabled", False):
+            e = self._hcc[0]
+            assert ip.hc_m_this == e["inbuf"].shape[0] or (
+                ip.hc_m_this == 0 and e["inbuf"].shape[0] == 1), (
+                f"iteration m_this {ip.hc_m_this} != combine inbuf rows "
+                f"{e['inbuf'].shape[0]} (derive must follow the rebuild)")
+            e.update(routing=ip.hcc_routing, pack=ip.hcc_pack,
+                     red=ip.hcc_red, uc=ip.hcc_uc, wire=ip.hcc_wire,
+                     redcsr=ip.hcc_redcsr, m_this=ip.hc_m_this)
+
     def enable_hier_compress(self, tp_env, local_world_size: int,
                              headroom: float = 1.5,
                              relay: str = "identity",
@@ -1307,10 +1758,17 @@ class EpicLayer0Runner(EPLBLayer0Runner):
             swap_kw["dense_out"] = torch.full(
                 (m_exp, self.cfg.H), float("nan"), dtype=self.dtype,
                 device=self.device)
+        # per-iteration planning (rule 5): prefer this iteration's host-arg
+        # metadata over the setup bundle's when a plan is bound
+        ihc = getattr(self, "_iter_hc", None)
+        sps = ihc["sps"] if ihc is not None else b.meta.splits_per_source
+        ucs = ihc["uc"] if ihc is not None else b.meta.a2av_unique_counts
+        pad_mine = (ihc["pad_mine"] if ihc is not None
+                    else int(b.pad_rows_per_rank[self.rank]))
         dense, ssi, _ssc, m_ep = self._hc_ops[g].dispatch_only(
             self._last_inputs, self._hc_splits_gpu[g],
             self._hc_scatter_gpu[g],
-            b.meta.splits_per_source, b.meta.a2av_unique_counts,
+            sps, ucs,
             **swap_kw,
         )
         m = int(m_ep)
@@ -1319,7 +1777,7 @@ class EpicLayer0Runner(EPLBLayer0Runner):
             print(f"[canon-nan] rank {self.rank} g{g}: "
                   f"{int(bad.sum())}/{m} recv rows never written by the "
                   "wire", flush=True)
-        n_real = m - int(b.pad_rows_per_rank[self.rank])
+        n_real = m - pad_mine
         assert n_real == n_rows, (
             f"group {g}: dense real rows {n_real} != layout rows {n_rows}")
         if n_rows:
