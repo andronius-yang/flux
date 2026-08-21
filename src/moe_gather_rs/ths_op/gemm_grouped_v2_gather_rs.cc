@@ -1837,6 +1837,78 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     }
   }
 
+ public:
+  // Rule-5 in-window planning entry (2026-08-21): the combine (and compress)
+  // index build as ONE host call — the same internal arithmetic-identity
+  // builders the isolated-mode in-forward path uses. cnt/U are host metadata
+  // the caller already holds (e.g. from the layer0 derive_routed_meta), so
+  // the host offset tables cost no D2H sync; the chain launches back-to-back
+  // with no interpreter gaps. Returns {pack_index, reduce_index} for
+  // a2av_hier, plus {wire_ptr, wire_copy, red_ptr, red_row} when compress.
+  std::vector<torch::Tensor>
+  derive_combine_meta(
+      torch::Tensor splits_gpu,
+      torch::Tensor routing_idx,
+      torch::Tensor splits_per_source,
+      c10::optional<torch::Tensor> a2av_unique_counts) {
+    (void)get_int_from_env("FLUX_A2AV_RS_DERIVE_COMBINE_TAG", 0);
+    FLUX_CHECK(this->a2av_hier)
+        << "derive_combine_meta requires the a2av_hier/a2av_hier_compress ctor flag";
+    CHECK_INPUT(routing_idx, at::ScalarType::Int);
+    CHECK_INPUT(splits_gpu, at::ScalarType::Int);
+    CHECK_1D(splits_gpu, this->total_num_experts);
+    FLUX_CHECK(splits_per_source.device().is_cpu()) << "splits_per_source must be CPU";
+    CHECK_2D(splits_per_source, this->world_size, this->total_num_experts);
+    FLUX_CHECK(splits_per_source.scalar_type() == at::ScalarType::Int);
+    FLUX_CHECK(splits_per_source.is_contiguous());
+    const int64_t m_full = routing_idx.numel();
+    FLUX_CHECK_DIV(m_full, (int64_t)this->world_size * this->topk);
+    // gemm rows of this rank's EP slice, from the host cnt (no device sync)
+    const int32_t *cnt = splits_per_source.data_ptr<int32_t>();
+    int64_t m_this_ep = 0;
+    for (int h = 0; h < this->world_size; h++) {
+      for (int64_t e = this->ep_start; e < this->ep_start + this->ep_nexperts; e++) {
+        m_this_ep += cnt[h * this->total_num_experts + e];
+      }
+    }
+    auto [pack_idx, reduce_idx] = build_a2av_combine_indices(
+        routing_idx,
+        splits_gpu,
+        splits_per_source,
+        m_this_ep,
+        m_full,
+        this->world_size,
+        this->rank,
+        this->total_num_experts,
+        this->ep_nexperts,
+        this->ep_start);
+    std::vector<torch::Tensor> out{pack_idx, reduce_idx};
+    if (this->a2av_compress) {
+      FLUX_CHECK(a2av_unique_counts.has_value())
+          << "a2av_hier_compress derive requires a2av_unique_counts ([W, nnodes] int32 CPU)";
+      auto [wp, wc, rp, rr] = build_a2av_compress_indices(
+          routing_idx,
+          splits_gpu,
+          splits_per_source,
+          a2av_unique_counts.value(),
+          m_full,
+          this->world_size,
+          this->nnodes,
+          this->local_world_size,
+          this->rank,
+          this->total_num_experts,
+          this->ep_nexperts,
+          this->topk);
+      out.push_back(wp);
+      out.push_back(wc);
+      out.push_back(rp);
+      out.push_back(rr);
+    }
+    return out;
+  }
+
+ private:
+
   void
   create_workspace_or_expand(int64_t workspace_size) {
     if (workspace_size <= 0)
@@ -2825,6 +2897,19 @@ GemmGroupedV2GatherRSOp::forward_gather_rs(
       std::move(a2av_unique_counts),
       std::move(a2av_wire_csr),
       std::move(a2av_reduce_csr));
+}
+std::vector<torch::Tensor>
+GemmGroupedV2GatherRSOp::derive_combine_meta(
+    torch::Tensor splits_gpu,
+    torch::Tensor routing_idx,
+    torch::Tensor splits_per_source,
+    c10::optional<torch::Tensor> a2av_unique_counts) {
+  FLUX_CHECK(impl_ != nullptr) << "GemmGroupedV2GatherRSOp not initialized";
+  return impl_->derive_combine_meta(
+      std::move(splits_gpu),
+      std::move(routing_idx),
+      std::move(splits_per_source),
+      std::move(a2av_unique_counts));
 }
 torch::Tensor
 GemmGroupedV2GatherRSOp::forward_gather_rs_triton_aot(

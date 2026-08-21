@@ -135,6 +135,13 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("a2av_wire_csr") = py::none(),
             py::arg("a2av_reduce_csr") = py::none())
         .def(
+            "derive_combine_meta",
+            &GemmGroupedV2GatherRSOpCls::derive_combine_meta,
+            py::arg("splits_gpu"),
+            py::arg("routing_idx"),
+            py::arg("splits_per_source"),
+            py::arg("a2av_unique_counts") = py::none())
+        .def(
             "forward_gather_rs_triton_aot",
             &GemmGroupedV2GatherRSOpCls::forward_gather_rs_triton_aot,
             py::arg("input"),

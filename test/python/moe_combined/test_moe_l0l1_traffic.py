@@ -767,6 +767,27 @@ if __name__ == "__main__":
             a2av_hier_compress=l1_use_compress,
         )
 
+        # drift guard (untimed, once): the C++ derive_combine_meta must
+        # reproduce the _dev twins bitwise (which the setup guard already
+        # pinned against the CPU builders — closing the equality chain)
+        if l1_use_a2av:
+            _uc_l1 = (
+                l1_unique_counts_cpu if (l1_use_compress and NNODES > 1) else None
+            )
+            _g_meta = l1_op.derive_combine_meta(
+                g_sd, g_scd.view(-1), g_sps, a2av_unique_counts=_uc_l1
+            )
+            assert torch.equal(_g_meta[0], d_pack), "C++ pack_index drift vs _dev"
+            assert torch.equal(_g_meta[1], d_red), "C++ reduce_index drift vs _dev"
+            if _uc_l1 is not None:
+                for got, ref, nm in (
+                    (_g_meta[2], d_wp, "wire_ptr"),
+                    (_g_meta[3], d_wc, "wire_copy"),
+                    (_g_meta[4], d_rp, "red_ptr"),
+                    (_g_meta[5], d_rr, "red_row"),
+                ):
+                    assert torch.equal(got, ref), f"C++ compress {nm} drift vs _dev"
+
         # allocation-scope extras; the routing-derived entries
         # (splits_per_source / unique counts) join per-iteration in flux_plan
         l0_extra_base = {
@@ -794,25 +815,29 @@ if __name__ == "__main__":
                 l0x["a2av_unique_counts"] = uc_c
             l1k = {}
             if l1_use_a2av:
-                r_idx = scd.view(-1)
-                pk, rd = build_a2av_combine_indices_dev(
-                    r_idx, sd, RANK, WORLD_SIZE, args.topk
+                # C++ single-call derivation (2026-08-21,
+                # FLUX_A2AV_RS_DERIVE_COMBINE_TAG): the op's internal
+                # arithmetic-identity builders — host offset tables come free
+                # from the pinned cnt, no mid-chain D2H syncs, one launch
+                # chain (replaced the python _dev twins whose ~40 launches +
+                # 5 scalar syncs cost 3.9-6.7 ms/iter at K3)
+                uc_l1 = (
+                    uc_c[:, WORLD_SIZE:].contiguous()
+                    if (l1_use_compress and NNODES > 1)
+                    else None
+                )
+                meta = l1_op.derive_combine_meta(
+                    sd, scd.view(-1), sps_c, a2av_unique_counts=uc_l1
                 )
                 l1k = {
                     "splits_per_source": sps_c,
-                    "a2av_pack_index": pk,
-                    "a2av_reduce_index": rd,
+                    "a2av_pack_index": meta[0],
+                    "a2av_reduce_index": meta[1],
                 }
-                if l1_use_compress and NNODES > 1:
-                    d_uc = build_a2av_unique_counts_dev(
-                        topk_gather_buf, WORLD_SIZE, NNODES, n_experts_per_rank
-                    )
-                    wp, wc, rp, rr = build_a2av_compress_indices_dev(
-                        r_idx, sd, d_uc, RANK, WORLD_SIZE, NNODES, args.topk
-                    )
-                    l1k["a2av_wire_csr"] = [wp, wc]
-                    l1k["a2av_reduce_csr"] = [rp, rr]
-                    l1k["a2av_unique_counts"] = uc_c[:, WORLD_SIZE:].contiguous()
+                if uc_l1 is not None:
+                    l1k["a2av_wire_csr"] = [meta[2], meta[3]]
+                    l1k["a2av_reduce_csr"] = [meta[4], meta[5]]
+                    l1k["a2av_unique_counts"] = uc_l1
             return {"sd": sd, "scd": scd, "l0_extra": l0x, "l1_kwargs": l1k}
 
         def flux_l0(plan):

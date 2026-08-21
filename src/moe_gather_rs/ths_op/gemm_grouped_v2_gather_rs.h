@@ -112,6 +112,16 @@ class GemmGroupedV2GatherRSOp {
       c10::optional<torch::Tensor> a2av_unique_counts = c10::nullopt,
       c10::optional<std::vector<torch::Tensor>> a2av_wire_csr = c10::nullopt,
       c10::optional<std::vector<torch::Tensor>> a2av_reduce_csr = c10::nullopt);
+  // Rule-5 per-iteration combine/compress index derivation as one host call
+  // (2026-08-21): returns [pack_index, reduce_index] for a2av_hier, plus
+  // [wire_ptr, wire_copy, red_ptr, red_row] when compress. splits_gpu int32
+  // CUDA [nexperts], routing_idx int32 CUDA [m_full], splits_per_source int32
+  // CPU [W, nexperts]; a2av_unique_counts int32 CPU [W, nnodes] (compress).
+  std::vector<torch::Tensor> derive_combine_meta(
+      torch::Tensor splits_gpu,
+      torch::Tensor routing_idx,
+      torch::Tensor splits_per_source,
+      c10::optional<torch::Tensor> a2av_unique_counts = c10::nullopt);
   torch::Tensor forward_gather_rs_triton_aot(
       torch::Tensor input,
       torch::Tensor weight,
