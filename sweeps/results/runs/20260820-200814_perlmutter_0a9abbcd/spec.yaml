@@ -1,0 +1,38 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 1
+  - 2
+  - 4
+  - 8
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+ffn_hidden: 4096
+idle_timeout_s: 300
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 4
+nodes: 4
+notes: "campaign-2 planner-v2 debut (fused-canonical, SCHEMA rules 4/5): eplb on the FusedEpDispatch wire (planner_impl=fused_dispatch, NO planning step, in-launch counts exchange in comm_ms, replica_select=local_spread default with lstatic twin, plan_comm~0/bytes=0); epic hc mig_fused on --hc_meta inwindow (op-derived splits/stable-scatter/sps/uc inside the dispatch bracket); moonep unchanged (authentic ported planner). NEW BINARY BOUNDARY: tags FLUX_FUSED_EP_DISPATCH_TAG + FLUX_A2AV_INWINDOW_META_TAG — never compare against campaign-1 capsules on any planning-inclusive or wire bracket."
+platform: perlmutter
+profile_iters: 3
+retries: 1
+skip_correctness: false
+sm_margin: 8
+timeout_s: 1200
+topk: 8
+variants:
+  - eplb_fused
+  - eplb_fused_l01
+  - eplb_fused_lstatic
+  - epic_hc_m1_mig_fused
+  - epic_l01_hc_m1_mig_fused
+  - moonep_nvshmem_getmem
+  - moonep_l01_nvshmem_getmem
+warmup_iters: 5
