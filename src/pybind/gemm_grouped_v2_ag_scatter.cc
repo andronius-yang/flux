@@ -72,6 +72,20 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("swap_fc2") = py::none(),
             py::arg("swap_peer") = -1,
             py::arg("swap_epoch") = 0)
+        .def(
+            "dispatch_only_routed",
+            &GemmGroupedV2AGScatterOpCls::dispatch_only_routed,
+            py::arg("inputs_shard"),
+            py::arg("topk_ids"),
+            py::arg("dense_out") = py::none(),
+            py::arg("swap_fc1") = py::none(),
+            py::arg("swap_fc2") = py::none(),
+            py::arg("swap_peer") = -1,
+            py::arg("swap_epoch") = 0)
+        .def(
+            "derive_routed_meta",
+            &GemmGroupedV2AGScatterOpCls::derive_routed_meta,
+            py::arg("topk_ids"))
         .def("collect_swap_times", &GemmGroupedV2AGScatterOpCls::collect_swap_times)
         .def(
             "forward",

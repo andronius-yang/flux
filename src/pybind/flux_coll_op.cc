@@ -24,6 +24,7 @@
 #include "coll/ths_op/dis_scatter_forward.h"
 #include "coll/ths_op/isendrecv.h"
 #include "coll/ths_op/weight_prefetch_getmem.h"
+#include "coll/ths_op/fused_ep_dispatch.h"
 #include "coll/ths_op/weight_push_multicast.h"
 #include "flux/ths_op/flux_shm.h"
 #include "flux/ths_op/ths_pybind.h"
@@ -532,6 +533,80 @@ static int reg_weight_prefetch_getmem [[maybe_unused]] = []() {
                 py::arg("num_comm_sm"),
                 py::arg("chunk_bytes"),
                 py::arg("device_kernel") = true);
+      });
+  return 0;
+}();
+
+using FusedEpDispatchCls = ths_op::TorchClassWrapper<FusedEpDispatch>;
+
+static int reg_fused_ep_dispatch [[maybe_unused]] = []() {
+  ths_op::ThsOpsInitRegistry::instance().register_one(
+      "fused_ep_dispatch", [](py::module &m) {
+        py::class_<FusedEpDispatchCls>(m, "FusedEpDispatch")
+            .def(
+                py::init([](c10::intrusive_ptr<c10d::ProcessGroup> pg,
+                            int64_t nnodes,
+                            int64_t s_max,
+                            int64_t hidden,
+                            int64_t topk,
+                            int64_t nlp,
+                            int64_t max_rows_per_pair,
+                            int64_t max_recv_total,
+                            at::ScalarType dtype,
+                            int64_t m_groups,
+                            int64_t spin_limit) {
+                  return new FusedEpDispatchCls(
+                      std::make_shared<C10dProcessGroup>("", pg),
+                      nnodes,
+                      s_max,
+                      hidden,
+                      topk,
+                      nlp,
+                      max_rows_per_pair,
+                      max_recv_total,
+                      dtype,
+                      m_groups,
+                      spin_limit);
+                }),
+                py::arg("pg"),
+                py::arg("nnodes"),
+                py::arg("s_max"),
+                py::arg("hidden"),
+                py::arg("topk"),
+                py::arg("nlp"),
+                py::arg("max_rows_per_pair"),
+                py::arg("max_recv_total"),
+                py::arg("dtype"),
+                py::arg("m_groups") = 1,
+                py::arg("spin_limit") = 0)
+            .def(
+                "dispatch",
+                &FusedEpDispatchCls::dispatch,
+                py::arg("inputs_shard"),
+                py::arg("dst_phys"),
+                py::arg("probs"),
+                py::arg("num_comm_sm"))
+            .def(
+                "wait_group",
+                &FusedEpDispatchCls::wait_group,
+                py::arg("g"),
+                py::arg("num_comm_sm"))
+            .def(
+                "combine",
+                &FusedEpDispatchCls::combine,
+                py::arg("expert_rows"),
+                py::arg("num_comm_sm"))
+            .def(
+                "combine_gate",
+                &FusedEpDispatchCls::combine_gate,
+                py::arg("s_tokens"),
+                py::arg("num_comm_sm"))
+            .def(
+                "probe_signal_ordering",
+                &FusedEpDispatchCls::probe_signal_ordering,
+                py::arg("iters") = 1000)
+            .def("recv_rows", &FusedEpDispatchCls::recv_rows)
+            .def("headers", &FusedEpDispatchCls::headers);
       });
   return 0;
 }();

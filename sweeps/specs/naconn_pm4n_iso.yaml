@@ -29,7 +29,7 @@ profile_iters: 3
 sm_margin: 8
 matrix_instance: "001"
 timeout_s: 900
-idle_timeout_s: 180
+idle_timeout_s: 900
 modes: [isolated]
 skip_correctness: true
 notes: "C conn ladder {8,32}: 12 cells iso; conn=64 excluded (driver clamps silently at 32)"

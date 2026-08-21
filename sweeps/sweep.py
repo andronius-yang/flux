@@ -213,6 +213,13 @@ CELLS_COLUMNS = [
     # legacy_untimed_plan — planning-inclusive totals never compare across
     # the two; old capsules lack the column (== legacy accounting)
     "timing_accounting",
+    # appended 2026-08-20 (campaign-2 fused-canonical planners): planner_impl
+    # = fused_dispatch | torch_gpu | legacy; replica_select = local_spread |
+    # local_static | quota; plan_comm_bytes = the pre-dispatch collective's
+    # payload (0 on sender-local arms). Old capsules lack the columns.
+    "planner_impl",
+    "replica_select",
+    "plan_comm_bytes",
 ]
 METRICS_COLUMNS = [
     "run_id",
@@ -930,12 +937,15 @@ def build_cell_env(spec, plat, cell, staging, matrix):
             env["NVSHMEM_SYMMETRIC_SIZE"] = moonep_getmem_sym_size(
                 matrix_path, plat, spec, v
             )
-        elif "nvshmem" in ta or "hier_compress" in ta:
+        elif "nvshmem" in ta or "hier_compress" in ta or "fused" in ta:
             if v.get("driver") == "ultraep":
                 env["NVSHMEM_SYMMETRIC_SIZE"] = ultraep_sym_size(
                     matrix_path, plat, spec, v
                 )
             elif v.get("driver") == "eplb":
+                # the fused wire's symmetric footprint (recv rows + headers
+                # + combine staging + counts/signals) sits inside the same
+                # row-sum envelope the staged bound already covers
                 env["NVSHMEM_SYMMETRIC_SIZE"] = eplb_sym_size(
                     matrix_path, plat, spec
                 )
@@ -1614,6 +1624,11 @@ def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, s
                 ("epic_incidence_remote", "incidence_remote"),
                 ("epic_mean_nodes_per_token", "mean_nodes_per_token"),
                 ("timing_accounting", "timing_accounting"),
+                ("planner_impl", "planner_impl"),
+                ("replica_select", "replica_select"),
+                ("eplb_plan_comm_bytes", "plan_comm_bytes"),
+                ("epic_plan_comm_bytes", "plan_comm_bytes"),
+                ("moonep_plan_comm_bytes", "plan_comm_bytes"),
             ]:
                 if k_src in info:
                     row[k_dst] = info[k_src]

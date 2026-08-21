@@ -112,6 +112,18 @@ cell facts `timing_accounting` and `moonep_planner_impl` carry the
 caveat). `plan_ms` sits inside `total_ms` but OUTSIDE `e2e_ms` (the
 comm-start anchor is unchanged).
 
+Planner v2 (2026-08-20, campaign 2 — `planner_impl=fused_dispatch`): on the
+fused-canonical arms (`eplb_fused*`, `epic_*_mig_fused`) there is no separate
+planner op at all — planning is fused into the dispatch, DeepEP-lineage:
+sender-local replica selection + an in-launch counts exchange that derives
+exact recv layouts inside the dispatch kernel chain. `plan_ms` on these arms
+is structurally near-zero (only the [S,K]→physical-slot map derivation
+remains outside the op) and the counts exchange + arrival gating are
+dispatch wire time, charged to `comm_ms`. EPLB fused runs NO pre-dispatch
+collective in either replica mode (`plan_comm_bytes=0`); EPIC always keeps
+its timed per-iteration loads allgather + migration decision (paper order:
+gate → counts sync → migrate → dispatch), so its `plan_comm` stays nonzero.
+
 MoonEP-semantics arm (`impl=moonep`, variant `moonep`, driver-swapped test
 `test_moe_moonep_traffic.py` — a semantic port of MoonshotAI/MoonEP
 redundant-expert dispatch; plan bit-equality vs the vendored MoonEP oracle is
@@ -408,6 +420,23 @@ Highlights (full list = header row):
   cover yet — epic m>1, loccap routers, moonep_fused, ultraep, flux
   drivers). **Never compare planning-inclusive totals across the two
   accountings** — same never-mix logic as protocol rule 4.
+- `planner_impl` (appended 2026-08-20, campaign 2) — `fused_dispatch`:
+  planning fused into the dispatch op (FusedEpDispatch for eplb, the
+  `dispatch_only_routed` in-window derive for epic hc); `torch_gpu`: the
+  campaign-1 per-iteration torch-op planner (retired from specs, kept for
+  history); `legacy`: setup-time planning. Reused arm names across a
+  planner_impl change are a rule-4 boundary (see the capability tags note).
+- `replica_select` (appended 2026-08-20, campaign 2) — replica-choice rule
+  for redundant experts, sender-local in both modes: `local_spread`
+  (DEFAULT; per-source largest-remainder prefix ≡ round-robin/equal token
+  split, the SGLang dynamic-dispatch load distribution), `local_static`
+  (src mod C, the EPIC D6 rule / SGLang static-map class), `quota` (the
+  retired staged-arm rule; needed a pre-dispatch loads allgather).
+- `plan_comm_bytes` (appended 2026-08-20, campaign 2) — payload of the
+  pre-dispatch planning collective, from the driver facts. 0 on
+  sender-local eplb fused arms (no such collective exists); W*G*4 on epic
+  (the per-iteration loads allgather is part of EPIC's algorithm and always
+  timed) and on the retired quota arms.
 
 ## Modes — the never-mix rule
 
@@ -606,7 +635,14 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
    ≤7%, i.e. below the cross-build spread — so a cross-build comparison can
    manufacture a result of either sign. If you must compare across capsules,
    state the build hashes and treat anything below the same-build spread as
-   noise. See `docs/handoff/04_build_ledger.md`.
+   noise. See `docs/handoff/04_build_ledger.md`. The 2026-08-20 campaign-2
+   binaries carry two new capability tag strings, grep-able from the
+   installed `.so` bytes: `FLUX_FUSED_EP_DISPATCH_TAG` (the FusedEpDispatch
+   op replacing EPLB's staged wire / EPIC's direct wire) and
+   `FLUX_A2AV_INWINDOW_META_TAG` (`dispatch_only_routed` in-window hc
+   metadata). They are a rule-4 boundary: arm names reused across the flip
+   (`epic_hc_m1_mig*`) measure different code — never compare a cell from a
+   binary with a tag against one without it.
 5. **Timing accounting: gating metadata is the ONLY untimed work
    (user directive, 2026-08-20).** The EXCLUSIVE untimed exemption is the
    one initial step where the harness provides/exchanges the gating
@@ -634,4 +670,7 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
    produced under the old accounting must never be compared against
    new-accounting capsules on any total that contains planning (same
    never-mix logic as rule 4; the boundary is the driver change, cite it
-   when quoting).
+   when quoting). Fused-canonical arms (`planner_impl=fused_dispatch`,
+   2026-08-20) satisfy this rule structurally: there is no planner to
+   mis-time — planning is part of the dispatch launch and lands in
+   `comm_ms` (see the Planner v2 paragraph under `plan_ms`).

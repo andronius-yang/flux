@@ -112,6 +112,23 @@ class GemmGroupedV2AGScatterOp {
       c10::optional<torch::Tensor> swap_fc2 = c10::nullopt,
       int64_t swap_peer = -1,
       int64_t swap_epoch = 0);
+  // Campaign-2 v2b (SCHEMA rule 5): dispatch_only with the hc metadata
+  // (splits / stable scatter_index / splits_per_source /
+  // a2av_unique_counts) derived ON DEVICE from the raw replicated
+  // [ntokens_global, topk] routing, inside the timed window (one pinned
+  // D2H + event sync for the host-consumed matrices), then delegated to
+  // dispatch_only unchanged. Capacity knobs stay ctor state.
+  std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, int64_t> dispatch_only_routed(
+      torch::Tensor inputs_shard,
+      torch::Tensor topk_ids,
+      c10::optional<torch::Tensor> dense_out = c10::nullopt,
+      c10::optional<torch::Tensor> swap_fc1 = c10::nullopt,
+      c10::optional<torch::Tensor> swap_fc2 = c10::nullopt,
+      int64_t swap_peer = -1,
+      int64_t swap_epoch = 0);
+  // Debug/drift-guard getter: {splits_dev, scatter_index_dev, sps_cpu,
+  // uc_cpu} derived exactly as dispatch_only_routed would.
+  std::vector<torch::Tensor> derive_routed_meta(torch::Tensor topk_ids);
   // Drain the always-on swap-phase timing events (per-launch ms, launch
   // order); call once after the timed loop.
   std::vector<double> collect_swap_times();

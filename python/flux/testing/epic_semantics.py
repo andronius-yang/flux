@@ -257,7 +257,8 @@ def epic_rank_quota_prefix(cfg: UltraEPConfig, tpe: torch.Tensor,
 
 
 def build_epic_plan(cfg: UltraEPConfig, tpe: torch.Tensor, pool_load,
-                    num_nodes: int) -> UltraEPPlan:
+                    num_nodes: int,
+                    replica_select: str = "local_static") -> UltraEPPlan:
     """EPIC §4.2 placement mapped onto the UltraEPPlan tensor layout.
 
     Same contract as build_eplb_plan: placement (p2l/l2p/lcnts) from the
@@ -324,10 +325,22 @@ def build_epic_plan(cfg: UltraEPConfig, tpe: torch.Tensor, pool_load,
             prefix += q
             quota_prefix[l, j] = prefix
 
+    # Replica rule (campaign-2 knob): local_static == the paper's D6 rule
+    # (default); local_spread == per-source largest-remainder equal split
+    # (SGLang-dynamic analog, ablation). Both sender-local. The
+    # ep_gpu_plan producer is device-agnostic (CPU tensors here) so the
+    # setup reference stays bitwise-consistent with the timed planner.
+    assert replica_select in ("local_static", "local_spread"), replica_select
+    if replica_select == "local_spread":
+        from .ep_gpu_plan import local_spread_rank_quota_prefix
+        rqp = local_spread_rank_quota_prefix(tpe, lcnts,
+                                             cfg.max_replicas_dim)
+    else:
+        rqp = epic_rank_quota_prefix(cfg, tpe, lcnts)
     plan = UltraEPPlan(
         cfg=cfg, tpe=tpe.to(torch.int32), p2l=p2l, l2p=l2p, lcnts=lcnts,
         quota=quota, quota_prefix=quota_prefix,
-        rank_quota_prefix=epic_rank_quota_prefix(cfg, tpe, lcnts),
+        rank_quota_prefix=rqp,
         domain_solutions=[],
     )
     # D4/D5 diagnostic facts ride on the plan object (pool units).
@@ -1114,13 +1127,17 @@ class EpicIterPlan:
     hc_pad_mine: int
     hc_kg_iter: int
     hc_m_this: int
-    # hc combine (l01 x hc; None-family otherwise)
-    hcc_routing: torch.Tensor        # flattened scatter int32 device
-    hcc_pack: torch.Tensor
-    hcc_red: torch.Tensor
-    hcc_uc: torch.Tensor             # CPU int32 (op host arg)
-    hcc_wire: list                   # [wire_ptr, wire_copy] device or None
-    hcc_redcsr: list                 # [red_ptr, red_row] device or None
+    # v2b in-window mode: ONLY the virtual routing ships from python; the
+    # op derives splits/scatter/sps/uc itself (derive_routed_meta)
+    hc_vce: torch.Tensor = None      # [ntokens, K_g] int32 device or None
+    # hc combine (l01 x hc python-meta mode; None-family otherwise —
+    # under in-window mode the combine op builds these itself)
+    hcc_routing: torch.Tensor = None  # flattened scatter int32 device
+    hcc_pack: torch.Tensor = None
+    hcc_red: torch.Tensor = None
+    hcc_uc: torch.Tensor = None       # CPU int32 (op host arg)
+    hcc_wire: list = None             # [wire_ptr, wire_copy] device
+    hcc_redcsr: list = None           # [red_ptr, red_row] device
 
 
 class EpicIterPlanner:
@@ -1137,15 +1154,28 @@ class EpicIterPlanner:
     def __init__(self, plan: UltraEPPlan, rank: int, device,
                  topk_all: torch.Tensor, local_world_size: int,
                  l01: bool = False, hc: bool = False, hcc: bool = False,
-                 kg_frozen: int = None):
+                 kg_frozen: int = None,
+                 replica_select: str = "local_static",
+                 inwindow_meta: bool = False):
+        # local_static == the paper's own D6 rule (src mod lcnts) and
+        # stays EPIC's default; local_spread is the SGLang-dynamic-analog
+        # ablation (campaign-2 knob). No quota mode for epic.
+        assert replica_select in ("local_static", "local_spread"), (
+            replica_select)
         cfg = plan.cfg
         self.cfg = cfg
         self.plan = plan
         self.rank = rank
         self.device = device
+        self.replica_select = replica_select
+        # campaign-2 v2b: the op derives splits/scatter/sps/uc IN-WINDOW
+        # (dispatch_only_routed / derive_routed_meta); the python planner
+        # then only builds the direct-layout probs-wire indices + the
+        # virtual routing (vce) + slot loads for the migration decision.
+        self.inwindow_meta = inwindow_meta
         self.l01 = l01
         self.hc = hc
-        self.hcc = hcc
+        self.hcc = hcc and not inwindow_meta
         self.L = local_world_size
         self.nn = cfg.R // local_world_size
         self.gpe = cfg.nlp + 1
@@ -1184,8 +1214,13 @@ class EpicIterPlanner:
         R, G, S, K, nlp = cfg.R, cfg.G, cfg.S, cfg.K, cfg.nlp
         dev = self.device
         tpe_all = loads_gather_buf.view(R, G)
-        rqp = d6_rank_quota_prefix(tpe_all, self.lcnts,
-                                   cfg.max_replicas_dim)
+        if self.replica_select == "local_spread":
+            from .ep_gpu_plan import local_spread_rank_quota_prefix
+            rqp = local_spread_rank_quota_prefix(
+                tpe_all, self.lcnts, cfg.max_replicas_dim)
+        else:  # local_static == D6, the paper rule
+            rqp = d6_rank_quota_prefix(tpe_all, self.lcnts,
+                                       cfg.max_replicas_dim)
         tok_all, phys_all = reroute_expand_all_gpu(
             rqp, self.l2p, self.lcnts, self.topk_all, cfg.interleave)
         order = torch.argsort(phys_all * (S + 1) + tok_all, dim=1,
@@ -1229,25 +1264,33 @@ class EpicIterPlanner:
             vce = torch.where(pad_mask,
                               self._pad_vslot.unsqueeze(1).expand_as(vce),
                               vce)
-            vce_flat = vce.reshape(-1)
-            scatter_index = (vce_flat.argsort(stable=True).argsort()
-                             .int().view(ntokens, kg))
-            splits = torch.bincount(vce_flat, minlength=E_virt).int()
-            src_of_copy = self._home_of_token.repeat_interleave(kg)
-            sps = torch.bincount(src_of_copy * E_virt + vce_flat,
-                                 minlength=R * E_virt).view(R, E_virt)
-            owner = vce // gpe
-            flags = torch.zeros(ntokens, R, dtype=torch.bool, device=dev)
-            flags.scatter_(1, owner, True)
-            u_mat = flags.view(R, S, R).sum(1)
-            U_mat = (flags.view(ntokens, self.nn, self.L).any(dim=2)
-                     .view(R, S, self.nn).sum(1))
-            uc = torch.cat([u_mat, U_mat], dim=1)
-            m_per_rank = splits.long().view(R, gpe).sum(1)
-            d2h += [sps.reshape(-1), uc.reshape(-1), pad_rows,
-                    m_per_rank, kg_iter.reshape(1)]
-            hc_state = dict(vce=vce, scatter_index=scatter_index,
-                            splits=splits)
+            if self.inwindow_meta:
+                # v2b: the op derives splits/scatter/sps/uc in-window
+                # (derive_routed_meta) — the planner ships ONLY the
+                # virtual routing + pad accounting.
+                d2h += [pad_rows, kg_iter.reshape(1)]
+                hc_state = dict(vce=vce.to(torch.int32).contiguous())
+            else:
+                vce_flat = vce.reshape(-1)
+                scatter_index = (vce_flat.argsort(stable=True).argsort()
+                                 .int().view(ntokens, kg))
+                splits = torch.bincount(vce_flat, minlength=E_virt).int()
+                src_of_copy = self._home_of_token.repeat_interleave(kg)
+                sps = torch.bincount(src_of_copy * E_virt + vce_flat,
+                                     minlength=R * E_virt).view(R, E_virt)
+                owner = vce // gpe
+                flags = torch.zeros(ntokens, R, dtype=torch.bool,
+                                    device=dev)
+                flags.scatter_(1, owner, True)
+                u_mat = flags.view(R, S, R).sum(1)
+                U_mat = (flags.view(ntokens, self.nn, self.L).any(dim=2)
+                         .view(R, S, self.nn).sum(1))
+                uc = torch.cat([u_mat, U_mat], dim=1)
+                m_per_rank = splits.long().view(R, gpe).sum(1)
+                d2h += [sps.reshape(-1), uc.reshape(-1), pad_rows,
+                        m_per_rank, kg_iter.reshape(1)]
+                hc_state = dict(vce=vce, scatter_index=scatter_index,
+                                splits=splits)
 
         hcc_state = {}
         if self.hcc:
@@ -1287,8 +1330,21 @@ class EpicIterPlanner:
         max_pair_rows = int(take(1))
         hc_kw = dict(hc_splits=None, hc_scatter=None, hc_sps_cpu=None,
                      hc_uc_cpu=None, hc_pad_mine=0, hc_kg_iter=0,
-                     hc_m_this=0)
-        if self.hc:
+                     hc_m_this=0, hc_vce=None)
+        if self.hc and self.inwindow_meta:
+            pad_rows_h = take(R)
+            kg_iter_h = int(take(1))
+            assert kg_iter_h <= self.kg_frozen, (
+                f"iteration K_g {kg_iter_h} exceeds the frozen op topk "
+                f"{self.kg_frozen} — hc arms cannot absorb this routing")
+            hc_kw = dict(
+                hc_splits=None, hc_scatter=None, hc_sps_cpu=None,
+                hc_uc_cpu=None,
+                hc_pad_mine=int(pad_rows_h[self.rank]),
+                hc_kg_iter=kg_iter_h, hc_m_this=0,
+                hc_vce=hc_state["vce"],
+            )
+        elif self.hc:
             sps_cpu = (take(R * self.E_virt).view(R, self.E_virt)
                        .int().contiguous())
             uc_cpu = (take(R * (R + self.nn)).view(R, R + self.nn)
@@ -1306,6 +1362,7 @@ class EpicIterPlanner:
                 hc_pad_mine=int(pad_rows_h[self.rank]),
                 hc_kg_iter=kg_iter_h,
                 hc_m_this=int(m_per_rank_h[self.rank]),
+                hc_vce=None,
             )
 
         segments = []
@@ -1360,6 +1417,11 @@ class EpicIterPlanner:
                            slot_batch_loads(self.plan))
         if self.l01:
             assert torch.equal(ip.comb_dst_slot.cpu(), grp.comb_dst_slot)
+        if self.hc and self.inwindow_meta:
+            b = runner._hc_bundles[0]
+            assert torch.equal(ip.hc_vce.cpu(), b.virtual_choosed), (
+                "in-window vce drift vs the setup bundle")
+            return
         if self.hc:
             b = runner._hc_bundles[0]
             assert ip.hc_kg_iter == b.K_g or self.kg_frozen == b.K_g
@@ -1597,6 +1659,12 @@ class EpicLayer0Runner(EPLBLayer0Runner):
                 f"--a2a_split_headroom")
             self._g_in_splits[0] = ip.in_splits
             self._g_out_splits[0] = ip.out_splits
+        if self.hc_enabled and ip.hc_vce is not None:
+            # v2b in-window mode: dispatch_group_hc derives the metadata
+            # via the op (derive_routed_meta) from this vce each call.
+            self._iter_vce = ip.hc_vce
+            self._iter_pad_mine = ip.hc_pad_mine
+            return
         if self.hc_enabled:
             self._hc_splits_gpu[0] = ip.hc_splits
             self._hc_scatter_gpu[0] = ip.hc_scatter
@@ -1758,8 +1826,33 @@ class EpicLayer0Runner(EPLBLayer0Runner):
             swap_kw["dense_out"] = torch.full(
                 (m_exp, self.cfg.H), float("nan"), dtype=self.dtype,
                 device=self.device)
-        # per-iteration planning (rule 5): prefer this iteration's host-arg
-        # metadata over the setup bundle's when a plan is bound
+        # per-iteration planning (rule 5). v2b in-window mode: the op
+        # itself derives splits/scatter/sps/uc from the bound virtual
+        # routing (derive_routed_meta — kernels + one pinned D2H, all
+        # inside this dispatch bracket); the derived tensors also refresh
+        # the canon tail's splits and the combine entry's routing.
+        ivce = getattr(self, "_iter_vce", None)
+        if ivce is not None:
+            sd, scd, sps_cpu, uc_cpu = (
+                self._hc_ops[g].derive_routed_meta(ivce))
+            self._hc_splits_gpu[g] = sd
+            self._hc_scatter_gpu[g] = scd
+            self._iter_hc = dict(sps=sps_cpu, uc=uc_cpu,
+                                 pad_mine=self._iter_pad_mine)
+            if getattr(self, "hcc_enabled", False):
+                # the combine op rebuilds pack/red/wire/redcsr internally
+                # from routing when they are not passed (the
+                # RS_CHECK_IDENTITY-verified in-op builders). Its
+                # unique_counts arg is the COMBINE U [W, NN] — the last NN
+                # columns of the dispatch-side [W, W+NN] concat.
+                W = self.cfg.R
+                nn = W // self._hc_L
+                self._hcc[g].update(
+                    routing=scd.reshape(-1).contiguous(), pack=None,
+                    red=None,
+                    uc=(uc_cpu[:, W:].contiguous() if nn > 1 else None),
+                    wire=None, redcsr=None,
+                    sps=sps_cpu)
         ihc = getattr(self, "_iter_hc", None)
         sps = ihc["sps"] if ihc is not None else b.meta.splits_per_source
         ucs = ihc["uc"] if ihc is not None else b.meta.a2av_unique_counts
@@ -2205,7 +2298,9 @@ class EpicLayer0Runner(EPLBLayer0Runner):
                 [e["scale"]],
                 self._hcc_pack_blocks,
                 self._hcc_stream.cuda_stream,
-                b.meta.splits_per_source,
+                # inwindow mode refreshes sps per iteration (migration can
+                # reshape the wire); python mode keeps the plan's tensor
+                e.get("sps", b.meta.splits_per_source),
                 e["pack"], e["red"],
                 e["uc"], e["wire"], e["redcsr"],
             )

@@ -136,6 +136,343 @@ namespace bytedance::flux::ths_op {
 
 using torch::Tensor;
 
+// The two a2av_hier routing-plan index builders are free functions so both
+// the gather-rs op and the standalone TopkReduceScatterOp combine entry can
+// self-build absent indices on the timed critical path (v2b in-window).
+namespace {
+  // Builds the mirror-layout gather indices for the a2av_hier combine, sharing
+  // layer0 a2av's exact ordering contract (same (.., expert, dst_row) keys, same
+  // copy-index tie-break):
+  // - pack_index [M_this_ep]: send-panel row -> gemm row. The send panel is
+  //   (home_rank, expert, copy)-ordered == layer0's recv layout on this rank, so
+  //   this is the inverse of layer0's sorted_gather_index arithmetic identity --
+  //   derived from the same offA/cumA/offR_of_A host tables, NO sort.
+  // - reduce_index [cpr]: local copy (t_local * topk + j) -> recv-panel row. The
+  //   recv panel is (owner_rank, expert, copy)-ordered == layer0's send-buffer
+  //   layout on this rank, i.e. globally (expert, copy)-sorted -- the inverse of
+  //   layer0's pack permutation: ONE argsort of the layer0 pack key + a scatter.
+  // A fused layer0+layer1 pipeline can pass layer0's tensors instead and pay the
+  // index math once (see the forward kwargs).
+  std::pair<torch::Tensor, torch::Tensor>
+  build_a2av_combine_indices(
+      torch::Tensor const &routing_idx,
+      torch::Tensor const &splits_gpu,
+      torch::Tensor const &splits_per_source,
+      int64_t M_this_ep,
+      int64_t m_full,
+      int world_size,
+      int rank,
+      int64_t total_num_experts,
+      int64_t ep_nexperts,   // experts per owner rank (tp == 1)
+      int64_t ep_start) {
+    const int W = world_size;
+    const int64_t nex = total_num_experts;
+    const int64_t E_loc = ep_nexperts;  // experts per owner rank (tp == 1)
+    const int64_t nexG = E_loc * W;
+    const int64_t cpr = m_full / W;
+    const int32_t *cnt = splits_per_source.data_ptr<int32_t>();
+    auto cnt_at = [&](int h, int64_t e) -> int64_t { return cnt[h * nex + e]; };
+    auto opt_i64 = torch::TensorOptions(torch::kCUDA).dtype(torch::kLong);
+
+    // host tables -- formulas identical to layer0's metadata collapse (dispatch
+    // source == combine home, both index cnt rows). A-order groups g = e_loc*W+h.
+    torch::Tensor tables = torch::empty({3, nexG}, torch::TensorOptions().dtype(torch::kLong));
+    int64_t *cumA_h = tables[0].data_ptr<int64_t>();
+    int64_t *offA_h = tables[1].data_ptr<int64_t>();
+    int64_t *offR_of_A_h = tables[2].data_ptr<int64_t>();
+    int64_t acc = 0;
+    for (int64_t e_loc = 0; e_loc < E_loc; e_loc++) {
+      for (int h = 0; h < W; h++) {
+        int64_t g = e_loc * W + h;
+        offA_h[g] = acc;
+        acc += cnt_at(h, ep_start + e_loc);
+        cumA_h[g] = acc;
+      }
+    }
+    FLUX_CHECK_EQ(acc, M_this_ep) << "splits_per_source disagrees with gemm rows";
+    std::vector<int64_t> offR((size_t)nexG, 0);
+    acc = 0;
+    for (int h = 0; h < W; h++) {
+      for (int64_t e_loc = 0; e_loc < E_loc; e_loc++) {
+        offR[h * E_loc + e_loc] = acc;
+        acc += cnt_at(h, ep_start + e_loc);
+      }
+    }
+    for (int64_t e_loc = 0; e_loc < E_loc; e_loc++) {
+      for (int h = 0; h < W; h++) {
+        offR_of_A_h[e_loc * W + h] = offR[h * E_loc + e_loc];
+      }
+    }
+    auto tables_dev = tables.to(torch::kCUDA);
+    auto cumA = tables_dev[0];
+    auto offA = tables_dev[1];
+    auto offR_of_A = tables_dev[2];
+
+    torch::Tensor pack_index;
+    auto iota = torch::arange(M_this_ep, opt_i64);
+    if (M_this_ep > 0) {
+      auto g = torch::searchsorted(cumA, iota, /*out_int32=*/false, /*right=*/true)
+                   .clamp_max_(nexG - 1);
+      auto sgi = offR_of_A.index_select(0, g) + iota - offA.index_select(0, g);
+      pack_index =
+          torch::empty({M_this_ep}, opt_i64).scatter_(0, sgi, iota).to(torch::kInt);
+    } else {
+      pack_index = torch::empty({0}, torch::TensorOptions(torch::kCUDA).dtype(torch::kInt));
+    }
+
+    // reduce index: my copies sorted by (expert, copy index) == recv-panel order
+    // (owner-major falls out because experts are owner-contiguous). Keys are
+    // unique (one entry per copy), so no tie-break is needed.
+    auto iota_c = torch::arange(cpr, opt_i64);
+    auto routing_slice =
+        routing_idx.narrow(0, (int64_t)rank * cpr, cpr).to(torch::kLong);
+    auto splits_cum = splits_gpu.to(torch::kLong).cumsum(0);
+    auto e_of = torch::searchsorted(splits_cum, routing_slice, /*out_int32=*/false, /*right=*/true)
+                    .clamp_max_(nex - 1);
+    auto perm = (e_of * cpr + iota_c).argsort();
+    auto reduce_index = torch::empty({cpr}, opt_i64).scatter_(0, perm, iota_c).to(torch::kInt);
+
+    static const bool kCheckIdentity =
+        get_int_from_env("FLUX_A2AV_RS_CHECK_IDENTITY", 0) != 0;
+    if (kCheckIdentity && M_this_ep > 0) {
+      // brute-force reference for the arithmetic pack identity: recover each gemm
+      // row's global copy index from routing_idx, sort rows by (home, row)
+      int64_t ep_m_start = 0;
+      for (int64_t e = 0; e < ep_start; e++) {
+        for (int h = 0; h < W; h++) {
+          ep_m_start += cnt_at(h, e);
+        }
+      }
+      auto iota_m = torch::arange((int64_t)m_full, opt_i64);
+      auto copy_of_row = torch::empty({(int64_t)m_full}, opt_i64)
+                             .scatter_(0, routing_idx.to(torch::kLong), iota_m)
+                             .narrow(0, ep_m_start, M_this_ep);
+      auto h_of = copy_of_row.div(cpr, "floor");
+      auto perm_ref = (h_of * M_this_ep + iota).argsort();
+      FLUX_CHECK(torch::equal(pack_index, perm_ref.to(torch::kInt)))
+          << "a2av_hier pack-index identity mismatch";
+    }
+    return {pack_index, reduce_index};
+  }
+
+  // Compress (dedup) metadata for the a2av_hier combine. Executable spec:
+  // test_a2av_combine_sim.py::simulate_compress. One partial per (token,
+  // source node) crosses the wire; source rank (n, lr) owns all wire rows to
+  // rank (tn, lr) (same-lr end-to-end); the node's copies converge on it and
+  // are merged per token before the put. Everything below is derived from the
+  // globally replicated routing metadata, no exchange.
+  //
+  // Outputs (int32 CUDA):
+  // - wire_ptr [wire_rows + 1], wire_copy [conv_rows]: source-side CSR, wire
+  //   row -> contributing conv-panel rows. Conv panel on this rank: segments
+  //   ordered (dest node tn ascending SKIPPING own, source local rank ls
+  //   ascending), each holding peer (n, ls)'s send-panel slice for dest rank
+  //   (tn, my_lr) in the peer's (expert, copy) order. Wire rows are
+  //   token-ascending per tn segment; per-segment row count must equal the
+  //   transposed dedup count U[(tn, my_lr)][n] (FLUX_CHECKed).
+  // - red_ptr [ntokens_local + 1], red_row [red_total]: destination-side CSR,
+  //   local token -> its recv-panel rows under the compress chunk matrix C'
+  //   (own-node lanes keep per-rank chunks; the remote lane materializes only
+  //   at the same-lr source rank with U[me][m] rows). Per token: own-node
+  //   copies individually in copy-j order, then one merged row per
+  //   contributing remote node ascending. Remote merged row position is the
+  //   transposed one-cumsum: exclusive count of earlier home tokens with a
+  //   copy on that node.
+  std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+  build_a2av_compress_indices(
+      torch::Tensor const &routing_idx,
+      torch::Tensor const &splits_gpu,
+      torch::Tensor const &splits_per_source,  // CPU int32 [W, nex]
+      torch::Tensor const &unique_counts,      // CPU int32 [W, NN]: U[home][src_node]
+      int64_t m_full,
+      int world_size,
+      int nnodes,
+      int local_world_size,
+      int rank,
+      int64_t total_num_experts,
+      int64_t ep_nexperts,   // experts per owner rank (tp == 1)
+      int topk) {
+    const int W = world_size;
+    const int NN = nnodes;
+    const int L = local_world_size;
+    const int my_node = rank / L;
+    const int my_lr = rank % L;
+    const int64_t nex = total_num_experts;
+    const int64_t E_loc = ep_nexperts;
+    const int64_t cpr = m_full / W;
+    const int64_t ntok_local = cpr / topk;
+    const int64_t ntokens = m_full / topk;
+    auto opt_i64 = torch::TensorOptions(torch::kCUDA).dtype(torch::kLong);
+    auto opt_i32 = torch::TensorOptions(torch::kCUDA).dtype(torch::kInt);
+    constexpr int64_t kMax64 = std::numeric_limits<int64_t>::max();
+
+    FLUX_CHECK(unique_counts.device().is_cpu()) << "a2av_unique_counts must be CPU";
+    CHECK_2D(unique_counts, W, NN);
+    FLUX_CHECK(unique_counts.is_contiguous());
+    FLUX_CHECK(unique_counts.scalar_type() == at::ScalarType::Int);
+    const int32_t *U = unique_counts.data_ptr<int32_t>();
+    const int32_t *cnt = splits_per_source.data_ptr<int32_t>();
+
+    // host chunk matrix C[s][d] and the C/C' recv prefixes of MY column
+    std::vector<int64_t> C((size_t)W * W, 0);
+    for (int s = 0; s < W; s++) {
+      for (int d = 0; d < W; d++) {
+        int64_t acc = 0;
+        for (int64_t e = s * E_loc; e < (s + 1) * E_loc; e++) {
+          acc += cnt[d * nex + e];
+        }
+        C[s * W + d] = acc;
+      }
+    }
+    torch::Tensor lane_tables = torch::empty({2, W}, torch::TensorOptions().dtype(torch::kLong));
+    int64_t *recv_off_C = lane_tables[0].data_ptr<int64_t>();
+    int64_t *recv_off_Cp = lane_tables[1].data_ptr<int64_t>();
+    int64_t own_total = 0;
+    for (int s = 0, accC = 0, accCp = 0; s < W; s++) {
+      recv_off_C[s] = accC;
+      recv_off_Cp[s] = accCp;
+      accC += C[s * W + rank];
+      const bool same_node = s / L == my_node;
+      if (same_node) {
+        accCp += C[s * W + rank];
+        own_total += C[s * W + rank];
+      } else if (s % L == my_lr) {
+        accCp += U[rank * NN + s / L];
+      }
+    }
+    auto lane_dev = lane_tables.to(torch::kCUDA);
+    auto recv_off_C_dev = lane_dev[0];
+    auto recv_off_Cp_dev = lane_dev[1];
+
+    // ---- global per-copy attributes (every rank holds the full metadata)
+    auto iota_m = torch::arange(m_full, opt_i64);
+    auto splits_cum = splits_gpu.to(torch::kLong).cumsum(0);
+    auto e_of_copy =
+        torch::searchsorted(splits_cum, routing_idx.to(torch::kLong), false, /*right=*/true)
+            .clamp_max_(nex - 1);
+    auto owner = e_of_copy.div(E_loc, "floor");
+    auto home = iota_m.div(cpr, "floor");
+
+    // ---- source side: conv-panel order + wire CSR
+    torch::Tensor wire_ptr, wire_copy;
+    int64_t conv_total = 0, wire_total = 0;
+    for (int tn = 0; tn < NN; tn++) {
+      if (tn == my_node) {
+        continue;
+      }
+      wire_total += U[(tn * L + my_lr) * NN + my_node];
+      for (int ls = 0; ls < L; ls++) {
+        conv_total += C[(my_node * L + ls) * W + (tn * L + my_lr)];
+      }
+    }
+    if (conv_total > 0) {
+      auto owner_node = owner.div((int64_t)L, "floor");
+      auto home_node = home.div((int64_t)L, "floor");
+      auto conv_mask = (owner_node == my_node) & (home_node != my_node) &
+                       (home - home_node * L == my_lr);
+      auto seg = home_node - (home_node > my_node).to(torch::kLong);
+      auto ls = owner - owner_node * L;
+      auto conv_key = (((seg * L + ls) * nex + e_of_copy) * m_full + iota_m)
+                          .masked_fill_(~conv_mask, kMax64);
+      auto conv_copy = conv_key.argsort().narrow(0, 0, conv_total);
+      // wire grouping: (segment, token), token-ascending inside each segment
+      auto wkey = seg.index_select(0, conv_copy) * ntokens +
+                  conv_copy.div((int64_t)topk, "floor");
+      auto worder = wkey.argsort(/*stable=*/true, /*dim=*/-1, /*descending=*/false);
+      wire_copy = worder.to(torch::kInt);
+      auto counts = std::get<2>(torch::unique_consecutive(
+          wkey.index_select(0, worder), /*return_inverse=*/false, /*return_counts=*/true));
+      FLUX_CHECK_EQ(counts.numel(), wire_total)
+          << "compress wire rows disagree with a2av_unique_counts (transposed U)";
+      wire_ptr = torch::cat({torch::zeros({1}, opt_i64), counts.cumsum(0)}).to(torch::kInt);
+    } else {
+      // conv_total == 0 mathematically implies wire_total == 0; assert it so
+      // an inconsistent externally-supplied U aborts here instead of driving
+      // the pre-reduce kernel past wire_ptr's single element (2026-08-17
+      // hardening, epic combine-only entry).
+      FLUX_CHECK_EQ(wire_total, 0)
+          << "compress: conv_total == 0 but a2av_unique_counts claims "
+          << wire_total << " wire rows (inconsistent transposed U)";
+      wire_ptr = torch::zeros({1}, opt_i32);
+      wire_copy = torch::empty({0}, opt_i32);
+    }
+
+    // ---- destination side: red CSR under C'
+    auto iota_c = torch::arange(cpr, opt_i64);
+    auto e_my = e_of_copy.narrow(0, (int64_t)rank * cpr, cpr);
+    auto owner_my = owner.narrow(0, (int64_t)rank * cpr, cpr);
+    // today's recv row (C layout) via the reduce-index formula, then C' remap:
+    // intra-lane position is preserved, only the lane base changes
+    auto perm = (e_my * cpr + iota_c).argsort();
+    auto rows_C = torch::empty({cpr}, opt_i64).scatter_(0, perm, iota_c);
+    auto rows_Cp = rows_C - recv_off_C_dev.index_select(0, owner_my) +
+                   recv_off_Cp_dev.index_select(0, owner_my);
+    const int64_t K = (int64_t)topk + NN + 1;  // per-token entry order key base
+    auto tl = iota_c.div((int64_t)topk, "floor");
+    auto own_mask = owner_my.div((int64_t)L, "floor") == my_node;
+    auto key_own =
+        (tl * K + (iota_c - tl * topk)).masked_fill_(~own_mask, kMax64);
+    auto ord_own = key_own.argsort();
+    auto own_rows = rows_Cp.index_select(0, ord_own).narrow(0, 0, own_total);
+    auto own_keys = key_own.index_select(0, ord_own).narrow(0, 0, own_total);
+    // remote merged rows: flags [ntok_local, NN] -> per-column exclusive cumsum
+    int64_t rem_total = 0;
+    torch::Tensor rem_base = torch::zeros({NN}, torch::TensorOptions().dtype(torch::kLong));
+    int64_t *rem_base_p = rem_base.data_ptr<int64_t>();
+    for (int m = 0; m < NN; m++) {
+      if (m == my_node) {
+        continue;
+      }
+      rem_base_p[m] = recv_off_Cp[m * L + my_lr];
+      rem_total += U[rank * NN + m];
+    }
+    torch::Tensor red_ptr, red_row;
+    auto onode = owner_my.div((int64_t)L, "floor");
+    auto flags = torch::zeros({ntok_local * NN}, opt_i64)
+                     .scatter_(0, tl * NN + onode, 1)
+                     .view({ntok_local, (int64_t)NN});
+    flags.select(1, my_node).zero_();
+    auto pos = flags.cumsum(0) - flags;
+    auto rem_rows2d = pos + rem_base.to(torch::kCUDA).view({1, (int64_t)NN});
+    auto tl_col = torch::arange(ntok_local, opt_i64).view({ntok_local, 1});
+    auto m_row = torch::arange((int64_t)NN, opt_i64).view({1, (int64_t)NN});
+    auto key_rem = (tl_col * K + topk + m_row)
+                       .masked_fill_(flags.eq(0), kMax64)
+                       .reshape({-1});
+    auto ord_rem = key_rem.argsort();
+    auto rem_rows = rem_rows2d.reshape({-1}).index_select(0, ord_rem).narrow(0, 0, rem_total);
+    auto rem_keys = key_rem.index_select(0, ord_rem).narrow(0, 0, rem_total);
+    auto keys_all = torch::cat({own_keys, rem_keys});
+    auto vals_all = torch::cat({own_rows, rem_rows});
+    auto ord = keys_all.argsort();
+    red_row = vals_all.index_select(0, ord).to(torch::kInt);
+    auto tl_sorted = keys_all.index_select(0, ord).div(K, "floor");
+    red_ptr = torch::cat(
+                  {torch::zeros({1}, opt_i64),
+                   torch::bincount(tl_sorted, {}, ntok_local).cumsum(0)})
+                  .to(torch::kInt);
+
+    static const bool kCheckIdentity =
+        get_int_from_env("FLUX_A2AV_RS_CHECK_IDENTITY", 0) != 0;
+    if (kCheckIdentity) {
+      // every red entry lands inside the C' recv image, every token has at
+      // least one contribution, totals match the host tables
+      FLUX_CHECK_EQ(own_total + rem_total, red_row.size(0));
+      if (red_row.size(0) > 0) {
+        FLUX_CHECK_GE(red_row.min().item<int64_t>(), 0);
+        int64_t cpr_cp = 0;
+        for (int s = 0; s < W; s++) {
+          cpr_cp += (s / L == my_node)               ? C[s * W + rank]
+                    : (s % L == my_lr)               ? U[rank * NN + s / L]
+                                                     : 0;
+        }
+        FLUX_CHECK_LT(red_row.max().item<int64_t>(), cpr_cp);
+      }
+    }
+    return {wire_ptr, wire_copy, red_ptr, red_row};
+  }
+}  // namespace
+
 class TopkReduceScatterOp::TopkReduceScatterOpImpl {
  private:
   std::shared_ptr<Group> tp_group;
@@ -1269,15 +1606,40 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       FLUX_CHECK_EQ((int)gemm_outs.size(), 1) << "a2av_hier supports a single weight group";
       FLUX_CHECK(splits_per_source.has_value())
           << "a2av_hier requires splits_per_source ([W, nexperts] int32 CPU)";
-      FLUX_CHECK(pack_index.has_value() && reduce_index.has_value())
-          << "a2av_hier requires pack_index / reduce_index (built by the gather-rs op or "
-             "passed as precomputed routing-plan inputs)";
+      auto const &cnt_t = splits_per_source.value();
+      // v2b in-window: absent routing-plan indices self-build here, on the
+      // timed critical path (same v1 placement as the gather_rs entry above --
+      // per-iteration routing means these can never be assumed precomputed)
+      const int64_t nex_total = (int64_t)this->ep_nexperts * this->ep_world_size;
+      const int64_t e_loc = nex_total / this->world_size;
+      if (this->a2av_compress_ && !wire_csr.has_value()) {
+        FLUX_CHECK(unique_counts.has_value())
+            << "a2av_hier_compress in-window build requires unique_counts ([W, nnodes] int32 CPU)";
+        auto [wp, wc, rp, rr] = build_a2av_compress_indices(
+            routing_idx, splits, cnt_t, unique_counts.value(), m_full,
+            this->world_size, this->nnodes, this->local_world_size, this->rank,
+            nex_total, e_loc, this->topk);
+        wire_csr = std::vector<torch::Tensor>{wp, wc};
+        reduce_csr = std::vector<torch::Tensor>{rp, rr};
+      }
+      torch::Tensor pack_idx_t, reduce_idx_t;
+      if (pack_index.has_value() || reduce_index.has_value()) {
+        FLUX_CHECK(pack_index.has_value() && reduce_index.has_value())
+            << "pass both pack_index and reduce_index or neither";
+        pack_idx_t = pack_index.value();
+        reduce_idx_t = reduce_index.value();
+      } else {
+        std::tie(pack_idx_t, reduce_idx_t) = build_a2av_combine_indices(
+            routing_idx, splits, cnt_t, gemm_outs[0].size(0), m_full,
+            this->world_size, this->rank, nex_total, e_loc,
+            (int64_t)this->rank * e_loc);
+      }
       return run_a2av_hier(
           gemm_outs[0],
           output,
           splits_per_source.value(),
-          pack_index.value(),
-          reduce_index.value(),
+          pack_idx_t,
+          reduce_idx_t,
           unique_counts,
           wire_csr,
           reduce_csr,
@@ -1573,325 +1935,6 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         this->a2av_compress);
   }
 
-  // Builds the mirror-layout gather indices for the a2av_hier combine, sharing
-  // layer0 a2av's exact ordering contract (same (.., expert, dst_row) keys, same
-  // copy-index tie-break):
-  // - pack_index [M_this_ep]: send-panel row -> gemm row. The send panel is
-  //   (home_rank, expert, copy)-ordered == layer0's recv layout on this rank, so
-  //   this is the inverse of layer0's sorted_gather_index arithmetic identity --
-  //   derived from the same offA/cumA/offR_of_A host tables, NO sort.
-  // - reduce_index [cpr]: local copy (t_local * topk + j) -> recv-panel row. The
-  //   recv panel is (owner_rank, expert, copy)-ordered == layer0's send-buffer
-  //   layout on this rank, i.e. globally (expert, copy)-sorted -- the inverse of
-  //   layer0's pack permutation: ONE argsort of the layer0 pack key + a scatter.
-  // A fused layer0+layer1 pipeline can pass layer0's tensors instead and pay the
-  // index math once (see the forward kwargs).
-  std::pair<torch::Tensor, torch::Tensor>
-  build_a2av_combine_indices(
-      torch::Tensor const &routing_idx,
-      torch::Tensor const &splits_gpu,
-      torch::Tensor const &splits_per_source,
-      int64_t M_this_ep,
-      int64_t m_full) {
-    const int W = this->world_size;
-    const int64_t nex = this->total_num_experts;
-    const int64_t E_loc = this->ep_nexperts;  // experts per owner rank (tp == 1)
-    const int64_t nexG = E_loc * W;
-    const int64_t cpr = m_full / W;
-    const int32_t *cnt = splits_per_source.data_ptr<int32_t>();
-    auto cnt_at = [&](int h, int64_t e) -> int64_t { return cnt[h * nex + e]; };
-    auto opt_i64 = torch::TensorOptions(torch::kCUDA).dtype(torch::kLong);
-
-    // host tables -- formulas identical to layer0's metadata collapse (dispatch
-    // source == combine home, both index cnt rows). A-order groups g = e_loc*W+h.
-    torch::Tensor tables = torch::empty({3, nexG}, torch::TensorOptions().dtype(torch::kLong));
-    int64_t *cumA_h = tables[0].data_ptr<int64_t>();
-    int64_t *offA_h = tables[1].data_ptr<int64_t>();
-    int64_t *offR_of_A_h = tables[2].data_ptr<int64_t>();
-    int64_t acc = 0;
-    for (int64_t e_loc = 0; e_loc < E_loc; e_loc++) {
-      for (int h = 0; h < W; h++) {
-        int64_t g = e_loc * W + h;
-        offA_h[g] = acc;
-        acc += cnt_at(h, this->ep_start + e_loc);
-        cumA_h[g] = acc;
-      }
-    }
-    FLUX_CHECK_EQ(acc, M_this_ep) << "splits_per_source disagrees with gemm rows";
-    std::vector<int64_t> offR((size_t)nexG, 0);
-    acc = 0;
-    for (int h = 0; h < W; h++) {
-      for (int64_t e_loc = 0; e_loc < E_loc; e_loc++) {
-        offR[h * E_loc + e_loc] = acc;
-        acc += cnt_at(h, this->ep_start + e_loc);
-      }
-    }
-    for (int64_t e_loc = 0; e_loc < E_loc; e_loc++) {
-      for (int h = 0; h < W; h++) {
-        offR_of_A_h[e_loc * W + h] = offR[h * E_loc + e_loc];
-      }
-    }
-    auto tables_dev = tables.to(torch::kCUDA);
-    auto cumA = tables_dev[0];
-    auto offA = tables_dev[1];
-    auto offR_of_A = tables_dev[2];
-
-    torch::Tensor pack_index;
-    auto iota = torch::arange(M_this_ep, opt_i64);
-    if (M_this_ep > 0) {
-      auto g = torch::searchsorted(cumA, iota, /*out_int32=*/false, /*right=*/true)
-                   .clamp_max_(nexG - 1);
-      auto sgi = offR_of_A.index_select(0, g) + iota - offA.index_select(0, g);
-      pack_index =
-          torch::empty({M_this_ep}, opt_i64).scatter_(0, sgi, iota).to(torch::kInt);
-    } else {
-      pack_index = torch::empty({0}, torch::TensorOptions(torch::kCUDA).dtype(torch::kInt));
-    }
-
-    // reduce index: my copies sorted by (expert, copy index) == recv-panel order
-    // (owner-major falls out because experts are owner-contiguous). Keys are
-    // unique (one entry per copy), so no tie-break is needed.
-    auto iota_c = torch::arange(cpr, opt_i64);
-    auto routing_slice =
-        routing_idx.narrow(0, (int64_t)this->rank * cpr, cpr).to(torch::kLong);
-    auto splits_cum = splits_gpu.to(torch::kLong).cumsum(0);
-    auto e_of = torch::searchsorted(splits_cum, routing_slice, /*out_int32=*/false, /*right=*/true)
-                    .clamp_max_(nex - 1);
-    auto perm = (e_of * cpr + iota_c).argsort();
-    auto reduce_index = torch::empty({cpr}, opt_i64).scatter_(0, perm, iota_c).to(torch::kInt);
-
-    static const bool kCheckIdentity =
-        get_int_from_env("FLUX_A2AV_RS_CHECK_IDENTITY", 0) != 0;
-    if (kCheckIdentity && M_this_ep > 0) {
-      // brute-force reference for the arithmetic pack identity: recover each gemm
-      // row's global copy index from routing_idx, sort rows by (home, row)
-      int64_t ep_m_start = 0;
-      for (int64_t e = 0; e < this->ep_start; e++) {
-        for (int h = 0; h < W; h++) {
-          ep_m_start += cnt_at(h, e);
-        }
-      }
-      auto iota_m = torch::arange((int64_t)m_full, opt_i64);
-      auto copy_of_row = torch::empty({(int64_t)m_full}, opt_i64)
-                             .scatter_(0, routing_idx.to(torch::kLong), iota_m)
-                             .narrow(0, ep_m_start, M_this_ep);
-      auto h_of = copy_of_row.div(cpr, "floor");
-      auto perm_ref = (h_of * M_this_ep + iota).argsort();
-      FLUX_CHECK(torch::equal(pack_index, perm_ref.to(torch::kInt)))
-          << "a2av_hier pack-index identity mismatch";
-    }
-    return {pack_index, reduce_index};
-  }
-
-  // Compress (dedup) metadata for the a2av_hier combine. Executable spec:
-  // test_a2av_combine_sim.py::simulate_compress. One partial per (token,
-  // source node) crosses the wire; source rank (n, lr) owns all wire rows to
-  // rank (tn, lr) (same-lr end-to-end); the node's copies converge on it and
-  // are merged per token before the put. Everything below is derived from the
-  // globally replicated routing metadata, no exchange.
-  //
-  // Outputs (int32 CUDA):
-  // - wire_ptr [wire_rows + 1], wire_copy [conv_rows]: source-side CSR, wire
-  //   row -> contributing conv-panel rows. Conv panel on this rank: segments
-  //   ordered (dest node tn ascending SKIPPING own, source local rank ls
-  //   ascending), each holding peer (n, ls)'s send-panel slice for dest rank
-  //   (tn, my_lr) in the peer's (expert, copy) order. Wire rows are
-  //   token-ascending per tn segment; per-segment row count must equal the
-  //   transposed dedup count U[(tn, my_lr)][n] (FLUX_CHECKed).
-  // - red_ptr [ntokens_local + 1], red_row [red_total]: destination-side CSR,
-  //   local token -> its recv-panel rows under the compress chunk matrix C'
-  //   (own-node lanes keep per-rank chunks; the remote lane materializes only
-  //   at the same-lr source rank with U[me][m] rows). Per token: own-node
-  //   copies individually in copy-j order, then one merged row per
-  //   contributing remote node ascending. Remote merged row position is the
-  //   transposed one-cumsum: exclusive count of earlier home tokens with a
-  //   copy on that node.
-  std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
-  build_a2av_compress_indices(
-      torch::Tensor const &routing_idx,
-      torch::Tensor const &splits_gpu,
-      torch::Tensor const &splits_per_source,  // CPU int32 [W, nex]
-      torch::Tensor const &unique_counts,      // CPU int32 [W, NN]: U[home][src_node]
-      int64_t m_full) {
-    const int W = this->world_size;
-    const int NN = this->nnodes;
-    const int L = this->local_world_size;
-    const int my_node = this->rank / L;
-    const int my_lr = this->rank % L;
-    const int64_t nex = this->total_num_experts;
-    const int64_t E_loc = this->ep_nexperts;
-    const int64_t cpr = m_full / W;
-    const int64_t ntok_local = cpr / this->topk;
-    const int64_t ntokens = m_full / this->topk;
-    auto opt_i64 = torch::TensorOptions(torch::kCUDA).dtype(torch::kLong);
-    auto opt_i32 = torch::TensorOptions(torch::kCUDA).dtype(torch::kInt);
-    constexpr int64_t kMax64 = std::numeric_limits<int64_t>::max();
-
-    FLUX_CHECK(unique_counts.device().is_cpu()) << "a2av_unique_counts must be CPU";
-    CHECK_2D(unique_counts, W, NN);
-    FLUX_CHECK(unique_counts.is_contiguous());
-    FLUX_CHECK(unique_counts.scalar_type() == at::ScalarType::Int);
-    const int32_t *U = unique_counts.data_ptr<int32_t>();
-    const int32_t *cnt = splits_per_source.data_ptr<int32_t>();
-
-    // host chunk matrix C[s][d] and the C/C' recv prefixes of MY column
-    std::vector<int64_t> C((size_t)W * W, 0);
-    for (int s = 0; s < W; s++) {
-      for (int d = 0; d < W; d++) {
-        int64_t acc = 0;
-        for (int64_t e = s * E_loc; e < (s + 1) * E_loc; e++) {
-          acc += cnt[d * nex + e];
-        }
-        C[s * W + d] = acc;
-      }
-    }
-    torch::Tensor lane_tables = torch::empty({2, W}, torch::TensorOptions().dtype(torch::kLong));
-    int64_t *recv_off_C = lane_tables[0].data_ptr<int64_t>();
-    int64_t *recv_off_Cp = lane_tables[1].data_ptr<int64_t>();
-    int64_t own_total = 0;
-    for (int s = 0, accC = 0, accCp = 0; s < W; s++) {
-      recv_off_C[s] = accC;
-      recv_off_Cp[s] = accCp;
-      accC += C[s * W + this->rank];
-      const bool same_node = s / L == my_node;
-      if (same_node) {
-        accCp += C[s * W + this->rank];
-        own_total += C[s * W + this->rank];
-      } else if (s % L == my_lr) {
-        accCp += U[this->rank * NN + s / L];
-      }
-    }
-    auto lane_dev = lane_tables.to(torch::kCUDA);
-    auto recv_off_C_dev = lane_dev[0];
-    auto recv_off_Cp_dev = lane_dev[1];
-
-    // ---- global per-copy attributes (every rank holds the full metadata)
-    auto iota_m = torch::arange(m_full, opt_i64);
-    auto splits_cum = splits_gpu.to(torch::kLong).cumsum(0);
-    auto e_of_copy =
-        torch::searchsorted(splits_cum, routing_idx.to(torch::kLong), false, /*right=*/true)
-            .clamp_max_(nex - 1);
-    auto owner = e_of_copy.div(E_loc, "floor");
-    auto home = iota_m.div(cpr, "floor");
-
-    // ---- source side: conv-panel order + wire CSR
-    torch::Tensor wire_ptr, wire_copy;
-    int64_t conv_total = 0, wire_total = 0;
-    for (int tn = 0; tn < NN; tn++) {
-      if (tn == my_node) {
-        continue;
-      }
-      wire_total += U[(tn * L + my_lr) * NN + my_node];
-      for (int ls = 0; ls < L; ls++) {
-        conv_total += C[(my_node * L + ls) * W + (tn * L + my_lr)];
-      }
-    }
-    if (conv_total > 0) {
-      auto owner_node = owner.div((int64_t)L, "floor");
-      auto home_node = home.div((int64_t)L, "floor");
-      auto conv_mask = (owner_node == my_node) & (home_node != my_node) &
-                       (home - home_node * L == my_lr);
-      auto seg = home_node - (home_node > my_node).to(torch::kLong);
-      auto ls = owner - owner_node * L;
-      auto conv_key = (((seg * L + ls) * nex + e_of_copy) * m_full + iota_m)
-                          .masked_fill_(~conv_mask, kMax64);
-      auto conv_copy = conv_key.argsort().narrow(0, 0, conv_total);
-      // wire grouping: (segment, token), token-ascending inside each segment
-      auto wkey = seg.index_select(0, conv_copy) * ntokens +
-                  conv_copy.div((int64_t)this->topk, "floor");
-      auto worder = wkey.argsort(/*stable=*/true, /*dim=*/-1, /*descending=*/false);
-      wire_copy = worder.to(torch::kInt);
-      auto counts = std::get<2>(torch::unique_consecutive(
-          wkey.index_select(0, worder), /*return_inverse=*/false, /*return_counts=*/true));
-      FLUX_CHECK_EQ(counts.numel(), wire_total)
-          << "compress wire rows disagree with a2av_unique_counts (transposed U)";
-      wire_ptr = torch::cat({torch::zeros({1}, opt_i64), counts.cumsum(0)}).to(torch::kInt);
-    } else {
-      // conv_total == 0 mathematically implies wire_total == 0; assert it so
-      // an inconsistent externally-supplied U aborts here instead of driving
-      // the pre-reduce kernel past wire_ptr's single element (2026-08-17
-      // hardening, epic combine-only entry).
-      FLUX_CHECK_EQ(wire_total, 0)
-          << "compress: conv_total == 0 but a2av_unique_counts claims "
-          << wire_total << " wire rows (inconsistent transposed U)";
-      wire_ptr = torch::zeros({1}, opt_i32);
-      wire_copy = torch::empty({0}, opt_i32);
-    }
-
-    // ---- destination side: red CSR under C'
-    auto iota_c = torch::arange(cpr, opt_i64);
-    auto e_my = e_of_copy.narrow(0, (int64_t)this->rank * cpr, cpr);
-    auto owner_my = owner.narrow(0, (int64_t)this->rank * cpr, cpr);
-    // today's recv row (C layout) via the reduce-index formula, then C' remap:
-    // intra-lane position is preserved, only the lane base changes
-    auto perm = (e_my * cpr + iota_c).argsort();
-    auto rows_C = torch::empty({cpr}, opt_i64).scatter_(0, perm, iota_c);
-    auto rows_Cp = rows_C - recv_off_C_dev.index_select(0, owner_my) +
-                   recv_off_Cp_dev.index_select(0, owner_my);
-    const int64_t K = (int64_t)this->topk + NN + 1;  // per-token entry order key base
-    auto tl = iota_c.div((int64_t)this->topk, "floor");
-    auto own_mask = owner_my.div((int64_t)L, "floor") == my_node;
-    auto key_own =
-        (tl * K + (iota_c - tl * this->topk)).masked_fill_(~own_mask, kMax64);
-    auto ord_own = key_own.argsort();
-    auto own_rows = rows_Cp.index_select(0, ord_own).narrow(0, 0, own_total);
-    auto own_keys = key_own.index_select(0, ord_own).narrow(0, 0, own_total);
-    // remote merged rows: flags [ntok_local, NN] -> per-column exclusive cumsum
-    int64_t rem_total = 0;
-    torch::Tensor rem_base = torch::zeros({NN}, torch::TensorOptions().dtype(torch::kLong));
-    int64_t *rem_base_p = rem_base.data_ptr<int64_t>();
-    for (int m = 0; m < NN; m++) {
-      if (m == my_node) {
-        continue;
-      }
-      rem_base_p[m] = recv_off_Cp[m * L + my_lr];
-      rem_total += U[this->rank * NN + m];
-    }
-    torch::Tensor red_ptr, red_row;
-    auto onode = owner_my.div((int64_t)L, "floor");
-    auto flags = torch::zeros({ntok_local * NN}, opt_i64)
-                     .scatter_(0, tl * NN + onode, 1)
-                     .view({ntok_local, (int64_t)NN});
-    flags.select(1, my_node).zero_();
-    auto pos = flags.cumsum(0) - flags;
-    auto rem_rows2d = pos + rem_base.to(torch::kCUDA).view({1, (int64_t)NN});
-    auto tl_col = torch::arange(ntok_local, opt_i64).view({ntok_local, 1});
-    auto m_row = torch::arange((int64_t)NN, opt_i64).view({1, (int64_t)NN});
-    auto key_rem = (tl_col * K + this->topk + m_row)
-                       .masked_fill_(flags.eq(0), kMax64)
-                       .reshape({-1});
-    auto ord_rem = key_rem.argsort();
-    auto rem_rows = rem_rows2d.reshape({-1}).index_select(0, ord_rem).narrow(0, 0, rem_total);
-    auto rem_keys = key_rem.index_select(0, ord_rem).narrow(0, 0, rem_total);
-    auto keys_all = torch::cat({own_keys, rem_keys});
-    auto vals_all = torch::cat({own_rows, rem_rows});
-    auto ord = keys_all.argsort();
-    red_row = vals_all.index_select(0, ord).to(torch::kInt);
-    auto tl_sorted = keys_all.index_select(0, ord).div(K, "floor");
-    red_ptr = torch::cat(
-                  {torch::zeros({1}, opt_i64),
-                   torch::bincount(tl_sorted, {}, ntok_local).cumsum(0)})
-                  .to(torch::kInt);
-
-    static const bool kCheckIdentity =
-        get_int_from_env("FLUX_A2AV_RS_CHECK_IDENTITY", 0) != 0;
-    if (kCheckIdentity) {
-      // every red entry lands inside the C' recv image, every token has at
-      // least one contribution, totals match the host tables
-      FLUX_CHECK_EQ(own_total + rem_total, red_row.size(0));
-      if (red_row.size(0) > 0) {
-        FLUX_CHECK_GE(red_row.min().item<int64_t>(), 0);
-        int64_t cpr_cp = 0;
-        for (int s = 0; s < W; s++) {
-          cpr_cp += (s / L == my_node)               ? C[s * W + this->rank]
-                    : (s % L == my_lr)               ? U[this->rank * NN + s / L]
-                                                     : 0;
-        }
-        FLUX_CHECK_LT(red_row.max().item<int64_t>(), cpr_cp);
-      }
-    }
-    return {wire_ptr, wire_copy, red_ptr, red_row};
-  }
 
   torch::Tensor
   forward_gather_rs_impl(
@@ -2038,7 +2081,9 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
           // isolated mode: compress CSR build on the timed critical path, same
           // v1 placement as the pack/reduce index build below
           auto [wp, wc, rp, rr] = build_a2av_compress_indices(
-              routing_idx, splits_gpu, cnt_t, a2av_unique_counts.value(), m_full);
+              routing_idx, splits_gpu, cnt_t, a2av_unique_counts.value(), m_full,
+              this->world_size, this->nnodes, this->local_world_size, this->rank,
+              this->total_num_experts, this->ep_nexperts, this->topk);
           a2av_wire_csr = std::vector<torch::Tensor>{wp, wc};
           a2av_reduce_csr = std::vector<torch::Tensor>{rp, rr};
         }
@@ -2055,8 +2100,10 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         // v1 placement: index math on the main stream before the GEMM launch --
         // ordering to the pack kernel comes free via gemm_start_event. A fused
         // layer0+layer1 pipeline passes layer0's tensors and skips this entirely.
-        std::tie(a2av_pack_idx_t, a2av_reduce_idx_t) =
-            build_a2av_combine_indices(routing_idx, splits_gpu, cnt_t, M_this_ep, m_full);
+        std::tie(a2av_pack_idx_t, a2av_reduce_idx_t) = build_a2av_combine_indices(
+            routing_idx, splits_gpu, cnt_t, M_this_ep, m_full,
+            this->world_size, this->rank, this->total_num_experts,
+            this->ep_nexperts, this->ep_start);
       }
     }
 

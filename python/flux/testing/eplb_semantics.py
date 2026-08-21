@@ -43,11 +43,23 @@ import torch
 
 from .ep_gpu_plan import (
     comb_dst_slot_from_topk,
+    d6_rank_quota_prefix,
     direct_layout_entries,
     largest_remainder_split,
+    local_spread_rank_quota_prefix,
     rank_quota_prefix_nonlocal,
     reroute_expand_all_gpu,
 )
+
+# Replica-selection rules (2026-08-20 campaign-2 decision): sender-local
+# modes only — `local_spread` (default; per-source largest-remainder equal
+# split == token round-robin counts; SGLang dynamic-dispatch analog) and
+# `local_static` (src mod C; SGLang static-map / EPIC D6 class). The
+# global-quota split survives as `quota` for the retired staged arms'
+# history and their parity tests, but is NOT a sweep knob value and gets
+# no fused arm: it is the idealized global-sync ceiling that exists
+# nowhere in production.
+REPLICA_SELECT_MODES = ("local_spread", "local_static", "quota")
 from .ultraep_semantics import (
     UltraEPConfig,
     UltraEPPlan,
@@ -66,7 +78,8 @@ EPLB_POLICIES = ("global", "hier")
 
 def build_eplb_plan(cfg: UltraEPConfig, tpe: torch.Tensor,
                     pool_load, policy: str, num_nodes: int,
-                    rebalance_fn) -> UltraEPPlan:
+                    rebalance_fn,
+                    replica_select: str = "quota") -> UltraEPPlan:
     """Map one rebalance_experts() call onto the UltraEPPlan tensor layout.
 
     cfg:        shared shape config (D is irrelevant here beyond divisibility;
@@ -149,11 +162,25 @@ def build_eplb_plan(cfg: UltraEPConfig, tpe: torch.Tensor,
             prefix += q
             quota_prefix[l, j] = prefix
 
-    rank_quota_prefix = torch.stack([
-        build_rank_quota_prefix(cfg, tpe, l2p, lcnts, quota, src,
-                                locality_aware=False)
-        for src in range(cfg.R)
-    ])
+    # Replica rule (see REPLICA_SELECT_MODES): the two local modes are
+    # pure per-source functions (no global loads consumed); under them the
+    # quota/quota_prefix fields above become informational only (the
+    # build_epic_plan precedent). The ep_gpu_plan producers are
+    # device-agnostic, so calling them on CPU tensors here keeps the
+    # setup reference bitwise-consistent with the timed device planner.
+    assert replica_select in REPLICA_SELECT_MODES, replica_select
+    if replica_select == "quota":
+        rank_quota_prefix = torch.stack([
+            build_rank_quota_prefix(cfg, tpe, l2p, lcnts, quota, src,
+                                    locality_aware=False)
+            for src in range(cfg.R)
+        ])
+    elif replica_select == "local_spread":
+        rank_quota_prefix = local_spread_rank_quota_prefix(
+            tpe, lcnts, cfg.max_replicas_dim)
+    else:  # local_static
+        rank_quota_prefix = d6_rank_quota_prefix(
+            tpe, lcnts, cfg.max_replicas_dim)
 
     return UltraEPPlan(
         cfg=cfg, tpe=tpe.to(torch.int32), p2l=p2l, l2p=l2p, lcnts=lcnts,
@@ -161,6 +188,30 @@ def build_eplb_plan(cfg: UltraEPConfig, tpe: torch.Tensor,
         rank_quota_prefix=rank_quota_prefix,
         domain_solutions=[],
     )
+
+
+def fused_capacity_bounds(plan: UltraEPPlan, topk_all: torch.Tensor,
+                          headroom: float = 1.25):
+    """(max_rows_per_pair, max_recv_total) for the FusedEpDispatch ctor —
+    deployment-scope allocation sizing (rule-5 legal one-shot) from the
+    setup reference routing, GLOBAL over ranks so the collective geometry
+    contract holds identically everywhere. Contents stay per-iteration;
+    the op's in-kernel collective trap enforces the bounds at runtime."""
+    from .ultraep_semantics import reroute_expand
+
+    cfg = plan.cfg
+    R, nlp = cfg.R, cfg.nlp
+    P = R * nlp
+    pair_max = 0
+    recv_rows = torch.zeros(P, dtype=torch.int64)
+    for src in range(R):
+        _, phys = reroute_expand(cfg, plan, src, topk_all[src])
+        per_slot = torch.bincount(phys, minlength=P)
+        pair_max = max(pair_max, int(per_slot.max()))
+        recv_rows += per_slot
+    recv_max = int(recv_rows.view(R, nlp).sum(1).max())
+    return (max(int(pair_max * headroom) + 1, 1),
+            max(int(recv_max * headroom) + 1, 1))
 
 
 def weight_placement_pairs(plan: UltraEPPlan) -> list:
@@ -243,12 +294,15 @@ class EplbIterPlanner:
     """
 
     def __init__(self, plan: UltraEPPlan, rank: int, device,
-                 topk_all: torch.Tensor, want_comb: bool = False):
+                 topk_all: torch.Tensor, want_comb: bool = False,
+                 replica_select: str = "quota"):
+        assert replica_select in REPLICA_SELECT_MODES, replica_select
         cfg = plan.cfg
         self.cfg = cfg
         self.rank = rank
         self.device = device
         self.want_comb = want_comb
+        self.replica_select = replica_select
         # deployment-scope placement (rule-5 legal one-shot)
         self.l2p = plan.l2p.to(device)
         self.lcnts = plan.lcnts.to(device)
@@ -268,9 +322,18 @@ class EplbIterPlanner:
         R, G, S, K, nlp = cfg.R, cfg.G, cfg.S, cfg.K, cfg.nlp
         tpe_all = loads_gather_buf.view(R, G)
 
-        quota, _ = largest_remainder_split(
-            tpe_all.long().sum(0), self.lcnts, cfg.max_replicas_dim)
-        rqp = rank_quota_prefix_nonlocal(tpe_all, quota, self.lcnts)
+        # Replica rule branch (REPLICA_SELECT_MODES): local modes are pure
+        # per-source functions of tpe_all — no global information consumed.
+        if self.replica_select == "quota":
+            quota, _ = largest_remainder_split(
+                tpe_all.long().sum(0), self.lcnts, cfg.max_replicas_dim)
+            rqp = rank_quota_prefix_nonlocal(tpe_all, quota, self.lcnts)
+        elif self.replica_select == "local_spread":
+            rqp = local_spread_rank_quota_prefix(
+                tpe_all, self.lcnts, cfg.max_replicas_dim)
+        else:  # local_static
+            rqp = d6_rank_quota_prefix(
+                tpe_all, self.lcnts, cfg.max_replicas_dim)
         tok_all, phys_all = reroute_expand_all_gpu(
             rqp, self.l2p, self.lcnts, self.topk_all, cfg.interleave)
 
@@ -330,6 +393,46 @@ class EplbIterPlanner:
             n_recv=int(all_local.numel()),
             max_pair_rows=max_pair_rows,
         )
+
+    def derive_fused(self, loads_gather_buf=None) -> torch.Tensor:
+        """Campaign-2 fused path (planner v2a): the ENTIRE per-iteration
+        plan is one [S, K] int32 device tensor of global physical slot
+        ids — everything else (counts, layouts, offsets, combine handle)
+        derives inside the fused dispatch launch. Local replica modes
+        consume no exchange: tpe_all is a device histogram of the
+        rule-5-exempt replicated routing. Returns dst_phys.
+        """
+        cfg = self.cfg
+        R, G, S, K = cfg.R, cfg.G, cfg.S, cfg.K
+        dev = self.device
+        if self.replica_select == "quota":
+            assert loads_gather_buf is not None, "quota mode needs loads"
+            tpe_all = loads_gather_buf.view(R, G)
+            quota, _ = largest_remainder_split(
+                tpe_all.long().sum(0), self.lcnts, cfg.max_replicas_dim)
+            rqp = rank_quota_prefix_nonlocal(tpe_all, quota, self.lcnts)
+        else:
+            src_base = torch.arange(R, device=dev,
+                                    dtype=torch.int64).unsqueeze(1) * G
+            tpe_all = torch.bincount(
+                (src_base + self.topk_all.reshape(R, S * K)).reshape(-1),
+                minlength=R * G).view(R, G).to(torch.int32)
+            if self.replica_select == "local_spread":
+                rqp = local_spread_rank_quota_prefix(
+                    tpe_all, self.lcnts, cfg.max_replicas_dim)
+            else:  # local_static
+                rqp = d6_rank_quota_prefix(
+                    tpe_all, self.lcnts, cfg.max_replicas_dim)
+        from .ep_gpu_plan import reroute_expand_gpu
+        tok, phys = reroute_expand_gpu(
+            rqp[self.rank], self.l2p, self.lcnts, self.topk_all[self.rank],
+            cfg.interleave)
+        logical = self.p2l[phys]
+        cell = comb_dst_slot_from_topk(self.topk_all[self.rank], tok,
+                                       logical, G)
+        dst_phys = torch.empty(S * K, dtype=torch.int64, device=dev)
+        dst_phys[cell] = phys
+        return dst_phys.view(S, K).to(torch.int32)
 
     def check_against(self, ip: EplbIterPlan, lay) -> None:
         """Loud bitwise drift guard vs the setup CPU reference layout
@@ -501,6 +604,84 @@ class EPLBLayer0Runner(UltraEPLayer0Runner):
             self._out_splits = ip.out_splits
         if ip.comb_dst_slot is not None:
             self.comb_dst_slot = ip.comb_dst_slot
+
+    # -- campaign-2 fused wire (planner v2a, CANONICAL) ---------------------
+    #
+    # One FusedEpDispatch call replaces pack/a2av/place: the plan is just
+    # dst_phys [S, K] (EplbIterPlanner.derive_fused); counts ride in-launch;
+    # recv rows land slot-major/(src, stable-cell) ordered — which IS the
+    # gemm segment order, so gemm/act/gemm2 read the op views directly and
+    # the l01 combine consumes the recorded headers (no combine planning).
+
+    def enable_fused_dispatch(self, local_world_size: int,
+                              num_comm_sm: int = 8, m_groups: int = 1,
+                              headroom: float = 1.25,
+                              spin_limit: int = 0):
+        import flux  # GPU-side only
+
+        cfg = self.cfg
+        mrp, mrt = fused_capacity_bounds(self.plan, self._topk_all,
+                                         headroom)
+        self._fused = flux.FusedEpDispatch(
+            self.group, cfg.R // local_world_size, cfg.S, cfg.H, cfg.K,
+            cfg.nlp, mrp, mrt, self.dtype, m_groups, spin_limit)
+        self._fused_num_comm_sm = num_comm_sm
+        self._fused_probs = None
+        self._dst_phys = None
+        self.transport = "fused"
+
+    def set_fused_probs(self, probs_entry: torch.Tensor):
+        """[S, K] fp32 device — the gate's native per-entry probs (the
+        [S, G] -> [S, K] gather is a harness-form conversion of exempt
+        gating metadata, done once at setup)."""
+        assert probs_entry.shape == (self.cfg.S, self.cfg.K)
+        self._fused_probs = probs_entry.contiguous()
+
+    def bind_fused_plan(self, dst_phys: torch.Tensor):
+        """The ENTIRE per-iteration plan of the fused path."""
+        self._dst_phys = dst_phys
+
+    def fused_dispatch(self, inputs_shard: torch.Tensor):
+        cfg = self.cfg
+        recv, w, seg = self._fused.dispatch(
+            inputs_shard, self._dst_phys, self._fused_probs,
+            self._fused_num_comm_sm)
+        nlp = cfg.nlp
+        seg_rows = seg[:nlp].tolist()
+        seg_start = seg[nlp:].tolist()
+        base = self.rank * nlp
+        p2l = self.plan.p2l.long()
+        segments = []
+        for p in range(nlp):
+            if seg_rows[p] == 0:
+                continue
+            logical = int(p2l[base + p])
+            assert logical >= 0, f"rank {self.rank}: rows in unused slot {p}"
+            segments.append((p, seg_start[p], seg_start[p] + seg_rows[p],
+                             logical))
+        self.lay = _dc_replace(self.lay, gemm_segments=segments,
+                               seg_rows=seg_rows, seg_start=seg_start)
+        self.n_recv = seg_start[-1] + seg_rows[-1]
+        self.hidden_buf = recv
+        self.weights_buf = w
+        return recv
+
+    def fused_combine(self):
+        """Expert-side l01 combine: header-addressed row puts into every
+        source's home staging (weights NOT applied here — receiver-side
+        application is the DeepEP convention)."""
+        self._fused.combine(self.comb_hidden_buf[:self.n_recv],
+                            self._fused_num_comm_sm)
+
+    def fused_combine_reduce(self):
+        """Home-side gate + fp32 weighted reduce over the K cells."""
+        cfg = self.cfg
+        staging = self._fused.combine_gate(cfg.S, self._fused_num_comm_sm)
+        w = self._fused_probs.view(cfg.S, cfg.K, 1)
+        self.final_out.copy_(
+            (staging.view(cfg.S, cfg.K, cfg.H).float() * w).sum(1)
+            .to(self.dtype))
+        return self.final_out
 
     # -- layer1 (gemm2 + combine), the dispatch mirror ----------------------
     #

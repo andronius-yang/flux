@@ -1229,4 +1229,132 @@ get_sorted_problem_schedule_v2_with_ntiles_limit(
   }
   return problem_schedules;
 }
+
+// ---------------------------------------------------------------------------
+// In-window hc metadata (campaign-2 v2b) — see sort_util.h for contracts.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+__global__ void __launch_bounds__(256, 1)
+a2av_meta_counts_kernel(A2AVMetaCountsArguments args) {
+  // grid-stride over tokens; per token: per-copy histograms + per-token
+  // owner-rank/node dedup bitmasks -> uc row adds.
+  const int32_t W = args.world_size;
+  const int32_t ucols = W + args.nnodes;
+  for (int64_t t = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
+       t < args.ntokens; t += (int64_t)gridDim.x * blockDim.x) {
+    const int32_t src = (int32_t)(t / args.tokens_per_rank);
+    uint64_t rank_mask = 0;
+    for (int32_t k = 0; k < args.topk; ++k) {
+      const int32_t e = args.topk_ids[t * args.topk + k];
+      atomicAdd(&args.splits[e], 1);
+      atomicAdd(&args.sps[(int64_t)src * args.nexperts + e], 1);
+      rank_mask |= (uint64_t)1 << (e / args.ep_nexperts);
+    }
+    uint64_t node_mask = 0;
+    for (uint64_t m = rank_mask; m != 0; m &= m - 1) {
+      const int32_t d = __ffsll((long long)m) - 1;
+      atomicAdd(&args.uc[(int64_t)src * ucols + d], 1);
+      node_mask |= (uint64_t)1 << (d / args.local_world);
+    }
+    for (uint64_t m = node_mask; m != 0; m &= m - 1) {
+      const int32_t n = __ffsll((long long)m) - 1;
+      atomicAdd(&args.uc[(int64_t)src * ucols + W + n], 1);
+    }
+  }
+}
+
+__global__ void __launch_bounds__(256, 1)
+a2av_stable_scatter_pass1_kernel(A2AVStableScatterArguments args) {
+  extern __shared__ int32_t s_hist[];
+  for (int32_t e = threadIdx.x; e < args.nexperts; e += blockDim.x) {
+    s_hist[e] = 0;
+  }
+  __syncthreads();
+  const int64_t lo = (int64_t)blockIdx.x * kA2AVMetaTile;
+  const int64_t hi = (lo + (int64_t)kA2AVMetaTile < args.n_copies)
+                         ? lo + (int64_t)kA2AVMetaTile
+                         : args.n_copies;
+  for (int64_t i = lo + threadIdx.x; i < hi; i += blockDim.x) {
+    atomicAdd(&s_hist[args.topk_ids[i]], 1);
+  }
+  __syncthreads();
+  for (int32_t e = threadIdx.x; e < args.nexperts; e += blockDim.x) {
+    args.block_hist[(int64_t)blockIdx.x * args.nexperts + e] = s_hist[e];
+  }
+}
+
+__global__ void __launch_bounds__(256, 1)
+a2av_stable_scatter_scan_kernel(A2AVStableScatterArguments args) {
+  // single block: per-expert exclusive scan over blocks; then thread 0
+  // builds expert_base as the exclusive scan of the expert totals.
+  for (int32_t e = threadIdx.x; e < args.nexperts; e += blockDim.x) {
+    int32_t run = 0;
+    for (int32_t b = 0; b < args.num_blocks; ++b) {
+      const int32_t c = args.block_hist[(int64_t)b * args.nexperts + e];
+      args.block_offset[(int64_t)b * args.nexperts + e] = run;
+      run += c;
+    }
+    // stash the expert total in block_hist row 0 slot for the base scan
+    args.block_hist[e] = run;
+  }
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    int32_t run = 0;
+    for (int32_t e = 0; e < args.nexperts; ++e) {
+      args.expert_base[e] = run;
+      run += args.block_hist[e];
+    }
+    args.expert_base[args.nexperts] = run;
+  }
+}
+
+__global__ void __launch_bounds__(256, 1)
+a2av_stable_scatter_pass2_kernel(A2AVStableScatterArguments args) {
+  // stable emission: thread 0 of each block walks its tile strictly in
+  // flat order (deterministic; bit-identical to argsort(stable).argsort())
+  extern __shared__ int32_t s_cursor[];
+  const int32_t b = blockIdx.x;
+  for (int32_t e = threadIdx.x; e < args.nexperts; e += blockDim.x) {
+    s_cursor[e] = args.block_offset[(int64_t)b * args.nexperts + e];
+  }
+  __syncthreads();
+  const int64_t lo = (int64_t)b * kA2AVMetaTile;
+  const int64_t hi = (lo + (int64_t)kA2AVMetaTile < args.n_copies)
+                         ? lo + (int64_t)kA2AVMetaTile
+                         : args.n_copies;
+  if (threadIdx.x == 0) {
+    for (int64_t i = lo; i < hi; ++i) {
+      const int32_t e = args.topk_ids[i];
+      args.scatter_index[i] = args.expert_base[e] + s_cursor[e]++;
+    }
+  }
+}
+
+}  // namespace
+
+void
+a2av_meta_counts_impl(A2AVMetaCountsArguments const &args, cudaStream_t stream) {
+  FLUX_CHECK(args.world_size <= 64) << "owner bitmask is u64";
+  constexpr int kThreads = 256;
+  const int64_t want = (args.ntokens + kThreads - 1) / kThreads;
+  const int blocks = (int)std::min<int64_t>(want, 1024);
+  a2av_meta_counts_kernel<<<std::max(blocks, 1), kThreads, 0, stream>>>(args);
+  CUDA_CHECK(cudaGetLastError());
+}
+
+void
+a2av_stable_scatter_index_impl(
+    A2AVStableScatterArguments const &args, cudaStream_t stream) {
+  constexpr int kThreads = 256;
+  const size_t smem = (size_t)args.nexperts * sizeof(int32_t);
+  a2av_stable_scatter_pass1_kernel<<<args.num_blocks, kThreads, smem, stream>>>(
+      args);
+  a2av_stable_scatter_scan_kernel<<<1, kThreads, 0, stream>>>(args);
+  a2av_stable_scatter_pass2_kernel<<<args.num_blocks, kThreads, smem, stream>>>(
+      args);
+  CUDA_CHECK(cudaGetLastError());
+}
+
 }  // namespace bytedance::flux

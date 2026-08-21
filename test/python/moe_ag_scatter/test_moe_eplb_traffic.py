@@ -181,41 +181,69 @@ def perf_eplb(
             torch.distributed.barrier()
             iso_sync_times.append((time.perf_counter() - t_iso) * 1e3)
         nvtx_tag = f"iter{i}_warmup" if i < warmup_iters else f"iter{i}"
+        fused = runner.transport == "fused"
         with torch.cuda.nvtx.range(nvtx_tag):
             ev["start"][i].record()
-            # Recurring counts derivation + exchange (rule 5: the histogram
-            # is batch-derived, so it is computed in-bracket every
-            # iteration; the placement itself is static — no solver here).
-            torch.distributed.all_gather_into_tensor(
-                loads_gather_buf, planner.local_loads(), group=TP_GROUP
-            )
-            ev["plan_comm"][i].record()
-            # Per-iteration on-device planning (rule 5): NOTHING derived
-            # from routing is carried across iterations.
-            runner.bind_iter_plan(planner.derive(loads_gather_buf))
-            ev["plan"][i].record()
-            runner.pack(ctx.inputs_shard, probs_shard)
-            ev["pack"][i].record()
-            runner.a2av()
-            ev["comm"][i].record()
-            runner.place()
-            ev["scatter"][i].record()
-            # No per-iteration weight movement: prefetch is an empty phase,
-            # recorded for phase-name parity (reads ~0 by construction).
-            ev["prefetch"][i].record()
-            runner.gemm(gemm_only_op)
-            ev["gemm"][i].record()
-            if l01:
-                runner.act()
-                ev["act"][i].record()
-                runner.gemm2(gemm_only_op)
-                ev["gemm2"][i].record()
-                runner.combine_pack()
-                ev["cpack"][i].record()
-                runner.combine_a2av()
-                ev["comb"][i].record()
-                runner.combine_place_reduce()
-                ev["acc"][i].record()
+            if fused:
+                # CANONICAL campaign-2 path: local replica modes run NO
+                # pre-dispatch exchange (plan_comm records ~0 — the
+                # authentic DeepEP property); quota (debug-only on fused)
+                # re-adds the loads allgather.
+                if planner.replica_select == "quota":
+                    torch.distributed.all_gather_into_tensor(
+                        loads_gather_buf, planner.local_loads(),
+                        group=TP_GROUP)
+                ev["plan_comm"][i].record()
+                # the ENTIRE per-iteration plan: dst_phys [S, K]
+                runner.bind_fused_plan(planner.derive_fused(
+                    loads_gather_buf
+                    if planner.replica_select == "quota" else None))
+                ev["plan"][i].record()
+                ev["pack"][i].record()      # ~0: pack lives in-launch
+                runner.fused_dispatch(ctx.inputs_shard)
+                ev["comm"][i].record()
+                ev["scatter"][i].record()   # ~0: placement is the wire
+                ev["prefetch"][i].record()  # ~0: static placement
+                runner.gemm(gemm_only_op)
+                ev["gemm"][i].record()
+                if l01:
+                    runner.act()
+                    ev["act"][i].record()
+                    runner.gemm2(gemm_only_op)
+                    ev["gemm2"][i].record()
+                    ev["cpack"][i].record()  # ~0: handle-addressed
+                    runner.fused_combine()
+                    ev["comb"][i].record()
+                    runner.fused_combine_reduce()
+                    ev["acc"][i].record()
+            else:
+                # legacy staged path (retired from specs; kept for history)
+                torch.distributed.all_gather_into_tensor(
+                    loads_gather_buf, planner.local_loads(), group=TP_GROUP
+                )
+                ev["plan_comm"][i].record()
+                runner.bind_iter_plan(planner.derive(loads_gather_buf))
+                ev["plan"][i].record()
+                runner.pack(ctx.inputs_shard, probs_shard)
+                ev["pack"][i].record()
+                runner.a2av()
+                ev["comm"][i].record()
+                runner.place()
+                ev["scatter"][i].record()
+                ev["prefetch"][i].record()
+                runner.gemm(gemm_only_op)
+                ev["gemm"][i].record()
+                if l01:
+                    runner.act()
+                    ev["act"][i].record()
+                    runner.gemm2(gemm_only_op)
+                    ev["gemm2"][i].record()
+                    runner.combine_pack()
+                    ev["cpack"][i].record()
+                    runner.combine_a2av()
+                    ev["comb"][i].record()
+                    runner.combine_place_reduce()
+                    ev["acc"][i].record()
 
     seq = ["plan_comm", "plan", "pack", "comm", "scatter", "prefetch", "gemm"]
     if l01:
@@ -432,11 +460,24 @@ def parse_args():
                         "full-expert bytes (default), fc1 = only what the "
                         "layer0 GEMM consumes (halves setup memory)")
     parser.add_argument("--transport", default="nccl",
-                        choices=["nccl", "nvshmem"],
-                        help="dispatch a2av transport: NCCL alltoallv or"
-                        " flux's one-sided NVSHMEM All2AllSingle"
-                        " (putmem_nbi into symmetric staging + 2 team"
-                        " barriers per call; BF16/FP32 only)")
+                        choices=["nccl", "nvshmem", "fused"],
+                        help="dispatch transport: NCCL alltoallv, flux's"
+                        " staged NVSHMEM All2AllSingle (pre-v2 legacy"
+                        " arms), or the CANONICAL campaign-2 fused wire"
+                        " (FusedEpDispatch: DeepEP-lineage in-launch"
+                        " counts exchange + exact-offset puts + arrival"
+                        " signals — no planning step, no pre-dispatch"
+                        " collective under local replica modes)")
+    parser.add_argument("--replica_select", default=None,
+                        choices=["local_spread", "local_static", "quota"],
+                        help="replica-selection rule (campaign-2 knob)."
+                        " Default: local_spread for --transport fused"
+                        " (round-robin ≡ equal token split; SGLang"
+                        " dynamic-dispatch analog), quota for the legacy"
+                        " staged transports (their historical behavior)."
+                        " local_static = src mod C (SGLang static-map/D6"
+                        " class). Local modes are sender-local: NO"
+                        " pre-dispatch counts exchange is run or charged.")
     parser.add_argument("--num_comm_sm", type=int, default=8,
                         help="SMs for the NVSHMEM a2av kernel (nvshmem only)")
     parser.add_argument("--skip_correctness", default=False, action="store_true")
@@ -446,11 +487,14 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     init_ep_group(DIST_ENV.WORLD_SIZE)
-    if args.transport == "nvshmem":
-        # the one-sided All2AllSingle needs the flux shm / NVSHMEM heap;
-        # world group so pg ranks == NVSHMEM PEs (moonep/ultraep precedent)
+    if args.replica_select is None:
+        args.replica_select = (
+            "local_spread" if args.transport == "fused" else "quota")
+    if args.transport in ("nvshmem", "fused"):
+        # one-sided NVSHMEM paths need the flux shm heap; world group so
+        # pg ranks == NVSHMEM PEs (moonep/ultraep precedent)
         assert DTYPE_MAP[args.dtype] != torch.float16, (
-            "All2AllSingle instantiates BF16/FP32 only; fp16 aborts in-kernel"
+            "the NVSHMEM wires instantiate BF16/FP32 only"
         )
         flux.init_flux_shm(TP_GROUP)
     torch.cuda.synchronize()
@@ -526,7 +570,8 @@ if __name__ == "__main__":
     # per software stack, and the plan-hash all-gather below is the guard.
     t0 = time.perf_counter()
     plan = build_eplb_plan(cfg, tpe, pool_load, args.eplb_policy, num_nodes,
-                           rebalance_experts)
+                           rebalance_experts,
+                           replica_select=args.replica_select)
     plan_host_ms = (time.perf_counter() - t0) * 1e3
 
     h = torch.tensor([plan.plan_hash()], dtype=torch.int64, device="cuda")
@@ -555,6 +600,11 @@ if __name__ == "__main__":
     if args.transport == "nvshmem":
         # collective + device-syncing ctor: setup only, never timed
         runner.enable_nvshmem(DIST_ENV.LOCAL_WORLD_SIZE, args.num_comm_sm)
+    elif args.transport == "fused":
+        # campaign-2 canonical wire (collective ctor: symmetric recv/
+        # signal allocation + priming; capacity = deployment-scope bounds)
+        runner.enable_fused_dispatch(DIST_ENV.LOCAL_WORLD_SIZE,
+                                     num_comm_sm=args.num_comm_sm)
     if args.layers == "l01":
         runner.enable_layer1()
 
@@ -570,6 +620,7 @@ if __name__ == "__main__":
     planner = EplbIterPlanner(
         plan, rank, torch.device(torch.cuda.current_device()), topk_all,
         want_comb=(args.layers == "l01"),
+        replica_select=args.replica_select,
     )
 
     # Per-entry route probs, replicated deterministically so receivers can
@@ -579,17 +630,35 @@ if __name__ == "__main__":
     probs_shard = w_all[rank].cuda()
 
     # Gather buffer for the recurring counts exchange (the payload itself,
-    # planner.local_loads(), is derived in-bracket every iteration).
+    # planner.local_loads(), is derived in-bracket every iteration; only
+    # the quota replica mode ever runs the exchange).
     loads_gather_buf = torch.zeros(W * args.G, dtype=torch.int32, device="cuda")
-
-    # Setup-time drift guard (untimed): one derive from the known loads
-    # must reproduce the CPU reference layout bitwise, and the histogram
-    # derivation must match loads_from_topk.
-    assert torch.equal(planner.local_loads().cpu(), tpe[rank])
     loads_gather_buf.copy_(tpe.reshape(-1).to(loads_gather_buf.device))
-    ip0 = planner.derive(loads_gather_buf)
-    planner.check_against(ip0, runner.lay)
-    runner.bind_iter_plan(ip0)
+
+    # Setup-time drift guards (untimed): the device planner must be
+    # bitwise-consistent with its CPU twin / the CPU reference layout.
+    assert torch.equal(planner.local_loads().cpu(), tpe[rank])
+    if args.transport == "fused":
+        # per-entry probs in the gate's native [S, K] form (exempt gating
+        # metadata; setup-only reshape of the harness's [S, G] table)
+        probs_entry = w_all[rank][
+            torch.arange(S).unsqueeze(1), topk_all[rank].long()
+        ].float().cuda().contiguous()
+        runner.set_fused_probs(probs_entry)
+        cpu_planner = EplbIterPlanner(
+            plan, rank, torch.device("cpu"), topk_all,
+            replica_select=args.replica_select)
+        dst_cpu = cpu_planner.derive_fused(
+            tpe.reshape(-1).to(torch.int32)
+            if args.replica_select == "quota" else None)
+        dst0 = planner.derive_fused(
+            loads_gather_buf if args.replica_select == "quota" else None)
+        assert torch.equal(dst0.cpu(), dst_cpu), "fused plan CPU/GPU drift"
+        runner.bind_fused_plan(dst0)
+    else:
+        ip0 = planner.derive(loads_gather_buf)
+        planner.check_against(ip0, runner.lay)
+        runner.bind_iter_plan(ip0)
 
     gemm_only_op = flux.GemmOnly(
         moe_ctx.inputs.dtype,
@@ -631,6 +700,9 @@ if __name__ == "__main__":
               f"the per-iteration plan_ms, SCHEMA rule 5): {plan_host_ms:.1f}")
         RECORDER.emit_info(
             timing_accounting="per_iter_gpu",
+            planner_impl=("fused_dispatch" if args.transport == "fused"
+                          else "torch_gpu"),
+            replica_select=args.replica_select,
             eplb_layers=args.layers,
             ntokens=ntokens,
             tokens_per_rank=S,
@@ -646,7 +718,11 @@ if __name__ == "__main__":
             eplb_rehomed_slots=n_moved,
             eplb_remote_frac=remote_frac,
             eplb_plan_host_ms=plan_host_ms,
-            eplb_plan_comm_bytes=W * args.G * 4,
+            # fused transport is sender-local in BOTH replica modes: no
+            # pre-dispatch collective ever runs (the in-launch counts
+            # exchange is dispatch wire time, charged to comm_ms)
+            eplb_plan_comm_bytes=(0 if args.transport == "fused"
+                                  else W * args.G * 4),
             eplb_wire_bytes=wire_bytes,
             eplb_load_source=load_source,
             eplb_load_file=args.eplb_load_file or "",

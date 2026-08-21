@@ -1,0 +1,46 @@
+# Expert-movement baselines, campaign-2 fused-canonical — LOW budget rungs
+# (b1-b8, correctness ON). Qwen3 architecture (G=128, topk=8, H=4096,
+# layer-92 trace routing). Arms: the three AUTHENTIC baselines only, l0 +
+# l01 each — EPLB (static placement, direct wire = DeepEP-LL/decode
+# transport class; eplb_l01 debut), EPIC (hc m1 + in-kernel fused
+# migration = the paper-faithful system config), MoonEP (staged faithful,
+# ported authentic planner per iteration). NO flux-native arms (user
+# scope 2026-08-20). Reversed twin: embase_pm4n_iso_rev.yaml. High rungs
+# (b16-b64): embase_pm4n_iso_hi.yaml.
+platform: perlmutter
+nodes: 4
+variants:
+  - eplb_fused
+  - eplb_fused_l01
+  - eplb_fused_lstatic
+  - epic_hc_m1_mig_fused
+  - epic_l01_hc_m1_mig_fused
+  - moonep_nvshmem_getmem
+  - moonep_l01_nvshmem_getmem
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib:
+  - 1
+  - 2
+  - 4
+  - 8
+topk: 8
+G: 128
+H: 4096
+ffn_hidden: 4096
+chunk_bytes: 8192
+dtype: bfloat16
+modes:
+  - isolated
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+matrix_instance: "001"
+retries: 1
+timeout_s: 1200
+idle_timeout_s: 300
+skip_correctness: false
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+notes: "campaign-2 planner-v2 debut (fused-canonical, SCHEMA rules 4/5): eplb on the FusedEpDispatch wire (planner_impl=fused_dispatch, NO planning step, in-launch counts exchange in comm_ms, replica_select=local_spread default with lstatic twin, plan_comm~0/bytes=0); epic hc mig_fused on --hc_meta inwindow (op-derived splits/stable-scatter/sps/uc inside the dispatch bracket); moonep unchanged (authentic ported planner). NEW BINARY BOUNDARY: tags FLUX_FUSED_EP_DISPATCH_TAG + FLUX_A2AV_INWINDOW_META_TAG — never compare against campaign-1 capsules on any planning-inclusive or wire bracket."

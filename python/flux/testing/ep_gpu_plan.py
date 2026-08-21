@@ -26,6 +26,7 @@ __all__ = [
     "largest_remainder_split",
     "rank_quota_prefix_nonlocal",
     "d6_rank_quota_prefix",
+    "local_spread_rank_quota_prefix",
     "interleave_params_batched",
     "reroute_expand_gpu",
     "reroute_expand_all_gpu",
@@ -142,6 +143,34 @@ def d6_rank_quota_prefix(tpe_all: torch.Tensor, lcnts: torch.Tensor,
     out = torch.where(step, tpe_all.long().unsqueeze(-1),
                       torch.zeros(1, dtype=torch.int64, device=dev))
     return out.to(torch.int32)
+
+
+def local_spread_rank_quota_prefix(tpe_all: torch.Tensor,
+                                   lcnts: torch.Tensor,
+                                   Cmax: int) -> torch.Tensor:
+    """[R, G, Cmax] int32 rank-quota prefix for the `local_spread` replica
+    rule: each SOURCE splits its own load for expert l equally over the
+    expert's C_l instances by largest remainder (extras to the lowest
+    instance index) — count-equivalent to token-ordinal round-robin
+    replica selection (SGLang dynamic-dispatch analog), and fully
+    sender-local: a pure function of tpe_all[src], no exchange.
+
+    Parity target: largest_remainder_split applied per source row.
+    Caveat (recorded in variants/handoff): count-equivalence, not
+    token-identity — the coprime interleave permutes which tokens fill
+    each instance's block.
+    """
+    R, G = tpe_all.shape
+    dev = tpe_all.device
+    loads = tpe_all.long().unsqueeze(-1)                    # [R, G, 1]
+    C = lcnts.long().view(1, G, 1)
+    j = torch.arange(Cmax, device=dev, dtype=torch.int64).view(1, 1, Cmax)
+    valid = j < C
+    base = torch.div(loads, C, rounding_mode="floor")
+    rem = torch.remainder(loads, C)
+    q = torch.where(valid, base + (j < rem).long(), torch.zeros_like(base))
+    prefix = torch.where(valid, q.cumsum(dim=-1), torch.zeros_like(q))
+    return prefix.to(torch.int32)
 
 
 def interleave_params_batched(totals: torch.Tensor,

@@ -200,6 +200,7 @@ All2AllSingle = _get_flux_member("All2AllSingle")
 AsyncSendRecv = _get_flux_member("AsyncSendRecv")
 WeightPrefetchGetmem = _get_flux_member("WeightPrefetchGetmem")
 WeightPushMulticast = _get_flux_member("WeightPushMulticast")
+FusedEpDispatch = _get_flux_member("FusedEpDispatch")
 
 __all__ = [
     "bsr_reduce",
@@ -253,6 +254,7 @@ __all__ = [
     "All2AllSingle",
     "AsyncSendRecv",
     "WeightPrefetchGetmem",
+    "FusedEpDispatch",
     "WeightPushMulticast",
     "_nvshmem_team_split_strided",
     "_nvshmem_team_split_2d",

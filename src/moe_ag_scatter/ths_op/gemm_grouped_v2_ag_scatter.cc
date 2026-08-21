@@ -3445,6 +3445,132 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             (int64_t)st.M_this_ep};
   }
 
+  // ---- campaign-2 v2b: in-window hc metadata (rule 5) -------------------
+  //
+  // dispatch_only_routed derives splits / scatter_index /
+  // splits_per_source / a2av_unique_counts ON DEVICE from the raw
+  // replicated routing, D2H's the two small host-consumed matrices into
+  // pinned staging (event-synced — an honest in-window sync, precedents
+  // at the non-meta chunks path and the relay cnt_in sync), and delegates
+  // to dispatch_only unchanged. Capacity knobs (FLUX_A2AV_MAX_*) remain
+  // setup-computed ctor state: allocation is deployment scope, CONTENTS
+  // are per-iteration. Determinism note: the stable scatter index is
+  // bit-identical to python argsort(stable).argsort() — replicated
+  // cross-rank data must never come from the non-deterministic
+  // calc_scatter_index.
+
+  void
+  ensure_routed_meta() {
+    if (routed_meta_ready_) {
+      return;
+    }
+    const int W = this->world_size;
+    const int64_t E = this->nexperts;
+    const int64_t n_copies = (int64_t)this->max_ntokens * this->topk;
+    const int32_t nblocks =
+        (int32_t)((n_copies + kA2AVMetaTile - 1) / kA2AVMetaTile);
+    auto dev = torch::TensorOptions(torch::kCUDA).dtype(torch::kInt32);
+    auto pin = torch::TensorOptions(torch::kCPU)
+                   .dtype(torch::kInt32)
+                   .pinned_memory(true);
+    rt_splits_dev_ = torch::zeros({E}, dev);
+    rt_scatter_dev_ = torch::zeros({(int64_t)this->max_ntokens, this->topk},
+                                   dev);
+    rt_sps_dev_ = torch::zeros({(int64_t)W, E}, dev);
+    rt_uc_dev_ = torch::zeros({(int64_t)W, W + this->nnodes}, dev);
+    rt_sps_cpu_ = torch::zeros({(int64_t)W, E}, pin);
+    rt_uc_cpu_ = torch::zeros({(int64_t)W, W + this->nnodes}, pin);
+    rt_block_hist_ = torch::zeros({(int64_t)nblocks, E}, dev);
+    rt_block_offset_ = torch::zeros({(int64_t)nblocks, E}, dev);
+    rt_expert_base_ = torch::zeros({E + 1}, dev);
+    CUDA_CHECK(cudaEventCreateWithFlags(&rt_meta_event_,
+                                        cudaEventDisableTiming));
+    routed_meta_ready_ = true;
+  }
+
+  std::vector<torch::Tensor>
+  derive_routed_meta(torch::Tensor topk_ids) {
+    (void)get_int_from_env("FLUX_A2AV_INWINDOW_META_TAG", 0);
+    CHECK_INPUT(topk_ids, torch::kInt32);
+    CHECK_NDIM(topk_ids, 2);
+    const int W = this->world_size;
+    const int64_t ntok = topk_ids.size(0);
+    FLUX_CHECK_EQ(topk_ids.size(1), this->topk);
+    FLUX_CHECK(ntok % W == 0);
+    FLUX_CHECK_LE(ntok, this->max_ntokens);
+    ensure_routed_meta();
+    cudaStream_t stream = c10::cuda::getCurrentCUDAStream();
+    const int64_t E = this->nexperts;
+    const int64_t n_copies = ntok * this->topk;
+    CUDA_CHECK(cudaMemsetAsync(rt_splits_dev_.data_ptr(), 0,
+                               E * sizeof(int32_t), stream));
+    CUDA_CHECK(cudaMemsetAsync(rt_sps_dev_.data_ptr(), 0,
+                               (size_t)W * E * sizeof(int32_t), stream));
+    CUDA_CHECK(cudaMemsetAsync(
+        rt_uc_dev_.data_ptr(), 0,
+        (size_t)W * (W + this->nnodes) * sizeof(int32_t), stream));
+    A2AVMetaCountsArguments margs{
+        topk_ids.data_ptr<int32_t>(),
+        ntok,
+        (int32_t)this->topk,
+        (int32_t)E,
+        (int32_t)this->ep_nexperts,
+        (int32_t)W,
+        (int32_t)this->nnodes,
+        (int32_t)(W / this->nnodes),
+        ntok / W,
+        rt_splits_dev_.data_ptr<int32_t>(),
+        rt_sps_dev_.data_ptr<int32_t>(),
+        rt_uc_dev_.data_ptr<int32_t>()};
+    a2av_meta_counts_impl(margs, stream);
+    A2AVStableScatterArguments sargs{
+        topk_ids.data_ptr<int32_t>(),
+        n_copies,
+        (int32_t)E,
+        rt_block_hist_.data_ptr<int32_t>(),
+        rt_block_offset_.data_ptr<int32_t>(),
+        rt_expert_base_.data_ptr<int32_t>(),
+        rt_scatter_dev_.data_ptr<int32_t>(),
+        (int32_t)((n_copies + kA2AVMetaTile - 1) / kA2AVMetaTile)};
+    a2av_stable_scatter_index_impl(sargs, stream);
+    CUDA_CHECK(cudaMemcpyAsync(rt_sps_cpu_.data_ptr(), rt_sps_dev_.data_ptr(),
+                               (size_t)W * E * sizeof(int32_t),
+                               cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaMemcpyAsync(
+        rt_uc_cpu_.data_ptr(), rt_uc_dev_.data_ptr(),
+        (size_t)W * (W + this->nnodes) * sizeof(int32_t),
+        cudaMemcpyDeviceToHost, stream));
+    CUDA_CHECK(cudaEventRecord(rt_meta_event_, stream));
+    CUDA_CHECK(cudaEventSynchronize(rt_meta_event_));
+    return {rt_splits_dev_,
+            rt_scatter_dev_.narrow(0, 0, ntok),
+            rt_sps_cpu_, rt_uc_cpu_};
+  }
+
+  std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, int64_t>
+  dispatch_only_routed(
+      torch::Tensor inputs_shard,
+      torch::Tensor topk_ids,
+      c10::optional<torch::Tensor> dense_out,
+      c10::optional<torch::Tensor> swap_fc1,
+      c10::optional<torch::Tensor> swap_fc2,
+      int64_t swap_peer,
+      int64_t swap_epoch) {
+    auto meta = derive_routed_meta(topk_ids);
+    return dispatch_only(
+        inputs_shard, meta[0], meta[1],
+        c10::optional<torch::Tensor>(rt_sps_cpu_),
+        c10::optional<torch::Tensor>(rt_uc_cpu_), dense_out, swap_fc1,
+        swap_fc2, swap_peer, swap_epoch);
+  }
+
+ private:
+  bool routed_meta_ready_ = false;
+  torch::Tensor rt_splits_dev_, rt_scatter_dev_, rt_sps_dev_, rt_uc_dev_;
+  torch::Tensor rt_sps_cpu_, rt_uc_cpu_;
+  torch::Tensor rt_block_hist_, rt_block_offset_, rt_expert_base_;
+  cudaEvent_t rt_meta_event_ = nullptr;
+
  protected:
   std::vector<torch::Tensor>
   forward_impl(
@@ -4639,6 +4765,32 @@ GemmGroupedV2AGScatterOp::dispatch_only(
       std::move(swap_fc2),
       swap_peer,
       swap_epoch);
+}
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, int64_t>
+GemmGroupedV2AGScatterOp::dispatch_only_routed(
+    torch::Tensor inputs_shard,
+    torch::Tensor topk_ids,
+    c10::optional<torch::Tensor> dense_out,
+    c10::optional<torch::Tensor> swap_fc1,
+    c10::optional<torch::Tensor> swap_fc2,
+    int64_t swap_peer,
+    int64_t swap_epoch) {
+  FLUX_CHECK(impl_ != nullptr) << "GemmGroupedV2AGScatterOp is not initialized";
+  return impl_->dispatch_only_routed(
+      std::move(inputs_shard),
+      std::move(topk_ids),
+      std::move(dense_out),
+      std::move(swap_fc1),
+      std::move(swap_fc2),
+      swap_peer,
+      swap_epoch);
+}
+
+std::vector<torch::Tensor>
+GemmGroupedV2AGScatterOp::derive_routed_meta(torch::Tensor topk_ids) {
+  FLUX_CHECK(impl_ != nullptr) << "GemmGroupedV2AGScatterOp is not initialized";
+  return impl_->derive_routed_meta(std::move(topk_ids));
 }
 
 std::vector<double>

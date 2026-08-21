@@ -722,6 +722,22 @@ def parse_args():
                         help="<mid>.placement.json sidecar "
                         "(sweeps/predict_placement.py); required for "
                         "--placement nodeaware")
+    parser.add_argument("--hc_meta", default="inwindow",
+                        choices=["inwindow", "python"],
+                        help="hc metadata derivation (campaign-2 v2b)."
+                        " inwindow = CANONICAL: the op derives splits/"
+                        "stable-scatter/splits_per_source/unique_counts"
+                        " on device inside the dispatch bracket"
+                        " (dispatch path calls derive_routed_meta; the"
+                        " combine op rebuilds its index sets internally);"
+                        " python = the campaign-1 torch-op derive, kept"
+                        " for debug/A-B (requires the same binary)")
+    parser.add_argument("--replica_select", default="local_static",
+                        choices=["local_static", "local_spread"],
+                        help="replica rule: local_static = the paper's"
+                        " own D6 src-mod-C (DEFAULT — authentic EPIC);"
+                        " local_spread = per-source equal split (SGLang"
+                        " dynamic analog, ablation). Both sender-local.")
     parser.add_argument("--router", default="d6",
                         choices=["d6", "loccap", "evensplit"],
                         help="replica selection: d6 = src mod lcnts (the "
@@ -885,7 +901,8 @@ if __name__ == "__main__":
     placement_sha = ""
     t0 = time.perf_counter()
     if args.placement == "epic":
-        plan = build_epic_plan(cfg, tpe, pool_load, num_nodes)
+        plan = build_epic_plan(cfg, tpe, pool_load, num_nodes,
+                               replica_select=args.replica_select)
     elif args.placement == "nodeaware":
         assert args.placement_file, "--placement nodeaware needs --placement_file"
         assert args.routing_file, (
@@ -1045,6 +1062,9 @@ if __name__ == "__main__":
             hc=runner.hc_enabled,
             hcc=getattr(runner, "hcc_enabled", False),
             kg_frozen=(runner._hc_kg[0] if runner.hc_enabled else None),
+            replica_select=args.replica_select,
+            inwindow_meta=(args.hc_meta == "inwindow"
+                           and runner.hc_enabled),
         )
         # Setup-time drift guard (untimed): one derive from the known
         # loads must reproduce the CPU reference state bitwise.
@@ -1052,6 +1072,18 @@ if __name__ == "__main__":
         loads_gather_buf.copy_(tpe.reshape(-1).to(loads_gather_buf.device))
         ip0 = iter_planner.derive(loads_gather_buf)
         iter_planner.check_against(ip0, runner)
+        if iter_planner.inwindow_meta:
+            # v2b guard: the op's in-window derivation must be bitwise-
+            # equal to the python reference bundle (stable scatter index
+            # determinism is the load-bearing property).
+            b0 = runner._hc_bundles[0]
+            sd, scd, sps_c, uc_c = runner._hc_ops[0].derive_routed_meta(
+                ip0.hc_vce)
+            assert torch.equal(sd.cpu(), b0.meta.splits), "iw splits drift"
+            assert torch.equal(scd.cpu(), b0.meta.scatter_index), (
+                "in-window stable scatter index != python reference")
+            assert torch.equal(sps_c, b0.meta.splits_per_source)
+            assert torch.equal(uc_c, b0.meta.a2av_unique_counts)
         runner.bind_iter_plan(ip0)
     elif rank == 0:
         print("timing_accounting=legacy_untimed_plan (m>1 or non-d6 "
@@ -1093,6 +1125,11 @@ if __name__ == "__main__":
               f"{plan_host_ms:.1f}")
         RECORDER.emit_info(
             timing_accounting=timing_accounting,
+            planner_impl=("fused_dispatch"
+                          if (per_iter and args.hc_meta == "inwindow"
+                              and args.transport == "hier_compress")
+                          else "torch_gpu" if per_iter else "legacy"),
+            replica_select=args.replica_select,
             ntokens=ntokens,
             tokens_per_rank=S,
             gemm_rows_per_rank=gemm_rows,

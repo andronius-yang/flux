@@ -24,6 +24,7 @@ from flux.testing.ep_gpu_plan import (
     d6_rank_quota_prefix,
     interleave_params_batched,
     largest_remainder_split,
+    local_spread_rank_quota_prefix,
     place_slots_from_locals,
     rank_quota_prefix_nonlocal,
     reroute_expand_all_gpu,
@@ -84,6 +85,60 @@ def test_quota_and_rank_quota_parity(case, pool_mode):
 
     rqp = rank_quota_prefix_nonlocal(tpe, plan.quota, plan.lcnts)
     assert torch.equal(rqp, plan.rank_quota_prefix)
+
+
+@pytest.mark.parametrize("case", CASES, ids=lambda c: c.name)
+def test_local_spread_prefix(case):
+    """local_spread producer: (a) bitwise == largest_remainder_split
+    applied per source row; (b) conservation prefix[C-1] == tpe[src,l];
+    (c) count-equivalence to token-ordinal round-robin replica selection."""
+    cfg, topk_all, tpe, plan = build(case, "batch")
+    Cmax = cfg.max_replicas_dim
+    rqp = local_spread_rank_quota_prefix(tpe, plan.lcnts, Cmax)
+    for src in range(cfg.R):
+        _, ref = largest_remainder_split(tpe[src].long(), plan.lcnts, Cmax)
+        assert torch.equal(rqp[src], ref), f"src {src} per-source parity"
+    # conservation: prefix at the last valid instance equals the load
+    C = plan.lcnts.long()
+    last = rqp.long().gather(
+        2, (C - 1).clamp(min=0).view(1, cfg.G, 1).expand(cfg.R, cfg.G, 1)
+    ).squeeze(-1)
+    assert torch.equal(last, tpe.long())
+    # count-equivalence vs true token round-robin: residue j of `o % C`
+    # over m ordinals receives floor(m/C) + (j < m % C) — ELEMENTWISE
+    # identical to the largest-remainder equal split.
+    alloc = rqp.long().clone()
+    alloc[:, :, 1:] -= rqp.long()[:, :, :-1]
+    for src in range(min(cfg.R, 2)):
+        for l in range(cfg.G):
+            m, Cl = int(tpe[src, l]), int(plan.lcnts[l])
+            rr = torch.bincount(
+                torch.arange(m, dtype=torch.int64) % Cl, minlength=Cl)
+            assert torch.equal(alloc[src, l, :Cl], rr), (src, l)
+
+
+@pytest.mark.parametrize("mode", ["local_spread", "local_static"])
+@pytest.mark.parametrize("case", CASES[:4], ids=lambda c: c.name)
+def test_eplb_iter_planner_replica_modes(case, mode):
+    """End-to-end drift-guard consistency in the two campaign-2 replica
+    modes: a plan built with replica_select == the planner's mode must
+    reproduce build_comm_layout bitwise on every rank."""
+    from flux.testing.eplb_semantics import EplbIterPlanner, build_eplb_plan
+    from flux.testing.ultraep_semantics import loads_from_topk
+
+    cfg = make_cfg(case)
+    topk_all = make_topk(case)
+    tpe = loads_from_topk(cfg, topk_all)
+    plan = build_eplb_plan(cfg, tpe, tpe.long().sum(0).double(), "global",
+                           1, rebalance_experts, replica_select=mode)
+    loads_gather = tpe.reshape(-1).to(torch.int32)
+    for rank in range(min(cfg.R, 4)):
+        lay = build_comm_layout(plan, rank, topk_all, pinned_masters=False)
+        planner = EplbIterPlanner(plan, rank, torch.device("cpu"),
+                                  topk_all, want_comb=True,
+                                  replica_select=mode)
+        ip = planner.derive(loads_gather)
+        planner.check_against(ip, lay)
 
 
 @pytest.mark.parametrize("case", CASES[:4], ids=lambda c: c.name)

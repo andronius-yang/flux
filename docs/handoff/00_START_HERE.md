@@ -72,6 +72,7 @@ is larger than every headline claim in this project. See `04`.
 | `03_insight_ledger.md` | **Before you propose any optimization.** |
 | `04_build_ledger.md` | When interpreting any pre-existing capsule. |
 | `docs/qa_walkthroughs/layer0_a2av_walkthrough.md`, `docs/launch/comet_traffic_matrix_a2av.md` | Only when you need mechanism. Still accurate, platform-neutral. |
+| `09_comm_only_tier12_restructure.md` | Before touching the comm-only drivers' timing (FAST/comet/hier arms): the queued Tier-1/Tier-2 (rule-5) restructure campaign, self-contained for a fresh session. |
 
 `03` exists to stop you re-deriving things that cost days. Read it before you build, not
 after — including the idea you are most likely to propose in your first hour, that **saving

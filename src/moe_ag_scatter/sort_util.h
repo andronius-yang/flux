@@ -198,6 +198,54 @@ void sort_scatter_index_to_per_expert(
     int ep_nexperts,
     cudaStream_t stream);
 
+// ---------------------------------------------------------------------------
+// In-window hc metadata derivation (campaign-2 planner v2b, rule 5): the
+// dispatch_only_routed entry derives splits / splits_per_source /
+// a2av_unique_counts / a stable scatter_index ON DEVICE from the raw
+// replicated topk routing, inside the timed window — replacing the python
+// setup-time metadata of the pre-v2 epic hc arms.
+// ---------------------------------------------------------------------------
+
+// Per-copy histograms + per-token dedup counts from the replicated
+// [ntokens_global, topk] routing. All outputs pre-zeroed by the caller.
+// Sums of nonnegative ints are order-independent => deterministic and
+// bitwise rank-identical (the replicated-data requirement).
+struct A2AVMetaCountsArguments {
+  int32_t const *topk_ids;  // [ntokens_global, topk] global expert ids
+  int64_t ntokens;          // ntokens_global (= tokens_per_rank * W)
+  int32_t topk;
+  int32_t nexperts;         // E_virt
+  int32_t ep_nexperts;      // experts per rank (owner = e / ep_nexperts)
+  int32_t world_size;       // W (<= 64: per-token owner bitmask in u64)
+  int32_t nnodes;
+  int32_t local_world;
+  int64_t tokens_per_rank;
+  int32_t *splits;          // [nexperts] out
+  int32_t *sps;             // [W, nexperts] out (splits_per_source)
+  int32_t *uc;              // [W, W + nnodes] out (u_mat | U_mat)
+};
+void a2av_meta_counts_impl(A2AVMetaCountsArguments const &args, cudaStream_t stream);
+
+// DETERMINISTIC counting-sort scatter index: bit-identical to the python
+// argsort(stable).argsort() reference. (calc_scatter_index in
+// src/cuda/moe_utils.cu is explicitly non-deterministic and must NEVER
+// produce replicated cross-rank data.) Three launches: per-tile smem
+// histograms -> single-block scans (expert_base + per-block offsets) ->
+// stable emission in flat (token, k) order.
+struct A2AVStableScatterArguments {
+  int32_t const *topk_ids;  // [n_copies] flat
+  int64_t n_copies;
+  int32_t nexperts;
+  int32_t *block_hist;      // [num_blocks, nexperts] scratch
+  int32_t *block_offset;    // [num_blocks, nexperts] scratch
+  int32_t *expert_base;     // [nexperts + 1] scratch (exclusive scan)
+  int32_t *scatter_index;   // [n_copies] out
+  int32_t num_blocks;       // = ceil(n_copies / kA2AVMetaTile)
+};
+constexpr int32_t kA2AVMetaTile = 2048;
+void a2av_stable_scatter_index_impl(
+    A2AVStableScatterArguments const &args, cudaStream_t stream);
+
 struct ProblemSchedule {
   int32_t expert_id;
   int32_t m_start;

@@ -10,6 +10,7 @@ if(ENABLE_NVSHMEM)
   all2all_impl.cu
   all2all_single_2d_impl.cu
   weight_prefetch_getmem_impl.cu
+  fused_ep_dispatch_impl.cu
   )
 endif()
 
@@ -22,7 +23,7 @@ list(APPEND FLUX_CUDA_OP_TARGETS ${LIB_NAME})
 set(FLUX_CUDA_OP_TARGETS ${FLUX_CUDA_OP_TARGETS} PARENT_SCOPE)
 if (BUILD_THS)
   file(GLOB THS_FILES ths_op/*.cc)
-  file(GLOB ALL2ALL_THS_FILES ths_op/dis_scatter*.cc ths_op/all2all_op.cc ths_op/all2all_single_2d.cc ths_op/weight_prefetch_getmem.cc ths_op/weight_push_multicast.cc)
+  file(GLOB ALL2ALL_THS_FILES ths_op/dis_scatter*.cc ths_op/all2all_op.cc ths_op/all2all_single_2d.cc ths_op/weight_prefetch_getmem.cc ths_op/weight_push_multicast.cc ths_op/fused_ep_dispatch.cc)
   list(REMOVE_ITEM THS_FILES ${ALL2ALL_THS_FILES})
   if(ENABLE_NVSHMEM)
     list(APPEND THS_FILES ${ALL2ALL_THS_FILES})

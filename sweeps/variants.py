@@ -484,12 +484,53 @@ VARIANTS = {
     # NVSHMEM_SYMMETRIC_SIZE via eplb_sym_size (row-sum bound — the ultraep
     # domain bound is unsafe under global re-homing). conn=8 pin inherited
     # from the EP-arm family A/B.
+    # ---- campaign-2 CANONICAL eplb arms (2026-08-20, planner v2a) ----
+    # FusedEpDispatch wire: DeepEP-lineage fused dispatch — NO planning
+    # step (the per-iteration plan is one [S,K] dst_phys tensor), the
+    # counts exchange rides IN-LAUNCH (comm_ms, zero host collectives),
+    # exact deterministic offsets, per-(slot,src) arrival signals, l01
+    # combine via the recorded per-row header handle. Replica selection is
+    # sender-local (NO pre-dispatch exchange; plan_comm records ~0 and
+    # eplb_plan_comm_bytes=0): default local_spread = per-source equal
+    # split == token round-robin COUNTS (SGLang dynamic-dispatch analog;
+    # count-equivalent, not token-identity — the interleave permutes
+    # within blocks); lstatic twin = src mod C (SGLang static-map/D6
+    # class). The old staged arms below are RETIRED from specs (kept for
+    # history; never quote against fused arms across the binary boundary
+    # FLUX_FUSED_EP_DISPATCH_TAG — SCHEMA rule 4/5).
+    "eplb_fused": dict(
+        comm_pattern="eplb_fused_ep",
+        driver="eplb",
+        test_args=["--transport", "fused",
+                   "--replica_select", "local_spread"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_FUSED_EP_DISPATCH_TAG"],
+    ),
+    "eplb_fused_l01": dict(
+        comm_pattern="eplb_fused_ep",
+        driver="eplb",
+        layer="l01",
+        test_args=["--transport", "fused",
+                   "--replica_select", "local_spread",
+                   "--layers", "l01"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_FUSED_EP_DISPATCH_TAG"],
+    ),
+    "eplb_fused_lstatic": dict(
+        comm_pattern="eplb_fused_ep",
+        driver="eplb",
+        test_args=["--transport", "fused",
+                   "--replica_select", "local_static"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_FUSED_EP_DISPATCH_TAG"],
+    ),
     # EPLB full journey (2026-08-20): dispatch + GEMM0 + GELU + GEMM1 +
     # the staged combine mirror (reverse a2av on the same All2AllSingle
     # pair, swapped splits; deterministic comb_dst_slot home reduce). No
     # dedup anywhere (direct wire both directions — the authentic
     # DeepEP-LL/decode transport class). rule-5 accounting: per-iteration
     # GPU planner (EplbIterPlanner), plan_ms column.
+    # RETIRED from specs 2026-08-20 (campaign 2: fused is canonical).
     "eplb_l01": dict(
         comm_pattern="eplb_static_a2av",
         driver="eplb",
@@ -635,12 +676,20 @@ VARIANTS = {
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
     ),
+    # 2026-08-20 campaign-2 v2b BOUNDARY: since the FLUX_A2AV_INWINDOW_
+    # META_TAG binary, these mig_fused arms run --hc_meta inwindow by
+    # driver default — the op derives splits/stable-scatter/sps/uc on
+    # device INSIDE the dispatch bracket (planner_impl=fused_dispatch);
+    # pre-v2 capsules of the SAME arm names used python-side per-iteration
+    # metadata (planner_impl=torch_gpu). Never compare across the tag
+    # boundary (SCHEMA rules 4/5).
     "epic_hc_m1_mig_fused": dict(
         comm_pattern="epic_hc_a2av", driver="epic",
         test_args=["--transport", "hier_compress", "--placement", "epic",
                    "--groups", "1", "--migration", "inkernel"],
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
-        requires=["FLUX_A2AV_INKERNEL_SWAP_TAG"],
+        requires=["FLUX_A2AV_INKERNEL_SWAP_TAG",
+                  "FLUX_A2AV_INWINDOW_META_TAG"],
     ),
     "epic_l01_hc_m1_mig": dict(
         comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
@@ -655,7 +704,8 @@ VARIANTS = {
                    "--groups", "1", "--layers", "l01", "--migration",
                    "inkernel"],
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
-        requires=["FLUX_A2AV_INKERNEL_SWAP_TAG"],
+        requires=["FLUX_A2AV_INKERNEL_SWAP_TAG",
+                  "FLUX_A2AV_INWINDOW_META_TAG"],
     ),
     "epic_l01_hc_m1": dict(
         comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
