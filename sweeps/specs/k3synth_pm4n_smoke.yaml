@@ -1,0 +1,44 @@
+# Kimi-K3 canonical shape — first smoke/template spec (2026-08-20).
+# G=896, topk=16, H=3584 (LATENT wire width; K3 tech report Table 1),
+# ffn 3072; routing = the SYNTHESIZED-EMPIRICAL pools (model=Kimi-K3-synth,
+# hot-split v2 from real K2 marginals — see SCHEMA trace-family note: the
+# routing is derived, the perf numbers are concrete). Budgets are MULTIPLES
+# OF 7 MiB: the latent row is 7168 B = 7*2^10, and budget_mib*2^20 must be
+# chunk-divisible — b7/b14/b28/b56 is the K3 analog of b8..b64.
+# Pre-registered 4n expectation (probe 2026-08-20, U-spread 1.003): topk-16
+# incidence SATURATES at 4 nodes (~99% of tokens touch every node), so
+# lb~union and exporter asymmetry ~0 pre-placement; the asymmetry
+# mechanisms activate at larger NN or once placement de-saturates
+# incidence. Layer 92 = K3-relabeled late layer (K2 fit layer 60).
+platform: perlmutter
+nodes: 4
+variants:
+  - hier_compress_lb_union
+  - hier_compress_union
+  - eplb_fused
+  - moonep_nvshmem_getmem
+families:
+  - "trace:model=Kimi-K3-synth;pools=mmlu/college_mathematics+mmlu/high_school_world_history+livecodebench/execution+mmlu/professional_law;layer=92;sem=pernode"
+budgets_mib:
+  - 7
+  - 28
+topk: 16
+G: 896
+H: 3584
+ffn_hidden: 3072
+chunk_bytes: 7168
+dtype: bfloat16
+modes:
+  - isolated
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+matrix_instance: "001"
+retries: 1
+timeout_s: 1200
+idle_timeout_s: 300
+skip_correctness: false
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+  NVSHMEM_SYMMETRIC_SIZE: "8G"

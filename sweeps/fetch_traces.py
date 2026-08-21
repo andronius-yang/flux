@@ -34,6 +34,11 @@ MODEL_PREFIXES = {
     "DeepSeek-R1": "cognitivecomputations/DeepSeek-R1-AWQ",
     "Llama4-Maverick": "meta-llama/Llama-4-Maverick-17B-128E-Instruct",
     "Kimi-K2": "moonshotai/Kimi-K2-Thinking",
+    # NOT an HF subtree: pools generated locally by synthesize_k3_traces.py
+    # (empirical K2 marginals upscaled 384->896; provenance in each
+    # pool.manifest.json). Same on-disk layout, so the whole trace-family
+    # pipeline consumes it unchanged.
+    "Kimi-K3-synth": "Kimi-K3-synthesized",
 }
 
 DEFAULT_TRACES_ROOT = "${PSCRATCH}/workspace/andrewy/moe_traces"
