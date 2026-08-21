@@ -994,6 +994,10 @@ if __name__ == "__main__":
             moe_ctx.weights[0], n_experts_per_rank, input_dtype, output_dtype
         )
         gemm1_op = flux.GemmGroupedV2(l1_weight, n_experts_per_rank, input_dtype, output_dtype)
+        # the reference (and the flux op) scale gemm1 by weight_scale[e] *
+        # input_scale; static per-expert constants (setup scope) expanded to
+        # A-order rows per iteration from the in-window splits
+        l1_scale_const = (l1_weight_scale * l1_input_scale).float()  # [epr]
 
         @torch.no_grad()
         def perf_fast_combined(iters, warmup_iters):
@@ -1052,6 +1056,10 @@ if __name__ == "__main__":
                     out1 = gemm1_op.forward(
                         intermediate, m["split_cpu"], sm_margin=args.sm_margin
                     )
+                    row_scale = torch.repeat_interleave(
+                        l1_scale_const, m["split_cpu"].to("cuda", non_blocking=True).long()
+                    )
+                    out1.mul_(row_scale.unsqueeze(1))
                     out1.mul_(l1_output_vec_scale.unsqueeze(1))
                     gemm2_end[i].record()
                     send1 = torch.index_select(out1, dim=0, index=m["inv_unpack"])
@@ -1165,6 +1173,10 @@ if __name__ == "__main__":
         ref1 = gemm1_op.forward(
             torch.nn.functional.gelu(ref0), gm["split_cpu"], sm_margin=args.sm_margin
         )
+        ref_row_scale = torch.repeat_interleave(
+            l1_scale_const, gm["split_cpu"].to("cuda").long()
+        )
+        ref1.mul_(ref_row_scale.unsqueeze(1))
         ref1.mul_(l1_output_vec_scale.unsqueeze(1))
         assert flux.testing.bitwise_eq(fast_out1, ref1), (
             "❌ same-op gemm0->gelu->gemm1 chain mismatch: data movement is broken"
