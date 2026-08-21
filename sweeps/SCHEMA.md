@@ -454,6 +454,22 @@ Highlights (full list = header row):
   sender-local eplb fused arms (no such collective exists); W*G*4 on epic
   (the per-iteration loads allgather is part of EPIC's algorithm and always
   timed) and on the retired quota arms.
+- `shape`, `ffn_hidden` (appended 2026-08-20, qwen3 validation lane) —
+  `shape` is the `SHAPE_PRESETS` key the spec used (`k3` = Kimi-K3 canon
+  G896/k16/H3584/ffn3072/chunk7168 on the synthesized pools; `qwen3` =
+  authentic Qwen3-235B-A22B G128/k8/H4096/**ffn1536**/chunk8192 on captured
+  Qwen3 routing — the fast 4n lane, since K3 topk-16 incidence saturates at
+  4 nodes); empty = raw-field spec. The runner (`apply_shape`) hard-errors
+  when a preset spec explicitly contradicts a pinned field or names a trace
+  family whose model doesn't match the preset (authentic capture vs
+  synthesized pools is part of the shape). **ffn correction, a rule-4-style
+  never-mix boundary:** `ffn_hidden` was previously unrecorded, and every
+  pre-2026-08-20 Qwen3-shape capsule ran ffn_hidden=4096 — wrong for Qwen3
+  (per-expert `moe_intermediate_size` is 1536; ~2.7x per-expert GEMM
+  inflation). Capsules lacking the `ffn_hidden` column therefore carry
+  invalid absolute GEMM-inclusive numbers for the Qwen3 shape; never
+  compare them against ffn_hidden=1536 cells. Comm-only/wire facts
+  (bytes, incidence, dedup ratios) are ffn-independent and remain valid.
 
 ## Modes — the never-mix rule
 

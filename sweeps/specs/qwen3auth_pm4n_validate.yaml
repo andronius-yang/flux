@@ -1,0 +1,45 @@
+# Qwen3-authentic fast validation lane (2026-08-20) — the 4n answer to K3
+# saturation: at the K3 canon (topk=16) 4-node incidence saturates (~99% of
+# tokens touch every node), so placement/router mechanisms cannot be
+# validated there without 8-32 nodes. shape=qwen3 (topk=8, headroom
+# 1-4(3/4)^8 ~ 0.90 mean visited-nodes fraction, i.e. NOT saturated) keeps
+# the quick 4n iteration loop alive on AUTHENTIC captured Qwen3-235B routing
+# (never the K3 synthesized pools — apply_shape hard-guards the model).
+#
+# SHAPE CORRECTION, protocol-rule-4-style boundary: shape=qwen3 pins
+# ffn_hidden=1536 (Qwen3-235B-A22B per-expert moe_intermediate_size). All
+# pre-2026-08-20 Qwen3-shape capsules ran ffn_hidden=4096 (~2.7x per-expert
+# GEMM inflation, and the ffn_hidden column did not exist) — their absolute
+# numbers are invalidated for GEMM-inclusive comparisons; NEVER compare this
+# spec's cells against them. Comparisons live inside this capsule only.
+#
+# Arms = the placement axis on one transport (A1 lineage) + the fused
+# reference: fixed placement -> epic placement -> nodeaware (+loccap)
+# -> pure-locality router, vs hier_compress_lb_union (tile-overlap fused
+# baseline). loccap/evensplit routers are still legacy_untimed_plan
+# accounting (SCHEMA rule 5) until their GPU port lands — quote wire/route
+# facts and same-accounting deltas, not cross-accounting totals.
+platform: perlmutter
+nodes: 4
+shape: qwen3
+variants:
+  - hier_compress_lb_union
+  - epic_hc_m1_place_none
+  - epic_hc_m1
+  - epic_hc_m1_na
+  - epic_hc_m1_na_lcinf
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+budgets_mib: [2, 8, 64]
+dtype: bfloat16
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+matrix_instance: "001"
+timeout_s: 900
+idle_timeout_s: 300
+retries: 1
+modes: [isolated]
+skip_correctness: false
+notes: "qwen3 authentic-shape 4n validation lane (ffn=1536 CORRECTED, shape preset debut); placement axis + fused reference; loccap arms legacy_untimed_plan"

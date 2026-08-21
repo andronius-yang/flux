@@ -56,11 +56,46 @@ MODE_ORDER = {m: i for i, m in enumerate(MODES)}  # clean numbers before perturb
 # get status nsys_empty instead of silently passing
 NSYS_REP_MIN_BYTES = 100_000
 
+# Model-shape presets (spec key `shape:` / --shape). A preset pins the FULL
+# coherent bundle {G, topk, H, ffn_hidden, chunk_bytes} plus the trace model
+# it is valid for — apply_shape() hard-errors on any explicitly-given field
+# that contradicts the preset and on any trace family whose model does not
+# match, so a spec can never silently mix (say) the K3 expert count with the
+# Qwen3 hidden width or the authentic Qwen3 routing with the K3-synth pools.
+#   k3    — Kimi-K3 canon (user decision 2026-08-20; CLAUDE.md): LATENT wire
+#           width H=3584, budgets must be multiples of 7 MiB (row 7168 B).
+#           Routing = the synthesized-empirical pools (no captured K3 exists).
+#   qwen3 — Qwen3-235B-A22B AUTHENTIC shape, the fast 4n-validation lane
+#           (K3 topk-16 incidence saturates at 4 nodes; Qwen3 topk-8 does
+#           not). ffn_hidden=1536 is the CORRECTED per-expert
+#           moe_intermediate_size — pre-2026-08-20 Qwen3-shape capsules ran
+#           ffn_hidden=4096 (~2.7x per-expert GEMM inflation) and are a
+#           never-mix boundary (SCHEMA protocol rule 4 note).
+SHAPE_PRESETS = {
+    "k3": {
+        "G": 896,
+        "topk": 16,
+        "H": 3584,
+        "ffn_hidden": 3072,
+        "chunk_bytes": 7168,
+        "trace_model": "Kimi-K3-synth",
+    },
+    "qwen3": {
+        "G": 128,
+        "topk": 8,
+        "H": 4096,
+        "ffn_hidden": 1536,
+        "chunk_bytes": 8192,
+        "trace_model": "Qwen3-235B",
+    },
+}
+
 # defaults for the fully-resolved spec; anything not overridden by --spec or
 # flags is pinned here (constants like H/chunk_bytes change only via a spec)
 SPEC_DEFAULTS = {
     "platform": None,
     "nodes": 2,
+    "shape": "",  # SHAPE_PRESETS key; "" = raw fields below (legacy specs)
     "variants": ["hier", "hier_compress"],
     "families": ["remotefrac"],
     "budgets_mib": [2, 8],
@@ -220,6 +255,14 @@ CELLS_COLUMNS = [
     "planner_impl",
     "replica_select",
     "plan_comm_bytes",
+    # appended 2026-08-20 (qwen3 validation lane): shape = the SHAPE_PRESETS
+    # key ("" = raw-field spec); ffn_hidden was previously UNRECORDED, which
+    # let the wrong Qwen3 value (4096 instead of the authentic per-expert
+    # moe_intermediate_size 1536) go unnoticed — old capsules lack both
+    # columns; Qwen3-shape capsules without ffn_hidden ran 4096 and never
+    # compare against ffn_hidden=1536 cells (protocol rule 4 note in SCHEMA)
+    "shape",
+    "ffn_hidden",
 ]
 METRICS_COLUMNS = [
     "run_id",
@@ -451,6 +494,45 @@ def parse_family(spec_str):
     name, _, rest = spec_str.partition(":")
     params = gen_matrix.parse_params(rest.split(";")) if rest else {}
     return name, params
+
+
+def apply_shape(spec, explicit=()):
+    """Expand spec['shape'] into the shape fields (see SHAPE_PRESETS).
+
+    `explicit` = keys the user actually wrote (spec file or flags): a field
+    that is explicit AND contradicts the preset is a hard error, never a
+    silent override. Every trace family's model must match the preset —
+    shape=qwen3 means the AUTHENTIC Qwen3-235B routing, never the K3
+    synthesized pools, and vice versa. No-op when shape is unset.
+    """
+    name = spec.get("shape") or ""
+    if not name:
+        return
+    if name not in SHAPE_PRESETS:
+        raise SystemExit(f"unknown shape {name!r}; known: {sorted(SHAPE_PRESETS)}")
+    preset = SHAPE_PRESETS[name]
+    for k, v in preset.items():
+        if k == "trace_model":
+            continue
+        if k in explicit and spec[k] != v:
+            raise SystemExit(
+                f"spec sets {k}={spec[k]!r} but shape={name} pins {k}={v} —"
+                " drop the explicit field or change/drop the shape key"
+            )
+        spec[k] = v
+    trace_default = gen_matrix.FAMILY_DEFAULT_PARAMS["trace"]["model"]
+    for fam_str in spec["families"]:
+        fam, fparams = parse_family(fam_str)
+        if fam != "trace":
+            continue
+        model = fparams.get("model", trace_default)
+        if model != preset["trace_model"]:
+            raise SystemExit(
+                f"shape={name} requires trace model {preset['trace_model']!r}"
+                f" but family {fam_str!r} resolves to model {model!r} —"
+                " the routing provenance (authentic capture vs synthesized"
+                " pools) is part of the shape, never mix them"
+            )
 
 
 def family_slug(name, params):
@@ -1532,6 +1614,8 @@ def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, s
             G=spec["G"],
             H=spec["H"],
             chunk_bytes=spec["chunk_bytes"],
+            shape=spec.get("shape", ""),
+            ffn_hidden=spec["ffn_hidden"],
             dtype=spec["dtype"],
             world_size=cell["world_size"],
             nnodes=spec["nodes"],
@@ -1958,6 +2042,13 @@ def main():
     rp.add_argument(
         "--budgets-mib", dest="budgets_mib", type=lambda s: [int(x) for x in parse_list(s)]
     )
+    rp.add_argument(
+        "--shape",
+        choices=sorted(SHAPE_PRESETS),
+        help="model-shape preset pinning G/topk/H/ffn_hidden/chunk_bytes and"
+        " the trace model (qwen3 = authentic Qwen3-235B, the fast"
+        " 4n-validation lane; k3 = Kimi-K3 canon, synthesized pools)",
+    )
     rp.add_argument("--topk", type=int)
     rp.add_argument("--G", type=int)
     rp.add_argument("--iters", type=int)
@@ -1986,18 +2077,27 @@ def main():
     if args.command == "rerun":
         spec = load_yaml(os.path.join(args.capsule, "spec.yaml"))
         merged = dict(SPEC_DEFAULTS, **spec)
+        # resolved capsule specs already carry the expanded fields; passing
+        # them as explicit re-validates preset consistency instead of
+        # silently rewriting a hand-edited capsule spec
+        apply_shape(merged, explicit=set(spec))
         cmd_run(merged, args.jobid, args.dry_run)
         return
 
     spec = dict(SPEC_DEFAULTS)
+    explicit = set()
     if args.spec:
-        spec.update(load_yaml(args.spec))
+        loaded = load_yaml(args.spec)
+        spec.update(loaded)
+        explicit |= set(loaded)
     for key in SPEC_DEFAULTS:
         val = getattr(args, key, None)
         if val is not None:
             spec[key] = val
+            explicit.add(key)
     if not spec["platform"]:
         raise SystemExit("--platform (or a spec with platform:) is required")
+    apply_shape(spec, explicit=explicit)
     cmd_run(spec, args.jobid, args.dry_run)
 
 
