@@ -412,6 +412,22 @@ Highlights (full list = header row):
   is the offline CPU solve of the same module and the driver hard-asserts
   its on-device solve matches it). eps default 0.0625 = the working
   default from the confirmed flat basin [0, 0.125], NOT canonicalized.
+  **Sender-local + fused kernel (2026-08-21, user relaxation ruling):**
+  `loccap_route_sl` (same module) is the SENDER-LOCAL variant — shared
+  quota/share tables are order-independent integer functions of the
+  d[R,G] loads allgather; each rank decides only its own rows (no
+  donation across sources; offline gate: sl never loses to the global
+  loccap_gpu on incidence). Its fused CUDA implementation is
+  `flux.placelambda_route_sl` (binary tag
+  `FLUX_PLACELAMBDA_ROUTE_SL_TAG`; ~0.4 ms/rank vs 52-67 ms python) with
+  RELAXED determinism: per-entry assignment uses atomic tickets, so the
+  verification contract for kernel cells is INVARIANTS (conservation,
+  forced accounting) + incidence within a pre-registered band of the
+  torch `loccap_route_sl` simulation — never a route hash, and kernel
+  routings legitimately vary run-to-run. The torch `loccap_gpu` global
+  router remains the deterministic reference arm; never conflate the
+  three routers (`loccap` exact / `loccap_gpu` global-deterministic /
+  `loccap_sl` kernel-relaxed) in one comparison without saying so.
 - `correct_bitwise`, `correct_allclose` — AND over ranks; empty when
   `skip_correctness` ran. Note bitwise may legitimately be 0 with determinism
   off; allclose is the correctness verdict.

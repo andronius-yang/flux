@@ -115,6 +115,7 @@ _nvshmem_team_my_pe = _get_flux_member("_nvshmem_team_my_pe")
 GroupBarrier = flux_mod.GroupBarrier
 
 calc_scatter_index = _get_flux_member("calc_scatter_index")
+placelambda_route_sl = _get_flux_member("placelambda_route_sl")
 
 ProfilingContext = flux_mod.ProfilingContext
 TuningRecord = flux_mod.TuningRecord
@@ -246,6 +247,7 @@ __all__ = [
     "get_gemm_rs_threadblock_segments_info",
     "calc_gemm_rs_threadblock_segments_info",
     "calc_scatter_index",
+    "placelambda_route_sl",
     "calc_moe_triton_blocked_gather_a",
     "DisScatterForward",
     "DisScatterBackward",

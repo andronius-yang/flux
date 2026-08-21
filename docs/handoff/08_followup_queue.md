@@ -265,3 +265,30 @@ cells hang, bincount the routing for empty experts before anything else.
   47824@b64 (rows_max ~1.2x cap) — the bounded repair cannot fix
   single-instance hot experts (exact loccap's augmenting chains can);
   consider a replication-aware repair or extra rounds in the fusion pass.
+- **2026-08-21 (later, same session): SENDER-LOCAL + FUSED KERNEL LANDED,
+  SUB-MS ACHIEVED.** User rulings: bit-identity RELAXED (invariants +
+  incidence band replace route_hash), kernel = native flux binary (paper
+  artifact). Sender-local redesign (`loccap_route_sl` torch reference in
+  placelambda_gpu.py): shared tables = order-independent functions of the
+  d[R,G] allgather; per-row decisions rank-owned; NO donation across
+  sources. Offline gate PASSED: sl never loses to global loccap_gpu on
+  incidence (up to −13% better at b8 tight eps; identical at eps=inf).
+  CUDA kernel `placelambda_route_sl` in src/cuda/moe_utils.cu (9 small
+  launches, O(n^2) largest-remainder ranking, relaxed atomic tickets),
+  pybind in src/pybind/ths_op.cc, flux.placelambda_route_sl, tag
+  FLUX_PLACELAMBDA_ROUTE_SL_TAG (in libflux_cuda.so, probe-visible).
+  Parity test test_placelambda_kernel.py: **0.40-0.45 ms/rank warm
+  median** (vs 52-67 ms torch), incidence within +0.5% of reference,
+  b8 AND b64 (latency launch-bound, not compute-bound).
+- **OPEN for kernel-arm bring-up (the one real design item):** per-
+  iteration routing now VARIES across iterations (relaxed atomics) while
+  the hc runner's buffers/K_g/RS-caps are frozen at setup — the
+  `kg_iter <= kg_frozen` assert and knob sizing need slack (headroom on
+  the setup-routed K_g / rows), or first-iteration sizing + margin.
+  Solve at 2n bring-up, not blind. Driver/planner wiring for router
+  `loccap_sl` (kernel + phys-row allgather in derive, relaxed
+  check_against) is NOT yet written — the torch `loccap_gpu` global
+  router remains the integrated deterministic arm. Next fusion targets:
+  persist workspace/memsets across iterations, fold into the dispatch
+  launch (planner_impl=fused_dispatch), counts-only exchange instead of
+  the phys-row allgather.
