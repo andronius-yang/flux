@@ -87,10 +87,17 @@ make_workspace_kernel(
     int M_acc = ep_splits_acc[eid] - Mi;
 
     problem_sizes[i] = cutlass::gemm::GemmCoord{Mi, new_N, K};
-    ptr_A[i] = ptr_with_offset(args.input[gid], M_acc * K * input_elem_size);
-    ptr_B[i] = ptr_with_offset(args.weights[gid], (eid * N + sid * new_N) * K * input_elem_size);
+    // 64-bit byte offsets (2026-08-21): at many experts per rank the int32
+    // products overflow — eid*N*K*2 crosses 2^31 at eid > 2^31/(N*K*2)
+    // (K3 N=3584/K=3072: eid ~97; historical shapes ran <= 16 experts/rank
+    // and never hit it). ptr_A/ptr_D M_acc terms are the same class at
+    // large M. Root cause of the 2026-08-21 K3 layer1 wrong-output cliff.
+    ptr_A[i] = ptr_with_offset(args.input[gid], (int64_t)M_acc * K * input_elem_size);
+    ptr_B[i] = ptr_with_offset(
+        args.weights[gid], ((int64_t)eid * N + (int64_t)sid * new_N) * K * input_elem_size);
     ptr_C[i] = nullptr;
-    ptr_D[i] = ptr_with_offset(args.output[gid], (M_acc * N + sid * new_N) * output_elem_size);
+    ptr_D[i] = ptr_with_offset(
+        args.output[gid], ((int64_t)M_acc * N + (int64_t)sid * new_N) * output_elem_size);
     lda[i] = LayoutA::packed({(int)Mi, (int)K}).stride(0);
     ldb[i] = LayoutB::packed({(int)K, (int)N}).stride(0);
     ldc[i] = LayoutC::packed({(int)Mi, (int)N}).stride(0);

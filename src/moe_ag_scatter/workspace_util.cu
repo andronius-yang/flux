@@ -340,9 +340,13 @@ prepare_workspace_kernel(
 
     problem_sizes[i] = cutlass::gemm::GemmCoord(Mi, N, K);
     ptr_A[i] = args.input;
-    ptr_B[i] = ptr_with_offset(args.weight[gid], eid * N * K * input_elem_size);
+    // 64-bit byte offsets (2026-08-21): int32 products overflow at many
+    // experts per rank — eid*N*K*2 crosses 2^31 at eid > 2^31/(N*K*2)
+    // (K3 ffn/H: eid ~97; the gather_rs sibling was the proven K3 layer1
+    // wrong-output cliff, epr-bisected to exactly that boundary).
+    ptr_B[i] = ptr_with_offset(args.weight[gid], (int64_t)eid * N * K * input_elem_size);
     ptr_C[i] = nullptr;
-    ptr_D[i] = ptr_with_offset(args.output[gid], M_acc * N * output_elem_size);
+    ptr_D[i] = ptr_with_offset(args.output[gid], (int64_t)M_acc * N * output_elem_size);
     lda[i] = GemmLayoutA::packed({Mi, K}).stride(0);
     ldb[i] = GemmLayoutB::packed({K, N}).stride(0);
     ldc[i] = GemmLayoutC::packed({Mi, N}).stride(0);
