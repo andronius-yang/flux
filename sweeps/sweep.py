@@ -967,12 +967,16 @@ def build_cell_env(spec, plat, cell, staging, matrix):
     elif v.get("driver", "flux") == "l01_fast":
         # combined FAST arm (2026-08-21): TWO flash_comm_t instances (one per
         # wire direction) share one NVSHMEM heap -> double the single-instance
-        # sizing (capacity is transpose-invariant, so both are equal)
+        # sizing (capacity is transpose-invariant, so both are equal). When
+        # the doubled heap would exceed the platform clamp, the argv builder
+        # shrinks --capacity_mib to clamp/16 per buffer; heap = 8x capacity
+        # = clamp/2 then (device-side cudaMalloc work buffers need the other
+        # half of GPU memory — 16G heap + 2x2G caps OOMed at K3 b32).
         single = int(fast_sym_size(matrix_path, plat)[:-1])
         sym_g = 2 * single
         sym_max = plat.get("sym_size_max_g")
-        if sym_max:
-            sym_g = min(sym_g, int(sym_max))
+        if sym_max and sym_g > int(sym_max):
+            sym_g = max(2, int(sym_max) // 2)
         env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_g}G"
     elif v.get("driver", "flux") == "gather_rs":
         # layer1 flux cells: exact FLUX_A2AV_RS_MAX_*_ROWS + heap from the
@@ -1241,6 +1245,18 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         if spec["skip_correctness"]:
             test_args.append("--skip_correctness")
         if v.get("driver") == "l01_fast":
+            # two flash_comm_t instances share one heap (~8x capacity total)
+            # PLUS capacity-scale device-side work buffers; when the doubled
+            # auto-capacity would exceed the platform clamp, shrink capacity
+            # to clamp/16 per buffer (heap = clamp/2 via build_cell_env; at
+            # K3 b32 that is 1 GiB vs the 801 MiB per-round bound —
+            # 2026-08-21, the 2 GiB first cut still OOMed device-side)
+            sym_max = plat.get("sym_size_max_g")
+            if sym_max:
+                single = int(fast_sym_size(matrix_path, plat)[:-1])
+                if 2 * single > int(sym_max):
+                    cap_mib = (int(sym_max) << 30) // 16 >> 20
+                    test_args += ["--capacity_mib", str(cap_mib)]
             return srun_prefix + ["./launch_fast.sh"] + test_args, sm_margin, iters, warmup
         if cell["mode"] == "torchprof":
             test_args.append("--profile")

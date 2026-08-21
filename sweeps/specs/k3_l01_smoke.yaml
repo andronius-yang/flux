@@ -30,8 +30,10 @@ profile_iters: 3
 sm_margin: 8
 matrix_instance: "001"
 retries: 1
-timeout_s: 1800
-idle_timeout_s: 300
+timeout_s: 2400
+# the torch combined arm is silent for its whole loop; at b32 that exceeds
+# 5 minutes of healthy quiet (2026-08-21 false-stuck lesson)
+idle_timeout_s: 900
 skip_correctness: false
 extra_env:
   CUDA_DEVICE_MAX_CONNECTIONS: "8"

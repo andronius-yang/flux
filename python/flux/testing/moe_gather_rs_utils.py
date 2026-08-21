@@ -98,9 +98,11 @@ def moe_gather_rs_forward_torch(
             + topk_index[ep_rank_m_start:ep_rank_m_end]
         )
 
-        output1 = torch.zeros_like(full_output)
-        output1[new_index] = output
-        full_output += output1
+        # index_add over unique indices == the historical zeros_like +
+        # index-assign + add, without materializing a second [M, N] buffer
+        # per group (2026-08-21: that cost ~2x8.6 GB/window at K3 b32 and
+        # made the combined torch arm a ~50-minute cell)
+        full_output.index_add_(0, new_index, output)
     topk_reduce = full_output.view((full_output.size(0) // topk, topk, full_output.size(1))).sum(1)
     if do_all_reduce:
         torch.distributed.all_reduce(

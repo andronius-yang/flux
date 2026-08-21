@@ -232,6 +232,11 @@ def perf_combined(name: str, iters: int, warmup_iters: int, prep_fn, plan_comm_f
             act_end[i].record()
             output = l1_fn(plan, intermediate)
             e2e_end[i].record()
+        if TP_GROUP.rank() == 0:
+            # per-window heartbeat for the sweep runner's idle-kill: the torch
+            # arm is otherwise silent for its whole loop (minutes/window at
+            # K3 b32 — every-5 was not enough, 2026-08-21)
+            print(f"[hb] window {i + 1}/{total_iters}")
 
     iter_times = {
         "e2e_ms": [],
@@ -1080,6 +1085,8 @@ if __name__ == "__main__":
                 host_e2e[i] = (time.perf_counter() - t0) * 1e3
                 d_sched[i], d_fill[i], d_wire[i] = t_d.tolist()
                 c_sched[i], c_fill[i], c_wire[i] = t_c.tolist()
+                if RANK == 0:
+                    print(f"[hb] window {i + 1}/{total_iters}")
 
             def per_iter_ms(starts, ends):
                 return [
