@@ -61,6 +61,14 @@ _spec = importlib.util.spec_from_file_location("loccap_semantics",
                                                _LOCCAP_PATH)
 LC = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(LC)
+# PLACE-lambda GPU-portable module (same file the driver runs on device;
+# running it here on CPU is the cross-device side of the same-code oracle)
+_PLG_PATH = os.path.join(_REPO, "python", "flux", "testing",
+                         "placelambda_gpu.py")
+_spec_plg = importlib.util.spec_from_file_location("placelambda_gpu",
+                                                   _PLG_PATH)
+PLG = importlib.util.module_from_spec(_spec_plg)
+_spec_plg.loader.exec_module(PLG)
 
 EPS_LADDER_DEFAULT = (0.0, 0.0625, 0.125, 0.25, 0.5, 1.0, math.inf)
 
@@ -334,6 +342,9 @@ def simulate_arm(topk_all, hosts, nlp, L, router, eps=None):
         phys = LC.d6_route(topk_all, l2p, lcnts)
     elif router == "evensplit":
         phys = LC.evensplit_route(topk_all, l2p, lcnts)
+    elif router == "loccap_gpu":
+        phys, _ = PLG.loccap_route_gpu(topk_all, p2l, l2p, lcnts, nlp, L,
+                                       eps)
     else:
         phys = LC.loccap_route(topk_all, p2l, l2p, lcnts, nlp, L, eps)
     st = LC.incidence_stats(phys, nlp, L)
@@ -351,7 +362,9 @@ def simulate_arm(topk_all, hosts, nlp, L, router, eps=None):
         2, home_node.expand(R, S, 1)).squeeze(2).long()
     egress = remote_pt.sum(1).reshape(W // L, L).sum(1)
     return {
-        "router": router if eps is None else f"loccap_eps{eps:g}",
+        "router": (router if eps is None
+                   else f"{router}_eps{eps:g}" if router == "loccap_gpu"
+                   else f"loccap_eps{eps:g}"),
         "incidence_remote": st["incidence_remote"],
         "mean_nodes_per_token": round(st["mean_nodes_per_token"], 4),
         "imbalance": round(st["imbalance_max_over_mean"], 4),
@@ -388,6 +401,32 @@ def ensure_placement(params, W, L, budget_mib, topk, chunk_bytes,
     epn = nexperts // W
     nlp = epn + redundant_per_rank
 
+    # placelambda_gpu (2026-08-21): the BATCH-OBSERVED device-portable
+    # solver — placement from the realized routing, not the oracle pools
+    # (production semantics; the driver re-solves the identical routing on
+    # GPU and hard-asserts equality — the cross-device oracle). Its
+    # predicted ladder uses the loccap_gpu router (its own arm; the exact
+    # python loccap ladder is never mixed in).
+    topk_all = None
+    if mode == "placelambda_gpu":
+        _, _, _, rpath, _ = gen_trace_routing.ensure_trace_matrix(
+            dict(params), W, L, budget_mib, topk, chunk_bytes,
+            matrix_instance, out_root, traces_root=traces_root,
+            nexperts=nexperts)
+        topk_all = routing_tensor(rpath, W)
+
+    def _build():
+        if mode == "placelambda_gpu":
+            res = PLG.build_placement_gpu(topk_all, L, nlp, nexperts,
+                                          balance_tol=balance_tol)
+            return {"hosts": res["hosts"],
+                    "primary_node": res["primary_node"],
+                    "stats": res["stats"]}
+        return build_placement(
+            pools_rows, params["sem"], nexperts, W, L, nlp, mode=mode,
+            fm_passes=fm_passes, balance_tol=balance_tol,
+            min_gain=min_gain, target_slots=target_slots)
+
     # Fast-path revalidation: when the sidecar exists, rebuild only the
     # PLACEMENT (the code-drift-prone part, ~seconds) and verify it matches;
     # skip re-simulating the eps ladder (~minutes at b64) — the driver
@@ -399,10 +438,7 @@ def ensure_placement(params, W, L, budget_mib, topk, chunk_bytes,
     if os.path.exists(path_early):
         with open(path_early) as f:
             existing_blob = json.loads(f.read())
-        placed_chk = build_placement(
-            pools_rows, params["sem"], nexperts, W, L, nlp, mode=mode,
-            fm_passes=fm_passes, balance_tol=balance_tol, min_gain=min_gain,
-            target_slots=target_slots)
+        placed_chk = _build()
         if (existing_blob.get("hosts") != placed_chk["hosts"]
                 or existing_blob.get("planner") != placed_chk["stats"]):
             raise RuntimeError(
@@ -415,24 +451,25 @@ def ensure_placement(params, W, L, budget_mib, topk, chunk_bytes,
                 hashlib.sha256(existing.encode()).hexdigest(),
                 existing_blob)
 
-    placed = build_placement(pools_rows, params["sem"], nexperts, W, L, nlp,
-                             mode=mode, fm_passes=fm_passes,
-                             balance_tol=balance_tol, min_gain=min_gain,
-                             target_slots=target_slots)
+    placed = _build()
 
     # simulate on the realized routing (generate deterministically if the
     # sidecar files are absent; ensure_trace_matrix is idempotent)
-    _, _, _, rpath, _ = gen_trace_routing.ensure_trace_matrix(
-        dict(params), W, L, budget_mib, topk, chunk_bytes, matrix_instance,
-        out_root, traces_root=traces_root, nexperts=nexperts)
-    topk_all = routing_tensor(rpath, W)
+    if topk_all is None:
+        _, _, _, rpath, _ = gen_trace_routing.ensure_trace_matrix(
+            dict(params), W, L, budget_mib, topk, chunk_bytes,
+            matrix_instance, out_root, traces_root=traces_root,
+            nexperts=nexperts)
+        topk_all = routing_tensor(rpath, W)
 
+    ladder_router = ("loccap_gpu" if mode == "placelambda_gpu"
+                     else "loccap")
     predicted = [simulate_arm(topk_all, placed["hosts"], nlp, L, "d6"),
                  simulate_arm(topk_all, placed["hosts"], nlp, L,
                               "evensplit")]
     for eps in eps_ladder:
         predicted.append(simulate_arm(topk_all, placed["hosts"], nlp, L,
-                                      "loccap", eps))
+                                      ladder_router, eps))
 
     blob = {
         "version": PLACEMENT_VERSION,
@@ -510,7 +547,7 @@ def _setup(args):
 
 def cmd_plan(args):
     plat, W, L, params = _setup(args)
-    for mode in ("nodeaware", "rankconc"):
+    for mode in args.modes.split(","):
         target = None
         if mode == "rankconc":
             target = cmd_plan.last_spent
@@ -631,6 +668,10 @@ def main():
     p = sub.add_parser("plan")
     _common(p)
     p.add_argument("--budget-mib", type=int, required=True)
+    p.add_argument("--modes", default="nodeaware,rankconc",
+                   help="comma list of placement modes (nodeaware, "
+                   "rankconc, placelambda_gpu — the batch-observed "
+                   "device-portable solver)")
     p.set_defaults(fn=cmd_plan)
     p = sub.add_parser("table")
     _common(p)

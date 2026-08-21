@@ -223,3 +223,45 @@ cells hang, bincount the routing for empty experts before anything else.
   weight manifestation for replicas on the fused path (place_weights
   equivalent), and the pad handling noted in the campaign plan (dummy
   pad-weight expert or padless m=1 space).
+
+## PLACE-lambda GPU port (2026-08-21, session 8.21.place) — LANDED; fusion next
+
+- **Landed** (`flux.testing.placelambda_gpu`, pll_* variants, SCHEMA rule-5
+  placement amendment): `loccap_gpu` router = bounded-round vectorized
+  LocCap (greedy cover, clipped proportional fills, bounded repair;
+  integer-deterministic, **CPU==GPU bit-identical** — proven on the login
+  A100), rule-5 TIMED per-iteration via EpicIterPlanner router branch
+  (plan_ms). `build_placement_gpu` = batch-observed steepest-descent
+  PLACE-lambda (Stage A/B vectorized, LCM-integer bundle credit);
+  `place_dynamic` toggle: static = untimed setup solve (place_solver_ms),
+  dynamic = per-iteration TIMED solve + move-diff + trigger (place_ms,
+  epic_place_* facts). Sidecar mode `placement_placelambda_gpu` (offline
+  CPU solve of the same file; driver hard-asserts on-device equality).
+  eps default 0.0625 (working default, NOT canonical). loccap_gpu is a
+  NEW arm — never compare against exact-loccap cells.
+- **NOT yet done**: (a) multi-rank GPU bring-up of the pll arms
+  (2n -> 4n smoke, then the placement-axis capsule); (b) **the FUSION
+  pass — immediately after bring-up verification (user directive)**: mine
+  place_ms/plan_ms for removable latency (CUDA-graph capture of the
+  fixed-shape kernel sequence, fold the router into the
+  FusedEpDispatch-style in-window derive, batch the small kernels);
+  (c) actual expert-weight dispatch on trigger (the permanent-weights
+  end design: oracle ground truth vs per-batch solve -> move decision;
+  epic in-kernel swap machinery is the reuse candidate); (d) the v2
+  fully-fused composition above (loccap_gpu phys feeding
+  GemmGroupedV2AGScatterOp) — unchanged, still queued.
+- **Measured starting point (login A100, real Qwen3 4n routing, eps
+  0.0625)** — the fusion pass's mining targets: router 52 ms (b8) / 67 ms
+  (b64); placement solve 201/156 ms; trigger decision 118 ms. Quality:
+  incidence vs fixed/d6 −47.2% (b8) / −26.7% (b64); placement contributes
+  most, router −8..−15% on top. The latency is NOT kernel-bound — it is
+  ~200 small launches + dozens of host syncs (`bool()/int()` early-exits
+  in the round loops) + per-call rebuild of placement-static tables.
+  Fusion order: (1) hoist instance tables/grids to refresh_placement,
+  (2) remove per-round early-exit syncs (fixed round count), (3) tensorize
+  place_decision's host-side hosts conversion, (4) CUDA-graph the fixed-
+  shape sequence. Sub-ms plausibly needs (4); (1)-(3) alone should give
+  ~10x. Quality flag: real-routing skew leaves over_cap_rows 8241@b8 /
+  47824@b64 (rows_max ~1.2x cap) — the bounded repair cannot fix
+  single-instance hot experts (exact loccap's augmenting chains can);
+  consider a replication-aware repair or extra rounds in the fusion pass.

@@ -1147,8 +1147,11 @@ class EpicIterPlanner:
     recomputed each iteration on device. One-shot ctor state: the (mutable,
     migration-refreshed) placement tensors and the replicated routing.
 
-    Scope: m == 1 and the D6 router only — the sweep arms. m > 1 / loccap
-    stays on the legacy setup-time path (timing_accounting=
+    Scope: m == 1 with the D6 router (the epic sweep arms) or the
+    PLACE-lambda `loccap_gpu` router (router="loccap_gpu" + eps — OUR
+    per-token replica-selection port, flux.testing.placelambda_gpu; the
+    epic harness is only the vehicle). m > 1 / the exact python loccap
+    stay on the legacy setup-time path (timing_accounting=
     legacy_untimed_plan)."""
 
     def __init__(self, plan: UltraEPPlan, rank: int, device,
@@ -1156,12 +1159,18 @@ class EpicIterPlanner:
                  l01: bool = False, hc: bool = False, hcc: bool = False,
                  kg_frozen: int = None,
                  replica_select: str = "local_static",
-                 inwindow_meta: bool = False):
+                 inwindow_meta: bool = False,
+                 router: str = "d6", eps: float = None):
         # local_static == the paper's own D6 rule (src mod lcnts) and
         # stays EPIC's default; local_spread is the SGLang-dynamic-analog
         # ablation (campaign-2 knob). No quota mode for epic.
         assert replica_select in ("local_static", "local_spread"), (
             replica_select)
+        assert router in ("d6", "loccap_gpu"), router
+        assert router == "d6" or eps is not None, (
+            "router loccap_gpu needs eps")
+        self.router = router
+        self.eps = eps
         cfg = plan.cfg
         self.cfg = cfg
         self.plan = plan
@@ -1214,15 +1223,30 @@ class EpicIterPlanner:
         R, G, S, K, nlp = cfg.R, cfg.G, cfg.S, cfg.K, cfg.nlp
         dev = self.device
         tpe_all = loads_gather_buf.view(R, G)
-        if self.replica_select == "local_spread":
+        if self.router == "loccap_gpu":
+            # PLACE-lambda per-token replica selection, re-derived on
+            # device per iteration (rule 5). The loads allgather stays the
+            # timed plan_comm collective (routing globally known); the
+            # router consumes the replicated routing directly.
+            from .placelambda_gpu import loccap_route_gpu
+            phys3, _ = loccap_route_gpu(
+                self.topk_all.view(R, S, K), self.p2l.int(), self.l2p,
+                self.lcnts, nlp, self.L, self.eps)
+            phys_all = phys3.long().reshape(R, S * K)
+            tok_all = (torch.arange(S, device=dev, dtype=torch.int64)
+                       .repeat_interleave(K).unsqueeze(0)
+                       .expand(R, S * K).contiguous())
+            rqp = None
+        elif self.replica_select == "local_spread":
             from .ep_gpu_plan import local_spread_rank_quota_prefix
             rqp = local_spread_rank_quota_prefix(
                 tpe_all, self.lcnts, cfg.max_replicas_dim)
         else:  # local_static == D6, the paper rule
             rqp = d6_rank_quota_prefix(tpe_all, self.lcnts,
                                        cfg.max_replicas_dim)
-        tok_all, phys_all = reroute_expand_all_gpu(
-            rqp, self.l2p, self.lcnts, self.topk_all, cfg.interleave)
+        if rqp is not None:
+            tok_all, phys_all = reroute_expand_all_gpu(
+                rqp, self.l2p, self.lcnts, self.topk_all, cfg.interleave)
         order = torch.argsort(phys_all * (S + 1) + tok_all, dim=1,
                               stable=True)
         ent_tok = torch.gather(tok_all, 1, order)
@@ -1236,7 +1260,10 @@ class EpicIterPlanner:
                                     send_entry_logical, G)
             if self.l01 else None
         )
-        slot_loads = slot_loads_from_rqp(rqp, self.l2p, self.lcnts, cfg.P)
+        slot_loads = (torch.bincount(phys_all.reshape(-1), minlength=cfg.P)
+                      if rqp is None
+                      else slot_loads_from_rqp(rqp, self.l2p, self.lcnts,
+                                               cfg.P))
 
         d2h = [lay["seg_rows"], lay["seg_start"], lay["in_splits"].long(),
                lay["out_splits"].long(), lay["pair_max"].reshape(1)]
@@ -1413,8 +1440,16 @@ class EpicIterPlanner:
         assert ip.seg_start == runner.elay.seg_start, "seg_start drift"
         assert ip.gemm_segments == runner.elay.gemm_segments
         assert ip.max_pair_rows == runner.elay.max_pair_rows
-        assert torch.equal(ip.slot_loads.cpu(),
-                           slot_batch_loads(self.plan))
+        if self.router == "loccap_gpu":
+            ov = self.plan.phys_override
+            ref_loads = torch.bincount(ov.long().reshape(-1),
+                                       minlength=self.cfg.P)
+            assert torch.equal(ip.slot_loads.cpu(), ref_loads), (
+                "loccap_gpu slot loads drift vs the setup CPU routing — "
+                "cross-device determinism bug")
+        else:
+            assert torch.equal(ip.slot_loads.cpu(),
+                               slot_batch_loads(self.plan))
         if self.l01:
             assert torch.equal(ip.comb_dst_slot.cpu(), grp.comb_dst_slot)
         if self.hc and self.inwindow_meta:

@@ -841,6 +841,57 @@ VARIANTS = {
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
     ),
+    # ----- pll_* — PLACE-lambda/LocCap GPU port (8.21.place, OURS) -------
+    # These are OUR optimization arms (PLACE-lambda placement + LocCap
+    # routing, flux.testing.placelambda_gpu), distinct from the EPIC
+    # baselines above — the epic driver is only the harness. All rule-5:
+    # the loccap_gpu router re-derives per iteration ON DEVICE inside the
+    # timed bracket (plan_ms; timing_accounting=per_iter_gpu). Placement =
+    # the batch-observed device solver; the runner provisions the
+    # placement_placelambda_gpu sidecar and the driver hard-asserts its
+    # on-device solve equals it (cross-device oracle). loccap_gpu is a NEW
+    # arm — a bounded-round approximation, never comparable to the exact
+    # python loccap arms (epic_hc_m1_na_lc*). eps=0.0625 is the working
+    # default from the confirmed flat basin [0, 0.125] — NOT canonicalized.
+    # _dyn = the placement-ablation toggle ON: per-iteration timed solve +
+    # move diff + trigger (place_ms); static arms solve once untimed
+    # (place_solver_ms fact, ideal-stale semantics).
+    "pll_hc_d6": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "placelambda_gpu", "--groups", "1", "--router", "d6"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "pll_hc_lcg0625": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "placelambda_gpu", "--groups", "1", "--router",
+                   "loccap_gpu", "--eps", "0.0625"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "pll_hc_lcg0625_dyn": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "placelambda_gpu", "--groups", "1", "--router",
+                   "loccap_gpu", "--eps", "0.0625",
+                   "--place_dynamic", "dynamic"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    # trigger probe on a STALE resident (fixed placement + dynamic
+    # decision): measures the decision apparatus where re-placement
+    # genuinely pays — the trigger must fire here and stay silent on the
+    # _dyn arm above (resident == fresh)
+    "pll_hc_dynprobe_stale": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement", "none",
+                   "--groups", "1", "--router", "d6",
+                   "--place_dynamic", "dynamic"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
     "epic_hc_m1_na_lbu": dict(
         comm_pattern="epic_hc_a2av", driver="epic",
         test_args=["--transport", "hier_compress", "--placement",

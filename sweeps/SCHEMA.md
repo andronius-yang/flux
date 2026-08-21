@@ -396,7 +396,22 @@ Highlights (full list = header row):
   router is re-derived per iteration on device (rule 5); the
   loccap/evensplit python routers still run once per cell
   (`legacy_untimed_plan` accounting, `epic_loccap_plan_host_ms` fact) and
-  are NOT quotable in new-accounting capsules until their GPU port lands.
+  are NOT quotable in new-accounting capsules. **The GPU port landed
+  2026-08-21 as a NEW arm family (`pll_*`, router `loccap_gpu`, placement
+  `placelambda_gpu` — flux.testing.placelambda_gpu):** a bounded-round
+  vectorized approximation (greedy node cover + clipped proportional
+  fills + bounded repair; integer-deterministic, CPU==GPU bit-identical),
+  NOT the exact python loccap — its incidence lands within ~10% of exact
+  (offline gate) but its balance can exceed cap where only multi-hop
+  augmenting chains could repair (reported in the router stats). Never
+  compare `loccap_gpu` cells against exact-`loccap` cells as if the same
+  router. pll arms run rule-5 (`per_iter_gpu`, router in `plan_ms`);
+  placement accounting per the rule-5 placement amendment
+  (`place_dynamic` toggle, `place_ms` metric, `epic_place_*` facts;
+  sidecar mode `placement_placelambda_gpu`, batch-observed — the sidecar
+  is the offline CPU solve of the same module and the driver hard-asserts
+  its on-device solve matches it). eps default 0.0625 = the working
+  default from the confirmed flat basin [0, 0.125], NOT canonicalized.
 - `correct_bitwise`, `correct_allclose` — AND over ranks; empty when
   `skip_correctness` ran. Note bitwise may legitimately be 0 with determinism
   off; allclose is the correctness verdict.
@@ -470,6 +485,13 @@ Highlights (full list = header row):
   invalid absolute GEMM-inclusive numbers for the Qwen3 shape; never
   compare them against ffn_hidden=1536 cells. Comm-only/wire facts
   (bytes, incidence, dedup ratios) are ffn-independent and remain valid.
+- `place_dynamic`, `place_solver_ms` (appended 2026-08-21, pll_* arms) —
+  the PLACE-lambda placement-ablation toggle and the untimed setup
+  solve's measured latency (see the rule-5 placement amendment). Empty /
+  0 on non-pll arms. The timed dynamic-lane quantity is the `place_ms`
+  metric in metrics.csv; per-cell trigger facts (`epic_place_lb_cur`,
+  `lb_new`, `gain_ppm`, `moves_add/remove`, `trigger`) live in the
+  records artifacts.
 
 ## Modes — the never-mix rule
 
@@ -707,3 +729,26 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
    2026-08-20) satisfy this rule structurally: there is no planner to
    mis-time — planning is part of the dispatch launch and lands in
    `comm_ms` (see the Planner v2 paragraph under `plan_ms`).
+
+   **Placement amendment (user directive, 2026-08-21 — PLACE-lambda
+   arms).** EXPERT PLACEMENT (which experts' weights reside where) is a
+   different timescale than batch planning: re-placement implies weight
+   movement that production amortizes across iterations. Its accounting
+   is therefore an EXPLICIT ABLATION TOGGLE, never an implicit
+   amortization:
+   - `place_dynamic=static` (the ideal-stale arm): the placement is an
+     input; one setup solve runs untimed on device and is REPORTED as the
+     `epic_place_solver_ms` fact (visible, uncharged). Nothing
+     placement-related runs in-window.
+   - `place_dynamic=dynamic` (placement is part of the optimization under
+     test): the per-iteration solve + instance move-diff + trigger
+     threshold run INSIDE the timed bracket, reported as the `place_ms`
+     metric (a zero-width event on static arms). Weight dispatch itself is
+     not yet modeled (queued for the fusion pass); the timed quantity is
+     the full decision apparatus.
+   The ROUTER lane has no toggle: per-token replica selection
+   (`loccap_gpu`) is batch-plan work and is ALWAYS timed per iteration
+   in-window (`plan_ms`), like every rule-5 planner. The dynamic-arm
+   trigger facts are `epic_place_lb_cur/lb_new/gain_ppm/moves_add/`
+   `moves_remove/trigger` (identical across iterations under static
+   per-cell routing — asserted, recorded once).

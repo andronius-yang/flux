@@ -94,6 +94,12 @@ from flux.testing.epic_semantics import (
     plan_migration_swaps,
     plan_migration_swaps_gpu,
 )
+from flux.testing.placelambda_gpu import (
+    build_placement_gpu,
+    loccap_route_gpu,
+    place_decision,
+    placement_hash,
+)
 from flux.testing.loccap_semantics import (
     d6_route,
     evensplit_route,
@@ -161,6 +167,9 @@ def perf_epic(
     migration: str,  # "off" | "on" (host NCCL) | "inkernel" (fused phase 0)
     tau_tokens: float,
     single_stream: bool,
+    place_fn=None,  # dynamic PLACE-lambda decision: called per iteration
+    #                 INSIDE the timed bracket (place_ms); None = static
+    #                 ablation (zero-width place event)
 ):
     m = runner.m
     l01 = runner.layers == "l01"
@@ -182,7 +191,7 @@ def perf_epic(
             + [f"acc{g}" for g in range(m)]
             + ["sum_end"]
         )
-    names = ["start", "plan_comm", "plan", "mig", "pack"] + g_names
+    names = ["start", "plan_comm", "place", "plan", "mig", "pack"] + g_names
     ev = {
         name: [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
         for name in names
@@ -215,6 +224,13 @@ def perf_epic(
                 group=TP_GROUP,
             )
             ev["plan_comm"][i].record()
+            # Dynamic PLACE-lambda lane (2026-08-21 amendment): when the
+            # placement ablation is ON, the per-iteration solve + move
+            # diff + trigger threshold run here, TIMED (place_ms). Static
+            # arms record a zero-width event.
+            if place_fn is not None:
+                place_fn(i)
+            ev["place"][i].record()
             # Per-iteration on-device planning (SCHEMA rule 5): NOTHING
             # derived from routing is carried across iterations on this
             # path. Legacy (m>1 / loccap) keeps setup-time planning and
@@ -331,8 +347,8 @@ def perf_epic(
                     ev["sum_end"][i].record()
 
     keys = (
-        ["plan_comm_ms", "plan_ms", "migration_ms", "pack_ms", "comm_ms",
-         "e2e_ms", "total_ms"]
+        ["plan_comm_ms", "place_ms", "plan_ms", "migration_ms", "pack_ms",
+         "comm_ms", "e2e_ms", "total_ms"]
         + [f"disp{g}_ms" for g in range(m)]
         + [f"stall{g}_ms" for g in range(m)]
         + [f"scat{g}_ms" for g in range(m)]
@@ -357,8 +373,10 @@ def perf_epic(
             continue
         times["plan_comm_ms"].append(
             ev["start"][i].elapsed_time(ev["plan_comm"][i]))
+        times["place_ms"].append(
+            ev["plan_comm"][i].elapsed_time(ev["place"][i]))
         times["plan_ms"].append(
-            ev["plan_comm"][i].elapsed_time(ev["plan"][i]))
+            ev["place"][i].elapsed_time(ev["plan"][i]))
         times["migration_ms"].append(
             ev["plan"][i].elapsed_time(ev["mig"][i]))
         times["pack_ms"].append(ev["mig"][i].elapsed_time(ev["pack"][i]))
@@ -712,7 +730,8 @@ def parse_args():
                         " dispatch -> GEMM0 -> GELU -> GEMM1 -> per-group"
                         " combine -> terminal Sum (EPIC Fig 10(b))")
     parser.add_argument("--placement", default="epic",
-                        choices=["none", "epic", "nodeaware"],
+                        choices=["none", "epic", "nodeaware",
+                                 "placelambda_gpu"],
                         help="epic = §4.2 (redundancy + GPU greedy + NIC "
                         "stage) from the pool load; none = fixed contiguous "
                         "homing, empty redundant slots; nodeaware = "
@@ -739,7 +758,7 @@ def parse_args():
                         " local_spread = per-source equal split (SGLang"
                         " dynamic analog, ablation). Both sender-local.")
     parser.add_argument("--router", default="d6",
-                        choices=["d6", "loccap", "evensplit"],
+                        choices=["d6", "loccap", "evensplit", "loccap_gpu"],
                         help="replica selection: d6 = src mod lcnts (the "
                         "EPIC baseline rule; re-derived per iteration on "
                         "device under SCHEMA rule 5); loccap = per-token "
@@ -747,9 +766,26 @@ def parse_args():
                         "the token-node-incidence minimizer — still a "
                         "once-per-cell python port (legacy_untimed_plan "
                         "accounting; not quotable in new-accounting "
-                        "capsules until its GPU port lands)")
+                        "capsules until its GPU port lands); loccap_gpu = "
+                        "the PLACE-lambda bounded-round device port "
+                        "(flux.testing.placelambda_gpu) — rule-5 path, "
+                        "re-derived per iteration in-window (plan_ms)")
     parser.add_argument("--eps", type=float, default=0.25,
                         help="LocCap balance slack; 'inf' = pure locality")
+    parser.add_argument("--place_dynamic", default="static",
+                        choices=["static", "dynamic"],
+                        help="PLACE-lambda ablation toggle (placement "
+                        "placelambda_gpu only). static = ideal stale "
+                        "placement: one untimed setup solve "
+                        "(place_solver_ms fact). dynamic = the placement "
+                        "decision is part of the optimization under test: "
+                        "per-iteration in-window solve + move diff + "
+                        "trigger threshold, timed as place_ms")
+    parser.add_argument("--place_gain_threshold_ppm", type=int,
+                        default=50_000,
+                        help="dynamic-placement trigger: fire when the "
+                        "fresh solve's incidence-bound gain over the "
+                        "resident placement clears this (ppm)")
     parser.add_argument("--migration", default="off",
                         choices=["off", "on", "inkernel"],
                         help="§4.3 per-step intra-host expert migration. "
@@ -913,9 +949,42 @@ if __name__ == "__main__":
         pblob = json.loads(raw_p)
         placement_sha = hashlib.sha256(raw_p).hexdigest()[:16]
         plan = build_nodeaware_plan(cfg, tpe, pblob)
+    elif args.placement == "placelambda_gpu":
+        # PLACE-lambda batch-observed solve ON DEVICE (our arm; the epic
+        # driver is only the harness). static ablation: this one untimed
+        # setup solve is the resident placement (ideal-stale semantics),
+        # measured as place_solver_ms. dynamic ablation re-solves TIMED
+        # per iteration in perf_epic (place_ms) without moving weights.
+        assert args.routing_file, (
+            "--placement placelambda_gpu is defined for trace cells only")
+        tk_dev = topk_all.long().cuda()
+        torch.cuda.synchronize()
+        t_ps = time.perf_counter()
+        pl_solve = build_placement_gpu(
+            tk_dev, DIST_ENV.LOCAL_WORLD_SIZE, cfg.nlp, args.G)
+        torch.cuda.synchronize()
+        place_solver_ms = (time.perf_counter() - t_ps) * 1e3
+        hosts_pll = pl_solve["hosts"]
+        pblob = {"version": 2, "G": args.G, "W": W, "nlp": cfg.nlp,
+                 "hosts": hosts_pll, "planner": pl_solve["stats"]}
+        if args.placement_file:
+            # pre-registration gate: the offline CPU solve (sidecar) must
+            # equal the on-device solve bit-for-bit (cross-device oracle)
+            with open(args.placement_file, "rb") as f:
+                raw_p = f.read()
+            sblob = json.loads(raw_p)
+            placement_sha = hashlib.sha256(raw_p).hexdigest()[:16]
+            assert sblob["hosts"] == hosts_pll, (
+                "on-device PLACE-lambda solve != the sidecar's offline "
+                "solve — cross-device determinism bug, never noise")
+            pblob["predicted"] = sblob.get("predicted", [])
+        plan = build_nodeaware_plan(cfg, tpe, pblob)
     else:
         plan = build_fixed_plan(cfg, tpe)
     plan_host_ms = (time.perf_counter() - t0) * 1e3
+    if args.placement != "placelambda_gpu":
+        place_solver_ms = 0.0
+        hosts_pll = None
 
     # Replica selection. D6 (the rule-5 arms) is re-derived per iteration
     # on device by EpicIterPlanner; this setup pass builds the CPU
@@ -939,6 +1008,14 @@ if __name__ == "__main__":
             topk_all.long(), plan.p2l, plan.l2p, plan.lcnts, cfg.nlp,
             DIST_ENV.LOCAL_WORLD_SIZE, args.eps).cpu()
         plan.phys_override = phys_all_route
+    elif args.router == "loccap_gpu":
+        # setup CPU reference = one side of the cross-device oracle; the
+        # rule-5 planner re-derives on GPU per iteration and the setup
+        # check_against asserts bitwise equality against this routing
+        phys_all_route, _pll_rstats = loccap_route_gpu(
+            topk_all.long().cpu(), plan.p2l, plan.l2p, plan.lcnts,
+            cfg.nlp, DIST_ENV.LOCAL_WORLD_SIZE, args.eps)
+        plan.phys_override = phys_all_route
     elif args.router == "evensplit":
         phys_all_route = evensplit_route(topk_all.long(), plan.l2p,
                                          plan.lcnts).cpu()
@@ -949,8 +1026,11 @@ if __name__ == "__main__":
     route_stats = incidence_stats(phys_all_route, cfg.nlp,
                                   DIST_ENV.LOCAL_WORLD_SIZE)
     r_hash = route_hash(phys_all_route)
-    if args.placement == "nodeaware" and args.router != "d6":
+    if (args.placement in ("nodeaware", "placelambda_gpu")
+            and args.router != "d6"):
         want = ("evensplit" if args.router == "evensplit"
+                else f"loccap_gpu_eps{args.eps:g}"
+                if args.router == "loccap_gpu"
                 else f"loccap_eps{args.eps:g}")
         pred = [p for p in pblob.get("predicted", [])
                 if p.get("router") == want]
@@ -1052,7 +1132,7 @@ if __name__ == "__main__":
     # D6 arms — the sweep's quotable configurations. m>1 and the loccap
     # router stay on the legacy setup-time path and are marked
     # legacy_untimed_plan in cells.csv (visible, never silently mixed).
-    per_iter = (args.groups == 1 and args.router == "d6")
+    per_iter = (args.groups == 1 and args.router in ("d6", "loccap_gpu"))
     iter_planner = None
     if per_iter:
         iter_planner = EpicIterPlanner(
@@ -1065,6 +1145,8 @@ if __name__ == "__main__":
             replica_select=args.replica_select,
             inwindow_meta=(args.hc_meta == "inwindow"
                            and runner.hc_enabled),
+            router=args.router,
+            eps=(args.eps if args.router == "loccap_gpu" else None),
         )
         # Setup-time drift guard (untimed): one derive from the known
         # loads must reproduce the CPU reference state bitwise.
@@ -1086,10 +1168,38 @@ if __name__ == "__main__":
             assert torch.equal(uc_c, b0.meta.a2av_unique_counts)
         runner.bind_iter_plan(ip0)
     elif rank == 0:
-        print("timing_accounting=legacy_untimed_plan (m>1 or non-d6 "
+        print("timing_accounting=legacy_untimed_plan (m>1 or a python "
               "router: the per-iteration GPU planner is scoped to the "
-              "m=1/d6 arms)")
+              "m=1 d6/loccap_gpu arms)")
     timing_accounting = "per_iter_gpu" if per_iter else "legacy_untimed_plan"
+
+    # Dynamic PLACE-lambda ablation: per-iteration TIMED solve + move diff
+    # + trigger decision (place_ms in perf_epic). The resident placement is
+    # NOT mutated — weight dispatch is the queued fusion-pass mechanism;
+    # this arm times the full decision apparatus.
+    place_fn = None
+    place_dec_log = []
+    if args.place_dynamic == "dynamic":
+        assert per_iter, (
+            "dynamic placement is a rule-5 arm (m=1, router d6/loccap_gpu)")
+        _tk_place = topk_all.long().cuda()
+        # resident placement = whatever the arm actually runs on: the
+        # stale/oracle layout under none/epic/nodeaware (the meaningful
+        # trigger ablation) or the batch-solved layout itself under
+        # placelambda_gpu (the zero-gain apparatus-timing arm)
+        _resident_hosts = (
+            hosts_pll if hosts_pll is not None else
+            [sorted((plan.l2p[g, :int(plan.lcnts[g])].long()
+                     // cfg.nlp).tolist())
+             for g in range(args.G)])
+
+        def place_fn(_i):
+            fresh = build_placement_gpu(
+                _tk_place, DIST_ENV.LOCAL_WORLD_SIZE, cfg.nlp, args.G)
+            place_dec_log.append(place_decision(
+                _tk_place, _resident_hosts, fresh["hosts"],
+                DIST_ENV.LOCAL_WORLD_SIZE,
+                gain_threshold_ppm=args.place_gain_threshold_ppm))
 
     comm_stream = torch.cuda.Stream(priority=-1)
 
@@ -1113,7 +1223,8 @@ if __name__ == "__main__":
         print(f"imbalance max/mean: before {imb_before:.3f} -> after "
               f"{imb_after:.3f}")
         print(f"router: {args.router}"
-              + (f" (eps {args.eps:g})" if args.router == "loccap" else "")
+              + (f" (eps {args.eps:g})"
+                 if args.router in ("loccap", "loccap_gpu") else "")
               + f"; incidence_remote {route_stats['incidence_remote']} "
               f"(mean nodes/token {route_stats['mean_nodes_per_token']:.3f});"
               f" loccap_plan_host_ms {loccap_plan_host_ms:.1f} "
@@ -1153,8 +1264,13 @@ if __name__ == "__main__":
             epic_transport=args.transport,
             epic_gemm_backend=args.gemm_backend,
             epic_router=args.router,
-            epic_loccap_eps=(f"{args.eps:g}" if args.router == "loccap"
+            epic_loccap_eps=(f"{args.eps:g}"
+                             if args.router in ("loccap", "loccap_gpu")
                              else ""),
+            epic_place_dynamic=args.place_dynamic,
+            epic_place_solver_ms=place_solver_ms,
+            epic_placement_hash=(str(placement_hash(hosts_pll))
+                                 if hosts_pll is not None else ""),
             epic_loccap_plan_host_ms=loccap_plan_host_ms,
             epic_incidence_remote=route_stats["incidence_remote"],
             epic_mean_nodes_per_token=route_stats["mean_nodes_per_token"],
@@ -1201,8 +1317,24 @@ if __name__ == "__main__":
             runner, iter_planner, moe_ctx, probs_shard, loads_shard,
             loads_gather_buf, comm_stream, args.warmup_iters, args.iters,
             args.sm_margin, args.migration, tau_tokens, args.single_stream,
+            place_fn=place_fn,
         )
 
+    if place_dec_log:
+        # static per-cell routing => every iteration's decision is
+        # identical by construction; record the constant + a sanity check
+        d0 = place_dec_log[0]
+        assert all(d == d0 for d in place_dec_log), (
+            "dynamic place decision drifted across iterations on static "
+            "routing — determinism bug")
+        RECORDER.emit_info(
+            epic_place_lb_cur=d0["lb_cur"],
+            epic_place_lb_new=d0["lb_new"],
+            epic_place_gain_ppm=d0["gain_ppm"],
+            epic_place_moves_add=d0["moves_add"],
+            epic_place_moves_remove=d0["moves_remove"],
+            epic_place_trigger=d0["trigger"],
+        )
     if args.migration != "off":
         RECORDER.emit_info(
             epic_migration_swaps_total=mig_facts["swaps_total"],
@@ -1218,11 +1350,11 @@ if __name__ == "__main__":
         )
 
     def fmt(times):
-        keys = ["plan_comm_ms", "plan_ms", "migration_ms", "pack_ms",
-                "comm_ms", "e2e_ms", "total_ms"]
+        keys = ["plan_comm_ms", "place_ms", "plan_ms", "migration_ms",
+                "pack_ms", "comm_ms", "e2e_ms", "total_ms"]
         if args.layers == "l01":
-            keys = ["plan_comm_ms", "plan_ms", "migration_ms", "l0_ms",
-                    "act_ms", "l1_ms", "e2e_ms", "total_ms"]
+            keys = ["plan_comm_ms", "place_ms", "plan_ms", "migration_ms",
+                    "l0_ms", "act_ms", "l1_ms", "e2e_ms", "total_ms"]
         return ", ".join(
             f"{k[:-3]} {sum(times[k]) / max(len(times[k]), 1):.3f} ms"
             for k in keys

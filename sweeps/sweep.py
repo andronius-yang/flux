@@ -263,6 +263,14 @@ CELLS_COLUMNS = [
     # compare against ffn_hidden=1536 cells (protocol rule 4 note in SCHEMA)
     "shape",
     "ffn_hidden",
+    # appended 2026-08-21 (pll_* PLACE-lambda arms; SCHEMA rule-5 placement
+    # amendment): place_dynamic = static | dynamic (the placement ablation
+    # toggle; empty on non-pll arms), place_solver_ms = the untimed setup
+    # solve's measured latency (0 when placement is not placelambda_gpu).
+    # The timed dynamic-lane quantity is the place_ms METRIC; trigger facts
+    # live in the records artifacts (epic_place_*).
+    "place_dynamic",
+    "place_solver_ms",
 ]
 METRICS_COLUMNS = [
     "run_id",
@@ -1709,6 +1717,8 @@ def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, s
                 ("epic_mean_nodes_per_token", "mean_nodes_per_token"),
                 ("timing_accounting", "timing_accounting"),
                 ("planner_impl", "planner_impl"),
+                ("epic_place_dynamic", "place_dynamic"),
+                ("epic_place_solver_ms", "place_solver_ms"),
                 ("replica_select", "replica_select"),
                 ("eplb_plan_comm_bytes", "plan_comm_bytes"),
                 ("epic_plan_comm_bytes", "plan_comm_bytes"),
@@ -1911,6 +1921,38 @@ def cmd_run(spec, jobid_arg, dry):
                     p_path, p_sha, _ = placement_cache[rc_key]
                 else:
                     p_path, p_sha = na_path, na_sha
+                matrices[cell["cell_id"]].update(
+                    {"placement": p_path, "placement_sha": p_sha})
+            elif (vdef.get("driver") == "epic"
+                  and "placelambda_gpu" in targs):
+                # PLACE-lambda batch-observed sidecar (2026-08-21): the
+                # offline CPU solve of the SAME placelambda_gpu module the
+                # driver runs on device; the driver hard-asserts its
+                # on-device solve equals this file (cross-device oracle).
+                assert cell["family"] == "trace", (
+                    f"{cell['cell_id']}: --placement placelambda_gpu is "
+                    "defined for trace cells only")
+                import predict_placement
+                red = 2
+                if "--redundant_per_rank" in targs:
+                    red = int(targs[targs.index("--redundant_per_rank") + 1])
+                params = dict(gen_matrix.FAMILY_DEFAULT_PARAMS["trace"],
+                              **mparams)
+                pll_key = (mid, "placelambda_gpu", red)
+                if pll_key not in placement_cache:
+                    placement_cache[pll_key] = \
+                        predict_placement.ensure_placement(
+                            dict(params), mode="placelambda_gpu",
+                            W=cell["world_size"],
+                            L=plat["ranks_per_node"],
+                            budget_mib=cell["budget_mib"],
+                            topk=spec["topk"],
+                            chunk_bytes=spec["chunk_bytes"],
+                            matrix_instance=spec["matrix_instance"],
+                            out_root=plat["matrices_root"],
+                            traces_root=plat.get("traces_root"),
+                            nexperts=spec["G"], redundant_per_rank=red)
+                p_path, p_sha, _ = placement_cache[pll_key]
                 matrices[cell["cell_id"]].update(
                     {"placement": p_path, "placement_sha": p_sha})
 
