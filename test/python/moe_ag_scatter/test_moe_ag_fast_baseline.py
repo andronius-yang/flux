@@ -67,14 +67,16 @@ from flux.testing import (
     DTYPE_MAP,
     MoeAgScatterWithTorch,
     MoeMlp1Ctx,
+    choosed_experts_to_matrix_chunks,
     gen_moe_gating_args,
+    load_routing_file,
     parse_traffic_matrix,
     traffic_matrix_to_choosed_experts,
 )
 from flux.testing.recorder import RECORDER
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from fast_baseline_utils import build_pack_index, build_unpack_index
+from fast_baseline_utils import build_pack_index, build_unpack_index, derive_fast_meta_gpu
 
 DIST_ENV = flux.get_dist_env()
 TP_GROUP = DIST_ENV.get_world()
@@ -124,6 +126,9 @@ class FastPerfResult:
         self,
         name,
         e2e_ms,
+        plan_comm_ms,
+        plan_ms,
+        total_ms,
         pack_ms,
         schedule_ms,
         fill_ms,
@@ -134,7 +139,12 @@ class FastPerfResult:
         host_e2e_ms,
     ):
         self.name = name
-        self.e2e_ms = e2e_ms  # PRIMARY: comm start (pack) -> gemm finish (CUDA events)
+        self.e2e_ms = e2e_ms  # comm start (pack) -> gemm finish (CUDA events)
+        # rule-5 brackets, BEFORE the e2e window: routing allgather, then the
+        # in-window GPU metadata derivation (derive_fast_meta_gpu)
+        self.plan_comm_ms = plan_comm_ms
+        self.plan_ms = plan_ms
+        self.total_ms = total_ms  # PRIMARY: allgather start -> gemm finish
         self.pack_ms = pack_ms
         self.schedule_ms = schedule_ms
         self.fill_ms = fill_ms
@@ -148,8 +158,9 @@ class FastPerfResult:
 
     def __repr__(self) -> str:
         return (
-            f"{self.name}: e2e {self.e2e_ms:.3f} ms (comm start -> gemm finish;"
-            f" host {self.host_e2e_ms:.3f})"
+            f"{self.name}: total {self.total_ms:.3f} ms (plan_comm"
+            f" {self.plan_comm_ms:.3f} + plan {self.plan_ms:.3f} + e2e"
+            f" {self.e2e_ms:.3f}; host e2e {self.host_e2e_ms:.3f})"
             f" | pack {self.pack_ms:.3f} + schedule {self.schedule_ms:.3f}"
             f" + fill {self.fill_ms:.3f} + wire {self.wire_ms:.3f}"
             f" + unpack {self.unpack_ms:.3f} + gemm {self.gemm_ms:.3f}"
@@ -162,10 +173,9 @@ def perf_fast(
     ctx: MoeMlp1Ctx,
     comm,
     gemm_op,
-    matrix_cpu: torch.Tensor,
-    pack_index_gpu: torch.Tensor,
-    unpack_index_gpu: torch.Tensor,
-    split_cpu: torch.Tensor,
+    topk_shard: torch.Tensor,
+    topk_gather_buf: torch.Tensor,
+    derive_fn,
     warmup_iters: int,
     iters: int,
     sm_margin: int = 0,
@@ -175,6 +185,7 @@ def perf_fast(
 
     total_iters = warmup_iters + iters
     ev = lambda: [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
+    iter_start, plan_comm_end, plan_end = ev(), ev(), ev()
     e2e_start, pack_end, comm_end, unpack_end, e2e_end = ev(), ev(), ev(), ev(), ev()
     host_e2e = [0.0] * total_iters
     reset_ms = [0.0] * total_iters
@@ -192,6 +203,17 @@ def perf_fast(
         comm.alltoallv_reset()
         reset_ms[i] = (time.perf_counter() - t_r0) * 1e3
         torch.cuda.synchronize()
+
+        # rule 5 (SCHEMA protocol): routing exchange + ALL routing-derived
+        # metadata (pack/unpack indices, gemm splits, the BvN input matrix)
+        # inside the timed window, every iteration. The FAST window was
+        # already host-synchronous (BvN recompute per call), so these
+        # brackets change accounting, not loop semantics.
+        iter_start[i].record()
+        torch.distributed.all_gather_into_tensor(topk_gather_buf, topk_shard, group=TP_GROUP)
+        plan_comm_end[i].record()
+        pack_index_gpu, unpack_index_gpu, split_cpu, matrix_cpu = derive_fn(topk_gather_buf)
+        plan_end[i].record()
 
         t0 = time.perf_counter()
         e2e_start[i].record()
@@ -224,6 +246,9 @@ def perf_fast(
     result = FastPerfResult(
         name=f"fast #{TP_GROUP.rank()}",
         e2e_ms=mean_ms(e2e_start, e2e_end),
+        plan_comm_ms=mean_ms(iter_start, plan_comm_end),
+        plan_ms=mean_ms(plan_comm_end, plan_end),
+        total_ms=mean_ms(iter_start, e2e_end),
         pack_ms=mean_ms(e2e_start, pack_end),
         schedule_ms=mean_host_ms(schedule_us),
         fill_ms=mean_host_ms(fill_us),
@@ -235,6 +260,9 @@ def perf_fast(
     )
     result.iter_times = {
         "e2e_ms": per_iter_ms(e2e_start, e2e_end),
+        "plan_comm_ms": per_iter_ms(iter_start, plan_comm_end),
+        "plan_ms": per_iter_ms(plan_comm_end, plan_end),
+        "total_ms": per_iter_ms(iter_start, e2e_end),
         "pack_ms": per_iter_ms(e2e_start, pack_end),
         "unpack_ms": per_iter_ms(comm_end, unpack_end),
         "gemm_ms": per_iter_ms(unpack_end, e2e_end),
@@ -250,6 +278,16 @@ def perf_fast(
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--traffic_matrix", type=str, required=True, help="traffic matrix file")
+    parser.add_argument(
+        "--routing_file",
+        type=str,
+        default="",
+        help="REAL per-token routing ([ntokens, topk] expert ids) that must"
+        " realize --traffic_matrix exactly. FAST substitutes only the"
+        " communication phase: the matrix AND the gemm loads are then both"
+        " derived from this trace (2026-08-21). Without it, routing is"
+        " synthesized from the matrix (dealer realization).",
+    )
     parser.add_argument(
         "--chunk_bytes",
         type=int,
@@ -315,7 +353,24 @@ if __name__ == "__main__":
 
     matrix = parse_traffic_matrix(args.traffic_matrix)
     assert matrix.shape[0] == W, f"matrix is for {matrix.shape[0]} ranks, world size {W}"
-    choosed_experts = traffic_matrix_to_choosed_experts(matrix, args.G, args.topk, args.chunk_bytes)
+    if args.routing_file:
+        # FAST-as-comm-substitute (2026-08-21): consume the REAL routing so the
+        # matrix and the per-expert gemm loads are both trace-derived; FAST
+        # replaces only the token movement.
+        choosed_experts = load_routing_file(args.routing_file, args.G, args.topk)
+        assert choosed_experts.shape[0] % W == 0
+        got = choosed_experts_to_matrix_chunks(choosed_experts, W, args.G // W)
+        assert torch.equal(got * args.chunk_bytes, matrix), (
+            f"routing file {args.routing_file} does not realize --traffic_matrix"
+            f" {args.traffic_matrix}"
+        )
+        choosed_experts = choosed_experts.cuda()
+        if TP_GROUP.rank() == 0:
+            print(f"routing: REAL trace file {args.routing_file}")
+    else:
+        choosed_experts = traffic_matrix_to_choosed_experts(
+            matrix, args.G, args.topk, args.chunk_bytes
+        )
     ntokens = choosed_experts.shape[0]
     tokens_per_rank = ntokens // W
     gating_args = gen_moe_gating_args(args.G, args.topk, ntokens, choosed_experts=choosed_experts)
@@ -337,6 +392,7 @@ if __name__ == "__main__":
         drop_token=False,
         gating_args=gating_args,
         skip_reference=args.skip_correctness,
+        local_scatter=True,
     )
 
     # metadata-exchange result (untimed setup, same contract as the traffic test):
@@ -353,7 +409,9 @@ if __name__ == "__main__":
     rank = TP_GROUP.rank()
     epr = args.G // W
 
-    # ---- index math (host, untimed metadata like splits/scatter_index) ----
+    # ---- index math reference build (host, untimed — drift guard ONLY since
+    # the 2026-08-21 rule-5 conversion: perf_fast re-derives all of this per
+    # iteration on GPU via derive_fast_meta_gpu) ----
     ce_local = choosed_experts[rank * tokens_per_rank : (rank + 1) * tokens_per_rank]
     pack_index_gpu = build_pack_index(ce_local, args.topk).cuda()
     unpack_index, split_cpu = build_unpack_index(splits_per_source_cpu, rank, args.G, W)
@@ -362,6 +420,28 @@ if __name__ == "__main__":
     # wire-byte invariants
     assert int(pack_index_gpu.numel()) * args.chunk_bytes == int(matrix[rank].sum())
     assert int(unpack_index.numel()) * args.chunk_bytes == int(matrix[:, rank].sum())
+
+    # ---- rule-5 apparatus (SCHEMA protocol rule 5, 2026-08-21) ----
+    # Buffers are setup scope (allocation only); the routing exchange + every
+    # routing-derived quantity re-derives per iteration inside perf_fast.
+    topk_shard = choosed_experts[
+        rank * tokens_per_rank : (rank + 1) * tokens_per_rank
+    ].contiguous()
+    topk_gather_buf = torch.zeros(ntokens, args.topk, dtype=torch.int32, device="cuda")
+    derive_fn = lambda buf: derive_fast_meta_gpu(  # noqa: E731
+        buf, rank, args.G, W, tokens_per_rank, args.chunk_bytes
+    )
+    # Drift guard (untimed, once): in-window derivation must reproduce the
+    # replicated routing and the host reference index math bitwise.
+    torch.distributed.all_gather_into_tensor(topk_gather_buf, topk_shard, group=TP_GROUP)
+    assert torch.equal(topk_gather_buf, choosed_experts), (
+        "allgathered routing != replicated harness routing"
+    )
+    g_pack, g_unpack, g_split, g_matrix = derive_fn(topk_gather_buf)
+    assert torch.equal(g_pack, pack_index_gpu), "derived pack_index drift"
+    assert torch.equal(g_unpack, unpack_index_gpu), "derived unpack_index drift"
+    assert torch.equal(g_split, split_cpu), "derived gemm splits drift"
+    assert torch.equal(g_matrix, matrix.long()), "derived BvN matrix drift"
 
     # ---- FAST bring-up (the only NVSHMEM init in this process) ----
     flash_utils = load_fast(os.path.abspath(args.fast_dir))
@@ -389,6 +469,13 @@ if __name__ == "__main__":
             fast_send_bytes=matrix.sum(dim=1).tolist(),
             fast_recv_bytes=matrix.sum(dim=0).tolist(),
             capacity_bytes=capacity_bytes,
+            # SCHEMA protocol rule 5 (fast driver converted 2026-08-21): the
+            # routing allgather + all index/schedule metadata derivation timed
+            # per iteration (torch-GPU chain; no flux op in this process).
+            timing_accounting="per_iter_gpu",
+            # 2026-08-21: untimed correctness reference uses the local-slice
+            # scatter (W-fold smaller staging — un-OOMs large-budget cells)
+            torch_ref_impl="local_slice_scatter",
         )
 
     # The torch reference's gemm_impl ends with out.mul_(output_scale[exp_id]),
@@ -422,10 +509,9 @@ if __name__ == "__main__":
         moe_ctx,
         comm,
         gemm_op,
-        matrix,
-        pack_index_gpu,
-        unpack_index_gpu,
-        split_cpu,
+        topk_shard,
+        topk_gather_buf,
+        derive_fn,
         args.warmup_iters,
         args.iters,
         args.sm_margin,
@@ -448,9 +534,9 @@ if __name__ == "__main__":
     def check_result():
         print(f"Checking RANK #{rank}...")
         # data movement: FAST wire + unpack must reproduce the reference
-        # scatter block bit-for-bit (strongest possible ordering check)
-        input_offset = int(moe_ctx.splits_cpu[: rank * epr].sum())
-        ref_block = moe_ctx.scatter_inputs[input_offset : input_offset + moe_ctx.nrows_ep]
+        # scatter block bit-for-bit (strongest possible ordering check).
+        # local_scatter (2026-08-21): scatter_inputs IS the local EP block.
+        ref_block = moe_ctx.scatter_inputs[: moe_ctx.nrows_ep]
         if flux.testing.bitwise_eq(fast_gemm_input, ref_block):
             print("✅ FAST wire + unpack bitwise-match the reference scatter block")
         else:

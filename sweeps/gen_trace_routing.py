@@ -358,9 +358,7 @@ def prepare_trace(params, W, L, topk, matrix_instance, traces_root, nexperts, bu
     if max_eid >= nexperts:
         raise SystemExit(f"trace expert id {max_eid} >= G ({nexperts}); wrong --G for this model")
 
-    budget_bytes = budget_mib * (1 << 20)
-    assert budget_bytes % chunk_bytes == 0
-    T = budget_bytes // chunk_bytes  # pre-topk tokens per source rank
+    T, _ = gen_matrix.budget_tokens(budget_mib, chunk_bytes, topk)  # pre-topk tokens/rank
     mid = gen_matrix.matrix_id_of(
         "trace", params, W, L, budget_mib, topk, chunk_bytes, matrix_instance
     )
@@ -421,7 +419,6 @@ def ensure_trace_matrix(
     mid, params, specs, pools_rows, routing, chunks, T = generate_trace(
         params, W, L, budget_mib, topk, chunk_bytes, matrix_instance, traces_root, nexperts
     )
-    budget_bytes = budget_mib * (1 << 20)
 
     os.makedirs(out_root, exist_ok=True)
     # routing first: a torn state must never have a matrix without its routing
@@ -436,7 +433,9 @@ def ensure_trace_matrix(
         "W": W,
         "ranks_per_node": L,
         "budget_mib": budget_mib,
-        "budget_semantics": "pre-topk send budget; row_sum_bytes = budget_mib*2^20*topk",
+        "budget_semantics": "pre-topk send budget (nominal label); row_sum_bytes"
+        " = effective_budget_bytes*topk, effective = round-to-chunk of"
+        " budget_mib*2^20 (exact when chunk divides the budget)",
         "self_traffic_semantics": "diagonal kept (real self-routed tokens);"
         " wire bytes per row = row_sum - diag",
         "diag_bytes_total": diag_chunks * chunk_bytes,
@@ -445,7 +444,8 @@ def ensure_trace_matrix(
         "G": nexperts,
         "chunk_bytes": chunk_bytes,
         "tokens_per_rank": T,
-        "row_sum_bytes": budget_bytes * topk,
+        "effective_budget_bytes": T * chunk_bytes,
+        "row_sum_bytes": T * chunk_bytes * topk,
         "routing_file": os.path.basename(rpath),
         "routing_sha256": rsha,
         "seed": gen_matrix.fnv1a(

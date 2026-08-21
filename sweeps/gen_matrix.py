@@ -2,9 +2,12 @@
 """Deterministic traffic-matrix generator for the sweep system (sweeps/SCHEMA.md).
 
 Budget semantics: --budget-mib is STRICTLY the pre-topk send budget per source
-rank — the bytes of unique tokens homed on the rank. The generated matrix's
-row sums are budget_mib * 2^20 * topk (post-fanout wire rows), and
-tokens_per_rank = budget_mib * 2^20 / chunk_bytes (independent of topk).
+rank — the bytes of unique tokens homed on the rank. Since 2026-08-21 the
+label is NOMINAL: tokens_per_rank = round(budget_mib * 2^20 / chunk_bytes)
+(exact whenever chunk_bytes divides the budget — all pre-ladder labels), and
+row sums are tokens_per_rank * chunk_bytes * topk (post-fanout wire rows);
+the realized budget is recorded as effective_budget_bytes (see
+budget_tokens()).
 
 Identity: matrix_id is a pure function of (family, params, W, L, budget, topk,
 chunk_bytes, id). The RNG seed is FNV-1a of the same canonical string, so the
@@ -174,6 +177,24 @@ def _row_weights(family, params, s, W, L, rng_derived):
     return w
 
 
+def budget_tokens(budget_mib, chunk_bytes, topk):
+    """Nominal byte ladder (2026-08-21 canonicalization): tokens_per_rank =
+    round(budget_mib*2^20 / chunk_bytes), rounded to the nearest MULTIPLE OF
+    TOPK (the layer1/l01 lane requires ntokens % (W*topk) == 0, so the
+    invariant is kept globally rather than per-lane). EXACT whenever
+    chunk_bytes divides the budget — every historical shape/label
+    (chunk 8192: tokens = 128*budget, always topk-divisible) is
+    bit-unchanged. For shapes whose chunk does not divide a power-of-two MiB
+    (K3 chunk 7168), the nominal label b1/2/4/8/16/32/64 rounds to the
+    nearest topk-multiple token count; the realized per-rank budget is
+    tokens*chunk_bytes, recorded as effective_budget_bytes in meta.json and
+    cells.csv (worst labeling error ~1.6% at K3 b1/b2, <0.1% from b8 up).
+    Returns (tokens_per_rank, effective_budget_bytes)."""
+    budget_bytes = budget_mib * (1 << 20)
+    tokens = max(topk, round(budget_bytes / (chunk_bytes * topk)) * topk)
+    return tokens, tokens * chunk_bytes
+
+
 def generate(family, params, W, L, budget_mib, topk, chunk_bytes, matrix_instance):
     """Return (matrix_id, chunks) where chunks is a [W][W] list of chunk counts."""
     import random
@@ -193,11 +214,7 @@ def generate(family, params, W, L, budget_mib, topk, chunk_bytes, matrix_instanc
             f" got {len(params['nodefracs'])} for {nn} nodes"
         )
 
-    budget_bytes = budget_mib * (1 << 20)
-    assert (
-        budget_bytes % chunk_bytes == 0
-    ), f"budget ({budget_bytes} B) must be a multiple of chunk_bytes ({chunk_bytes})"
-    tokens_per_rank = budget_bytes // chunk_bytes  # pre-topk tokens
+    tokens_per_rank, _ = budget_tokens(budget_mib, chunk_bytes, topk)  # pre-topk tokens
     row_chunks = tokens_per_rank * topk  # post-fanout wire rows per source
 
     canon = canonical_string(family, params, W, L, budget_mib, topk, chunk_bytes, matrix_instance)
@@ -553,11 +570,14 @@ def ensure_matrix(
         "W": W,
         "ranks_per_node": L,
         "budget_mib": budget_mib,
-        "budget_semantics": "pre-topk send budget; row_sum_bytes = budget_mib*2^20*topk",
+        "budget_semantics": "pre-topk send budget (nominal label); row_sum_bytes"
+        " = effective_budget_bytes*topk, effective = round-to-chunk of"
+        " budget_mib*2^20 (exact when chunk divides the budget)",
         "topk": topk,
         "chunk_bytes": chunk_bytes,
         "tokens_per_rank": tokens_per_rank,
-        "row_sum_bytes": budget_mib * (1 << 20) * topk,
+        "effective_budget_bytes": tokens_per_rank * chunk_bytes,
+        "row_sum_bytes": tokens_per_rank * chunk_bytes * topk,
         "seed": fnv1a(
             canonical_string(family, params, W, L, budget_mib, topk, chunk_bytes, matrix_instance)
         ),

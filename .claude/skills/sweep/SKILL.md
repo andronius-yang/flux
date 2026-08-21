@@ -25,7 +25,9 @@ root (leave them).
   `NVSHMEM_SYMMETRIC_SIZE`) is formula-driven (SCHEMA.md §knobs) — do not
   hand-tune per cell.
 - Layer1 cells: `n_split_l1: 4` (split-N pipeline depth; N/n_split must be a
-  multiple of 1024, and 4 is the bench's own default).
+  multiple of the combine tile — 1024, or 512 when N is not 1024-aligned
+  (2026-08-21). H=4096: 4, the bench's own default; K3 H=3584: 7, set by the
+  k3 shape preset).
 
 ## Variables (the axes the user picks)
 

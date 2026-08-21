@@ -26,24 +26,25 @@ One timed window per iteration contains a FULL MoE layer pass:
                  GemmGroupedV2GatherRSOp)
 
 Window-accounting contract (the reason this bench exists — the l01 arm of the
-layer-axis campaign, cells.csv layer=l01):
+layer-axis campaign, cells.csv layer=l01; RULE-5 CONVERTED 2026-08-21,
+timing_accounting=per_iter_gpu):
 
-- Routing/scheduling is computed ONCE per window, inside layer0's forward
-  (its in-window stage2 metadata work). Nothing routing-derived is cached
-  across iterations (one-shot inference semantics).
-- Layer1 consumes PRECOMPUTED inverse indices (pack/reduce indices + compress
-  CSRs, the l1 bench's `--timing_mode amortized` contract): a real fused
-  pipeline inherits them ~free from layer0's in-window stage2 work, so the
-  python builders (build_a2av_combine_indices / build_a2av_compress_indices)
-  run OUTSIDE the timed window here. Their one-shot wall time is reported via
-  rank-0 cell_info `l1_index_build_ms` — never silently dropped.
-  `--l1_index_in_window` moves those same python builders INSIDE the window
-  (into l1_ms) for sensitivity runs; note they contain GPU->CPU copies of
-  routing_idx, so in-window builds serialize the host on the l0+GELU tail by
-  construction.
-- splits_per_source (cnt[s][e]) and the dedup unique-count matrices stay
-  untimed host metadata in BOTH modes, exactly like the per-layer benches
-  (a real system computes them locally from the gating allgather).
+- Per iteration, INSIDE the timed bracket: the routing allgather
+  (plan_comm_ms), then ALL routing-derived metadata for BOTH layers
+  (plan_ms) — splits / stable scatter_index / splits_per_source / unique
+  counts via the l0 op's fused derive_routed_meta, and the layer1
+  pack/reduce indices + compress CSRs via the vectorized _dev builder
+  twins seeded from that derive (the l1 unique-counts host kwarg is the
+  U-slice of the l0 derive; bit-parity with the CPU builders is guarded at
+  setup). Layer0's stage2 scheduling still runs in-window inside forward.
+  Nothing routing-derived is cached across iterations (one-shot inference
+  semantics). total_ms = plan_comm + plan + e2e; e2e/l0/act/l1 anchors are
+  unchanged vs the pre-conversion bench (never compare totals across the
+  accounting boundary).
+- The CPU builders survive only as untimed setup drift-guard references;
+  their wall time is still reported as rank-0 cell_info
+  `l1_index_build_ms` (guard cost, not timed work). The old
+  `--l1_index_in_window` sensitivity flag is retired.
 
 Per-iteration CUDA events: e2e_start / l0_end / act_end / e2e_end, emitted as
 e2e_ms / l0_ms / act_ms / l1_ms (+ iso_sync_ms under FLUX_SWEEP_ISOLATED_ITERS,
@@ -113,12 +114,18 @@ from flux.testing import (
     parse_traffic_matrix,
     traffic_matrix_to_choosed_experts,
 )
+from flux.testing.a2av_combine_indices import (
+    build_a2av_combine_indices_dev,
+    build_a2av_compress_indices_dev,
+    build_a2av_unique_counts_dev,
+)
 from flux.testing.recorder import RECORDER
 
 # reuse the layer1 traffic bench's inherited-index math and correctness
-# thresholds (import via sys.path like the fast baselines do): the builders are
-# the executable spec of what a fused layer0+layer1 pipeline hands layer1
-# precomputed, and the thresholds keep the l01 verdict comparable to l1 cells
+# thresholds (import via sys.path like the fast baselines do): the CPU
+# builders are now the untimed DRIFT-GUARD references (rule 5, 2026-08-21 —
+# the timed path re-derives everything per iteration via the _dev twins),
+# and the thresholds keep the l01 verdict comparable to l1 cells
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "moe_gather_rs")
 )
@@ -179,18 +186,23 @@ class PerfResult:
 
 
 @torch.no_grad()
-def perf_combined(name: str, iters: int, warmup_iters: int, prep_fn, l0_fn, l1_fn):
-    """One timed window per iteration: l0_fn() -> GELU -> l1_fn(intermediate),
-    with events e2e_start / l0_end / act_end / e2e_end. Mirrors the per-layer
-    benches' perf loops: warmup runs in the same loop and is filtered at
-    collection; NVTX tags segment warmup vs timed for nsys captures; the sweeps
-    isolated mode (FLUX_SWEEP_ISOLATED_ITERS) drains the device and aligns all
-    ranks before EVERY timed window, host wall of the pair -> iso_sync_ms."""
+def perf_combined(name: str, iters: int, warmup_iters: int, prep_fn, plan_comm_fn, plan_fn, l0_fn, l1_fn):
+    """One timed window per iteration (SCHEMA rule 5, converted 2026-08-21):
+    plan_comm_fn() [routing allgather] -> plan_fn() [ALL routing-derived
+    metadata for BOTH layers, on GPU] -> l0_fn(plan) -> GELU ->
+    l1_fn(plan, intermediate). Events iter_start / plan_comm_end / plan_end /
+    e2e_start / l0_end / act_end / e2e_end; e2e/l0/act/l1 anchors unchanged
+    vs the pre-rule-5 bench (check_l01_identity compatibility), plan brackets
+    sit inside total_ms but OUTSIDE e2e_ms. One plan bracket for the whole
+    pass: routing is fully known after one allgather, which is the fused
+    pipeline the combined arm models. Warmup runs in the same loop and is
+    filtered at collection; NVTX tags segment warmup vs timed for nsys; the
+    sweeps isolated mode (FLUX_SWEEP_ISOLATED_ITERS) drains the device and
+    aligns all ranks before EVERY timed window (host wall -> iso_sync_ms)."""
     total_iters = warmup_iters + iters
-    e2e_start = [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
-    l0_end = [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
-    act_end = [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
-    e2e_end = [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
+    ev = lambda: [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
+    iter_start, plan_comm_end, plan_end = ev(), ev(), ev()
+    e2e_start, l0_end, act_end, e2e_end = ev(), ev(), ev(), ev()
     torch.cuda.synchronize()
     torch.distributed.barrier()
     isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))
@@ -204,26 +216,42 @@ def perf_combined(name: str, iters: int, warmup_iters: int, prep_fn, l0_fn, l1_f
             torch.distributed.barrier()
             iso_sync_times.append((time.perf_counter() - t_iso) * 1e3)
         nvtx_tag = f"iter{i}_warmup" if i < warmup_iters else f"iter{i}"
-        e2e_start[i].record()
         with torch.cuda.nvtx.range(nvtx_tag):
-            l0_out = l0_fn()
+            iter_start[i].record()
+            plan_comm_fn()
+            plan_comm_end[i].record()
+            plan = plan_fn()
+            plan_end[i].record()
+            e2e_start[i].record()
+            l0_out = l0_fn(plan)
             l0_end[i].record()
             # activation on the [gemm_rows_this_ep, ffn] intermediate — a fresh
             # allocation per window (gelu has no out=); cheap post-warmup via
             # the caching allocator, and part of the pass by definition
             intermediate = torch.nn.functional.gelu(l0_out)
             act_end[i].record()
-            output = l1_fn(intermediate)
-        e2e_end[i].record()
+            output = l1_fn(plan, intermediate)
+            e2e_end[i].record()
 
-    iter_times = {"e2e_ms": [], "l0_ms": [], "act_ms": [], "l1_ms": []}
+    iter_times = {
+        "e2e_ms": [],
+        "l0_ms": [],
+        "act_ms": [],
+        "l1_ms": [],
+        "plan_comm_ms": [],
+        "plan_ms": [],
+        "total_ms": [],
+    }
     for i in range(total_iters):
         e2e_end[i].synchronize()
         if i >= warmup_iters:
+            iter_times["plan_comm_ms"].append(iter_start[i].elapsed_time(plan_comm_end[i]))
+            iter_times["plan_ms"].append(plan_comm_end[i].elapsed_time(plan_end[i]))
             iter_times["e2e_ms"].append(e2e_start[i].elapsed_time(e2e_end[i]))
             iter_times["l0_ms"].append(e2e_start[i].elapsed_time(l0_end[i]))
             iter_times["act_ms"].append(l0_end[i].elapsed_time(act_end[i]))
             iter_times["l1_ms"].append(act_end[i].elapsed_time(e2e_end[i]))
+            iter_times["total_ms"].append(iter_start[i].elapsed_time(e2e_end[i]))
     if isolated:
         iter_times["iso_sync_ms"] = iso_sync_times[warmup_iters:]
 
@@ -234,19 +262,24 @@ def perf_combined(name: str, iters: int, warmup_iters: int, prep_fn, l0_fn, l1_f
     return result
 
 
-def perf_fast(*_args, **_kwargs):
-    # --impl fast (the FAST+FAST combined arm: comm-free grouped GEMM0 + FAST
-    # alltoallv dispatch -> GELU -> grouped GEMM1 + FAST alltoallv combine)
-    # lands only after its own bring-up — see
-    # test/python/moe_gather_rs/test_moe_gather_rs_fast_baseline.py and
-    # test/python/moe_ag_scatter/test_moe_ag_fast_baseline.py for the halves.
-    # Open question blocking it: FAST's signal/credit reset currently runs once
-    # per window OUTSIDE it; a combined pass issues TWO alltoallv calls per
-    # window and it is unverified whether one tail reset is sufficient or each
-    # call needs its own in-window reset (which would change the accounting).
-    raise NotImplementedError(
-        "--impl fast is not implemented yet; run the per-layer FAST baselines"
-    )
+# ---- FAST combined arm helpers (2026-08-21; mirrors the layer0 fast test) --
+def load_fast(fast_dir: str):
+    """Load libflash.so (must come after `import flux`; FAST self-inits NVSHMEM)."""
+    sys.path.insert(0, fast_dir)
+    import flash_utils  # noqa: F401  (loads libflash.so)
+
+    return flash_utils
+
+
+def broadcast_uid(flash_utils) -> torch.Tensor:
+    # uid is a CPU byte tensor; the global PG is NCCL, so bounce it via GPU
+    if TP_GROUP.rank() == 0:
+        uid = flash_utils.get_nvshmem_init_id()
+    else:
+        uid = torch.zeros((128,), dtype=torch.uint8, device="cpu")
+    uid_gpu = uid.cuda()
+    torch.distributed.broadcast(uid_gpu, src=0, group=TP_GROUP)
+    return uid_gpu.cpu()
 
 
 def parse_args():
@@ -316,14 +349,37 @@ def parse_args():
         " (and shrink the reference scatter staging buffer); correctness columns"
         " in the sweep capsule stay empty for the cell",
     )
+    # NOTE (2026-08-21, rule-5 conversion): --l1_index_in_window is RETIRED —
+    # per-iteration in-window GPU derivation (plan bracket) is the only mode;
+    # the old flag's python-builders-inside-l1_ms accounting would be a third
+    # never-mix regime.
     parser.add_argument(
-        "--l1_index_in_window",
+        "--profile",
         default=False,
         action="store_true",
-        help="sensitivity mode: run the layer1 python index builders"
-        " (pack/reduce + compress CSRs) INSIDE the timed window (counted in"
-        " l1_ms) instead of inheriting them untimed; contains GPU->CPU copies,"
-        " so it serializes the host on the l0+GELU tail by construction",
+        help="wrap the timed loop in flux.group_profile (sweep torchprof mode)",
+    )
+    parser.add_argument(
+        "--capacity_mib",
+        type=int,
+        default=0,
+        help="FAST buffer capacity per buffer in MiB (--impl fast); 0 = auto"
+        " (4 x max(row sum, col sum) of the matrix; transpose-invariant, so"
+        " both wire directions get the same capacity)",
+    )
+    parser.add_argument(
+        "--fast_dir",
+        type=str,
+        default=os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "..",
+            "..",
+            "..",
+            "3rdparty",
+            "FAST",
+            "nvidia",
+        ),
+        help="directory containing libflash.so + flash_utils.py (--impl fast)",
     )
     return parser.parse_args()
 
@@ -333,18 +389,24 @@ if __name__ == "__main__":
     # combined pairing is defined over the sm80/V2 ops only (a2av dispatch +
     # gather-rs a2av combine both live there); Hopper's V3 pair has neither
     assert flux.util.get_arch() < 90, "test_moe_l0l1_traffic.py targets the sm80/V2 ops"
-    if args.impl == "fast":
-        perf_fast()
 
     # each expert's full ffn weight resides on one rank: T=1, E=world_size
     init_ep_group(DIST_ENV.WORLD_SIZE)
     RANK, WORLD_SIZE, NNODES = TP_GROUP.rank(), TP_GROUP.size(), flux.testing.NNODES()
     LOCAL_WORLD_SIZE = DIST_ENV.LOCAL_WORLD_SIZE
 
-    print("before flux_shm initialization")
-    flux.init_flux_shm(TP_GROUP)
-    torch.cuda.synchronize()
-    print("after flux_shm initialization")
+    if args.impl != "fast":
+        # --impl fast skips flux shm: FAST owns the only NVSHMEM init in the
+        # process (same contract as the layer0 fast test)
+        print("before flux_shm initialization")
+        flux.init_flux_shm(TP_GROUP)
+        torch.cuda.synchronize()
+        print("after flux_shm initialization")
+    else:
+        assert LOCAL_WORLD_SIZE in (4, 8), (
+            f"FAST expects 4 (Perlmutter) or 8 (p4d) GPUs/node; got {LOCAL_WORLD_SIZE}"
+        )
+        assert WORLD_SIZE > LOCAL_WORLD_SIZE, "FAST requires at least 2 nodes (server_n > 1)"
 
     input_dtype = DTYPE_MAP[args.dtype]
     output_dtype = input_dtype
@@ -354,8 +416,11 @@ if __name__ == "__main__":
         f" chunk granularity ({args.chunk_bytes} bytes)"
     )
     assert args.G % WORLD_SIZE == 0, f"{args.G} % {WORLD_SIZE} != 0"
-    assert args.N % args.n_split == 0 and (args.N // args.n_split) % 1024 == 0, (
-        f"N ({args.N}) / n_split ({args.n_split}) must be a multiple of 1024"
+    # combine tile is 1024 or 512 (2026-08-21, K3 H=3584): 512-alignment is
+    # the dense-path requirement; a2av-only arms would tolerate %8 but every
+    # planned cell satisfies %512 (K3: n_split=7 -> n_per=512)
+    assert args.N % args.n_split == 0 and (args.N // args.n_split) % 512 == 0, (
+        f"N ({args.N}) / n_split ({args.n_split}) must be a multiple of 512"
     )
     if args.l0_comm_pattern == "a2av_hier_compress" and NNODES > 1:
         assert args.sm_margin >= 1, "multi-node l0 a2av_hier_compress requires --sm_margin >= 1"
@@ -413,6 +478,7 @@ if __name__ == "__main__":
         drop_token=False,
         gating_args=gating_args,
         skip_reference=not need_torch_path,
+        local_scatter=True,
     )
 
     # ---- layer1 identities (T=1, E=W; each expert's rows are contiguous) ----
@@ -475,9 +541,10 @@ if __name__ == "__main__":
             choosed_experts, WORLD_SIZE, NNODES, n_experts_per_rank
         )
 
-    # ---- layer1 inherited indices (DECIDED accounting: OUTSIDE the window;
-    # --l1_index_in_window moves exactly these builder calls inside) ----
-    def build_l1_indices():
+    # ---- layer1 index REFERENCE builds (untimed, rule-5 drift guards ONLY
+    # since the 2026-08-21 conversion: the timed path re-derives everything
+    # per iteration on GPU inside the plan bracket) ----
+    def build_l1_indices_reference():
         kwargs = {}
         pack_index, reduce_index = build_a2av_combine_indices(
             routing_idx, split_cpu, RANK, WORLD_SIZE, args.topk
@@ -492,19 +559,13 @@ if __name__ == "__main__":
             kwargs["a2av_reduce_csr"] = [red_ptr, red_row]
         return kwargs
 
-    l1_index_build_ms = 0.0
-    l1_static_kwargs = {}
-    if l1_use_a2av and args.impl == "flux":  # flux-only inputs; torch arm ignores them
-        l1_static_kwargs["splits_per_source"] = splits_per_source_cpu
-        if l1_use_compress and NNODES > 1:
-            l1_static_kwargs["a2av_unique_counts"] = l1_unique_counts_cpu
-        if not args.l1_index_in_window:
-            t0 = time.perf_counter()
-            l1_static_kwargs.update(build_l1_indices())
-            torch.cuda.synchronize()  # builders end in .cuda() copies
-            l1_index_build_ms = (time.perf_counter() - t0) * 1e3
-    elif args.l1_index_in_window and RANK == 0:
-        print("NOTE: --l1_index_in_window is a no-op with --l1_comm_pattern dense")
+    l1_index_build_ms = 0.0  # wall of the reference build (drift-guard cost, untimed)
+    l1_reference_kwargs = {}
+    if l1_use_a2av and args.impl == "flux":
+        t0 = time.perf_counter()
+        l1_reference_kwargs = build_l1_indices_reference()
+        torch.cuda.synchronize()  # builders end in .cuda() copies
+        l1_index_build_ms = (time.perf_counter() - t0) * 1e3
 
     # ---- layer1 weights/scales (l1 traffic bench data_config; the input slot
     # is layer0's live output, so it is not generated here) ----
@@ -525,8 +586,7 @@ if __name__ == "__main__":
         print(f"Per-rank gemm rows: {rows_per_rank.tolist()}")
         print(
             f"impl: {args.impl}, l0_comm_pattern: {args.l0_comm_pattern},"
-            f" l1_comm_pattern: {args.l1_comm_pattern}, n_split: {args.n_split},"
-            f" l1_index_in_window: {args.l1_index_in_window}"
+            f" l1_comm_pattern: {args.l1_comm_pattern}, n_split: {args.n_split}"
         )
         if l0_use_a2av:
             send_bytes = (matrix.sum(dim=1) - matrix.diag()).tolist()
@@ -543,11 +603,16 @@ if __name__ == "__main__":
             l0_comm_pattern=args.l0_comm_pattern,
             l1_comm_pattern=args.l1_comm_pattern,
             n_split=int(args.n_split),
-            l1_index_in_window=bool(args.l1_index_in_window),
+            # SCHEMA protocol rule 5 (l01 driver converted 2026-08-21): the
+            # routing allgather + ALL plan derivation for BOTH layers timed
+            # per iteration; l1_index_build_ms is now the untimed drift-guard
+            # reference build wall, kept for column continuity.
+            timing_accounting="per_iter_gpu",
+            torch_ref_impl="local_slice_scatter",
             l1_index_build_ms=round(l1_index_build_ms, 6),
         )
 
-    # ---- build the ops (flux arm; ctor mirrors the per-layer benches) ----
+    # ---- build the ops (ctor mirrors the per-layer benches) ----
     gemm_only_op = None
     if need_torch_path:
         gemm_only_op = flux.GemmOnly(
@@ -556,6 +621,100 @@ if __name__ == "__main__":
             moe_ctx.outputs[0].dtype,
             use_fp8_gemm=flux.is_fp8_dtype(moe_ctx.inputs.dtype),
         )
+
+    # ---- rule-5 apparatus (SCHEMA protocol rule 5, l01 converted 2026-08-21)
+    # Buffers/ops are setup scope (allocation only); the routing exchange and
+    # EVERY routing-derived quantity for BOTH layers re-derive per iteration
+    # inside the plan bracket. Untimed work below is the bitwise drift guard.
+    topk_shard = choosed_experts[
+        RANK * tokens_per_rank : (RANK + 1) * tokens_per_rank
+    ].contiguous()
+    topk_gather_buf = torch.zeros(ntokens, args.topk, dtype=torch.int32, device="cuda")
+
+    def plan_comm_fn():
+        torch.distributed.all_gather_into_tensor(topk_gather_buf, topk_shard, group=TP_GROUP)
+
+    plan_comm_fn()
+    assert torch.equal(topk_gather_buf, choosed_experts), (
+        "allgathered routing != replicated harness routing"
+    )
+
+    # The l0 op doubles as the rule-5 meta engine (derive_routed_meta): the
+    # flux arm builds it with its comm pattern; the torch arm builds the plain
+    # allgather-mode op purely for the per-iteration derivation (minimal
+    # heap). The fast arm builds NO flux op (FAST owns NVSHMEM) — it derives
+    # via derive_fast_l01_meta_gpu, guarded in its own branch below.
+    is_flux = args.impl == "flux"
+    l0_op = None
+    if args.impl != "fast":
+        tp_env = flux.DistEnvTPWithEP(
+            tp_group=TP_GROUP, nnodes=DIST_ENV.NNODES, ep_group=EP_GROUP
+        )
+        moe_args = flux.MoeArguments(
+            max_ntokens=ntokens,
+            hidden=H,
+            ffn_hidden=FFN,
+            nexperts=args.G,
+            topk=args.topk,
+            input_dtype=input_dtype,
+            output_dtype=output_dtype,
+        )
+        l0_op = flux.GemmGroupedV2AGScatterOp(
+            tp_env=tp_env,
+            moe_args=moe_args,
+            a2av_dispatch=l0_use_a2av and is_flux,
+            a2av_ring=is_flux and (args.l0_comm_pattern == "a2av_ring"),
+            a2av_hier=is_flux and (args.l0_comm_pattern == "a2av_hier"),
+            a2av_hier_compress=is_flux and (args.l0_comm_pattern == "a2av_hier_compress"),
+        )
+    if args.impl == "fast":
+        g_sd = g_scd = g_sps = g_uc = None
+    else:
+        g_sd, g_scd, g_sps, g_uc = l0_op.derive_routed_meta(topk_gather_buf)
+    if args.impl != "fast":
+        assert torch.equal(g_sd.cpu(), split_cpu[: args.G].cpu().int()), "derive splits drift"
+        assert torch.equal(g_scd, moe_ctx.scatter_index.int()), "derive scatter_index drift"
+        assert torch.equal(g_sps, splits_per_source_cpu), "derive splits_per_source drift"
+        if l0_unique_counts_cpu is not None:
+            assert torch.equal(g_uc, l0_unique_counts_cpu), "derive l0 unique_counts drift"
+    if l1_use_a2av and is_flux:
+        d_pack, d_red = build_a2av_combine_indices_dev(
+            g_scd.view(-1), g_sd, RANK, WORLD_SIZE, args.topk
+        )
+        assert torch.equal(d_pack, l1_reference_kwargs["a2av_pack_index"].int()), (
+            "in-window pack_index drift vs CPU reference builder"
+        )
+        assert torch.equal(d_red, l1_reference_kwargs["a2av_reduce_index"].int()), (
+            "in-window reduce_index drift vs CPU reference builder"
+        )
+        if l1_use_compress and NNODES > 1:
+            d_uc = build_a2av_unique_counts_dev(
+                topk_gather_buf, WORLD_SIZE, NNODES, n_experts_per_rank
+            )
+            assert torch.equal(d_uc.cpu(), l1_unique_counts_cpu), "l1 unique_counts drift"
+            assert torch.equal(
+                g_uc[:, WORLD_SIZE:].contiguous(), l1_unique_counts_cpu
+            ), "l0-derive U slice != l1 unique_counts (transposed-U identity)"
+            d_wp, d_wc, d_rp, d_rr = build_a2av_compress_indices_dev(
+                g_scd.view(-1), g_sd, d_uc, RANK, WORLD_SIZE, NNODES, args.topk
+            )
+            r_wp, r_wc = l1_reference_kwargs["a2av_wire_csr"]
+            r_rp, r_rr = l1_reference_kwargs["a2av_reduce_csr"]
+            for got, ref, nm in (
+                (d_wp, r_wp, "wire_ptr"),
+                (d_wc, r_wc, "wire_copy"),
+                (d_rp, r_rp, "red_ptr"),
+                (d_rr, r_rr, "red_row"),
+            ):
+                assert torch.equal(got, ref.int()), f"in-window compress {nm} drift"
+    if need_torch_path and args.impl != "fast":
+        # torch-arm in-window reconstructions, guarded once here (the fast
+        # arm's untimed reference uses the setup gating values directly)
+        _iota_m = torch.arange(M, dtype=torch.int32, device="cuda")
+        _copy_buf = torch.empty(M, dtype=torch.int32, device="cuda")
+        _copy_buf.scatter_(0, g_scd.view(-1).long(), _iota_m)
+        assert torch.equal(_copy_buf // args.topk, token_index.int()), "token_index drift"
+        assert torch.equal(_copy_buf % args.topk, topk_index.int()), "topk_index drift"
 
     def run_torch_two_layer():
         """One unfused two-layer pass over the shared ctx; returns the final
@@ -585,24 +744,6 @@ if __name__ == "__main__":
         )
 
     if args.impl == "flux":
-        tp_env = flux.DistEnvTPWithEP(tp_group=TP_GROUP, nnodes=DIST_ENV.NNODES, ep_group=EP_GROUP)
-        moe_args = flux.MoeArguments(
-            max_ntokens=ntokens,
-            hidden=H,
-            ffn_hidden=FFN,
-            nexperts=args.G,
-            topk=args.topk,
-            input_dtype=input_dtype,
-            output_dtype=output_dtype,
-        )
-        l0_op = flux.GemmGroupedV2AGScatterOp(
-            tp_env=tp_env,
-            moe_args=moe_args,
-            a2av_dispatch=l0_use_a2av,
-            a2av_ring=(args.l0_comm_pattern == "a2av_ring"),
-            a2av_hier=(args.l0_comm_pattern == "a2av_hier"),
-            a2av_hier_compress=(args.l0_comm_pattern == "a2av_hier_compress"),
-        )
         l1_op = flux.GemmGroupedV2GatherRSOp(
             TP_GROUP,
             args.G,
@@ -621,81 +762,144 @@ if __name__ == "__main__":
             a2av_hier_compress=l1_use_compress,
         )
 
-        l0_extra = {
+        # allocation-scope extras; the routing-derived entries
+        # (splits_per_source / unique counts) join per-iteration in flux_plan
+        l0_extra_base = {
             "ag_option": flux.AllGatherOption(),
             "bias": take_first_or_none(moe_ctx.bias),
             "input_scale": take_first_or_none(moe_ctx.input_scale),
             "weight_scale": take_first_or_none(moe_ctx.weight_scale),
-            "splits_per_source": splits_per_source_cpu,
         }
-        if l0_unique_counts_cpu is not None:
-            l0_extra["a2av_unique_counts"] = l0_unique_counts_cpu
 
         def flux_prep():
             moe_ctx.clear_outputs()
             l0_op.clear_buffers()
 
-        def flux_l0():
-            # routing/scheduling for the whole pass is computed HERE, in-window
-            # (layer0's stage2 metadata work) — never cached across iterations
+        def flux_plan():
+            # rule 5: ALL routing-derived metadata for BOTH layers, per
+            # iteration, on GPU — seeded from ONE fused derive (the l1
+            # unique-counts host kwarg is the U-slice of the l0 derive; the
+            # derive's internal pinned-D2H event sync is the honest host
+            # sync; derive outputs alias op buffers, consumed before the
+            # next iteration derives again)
+            sd, scd, sps_c, uc_c = l0_op.derive_routed_meta(topk_gather_buf)
+            l0x = dict(l0_extra_base)
+            l0x["splits_per_source"] = sps_c
+            if args.l0_comm_pattern == "a2av_hier_compress":
+                l0x["a2av_unique_counts"] = uc_c
+            l1k = {}
+            if l1_use_a2av:
+                r_idx = scd.view(-1)
+                pk, rd = build_a2av_combine_indices_dev(
+                    r_idx, sd, RANK, WORLD_SIZE, args.topk
+                )
+                l1k = {
+                    "splits_per_source": sps_c,
+                    "a2av_pack_index": pk,
+                    "a2av_reduce_index": rd,
+                }
+                if l1_use_compress and NNODES > 1:
+                    d_uc = build_a2av_unique_counts_dev(
+                        topk_gather_buf, WORLD_SIZE, NNODES, n_experts_per_rank
+                    )
+                    wp, wc, rp, rr = build_a2av_compress_indices_dev(
+                        r_idx, sd, d_uc, RANK, WORLD_SIZE, NNODES, args.topk
+                    )
+                    l1k["a2av_wire_csr"] = [wp, wc]
+                    l1k["a2av_reduce_csr"] = [rp, rr]
+                    l1k["a2av_unique_counts"] = uc_c[:, WORLD_SIZE:].contiguous()
+            return {"sd": sd, "scd": scd, "l0_extra": l0x, "l1_kwargs": l1k}
+
+        def flux_l0(plan):
+            # layer0 stage2 scheduling still runs in-window inside forward
             l0_op.forward(
                 inputs_shard=moe_ctx.inputs_shard,
                 weights=moe_ctx.weights[0],
-                splits_gpu=moe_ctx.splits_gpu,
-                scatter_index=moe_ctx.scatter_index,
+                splits_gpu=plan["sd"],
+                scatter_index=plan["scd"],
                 output_scale=take_first_or_none(moe_ctx.output_scale),
                 outputs_buf=moe_ctx.outputs[0],
                 fast_accum=moe_ctx.fast_accum,
                 sm_margin=args.sm_margin,
                 allgather_output=None,
-                **l0_extra,
+                **plan["l0_extra"],
             )
             return moe_ctx.outputs[0]
 
-        def flux_l1(intermediate):
-            l1_kwargs = dict(l1_static_kwargs)
-            if l1_use_a2av and args.l1_index_in_window:
-                l1_kwargs.update(build_l1_indices())
+        def flux_l1(plan, intermediate):
             return l1_op.forward_gather_rs(
                 intermediate,
                 l1_weight,
-                split_cpu,
-                routing_idx,
+                plan["sd"],  # CUDA splits accepted directly by the op
+                plan["scd"].view(-1),
                 input_scale=l1_input_scale,
                 weight_scale=l1_weight_scale,
                 output_vec_scale=l1_output_vec_scale,
                 fast_accum=False,
                 sm_margin=args.sm_margin,
                 bias=None,
-                **l1_kwargs,
+                **plan["l1_kwargs"],
             )
 
-        perf_result = perf_combined(
-            f"flux #{RANK}", args.iters, args.warmup_iters, flux_prep, flux_l0, flux_l1
-        )
-    else:  # torch arm: same window discipline, unfused impls, impl="torch"
+        with flux.group_profile(
+            name="moe_ag_scatter_traffic_" + os.environ.get("TORCHELASTIC_RUN_ID", "l01"),
+            do_prof=args.profile,
+            group=TP_GROUP,
+        ):
+            perf_result = perf_combined(
+                f"flux #{RANK}",
+                args.iters,
+                args.warmup_iters,
+                flux_prep,
+                plan_comm_fn,
+                flux_plan,
+                flux_l0,
+                flux_l1,
+            )
+    elif args.impl == "torch":  # torch arm: same window discipline, unfused impls
+        # preallocated derivation scratch (contents re-derived per iteration)
+        iota_m = torch.arange(M, dtype=torch.int32, device="cuda")
+        copy_buf = torch.empty(M, dtype=torch.int32, device="cuda")
 
         def torch_prep():
             moe_ctx.clear_outputs()
 
-        def torch_l0():
+        def torch_plan():
+            # rule 5: derive splits/indices on GPU + the honest D2H the
+            # host-side per-expert gemm loop and layer1 segment sums require
+            sd, scd, _, _ = l0_op.derive_routed_meta(topk_gather_buf)
+            copy_buf.scatter_(0, scd.view(-1).long(), iota_m)
+            tok_idx = copy_buf // args.topk
+            tpk_idx = copy_buf % args.topk
+            splits_cpu_iter = sd.cpu()
+            moe_ctx.gather_index = tok_idx
+            moe_ctx.splits_cpu = splits_cpu_iter
+            return {
+                "split_cpu": splits_cpu_iter,
+                "token_index": tok_idx,
+                "topk_index": tpk_idx,
+                "ep_m_start": int(splits_cpu_iter[:eid_start].sum()),
+                "ep_m_end": int(splits_cpu_iter[:eid_end].sum()),
+            }
+
+        def torch_l0(plan):
             MoeAgScatterWithTorch.comm_impl(moe_ctx, TP_GROUP)
             MoeAgScatterWithTorch.scatter_impl(moe_ctx)
             MoeAgScatterWithTorch.gemm_impl(moe_ctx, gemm_only_op)
             return moe_ctx.outputs[0]
 
-        def torch_l1(intermediate):
+        def torch_l1(plan, intermediate):
             return moe_gather_rs_forward_torch(
                 TP_GROUP,
                 M,
                 eid_start,
-                ep_rank_m_start,
-                ep_rank_m_end,
+                plan["ep_m_start"],
+                plan["ep_m_end"],
                 intermediate,
                 l1_weight,
-                split_cpu,
-                token_index,
-                topk_index,
+                plan["split_cpu"],
+                plan["token_index"],
+                plan["topk_index"],
                 args.topk,
                 l1_input_scale,
                 l1_weight_scale,
@@ -703,8 +907,210 @@ if __name__ == "__main__":
                 do_all_reduce=False,
             )
 
-        perf_result = perf_combined(
-            f"torch #{RANK}", args.iters, args.warmup_iters, torch_prep, torch_l0, torch_l1
+        with flux.group_profile(
+            name="moe_ag_scatter_traffic_" + os.environ.get("TORCHELASTIC_RUN_ID", "l01"),
+            do_prof=args.profile,
+            group=TP_GROUP,
+        ):
+            perf_result = perf_combined(
+                f"torch #{RANK}",
+                args.iters,
+                args.warmup_iters,
+                torch_prep,
+                plan_comm_fn,
+                torch_plan,
+                torch_l0,
+                torch_l1,
+            )
+    else:  # --impl fast (2026-08-21): FAST+FAST combined — the authoritative
+        # unfused paper baseline on REAL routing: trace-driven dispatch
+        # alltoallv -> grouped GEMM0 -> GELU -> grouped GEMM1 -> combine
+        # alltoallv (transposed matrix) -> home-side topk-reduce. TWO
+        # flash_comm_t instances (one per wire direction; vendored refcount
+        # patch scripts/fast_two_instance.patch) so both credit resets stay
+        # OUTSIDE the window — the FAST contract requires a reset between
+        # calls on one instance, and a timed mid-window reset would insert a
+        # full-world barrier between the layers. e2e mode only (host-blocking
+        # alltoallv, like the layer0 fast arm).
+        sys.path.insert(
+            0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "moe_ag_scatter")
+        )
+        from fast_baseline_utils import (  # noqa: E402
+            build_pack_index,
+            build_unpack_index,
+            derive_fast_l01_meta_gpu,
+        )
+
+        def derive_fn(buf):
+            return derive_fast_l01_meta_gpu(
+                buf, RANK, args.G, WORLD_SIZE, tokens_per_rank, args.chunk_bytes
+            )
+
+        # drift guard (untimed, once): the in-window derivation must reproduce
+        # the host reference index math + the combine-direction extensions
+        gm = derive_fn(topk_gather_buf)
+        ce_local = choosed_experts[RANK * tokens_per_rank : (RANK + 1) * tokens_per_rank]
+        pack_ref = build_pack_index(ce_local, args.topk).cuda()
+        unpack_ref, split_ref = build_unpack_index(
+            splits_per_source_cpu, RANK, args.G, WORLD_SIZE
+        )
+        assert torch.equal(gm["pack_index"], pack_ref), "derived pack_index drift"
+        assert torch.equal(gm["unpack_index"], unpack_ref.cuda()), "derived unpack_index drift"
+        assert torch.equal(gm["split_cpu"], split_ref), "derived gemm splits drift"
+        assert torch.equal(gm["matrix_cpu"], matrix.long()), "derived BvN matrix drift"
+        assert torch.equal(gm["matrix_T_cpu"], matrix.long().t().contiguous()), (
+            "derived combine matrix drift"
+        )
+        assert torch.equal(gm["pack_order"] // args.topk, gm["pack_index"]), (
+            "pack_order/pack_index identity drift"
+        )
+        assert torch.equal(
+            gm["inv_unpack"][gm["unpack_index"]],
+            torch.arange(gm["unpack_index"].numel(), device="cuda"),
+        ), "inv_unpack is not the inverse of unpack_index"
+
+        # the reference gemm loop multiplies by output_scale, which the
+        # standalone GemmGroupedV2 does not (layer0 fast test contract) —
+        # pin to 1 so both sides compute the pure GEMM
+        moe_ctx.output_scale[0].fill_(1.0)
+
+        # ---- FAST bring-up (the only NVSHMEM init in this process; two
+        # instances, one per wire direction) ----
+        flash_utils = load_fast(os.path.abspath(args.fast_dir))
+        uid = broadcast_uid(flash_utils)
+        dispatch_comm = flash_utils.flash_comm_t(RANK, LOCAL_WORLD_SIZE, WORLD_SIZE, uid)
+        combine_comm = flash_utils.flash_comm_t(RANK, LOCAL_WORLD_SIZE, WORLD_SIZE, uid)
+        if args.capacity_mib > 0:
+            capacity_bytes = args.capacity_mib << 20
+        else:
+            capacity_bytes = 4 * int(max(matrix.sum(dim=1).max(), matrix.sum(dim=0).max()))
+        capacity_bytes = (capacity_bytes + 15) // 16 * 16
+        dispatch_comm.alltoallv_setup(capacity_bytes)
+        combine_comm.alltoallv_setup(capacity_bytes)
+        if RANK == 0:
+            print(f"FAST combined: capacity {capacity_bytes >> 20} MiB per buffer x2 comms")
+
+        gemm0_op = flux.GemmGroupedV2(
+            moe_ctx.weights[0], n_experts_per_rank, input_dtype, output_dtype
+        )
+        gemm1_op = flux.GemmGroupedV2(l1_weight, n_experts_per_rank, input_dtype, output_dtype)
+
+        @torch.no_grad()
+        def perf_fast_combined(iters, warmup_iters):
+            total_iters = warmup_iters + iters
+            ev = lambda: [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
+            iter_start, plan_comm_end, plan_end = ev(), ev(), ev()
+            e2e_start, pack_end, disp_end, l0_end, act_end = ev(), ev(), ev(), ev(), ev()
+            gemm2_end, cpack_end, comb_end, e2e_end = ev(), ev(), ev(), ev()
+            reset_ms = [0.0] * total_iters
+            host_e2e = [0.0] * total_iters
+            d_sched = [0.0] * total_iters
+            d_fill = [0.0] * total_iters
+            d_wire = [0.0] * total_iters
+            c_sched = [0.0] * total_iters
+            c_fill = [0.0] * total_iters
+            c_wire = [0.0] * total_iters
+            out = out1 = gemm_in0 = None
+            full = torch.empty(M // WORLD_SIZE, H, dtype=input_dtype, device="cuda")
+            torch.distributed.barrier()
+            torch.cuda.synchronize()
+            for i in range(total_iters):
+                # inter-iteration hygiene, OUTSIDE the window (both directions)
+                t_r0 = time.perf_counter()
+                dispatch_comm.alltoallv_reset()
+                combine_comm.alltoallv_reset()
+                reset_ms[i] = (time.perf_counter() - t_r0) * 1e3
+                torch.cuda.synchronize()
+
+                nvtx_tag = f"iter{i}_warmup" if i < warmup_iters else f"iter{i}"
+                with torch.cuda.nvtx.range(nvtx_tag):
+                    # rule 5: routing exchange + ALL metadata (both wire
+                    # directions + gemm splits + both BvN matrices) in-window
+                    iter_start[i].record()
+                    plan_comm_fn()
+                    plan_comm_end[i].record()
+                    m = derive_fn(topk_gather_buf)
+                    plan_end[i].record()
+
+                    t0 = time.perf_counter()
+                    e2e_start[i].record()
+                    send0 = torch.index_select(
+                        moe_ctx.inputs_shard, dim=0, index=m["pack_index"]
+                    )
+                    pack_end[i].record()
+                    recv0, _, t_d = dispatch_comm.alltoallv(
+                        send0.view(torch.uint8), m["matrix_cpu"]
+                    )
+                    disp_end[i].record()
+                    gemm_in0 = torch.index_select(
+                        recv0.view(input_dtype).view(-1, H), dim=0, index=m["unpack_index"]
+                    )
+                    out0 = gemm0_op.forward(gemm_in0, m["split_cpu"], sm_margin=args.sm_margin)
+                    l0_end[i].record()
+                    intermediate = torch.nn.functional.gelu(out0)
+                    act_end[i].record()
+                    out1 = gemm1_op.forward(
+                        intermediate, m["split_cpu"], sm_margin=args.sm_margin
+                    )
+                    out1.mul_(l1_output_vec_scale.unsqueeze(1))
+                    gemm2_end[i].record()
+                    send1 = torch.index_select(out1, dim=0, index=m["inv_unpack"])
+                    cpack_end[i].record()
+                    recv1, _, t_c = combine_comm.alltoallv(
+                        send1.view(torch.uint8), m["matrix_T_cpu"]
+                    )
+                    comb_end[i].record()
+                    # home side: recv arrives in this rank's own pack order
+                    full.index_copy_(
+                        0, m["pack_order"], recv1.view(input_dtype).view(-1, H)
+                    )
+                    out = (
+                        full.view(tokens_per_rank, args.topk, H).float().sum(1).to(input_dtype)
+                    )
+                    e2e_end[i].record()
+                e2e_end[i].synchronize()
+                host_e2e[i] = (time.perf_counter() - t0) * 1e3
+                d_sched[i], d_fill[i], d_wire[i] = t_d.tolist()
+                c_sched[i], c_fill[i], c_wire[i] = t_c.tolist()
+
+            def per_iter_ms(starts, ends):
+                return [
+                    starts[i].elapsed_time(ends[i]) for i in range(warmup_iters, total_iters)
+                ]
+
+            iter_times = {
+                "plan_comm_ms": per_iter_ms(iter_start, plan_comm_end),
+                "plan_ms": per_iter_ms(plan_comm_end, plan_end),
+                "total_ms": per_iter_ms(iter_start, e2e_end),
+                "e2e_ms": per_iter_ms(e2e_start, e2e_end),
+                "l0_ms": per_iter_ms(e2e_start, l0_end),
+                "act_ms": per_iter_ms(l0_end, act_end),
+                "l1_ms": per_iter_ms(act_end, e2e_end),
+                "pack_ms": per_iter_ms(e2e_start, pack_end),
+                "gemm_ms": per_iter_ms(disp_end, l0_end),
+                "gemm2_ms": per_iter_ms(act_end, gemm2_end),
+                "cpack_ms": per_iter_ms(gemm2_end, cpack_end),
+                "comb_ms": per_iter_ms(cpack_end, comb_end),
+                "acc_ms": per_iter_ms(comb_end, e2e_end),
+                "schedule_ms": [v / 1e3 for v in d_sched[warmup_iters:]],
+                "fill_ms": [v / 1e3 for v in d_fill[warmup_iters:]],
+                "wire_ms": [v / 1e3 for v in d_wire[warmup_iters:]],
+                "comb_schedule_ms": [v / 1e3 for v in c_sched[warmup_iters:]],
+                "comb_fill_ms": [v / 1e3 for v in c_fill[warmup_iters:]],
+                "comb_wire_ms": [v / 1e3 for v in c_wire[warmup_iters:]],
+                "reset_ms": reset_ms[warmup_iters:],
+                "host_e2e_ms": host_e2e[warmup_iters:],
+            }
+            result = PerfResult(
+                name=f"fast #{RANK}",
+                output=out,
+                e2e_time_ms=sum(iter_times["e2e_ms"]) / iters,
+            )
+            result.iter_times = iter_times
+            return result, out1, gemm_in0
+
+        perf_result, fast_out1, fast_gemm_in0 = perf_fast_combined(
+            args.iters, args.warmup_iters
         )
 
     flux.exec_in_rank_order(TP_GROUP, lambda: print(perf_result))
@@ -740,6 +1146,52 @@ if __name__ == "__main__":
 
         flux.exec_in_rank_order(TP_GROUP, check_result)
         RECORDER.emit_correctness(bitwise=False, allclose=True)
+
+    if args.impl == "fast" and not args.skip_correctness:
+        torch_output = run_torch_two_layer()
+        # (a) bitwise: FAST dispatch wire + unpack must reproduce the reference
+        # scatter block (local_scatter: scatter_inputs IS the local EP block)
+        assert flux.testing.bitwise_eq(
+            fast_gemm_in0, moe_ctx.scatter_inputs[: moe_ctx.nrows_ep]
+        ), "❌ FAST dispatch+unpack does not match the reference scatter block"
+        print(f"✅ #{RANK} FAST dispatch+unpack bitwise-match the reference scatter block")
+        # (b) bitwise same-op chain on the reference block — isolates the
+        # combine wire as the only movement the final allclose still covers
+        ref0 = gemm0_op.forward(
+            moe_ctx.scatter_inputs[: moe_ctx.nrows_ep],
+            gm["split_cpu"],
+            sm_margin=args.sm_margin,
+        )
+        ref1 = gemm1_op.forward(
+            torch.nn.functional.gelu(ref0), gm["split_cpu"], sm_margin=args.sm_margin
+        )
+        ref1.mul_(l1_output_vec_scale.unsqueeze(1))
+        assert flux.testing.bitwise_eq(fast_out1, ref1), (
+            "❌ same-op gemm0->gelu->gemm1 chain mismatch: data movement is broken"
+        )
+        print(f"✅ #{RANK} same-op gemm chain bitwise-matches on the reference block")
+        # (c) final RS-sharded output vs the unfused two-layer reference
+        atol = ABSOLUTE_THRESHOLD_MAP[input_dtype]
+        rtol = RELATIVE_THRESHOLD_MAP[input_dtype]
+
+        def check_fast():
+            print(f"#{RANK} Threshold = Atol:{atol}  Rtol:{rtol}")
+            try:
+                flux.torch_allclose(perf_result.output, torch_output, atol=atol, rtol=rtol)
+            except Exception as e:
+                dump_dir = os.environ.get("FLUX_DEBUG_DUMP_DIR", "/tmp")
+                os.makedirs(dump_dir, exist_ok=True)
+                torch.save(perf_result.output, os.path.join(dump_dir, f"l01_fast_output_{RANK}.pt"))
+                torch.save(torch_output, os.path.join(dump_dir, f"l01_torch_output_{RANK}.pt"))
+                print(f"❌ fast and torch not matches, debug tensors dumped to {dump_dir}")
+                RECORDER.emit_correctness(bitwise=True, allclose=False)
+                RECORDER.flush()
+                raise e
+            else:
+                print("✅ fast and torch matches")
+
+        flux.exec_in_rank_order(TP_GROUP, check_fast)
+        RECORDER.emit_correctness(bitwise=True, allclose=True)
 
     TP_GROUP.barrier()
     torch.cuda.synchronize()

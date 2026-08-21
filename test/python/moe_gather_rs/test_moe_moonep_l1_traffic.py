@@ -180,7 +180,8 @@ if __name__ == "__main__":
     output_dtype = input_dtype
     assert args.N * input_dtype.itemsize == args.chunk_bytes
     assert args.G % W == 0
-    assert args.N % args.n_split == 0 and (args.N // args.n_split) % 1024 == 0
+    # combine tile is 1024 or 512 (2026-08-21, K3 H=3584)
+    assert args.N % args.n_split == 0 and (args.N // args.n_split) % 512 == 0
 
     matrix = parse_traffic_matrix(args.traffic_matrix)
     assert matrix.shape[0] == W

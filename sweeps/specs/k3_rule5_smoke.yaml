@@ -1,0 +1,45 @@
+# Rule-5 accounting verification on the K3 canon (2026-08-21).
+# One capsule, one binary, three comm baselines on the REAL synthesized K3
+# routing (model=Kimi-K3-synth; budgets are multiples of 7 MiB — latent row
+# 7168 B):
+#   - fast                    — FAST alltoallv comm substitute, FIRST run on
+#                               real trace routing (2026-08-21 patch: matrix
+#                               AND gemm loads trace-derived); e2e cells only
+#                               (fast x isolated is skipped by design).
+#   - allgather               — stock Comet fused op (dense baseline).
+#   - hier_compress_lb_union  — the reference a2av compress arm.
+# All three emit timing_accounting=per_iter_gpu: the routing allgather
+# (plan_comm_ms) + all plan derivation (plan_ms) timed per iteration inside
+# the window; quote total_ms for isolated latency and NEVER compare totals
+# against pre-rule-5 flux-driver capsules (SCHEMA protocol rule 5).
+# 4n expectation unchanged from k3synth_pm4n_smoke.yaml: topk-16 incidence
+# saturates at 4 nodes; this spec verifies accounting + run success, not
+# placement asymmetry.
+platform: perlmutter
+nodes: 4
+shape: k3
+variants:
+  - fast
+  - allgather
+  - hier_compress_lb_union
+families:
+  - "trace:model=Kimi-K3-synth;pools=mmlu/college_mathematics+mmlu/high_school_world_history+livecodebench/execution+mmlu/professional_law;layer=92;sem=pernode"
+budgets_mib:
+  - 7
+  - 28
+dtype: bfloat16
+modes:
+  - isolated
+  - e2e
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+matrix_instance: "001"
+retries: 1
+timeout_s: 1200
+idle_timeout_s: 300
+skip_correctness: false
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+  NVSHMEM_SYMMETRIC_SIZE: "8G"

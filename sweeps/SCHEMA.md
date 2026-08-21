@@ -8,8 +8,22 @@ disagree, fix one of them in the same commit.
 **`budget_mib` is STRICTLY the pre-topk send budget per source rank** — the
 bytes of *unique tokens homed on the rank* before topk fan-out:
 
-- `tokens_per_rank = budget_mib * 2^20 / chunk_bytes` (independent of topk)
-- matrix **row sums** = `budget_mib * 2^20 * topk` bytes (post-fanout wire rows)
+- `tokens_per_rank = round(budget_mib * 2^20 / chunk_bytes)`, rounded to
+  the nearest MULTIPLE OF TOPK (the layer1/l01 lane requires
+  `ntokens % (W*topk) == 0`; the invariant is global)
+- matrix **row sums** = `tokens_per_rank * chunk_bytes * topk` bytes
+  (post-fanout wire rows)
+
+Nominal byte ladder (2026-08-21): budget labels are the power-of-two
+ladder b1/2/4/8/16/32/64 for every shape. The rounding is EXACT whenever
+`chunk_bytes` divides the budget — every pre-2026-08-21 label (chunk 8192:
+tokens = 128*budget, always topk-divisible) — and the realized per-rank
+budget `tokens_per_rank * chunk_bytes` is recorded as
+`effective_budget_bytes` in meta.json and cells.csv (K3 worst labeling
+error ~1.6% at b1/b2, <=0.2% from b8 up — quote effective bytes when it
+matters). The interim K3 7-MiB-multiple labels (b7/b28, capsules
+20260821-104600/-105153 only) were byte-exact under chunk 7168; never
+conflate the labels.
 
 A "16 MiB budget at topk 8" therefore moves up to 128 MiB of logical wire rows
 per rank. Never quote a budget number without this framing; sweeps before
@@ -64,7 +78,21 @@ offline by `trace_analysis.py`). Differences from the synthetic families:
   bytes through the dealer (identical matrix_id, distinct cell) as the
   token-overlap counterfactual; `cells.csv` records `routing_mode`
   (`real`/`dealer`), `routing_path`, `routing_sha256` (empty for synthetic
-  families).
+  families). Since 2026-08-21 the layer0 `fast` driver also consumes
+  `--routing_file` on real cells (FAST is a comm-phase substitute: matrix
+  AND per-expert gemm loads are both trace-derived; the test asserts the
+  routing realizes the matrix), as does the combined `l01_fast` driver.
+  `dealer=1` remains an ABLATION arm only. The standalone layer1 `l1_fast`
+  driver still cannot consume routing (unchanged).
+- **Trace semantics canon (user decision 2026-08-21): `sem=homog` for ALL
+  future realistic-traffic sweeps** — pernode is retired (only 8 K3 pools
+  exist; homog scales to any node count; the 20260821-104600/-105153
+  capsules are the last pernode ones). **Canonical homog pool:
+  `mmlu/professional_law`** (the topic-concentrated hot-expert workload
+  used across prior campaigns); `livecodebench/execution` is the
+  designated ALTERNATE for topic-shift/domain ablations. Canonical K3
+  family string: `trace:model=Kimi-K3-synth;pools=mmlu/professional_law;
+  layer=92;sem=homog`.
 - **Nonzero diagonal**: real tokens route to experts owned by their home rank.
   Row sums still satisfy the budget invariant (`budget_mib*2^20*topk`), but
   wire bytes per row = row_sum − diag, so trace arms move fewer wire bytes
@@ -118,6 +146,25 @@ unpack_ms, gemm_ms` (components of the e2e window), `reset_ms` (inter-iteration
 hygiene OUTSIDE the window — never add it to e2e), `host_e2e_ms` (host-wall
 cross-check). Metric meaning is scoped by `impl` — `gemm_ms` under torch, fast,
 and (phases) flux are three different measurements by design.
+
+Rule-5 conversion of the flux and fast drivers (2026-08-21, protocol rule
+5): `impl=flux`, `impl=torch`, and `impl=fast` rows additionally carry
+`plan_comm_ms` (the per-iteration [ntokens, topk] routing allgather — the
+recurring exchange that makes routing globally known) and `plan_ms` (the
+per-iteration on-GPU derivation of ALL routing-derived metadata: flux/torch
+via the op's fused `derive_routed_meta` — splits, stable scatter_index,
+splits_per_source, compress unique counts, plus the torch reference's
+gather_index reconstruction and splits D2H; fast via the vectorized
+torch-GPU `derive_fast_meta_gpu` — pack/unpack indices, gemm splits, and
+the BvN input matrix, since the FAST process owns the only NVSHMEM init
+and constructs no flux op), and `total_ms = plan_comm + plan + e2e-window`.
+`e2e_ms` keeps its historical meaning (the op.forward / comm-start→gemm
+window; anchors unchanged). **Quote `total_ms`** for isolated latency on
+these drivers; capsules stamped `timing_accounting=per_iter_gpu`. Setup
+still computes the same metadata once, untimed, purely as a bitwise drift
+guard on the in-window derivation. Never compare planning-inclusive totals
+against pre-2026-08-21 flux/fast capsules (the never-mix boundary is the
+driver change; pre-boundary capsules simply lack these metric rows).
 
 `plan_ms` (2026-08-20, protocol rule 5; drivers eplb/epic/moonep): the
 per-iteration on-device plan derivation inside the timed bracket —
@@ -420,12 +467,23 @@ Highlights (full list = header row):
 - `layer` (appended 2026-08-16) — `l0` (dispatch, the historical default;
   older capsules simply lack the column), `l1` (gather-rs combine,
   driver=gather_rs / fast_gather_rs), `l01` (combined continuous pass,
-  driver=l01: one timed window per isolated iteration = layer0 forward
-  (routing/schedule in-window) -> GELU -> layer1 forward on layer0-inherited
-  inverse indices and compress CSRs — i.e. combined cells inherit compress's
-  CSRs, the AMORTIZED l1 semantics, so compress's isolated-mode in-forward
-  CSR-build penalty does not apply to l01 cells; the one-shot python builders
-  run outside the window and are reported as `l1_index_build_ms`. No
+  drivers l01 + l01_fast; RULE-5 CONVERTED 2026-08-21,
+  timing_accounting=per_iter_gpu: one timed window per iteration = routing
+  allgather (`plan_comm_ms`) -> ALL routing-derived metadata for BOTH
+  layers on GPU (`plan_ms`: the l0 op's fused derive_routed_meta seeding
+  the vectorized _dev builders for the l1 pack/reduce indices + compress
+  CSRs; the CPU builders survive as untimed drift guards, their wall
+  reported as `l1_index_build_ms`) -> layer0 forward (stage2 scheduling
+  still in-window) -> GELU -> layer1 forward. `total_ms = plan_comm +
+  plan + e2e`; e2e/l0/act/l1 anchors unchanged vs pre-conversion l01
+  capsules — never compare planning-inclusive totals across the boundary.
+  Driver l01_fast (--impl fast, 2026-08-21): the FAST+FAST combined
+  unfused baseline on REAL routing — dispatch alltoallv -> grouped GEMM0
+  -> GELU -> grouped GEMM1 -> combine alltoallv (transposed matrix) ->
+  home topk-reduce; TWO flash_comm_t instances (one per direction,
+  vendored patch scripts/fast_two_instance.patch) so both credit resets
+  stay OUTSIDE the window (`reset_ms`); e2e-only, >= 2 nodes; extra
+  metrics gemm2/cpack/comb_*/acc mirror the moonep l01 chain. No
   timing_mode axis, no phases cells. **Reference combined configuration
   since 2026-08-16: `l01_lbunion_compress`** — see variants.py for the
   14/14-budget verdict; the standalone-l1 verdict differs at small budgets
@@ -449,9 +507,23 @@ Highlights (full list = header row):
   reports the planner's share; quote plan_ms/total_ms per arm).
   `legacy_untimed_plan`: setup-time planning (all pre-2026-08-20 capsules,
   which simply lack the column, plus arms the per-iteration path does not
-  cover yet — epic m>1, loccap routers, moonep_fused, ultraep, flux
-  drivers). **Never compare planning-inclusive totals across the two
-  accountings** — same never-mix logic as protocol rule 4.
+  cover yet — epic m>1, loccap routers, moonep_fused, ultraep,
+  standalone l1/gather_rs drivers). The layer0 **flux and fast drivers
+  were converted 2026-08-21** (routing allgather as plan_comm +
+  derive_routed_meta / derive_fast_meta_gpu as plan; see the metrics
+  note), and the **combined l01 + l01_fast drivers on the same day** (see
+  the layer=l01 note) — their pre-boundary capsules are legacy. **Never
+  compare planning-inclusive totals across the two accountings** — same
+  never-mix logic as protocol rule 4.
+- `torch_ref_impl` (appended 2026-08-21) — `local_slice_scatter`: the torch
+  unfused reference scatters ONLY this rank's EP slice ([nrows_ep, H]
+  staging) instead of the global [ntokens*topk, H]; the gemm loop never
+  read the other W-1 slices, so the old global materialization was W-fold
+  extraneous memory (7 GiB at K3 b28 — the large-budget OOM class) AND
+  W-fold extraneous scatter work inside `scatter_ms`. Column absent =
+  pre-fix global-scatter reference; **`impl=torch` rows never compare
+  across the flip** (comm_ms/gemm_ms are unaffected; scatter_ms and totals
+  drop by design).
 - `planner_impl` (appended 2026-08-20, campaign 2) — `fused_dispatch`:
   planning fused into the dispatch op (FusedEpDispatch for eplb, the
   `dispatch_only_routed` in-window derive for epic hc); `torch_gpu`: the
@@ -728,7 +800,14 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
    when quoting). Fused-canonical arms (`planner_impl=fused_dispatch`,
    2026-08-20) satisfy this rule structurally: there is no planner to
    mis-time — planning is part of the dispatch launch and lands in
-   `comm_ms` (see the Planner v2 paragraph under `plan_ms`).
+   `comm_ms` (see the Planner v2 paragraph under `plan_ms`). The layer0
+   comm drivers (flux: all a2av arms + stock Comet + the torch reference;
+   fast) were converted 2026-08-21 — timed per-iteration routing allgather
+   (`plan_comm_ms`) + fused/vectorized on-GPU derivation (`plan_ms`),
+   setup metadata demoted to a bitwise drift guard; the flux test's
+   `--no_metadata_cnt` flag is ABLATION ONLY under the new accounting
+   (derive still runs and is timed; the flag only withholds cnt from
+   forward) and never appears in campaign specs.
 
    **Placement amendment (user directive, 2026-08-21 — PLACE-lambda
    arms).** EXPERT PLACEMENT (which experts' weights reside where) is a

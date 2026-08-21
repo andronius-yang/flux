@@ -438,8 +438,9 @@ if __name__ == "__main__":
         assert not args.use_read_mode, "a2av_hier does not support use_read_mode"
     if use_compress and NNODES == 1 and RANK == 0:
         print("a2av_hier_compress on a single node degrades to plain a2av_hier")
-    assert args.N % args.n_split == 0 and (args.N // args.n_split) % 1024 == 0, (
-        f"N ({args.N}) / n_split ({args.n_split}) must be a multiple of 1024"
+    # combine tile is 1024 or 512 (2026-08-21, K3 H=3584)
+    assert args.N % args.n_split == 0 and (args.N // args.n_split) % 512 == 0, (
+        f"N ({args.N}) / n_split ({args.n_split}) must be a multiple of 512"
     )
 
     # metadata-exchange result (untimed setup), mirroring the layer0 harness:

@@ -50,6 +50,13 @@ class MoeMlp1Ctx:
         skip_reference: bool = False,  # shrink the torch-reference scatter staging
         # buffer to one row; only valid when the caller never runs the torch
         # reference path (MoeAgScatterWithTorch scatter/gemm impls)
+        local_scatter: bool = False,  # 2026-08-21 fix: the reference scatters
+        # ONLY this rank's EP slice ([nrows_ep, K] instead of the global
+        # [ntokens*topk, K]) — the gemm loop never read the other W-1 slices,
+        # so the global materialization was W-fold extraneous memory AND
+        # scatter work. Opt-in for attributability: capsules record
+        # torch_ref_impl=local_slice_scatter; torch rows across the flip are
+        # a never-mix boundary.
     ) -> None:
         self.b = b
         self.s = s
@@ -125,7 +132,12 @@ class MoeMlp1Ctx:
         else:
             scale_value = 0.01 * (self.tp_rank + 1)
 
-        scatter_rows = 1 if skip_reference else self.ntokens * topk
+        self.local_scatter = local_scatter
+        if local_scatter:
+            assert not is_s8_dequant, "local_scatter: s8 scale slicing not implemented"
+        scatter_rows = (
+            1 if skip_reference else (self.nrows_ep if local_scatter else self.ntokens * topk)
+        )
         data_config = [
             ((self.ntokens_shard, K), input_dtype, (scale_value, 0)),  # input_shard
             ((self.ntokens, K), input_dtype, (1, 0)),  # input_full
@@ -217,12 +229,24 @@ class MoeAgScatterWithTorch(object):
 
     @staticmethod
     def scatter_impl(ctx):
+        if getattr(ctx, "local_scatter", False):
+            # 2026-08-21 local-slice fix: gather only this rank's EP rows —
+            # a contiguous segment of the expert-sorted gather order (experts
+            # ascend, each rank owns a contiguous expert range). input_offset
+            # from ctx.splits_cpu so a per-iteration (rule-5) refresh is
+            # honored.
+            input_offset = int(torch.sum(ctx.splits_cpu[: ctx.nexperts_ep * ctx.ep_rank]))
+            gather_index = ctx.gather_index[
+                input_offset : input_offset + ctx.scatter_inputs.shape[0]
+            ]
+        else:
+            gather_index = ctx.gather_index
         if flux.is_fp8_dtype(ctx.inputs.dtype):
             ctx.scatter_inputs.view(torch.uint8).copy_(
-                torch.index_select(ctx.inputs.view(torch.uint8), dim=0, index=ctx.gather_index)
+                torch.index_select(ctx.inputs.view(torch.uint8), dim=0, index=gather_index)
             )
         else:
-            ctx.scatter_inputs.copy_(torch.index_select(ctx.inputs, dim=0, index=ctx.gather_index))
+            ctx.scatter_inputs.copy_(torch.index_select(ctx.inputs, dim=0, index=gather_index))
 
         if ctx.is_s8 and ctx.input_scale is not None:
             for n in range(ctx.weight_groups):
@@ -234,7 +258,13 @@ class MoeAgScatterWithTorch(object):
     def gemm_impl(ctx, gemm_only_op):
         offset = 0
         expert_id_offset = ctx.nexperts_ep * ctx.ep_rank
-        input_offset = torch.sum(ctx.splits_cpu[:expert_id_offset])
+        # local_scatter: scatter_inputs holds ONLY this rank's EP slice, so
+        # the global expert-prefix offset is already baked into the buffer
+        input_offset = (
+            0
+            if getattr(ctx, "local_scatter", False)
+            else torch.sum(ctx.splits_cpu[:expert_id_offset])
+        )
         for exp_id in range(ctx.nexperts_ep):
             nxt_offset = offset + ctx.splits_cpu[exp_id + expert_id_offset]
             if nxt_offset - offset > 0:

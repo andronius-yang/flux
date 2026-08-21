@@ -14,6 +14,9 @@ VARIANTS = {
     # sweep.py; e2e mode only (its phase decomposition is captured structurally
     # — host-blocking alltoallv — so there is no separate phases cell); needs
     # >= 2 nodes and a built libflash.so (scripts/build_fast.sh, per checkout).
+    # Since 2026-08-21 it consumes --routing_file on real trace cells (FAST is
+    # a comm-phase substitute: matrix AND gemm loads trace-derived) and is
+    # rule-5 converted (in-window routing allgather + derive_fast_meta_gpu).
     "fast": dict(
         comm_pattern="fast_bvn_a2av",  # cells.csv label only, never a CLI flag
         driver="fast",
@@ -1292,10 +1295,28 @@ VARIANTS = {
     # (NVSHMEM_SYMMETRIC_SIZE = SUM of both layers' demands — two ops, one
     # heap). Validation identity per capsule: e2e(l01) ~= e2e(l0 isolated)
     # + act_ms + e2e(l1 tmamo) — sweeps/check_l01_identity.py.
-    # DEFERRED arms: l01_fast (bench --impl fast is a stub until the FAST
-    # credit-reset question is settled at bring-up). l01_lbunion_compress_eager
+    # l01_fast landed 2026-08-21 (rule-5 conversion): the credit-reset
+    # question resolved via TWO flash_comm_t instances (one per wire
+    # direction, resets outside the window; vendored refcount patch
+    # scripts/fast_two_instance.patch). l01_lbunion_compress_eager
     # will NOT be added — the l1 eager verdict closed as a LOSS (2026-08-16;
     # see the layer1 CLOSED note).
+    # FAST+FAST combined (2026-08-21): trace-driven dispatch alltoallv ->
+    # grouped GEMM0 -> GELU -> grouped GEMM1 -> combine alltoallv (transposed
+    # matrix) -> home topk-reduce; the authoritative unfused paper baseline on
+    # REAL routing. driver="l01_fast": launch_fast.sh, e2e-only, >= 2 nodes,
+    # heap = 2x fast_sym_size (two flash_comm_t instances), rule-5 in-window
+    # allgather + derive_fast_l01_meta_gpu.
+    "l01_fast": dict(
+        comm_pattern="l01_fast_bvn_a2av",  # cells.csv label only
+        driver="l01_fast",
+        layer="l01",
+        test_args=["--impl", "fast"],
+        env={},
+        requires=[],
+        requires_file="3rdparty/FAST/nvidia/libflash.so",
+        l1_pattern="fast",
+    ),
     "l01_torch": dict(
         comm_pattern="l01_torch_unfused",  # cells.csv label only
         driver="l01",

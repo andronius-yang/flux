@@ -78,6 +78,9 @@ SHAPE_PRESETS = {
         "H": 3584,
         "ffn_hidden": 3072,
         "chunk_bytes": 7168,
+        # layer1/l01 split-N depth: n_per = 3584/7 = 512 (the 512 combine
+        # tile, 2026-08-21) — matches the qwen 4096/4=1024 operating point
+        "n_split_l1": 7,
         "trace_model": "Kimi-K3-synth",
     },
     "qwen3": {
@@ -111,9 +114,11 @@ SPEC_DEFAULTS = {
     "sm_margin": 8,
     "modes": ["e2e"],
     "matrix_instance": "001",
-    # split-N pipeline depth for layer1 (gather_rs) cells; with N == H == 4096
-    # the op constraint N/n_split % 1024 == 0 allows {1, 2, 4}; 4 is the
-    # bench's own default so standalone-bench numbers stay comparable
+    # split-N pipeline depth for layer1 (gather_rs) cells; the op constraint
+    # is (N / n_split) % combine_tile == 0 with combine_tile 1024, or 512
+    # when N is not 1024-aligned (2026-08-21, K3): H=4096 allows {1, 2, 4}
+    # (default 4, the bench's own default); H=3584 uses 7 (n_per = 512,
+    # set by the k3 shape preset)
     "n_split_l1": 4,
     "skip_correctness": False,
     "timeout_s": 900,
@@ -203,6 +208,10 @@ CELLS_COLUMNS = [
     "routing_path",
     "routing_sha256",
     "budget_mib",
+    # appended 2026-08-21 (nominal byte ladder): tokens_per_rank*chunk_bytes,
+    # the realized per-rank pre-topk budget; == budget_mib*2^20 whenever
+    # chunk divides the budget (all pre-ladder labels)
+    "effective_budget_bytes",
     "topk",
     "G",
     "H",
@@ -248,6 +257,11 @@ CELLS_COLUMNS = [
     # legacy_untimed_plan — planning-inclusive totals never compare across
     # the two; old capsules lack the column (== legacy accounting)
     "timing_accounting",
+    # appended 2026-08-21: local_slice_scatter = the torch reference gathers
+    # only the local EP slice (W-fold less staging/scatter work); torch rows
+    # never compare across the flip. Old capsules lack the column (= the
+    # global-scatter reference).
+    "torch_ref_impl",
     # appended 2026-08-20 (campaign-2 fused-canonical planners): planner_impl
     # = fused_dispatch | torch_gpu | legacy; replica_select = local_spread |
     # local_static | quota; plan_comm_bytes = the pre-dispatch collective's
@@ -568,12 +582,14 @@ def expand_cells(spec, plat):
                     if vname not in VARIANTS:
                         raise SystemExit(f"unknown variant {vname}; see sweeps/variants.py")
                     driver = VARIANTS[vname].get("driver", "flux")
-                    if routing_mode == "real" and driver in ("fast", "fast_gather_rs"):
+                    if routing_mode == "real" and driver == "fast_gather_rs":
                         raise SystemExit(
-                            f"variant {vname} (fast driver) cannot consume a routing"
-                            f" file; use the dealer=1 arm for trace matrices"
+                            f"variant {vname} (fast_gather_rs driver) cannot consume"
+                            f" a routing file; use the dealer=1 arm for trace"
+                            f" matrices (the layer0 fast driver CAN, since"
+                            f" 2026-08-21)"
                         )
-                    if driver in ("fast", "fast_gather_rs"):
+                    if driver in ("fast", "fast_gather_rs", "l01_fast"):
                         if spec["nodes"] < 2:
                             raise SystemExit(
                                 f"variant {vname} requires nodes >= 2"
@@ -948,6 +964,16 @@ def build_cell_env(spec, plat, cell, staging, matrix):
         # (the 4*max(row,col sum) bound is transpose-symmetric, so the same
         # sizing serves the layer1 combine direction)
         env["NVSHMEM_SYMMETRIC_SIZE"] = fast_sym_size(matrix_path, plat)
+    elif v.get("driver", "flux") == "l01_fast":
+        # combined FAST arm (2026-08-21): TWO flash_comm_t instances (one per
+        # wire direction) share one NVSHMEM heap -> double the single-instance
+        # sizing (capacity is transpose-invariant, so both are equal)
+        single = int(fast_sym_size(matrix_path, plat)[:-1])
+        sym_g = 2 * single
+        sym_max = plat.get("sym_size_max_g")
+        if sym_max:
+            sym_g = min(sym_g, int(sym_max))
+        env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_g}G"
     elif v.get("driver", "flux") == "gather_rs":
         # layer1 flux cells: exact FLUX_A2AV_RS_MAX_*_ROWS + heap from the
         # collective FLUX_CHECK expressions (dispatch-orientation inputs;
@@ -1142,6 +1168,10 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
             "--sm_margin",
             str(sm_margin),
         ]
+        # FAST-as-comm-substitute (2026-08-21): real-routing cells feed the
+        # trace to the fast test so matrix AND gemm loads are trace-derived
+        if routing_path:
+            test_args += ["--routing_file", routing_path]
         if spec["skip_correctness"]:
             test_args.append("--skip_correctness")
         return srun_prefix + ["./launch_fast.sh"] + test_args, sm_margin, iters, warmup
@@ -1174,10 +1204,12 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         if spec["skip_correctness"]:
             test_args.append("--skip_correctness")
         return srun_prefix + ["./launch_fast.sh"] + test_args, sm_margin, iters, warmup
-    if v.get("driver", "flux") == "l01":
+    if v.get("driver", "flux") in ("l01", "l01_fast"):
         # combined layer0+1 continuous bench: full argv built here and
         # returned early (layer1-style single-dash dims; l0/l1 patterns and
-        # --impl ride the variant's test_args)
+        # --impl ride the variant's test_args). driver l01_fast (2026-08-21)
+        # is the same bench with --impl fast: launched via launch_fast.sh
+        # (FAST owns NVSHMEM), e2e-only (guarded at cell generation).
         test_args = [
             TEST_L01,
             "--traffic_matrix",
@@ -1208,6 +1240,8 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
             test_args += ["--routing_file", routing_path]
         if spec["skip_correctness"]:
             test_args.append("--skip_correctness")
+        if v.get("driver") == "l01_fast":
+            return srun_prefix + ["./launch_fast.sh"] + test_args, sm_margin, iters, warmup
         if cell["mode"] == "torchprof":
             test_args.append("--profile")
         launcher = cell_launcher(cell, plat, staging)
@@ -1618,6 +1652,7 @@ def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, s
             routing_path=m.get("routing", ""),
             routing_sha256=m.get("routing_sha", ""),
             budget_mib=cell["budget_mib"],
+            effective_budget_bytes=m.get("effective_budget_bytes", ""),
             topk=spec["topk"],
             G=spec["G"],
             H=spec["H"],
@@ -1672,18 +1707,23 @@ def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, s
             if cell["mode"] == "isolated":
                 # console-only quoted summary (SCHEMA: aggregation is the
                 # summarizer's job; nothing persisted): per-iteration
-                # max-across-ranks of e2e_ms, then stats over iterations
-                by_iter = {}
-                for impl, rank, i, metric, val in iters_rows:
-                    if impl == "flux" and metric == "e2e_ms":
-                        by_iter[i] = max(by_iter.get(i, 0.0), val)
-                if by_iter:
-                    mx = [by_iter[i] for i in sorted(by_iter)]
-                    print(
-                        f"  [{cell['cell_id']}] isolated max-rank e2e_ms: "
-                        f"mean {sum(mx) / len(mx):.3f}  min {min(mx):.3f}  "
-                        f"max {max(mx):.3f}  ({len(mx)} iters)"
-                    )
+                # max-across-ranks, then stats over iterations. total_ms
+                # (rule 5: plan_comm + plan + e2e) is the quotable isolated
+                # latency when the driver emits it; e2e_ms stays printed for
+                # continuity with pre-rule-5 capsules (never compare across
+                # the accounting boundary).
+                for want in ("e2e_ms", "total_ms"):
+                    by_iter = {}
+                    for impl, rank, i, metric, val in iters_rows:
+                        if impl == "flux" and metric == want:
+                            by_iter[i] = max(by_iter.get(i, 0.0), val)
+                    if by_iter:
+                        mx = [by_iter[i] for i in sorted(by_iter)]
+                        print(
+                            f"  [{cell['cell_id']}] isolated max-rank {want}: "
+                            f"mean {sum(mx) / len(mx):.3f}  min {min(mx):.3f}  "
+                            f"max {max(mx):.3f}  ({len(mx)} iters)"
+                        )
             if cell["mode"] == "phases":
                 for impl, rank, i, metric, val in parse_phase_logs(cell["staging"], cell["iters"]):
                     metrics_rows.append(
@@ -1716,6 +1756,7 @@ def finalize(spec, plat, cells_done, matrices, run_id, run_dir_staging, probe, s
                 ("epic_incidence_remote", "incidence_remote"),
                 ("epic_mean_nodes_per_token", "mean_nodes_per_token"),
                 ("timing_accounting", "timing_accounting"),
+                ("torch_ref_impl", "torch_ref_impl"),
                 ("planner_impl", "planner_impl"),
                 ("epic_place_dynamic", "place_dynamic"),
                 ("epic_place_solver_ms", "place_solver_ms"),
@@ -1844,11 +1885,19 @@ def cmd_run(spec, jobid_arg, dry):
                 traces_root=plat.get("traces_root"),
             )
             matrices[cell["cell_id"]] = {"id": mid, "path": path, "sha": sha}
+            with open(os.path.join(plat["matrices_root"], f"{mid}.meta.json")) as f:
+                mmeta = json.load(f)
+            # nominal byte ladder (2026-08-21): the realized per-rank budget;
+            # pre-ladder sidecars lack the key (their labels were exact)
+            matrices[cell["cell_id"]]["effective_budget_bytes"] = mmeta.get(
+                "effective_budget_bytes",
+                mmeta.get("tokens_per_rank", 0) * mmeta.get("chunk_bytes", 0),
+            )
             if cell.get("routing_mode") == "real":
                 rpath = path[: -len(".txt")] + ".routing.txt"
-                with open(os.path.join(plat["matrices_root"], f"{mid}.meta.json")) as f:
-                    rsha = json.load(f)["routing_sha256"]
-                matrices[cell["cell_id"]].update({"routing": rpath, "routing_sha": rsha})
+                matrices[cell["cell_id"]].update(
+                    {"routing": rpath, "routing_sha": mmeta["routing_sha256"]}
+                )
             if VARIANTS[cell["variant"]].get("driver") in ("eplb", "epic"):
                 # predicted-load sidecar: the cell's exact full pools (the
                 # oracle-ceiling prediction). Placement input only — matrix

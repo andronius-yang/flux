@@ -1,0 +1,76 @@
+diff --git a/nvidia/alltoall_nvshmem.cpp b/nvidia/alltoall_nvshmem.cpp
+index 58fb0ec..143de4a 100644
+--- a/nvidia/alltoall_nvshmem.cpp
++++ b/nvidia/alltoall_nvshmem.cpp
+@@ -805,6 +805,13 @@ bool fast_verify_buffer_compiled(){
+ #endif
+ }
+ 
++// flux two-instance patch (2026-08-21): allow multiple flash_comm_t in one
++// process (the combined l0+l1 baseline uses one instance per wire direction,
++// each reset OUTSIDE the timed window). NVSHMEM is process-global: init on
++// the first instance, finalize on the last, tolerate already-enabled peer
++// access. Captured as scripts/fast_two_instance.patch in the parent repo.
++static int flash_comm_instance_count = 0;
++
+ struct flash_comm_t : torch::CustomClassHolder{
+     int rank_id;
+     int local_rank_id;
+@@ -857,14 +864,19 @@ struct flash_comm_t : torch::CustomClassHolder{
+         );
+         nvshmemx_uniqueid_t id;
+         std::memcpy(&id, uid.data_ptr(), sizeof(id));
+-        nvshmemx_init_attr_t attr = NVSHMEMX_INIT_ATTR_INITIALIZER;
+-        nvshmemx_set_attr_uniqueid_args(rank_id, rank_n, &id, &attr);
+-        fast_init_debug_log(rank_id, "nvshmem init starting");
+-        {
+-            FastNvtxRange nvtx(kIntraNodeGpuNicCpuSynchronization, FastNvtxLevel::Sync);
+-            nvshmemx_init_attr(NVSHMEMX_INIT_WITH_UNIQUEID, &attr);
++        if (flash_comm_instance_count == 0) {
++            nvshmemx_init_attr_t attr = NVSHMEMX_INIT_ATTR_INITIALIZER;
++            nvshmemx_set_attr_uniqueid_args(rank_id, rank_n, &id, &attr);
++            fast_init_debug_log(rank_id, "nvshmem init starting");
++            {
++                FastNvtxRange nvtx(kIntraNodeGpuNicCpuSynchronization, FastNvtxLevel::Sync);
++                nvshmemx_init_attr(NVSHMEMX_INIT_WITH_UNIQUEID, &attr);
++            }
++            fast_init_debug_log(rank_id, "nvshmem init completed");
++        } else {
++            fast_init_debug_log(rank_id, "nvshmem already initialized (reuse)");
+         }
+-        fast_init_debug_log(rank_id, "nvshmem init completed");
++        flash_comm_instance_count++;
+         global_team = NVSHMEM_TEAM_WORLD;
+         int nvshmem_global_rank = nvshmem_team_my_pe(global_team);
+         int nvshmem_global_nranks = nvshmem_team_n_pes(global_team);
+@@ -883,11 +895,16 @@ struct flash_comm_t : torch::CustomClassHolder{
+             ", got ",
+             nvshmem_local_nranks
+         );
+-        //enable peer-to-peer access
++        //enable peer-to-peer access (tolerate re-enable on later instances)
+         for (uint i = 0; i < local_rank_n; i++){
+-            if (i == rank_id % local_rank_n) continue;        
++            if (i == rank_id % local_rank_n) continue;
+             FastNvtxRange nvtx(kCrossGpuSynchronization, FastNvtxLevel::Sync);
+-            CUDACHECK(cudaDeviceEnablePeerAccess(i, 0));
++            cudaError_t perr = cudaDeviceEnablePeerAccess(i, 0);
++            if (perr == cudaErrorPeerAccessAlreadyEnabled) {
++                (void)cudaGetLastError();  // clear the sticky error
++            } else {
++                CUDACHECK(perr);
++            }
+         }
+         fast_init_debug_log(rank_id, "cuda peer access enabled");
+         printf("FLASH is initialized: Torch Rank %d/%d, dev_n: %d, NVSHMEM Gobal Rank %d/%d, NVSHMEM Local Rank: %d/%d \n", rank_id, rank_n, local_rank_n, nvshmem_global_rank, nvshmem_global_nranks, nvshmem_local_rank, nvshmem_local_nranks);
+@@ -1509,7 +1526,9 @@ struct flash_comm_t : torch::CustomClassHolder{
+         CUCHECK(cuStreamDestroy(stream1));
+         CUCHECK(cuStreamDestroy(stream2));
+         CUCHECK(cuStreamDestroy(stream3));
+-        nvshmem_finalize();
++        if (--flash_comm_instance_count == 0) {
++            nvshmem_finalize();
++        }
+         printf("FLASH is freed: Torch RANK %d/%d\n", rank_id, rank_n);
+         if (scheduler){
+             std::cout << "cleaning scheduler" << std::endl;

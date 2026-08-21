@@ -1,0 +1,37 @@
+# Combined layer0+1 lane at the K3 canon — phase-2 smoke (2026-08-21).
+# First capsule of: the 512-combine-tile dense path (N=3584, topk=16), the
+# rule-5-converted l01 accounting (plan_comm/plan/total; quote total_ms,
+# never against pre-conversion l01 capsules), the FAST+FAST combined arm
+# (l01_fast, real routing, e2e-only), and the homog canon pool
+# (mmlu/professional_law; pernode retired). Budgets are the NOMINAL byte
+# ladder (effective_budget_bytes recorded; K3 b8/b32 = 1168/4688
+# tokens-per-rank). n_split_l1=7 comes from the k3 shape preset (n_per=512).
+platform: perlmutter
+nodes: 4
+shape: k3
+variants:
+  - l01_torch
+  - l01_allgather_dense
+  - l01_lbunion_hier
+  - l01_lbunion_compress
+  - l01_fast
+families:
+  - "trace:model=Kimi-K3-synth;pools=mmlu/professional_law;layer=92;sem=homog"
+budgets_mib:
+  - 8
+  - 32
+dtype: bfloat16
+modes:
+  - isolated
+  - e2e
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+matrix_instance: "001"
+retries: 1
+timeout_s: 1800
+idle_timeout_s: 300
+skip_correctness: false
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"

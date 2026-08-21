@@ -691,8 +691,15 @@ __launch_bounds__(kNumWorkerThreads + 32, 1) void topk_gather_rs_v2_kernel(
 }
 }  // namespace
 
+namespace {
+// combine-tile N is a pure aggregation granularity of this kernel (NOT the
+// GEMM tile): 1024 for 1024-aligned n_per_split (the historical shapes —
+// bit-identical instantiation), 512 otherwise (2026-08-21, K3 H=3584 =
+// 7*512). Selection must agree with combine_tile_n() on the host side
+// (tile-barrier sizing + args.tile_size_n).
+template <int kTiledN>
 void
-topk_gather_rs_v2(
+topk_gather_rs_v2_dispatch(
     TopKReduceGatherRSV2Arguments const &args, DataTypeEnum dtype, cudaStream_t stream) {
   constexpr int kNumWorkerThreads = 768;
   constexpr int kNumSyncThreads = 32;
@@ -701,7 +708,6 @@ topk_gather_rs_v2(
   dim3 block_dim(kNumThreads);
 
   constexpr int kTiledM = 128;
-  constexpr int kTiledN = 1024;
   FLUX_CHECK_DIV(args.n / args.n_split, kTiledN);
   FLUX_CHECK_EQ(args.tile_size_m, kTiledM);
   FLUX_CHECK_EQ(args.tile_size_n, kTiledN);
@@ -717,7 +723,8 @@ topk_gather_rs_v2(
               cute::_5{},
               cute::_6{},
               cute::_8{},
-              cute::_10{}),
+              cute::_10{},
+              cute::_16{}),
           cute::make_tuple(cute::_1{}, cute::_2{}),
           cute::make_tuple(cute::true_type{}, cute::false_type{}),
           cute::make_tuple(cute::true_type{}, cute::false_type{})),
@@ -747,6 +754,17 @@ topk_gather_rs_v2(
         FLUX_CHECK(false) << "unsupported for topk=" << args.topk << " dtype:" << dtype
                           << " input groups: " << args.input_groups;
       });
+}
+}  // namespace
+
+void
+topk_gather_rs_v2(
+    TopKReduceGatherRSV2Arguments const &args, DataTypeEnum dtype, cudaStream_t stream) {
+  if ((args.n / args.n_split) % 1024 == 0) {
+    topk_gather_rs_v2_dispatch<1024>(args, dtype, stream);
+  } else {
+    topk_gather_rs_v2_dispatch<512>(args, dtype, stream);
+  }
 }
 
 namespace {
@@ -968,8 +986,11 @@ __launch_bounds__(kNumWorkerThreads + 32, 1) void ep_topk_gather_rs_kernel_v2(
   }
 }
 }  // namespace
+namespace {
+// same tile-N policy as topk_gather_rs_v2_dispatch (see the note there)
+template <int kTiledN>
 void
-ep_topk_gather_rs_v2(
+ep_topk_gather_rs_v2_dispatch(
     TopKReduceGatherRSV2Arguments const &args,
     DataTypeEnum dtype,
     int32_t ep_start,
@@ -983,7 +1004,6 @@ ep_topk_gather_rs_v2(
   dim3 block_dim(kNumThreads);
 
   constexpr int kTiledM = 128;
-  constexpr int kTiledN = 1024;
   FLUX_CHECK_DIV(args.n / args.n_split, kTiledN);
   FLUX_CHECK_EQ(args.tile_size_m, kTiledM);
   FLUX_CHECK_EQ(args.tile_size_n, kTiledN);
@@ -999,7 +1019,8 @@ ep_topk_gather_rs_v2(
               cute::_5{},
               cute::_6{},
               cute::_8{},
-              cute::_10{}),  // topk
+              cute::_10{},
+              cute::_16{}),  // topk
           cute::make_tuple(cute::true_type{}, cute::false_type{})),
       [&](auto tup) {
         auto [dtype_, topk_, has_vec_scale_] = tup;
@@ -1015,6 +1036,21 @@ ep_topk_gather_rs_v2(
             <<<grid_dim, block_dim, shared_mem_size, stream>>>(args, ep_start, ep_nexperts);
       },
       [&]() { FLUX_CHECK(false) << "unsupported for topk=" << args.topk << " dtype:" << dtype; });
+}
+}  // namespace
+
+void
+ep_topk_gather_rs_v2(
+    TopKReduceGatherRSV2Arguments const &args,
+    DataTypeEnum dtype,
+    int32_t ep_start,
+    int32_t ep_nexperts,
+    cudaStream_t stream) {
+  if ((args.n / args.n_split) % 1024 == 0) {
+    ep_topk_gather_rs_v2_dispatch<1024>(args, dtype, ep_start, ep_nexperts, stream);
+  } else {
+    ep_topk_gather_rs_v2_dispatch<512>(args, dtype, ep_start, ep_nexperts, stream);
+  }
 }
 
 namespace {

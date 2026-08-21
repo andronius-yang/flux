@@ -185,9 +185,10 @@ struct TopKReduceGatherRSV2Arguments {
   bool use_read_mode = false;
 
   int threadblock_count;
-  int tile_size_m;  // tile shape m. 128 by default.
-  int tile_size_n;  // tile shape n. 1024 by default. supported 1024/1280/640/384. (n /
-                    // n_split) % tiled_n expected.
+  int tile_size_m;  // tile shape m. 128 (the only instantiation).
+  int tile_size_n;  // tile shape n: 1024 when (n / n_split) is 1024-aligned,
+                    // else 512 (2026-08-21, K3 H=3584). (n / n_split) %
+                    // tile_size_n == 0 required; see combine_tile_n().
   // for reduce_scatter
   int rank;
   int world_size;

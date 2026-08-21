@@ -125,7 +125,15 @@ def take_first_or_none(x: Optional[List[Any]]):
 
 
 @torch.no_grad()
-def perf_torch(ctx: MoeMlp1Ctx, warmup_iters: int, iters: int, gather_input: bool = True):
+def perf_torch(
+    ctx: MoeMlp1Ctx,
+    warmup_iters: int,
+    iters: int,
+    gather_input: bool = True,
+    meta_op=None,
+    topk_shard: torch.Tensor = None,
+    topk_gather_buf: torch.Tensor = None,
+):
     gemm_only_op = flux.GemmOnly(
         ctx.inputs.dtype,
         ctx.inputs.dtype,
@@ -135,32 +143,58 @@ def perf_torch(ctx: MoeMlp1Ctx, warmup_iters: int, iters: int, gather_input: boo
 
     total_iters = warmup_iters + iters
     start_events = [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
+    plan_comm_events = [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
+    plan_events = [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
     comm_end_events = [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
     scatter_end_events = [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
     gemm_end_events = [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
     ctx.clear_outputs()
+    # rule-5 in-window planning scratch (allocation is setup scope, CONTENTS
+    # are re-derived per iteration): the reconstructed gather_index and the
+    # static token-id ramp it is scattered from.
+    n_copies = topk_gather_buf.numel()
+    topk = topk_gather_buf.size(1)
+    gather_index_dev = torch.empty(n_copies, dtype=torch.int32, device="cuda")
+    token_of_copy = (
+        torch.arange(n_copies, dtype=torch.int32, device="cuda") // topk
+    )
     torch.distributed.barrier()
     torch.cuda.synchronize()
 
     for i in range(total_iters):
         start_events[i].record()
+        # rule 5 (SCHEMA protocol): routing exchange + ALL routing-derived
+        # metadata inside the timed window, every iteration.
+        torch.distributed.all_gather_into_tensor(topk_gather_buf, topk_shard, group=TP_GROUP)
+        plan_comm_events[i].record()
+        sd, scd, _, _ = meta_op.derive_routed_meta(topk_gather_buf)
+        # gather_index[p] = token of the copy at sorted position p; splits_cpu
+        # is the D2H the host-side per-expert gemm loop genuinely requires.
+        gather_index_dev.scatter_(0, scd.view(-1).long(), token_of_copy)
+        ctx.gather_index = gather_index_dev
+        ctx.splits_cpu = sd.cpu()
+        plan_events[i].record()
         MoeAgScatterWithTorch.comm_impl(ctx, TP_GROUP)
         comm_end_events[i].record()
         MoeAgScatterWithTorch.scatter_impl(ctx)
         scatter_end_events[i].record()
         MoeAgScatterWithTorch.gemm_impl(ctx, gemm_only_op)
         gemm_end_events[i].record()
+    plan_comm_times = []
+    plan_times = []
     comm_times = []
     scatter_times = []
     gemm_times = []
+    total_times = []
     for i in range(total_iters):
-        comm_end_events[i].synchronize()
-        scatter_end_events[i].synchronize()
         gemm_end_events[i].synchronize()
         if i >= warmup_iters:
-            comm_times.append(start_events[i].elapsed_time(comm_end_events[i]))
+            plan_comm_times.append(start_events[i].elapsed_time(plan_comm_events[i]))
+            plan_times.append(plan_comm_events[i].elapsed_time(plan_events[i]))
+            comm_times.append(plan_events[i].elapsed_time(comm_end_events[i]))
             scatter_times.append(comm_end_events[i].elapsed_time(scatter_end_events[i]))
             gemm_times.append(scatter_end_events[i].elapsed_time(gemm_end_events[i]))
+            total_times.append(start_events[i].elapsed_time(gemm_end_events[i]))
     comm_time = sum(comm_times) / iters
     scatter_time = sum(scatter_times) / iters
     gemm_time = sum(gemm_times) / iters
@@ -174,24 +208,20 @@ def perf_torch(ctx: MoeMlp1Ctx, warmup_iters: int, iters: int, gather_input: boo
         comm_time_ms=comm_time,
     )
     result.iter_times = {
+        "plan_comm_ms": plan_comm_times,
+        "plan_ms": plan_times,
         "comm_ms": comm_times,
         "scatter_ms": scatter_times,
         "gemm_ms": gemm_times,
+        "total_ms": total_times,
     }
     return result
 
 
 @torch.no_grad()
-def perf_flux(
-    ctx: MoeMlp1Ctx,
-    warmup_iters: int,
-    iters: int,
-    gather_input: bool = True,
-    ag_option: flux.AllGatherOption = flux.AllGatherOption(),
-    comm_pattern: str = "allgather",
-    splits_per_source: torch.Tensor = None,
-    a2av_unique_counts: torch.Tensor = None,
-):
+def make_flux_op(ctx: MoeMlp1Ctx, comm_pattern: str):
+    """Construct the layer0 op once (setup scope: allocation only — every
+    routing-derived quantity is re-derived in-window, per iteration)."""
     tp_env = flux.DistEnvTPWithEP(tp_group=TP_GROUP, nnodes=DIST_ENV.NNODES, ep_group=EP_GROUP)
     moe_args = flux.MoeArguments(
         max_ntokens=ctx.b * ctx.s,
@@ -202,42 +232,48 @@ def perf_flux(
         input_dtype=ctx.inputs_shard.dtype,
         output_dtype=ctx.outputs[0].dtype,
     )
-
     use_a2av = comm_pattern in ("a2av", "a2av_ring", "a2av_hier", "a2av_hier_compress")
-    extra_args = {}
     if flux.util.get_arch() >= 90:
         assert not use_a2av, "--comm_pattern a2av is only implemented for the sm80/V2 op"
-        op = flux.GemmGroupedV3AGScatter(tp_env=tp_env, moe_args=moe_args)
-    else:
-        op = flux.GemmGroupedV2AGScatterOp(
-            tp_env=tp_env,
-            moe_args=moe_args,
-            a2av_dispatch=use_a2av,
-            a2av_ring=(comm_pattern == "a2av_ring"),
-            a2av_hier=(comm_pattern == "a2av_hier"),
-            a2av_hier_compress=(comm_pattern == "a2av_hier_compress"),
-        )
+        return flux.GemmGroupedV3AGScatter(tp_env=tp_env, moe_args=moe_args)
+    return flux.GemmGroupedV2AGScatterOp(
+        tp_env=tp_env,
+        moe_args=moe_args,
+        a2av_dispatch=use_a2av,
+        a2av_ring=(comm_pattern == "a2av_ring"),
+        a2av_hier=(comm_pattern == "a2av_hier"),
+        a2av_hier_compress=(comm_pattern == "a2av_hier_compress"),
+    )
+
+
+@torch.no_grad()
+def perf_flux(
+    ctx: MoeMlp1Ctx,
+    warmup_iters: int,
+    iters: int,
+    gather_input: bool = True,
+    ag_option: flux.AllGatherOption = flux.AllGatherOption(),
+    comm_pattern: str = "allgather",
+    op=None,
+    topk_shard: torch.Tensor = None,
+    topk_gather_buf: torch.Tensor = None,
+):
+    use_a2av = comm_pattern in ("a2av", "a2av_ring", "a2av_hier", "a2av_hier_compress")
+    extra_args = {}
+    if flux.util.get_arch() < 90:
         extra_args = {
             "ag_option": ag_option,
             "bias": take_first_or_none(ctx.bias),
             "input_scale": take_first_or_none(ctx.input_scale),
             "weight_scale": take_first_or_none(ctx.weight_scale),
         }
-        if splits_per_source is not None:
-            # metadata-exchange result (untimed setup, like splits/scatter_index):
-            # int32 CPU [W, nexperts]; the real exchange is a ~W*nexperts-int
-            # allgather (~10-20 us), declared out of scope by the harness contract
-            extra_args["splits_per_source"] = splits_per_source
-        if a2av_unique_counts is not None:
-            # compress dedup counts (same pre-rule-5 legacy_untimed_plan accounting; see SCHEMA protocol rule 5): int32 CPU
-            # [W, W + nnodes], cols [0, W) = unique tokens s -> rank d, cols
-            # [W, W + nnodes) = unique tokens s -> node union
-            extra_args["a2av_unique_counts"] = a2av_unique_counts
     if use_a2av:
         assert not gather_input, "--gather_input has no dense gathered buffer in a2av mode"
 
     total_iters = warmup_iters + iters
     start_events = [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
+    plan_comm_events = [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
+    plan_events = [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
     end_events = [torch.cuda.Event(enable_timing=True) for _ in range(total_iters)]
     ctx.clear_outputs()
     torch.cuda.synchronize()
@@ -263,25 +299,50 @@ def perf_flux(
         nvtx_tag = f"iter{i}_warmup" if i < warmup_iters else f"iter{i}"
         start_events[i].record()
         with torch.cuda.nvtx.range(nvtx_tag):
+            # rule 5 (SCHEMA protocol): the routing exchange (plan_comm) and
+            # ALL routing-derived metadata (plan) are timed, per iteration.
+            torch.distributed.all_gather_into_tensor(
+                topk_gather_buf, topk_shard, group=TP_GROUP
+            )
+            plan_comm_events[i].record()
+            # fused C++/CUDA derivation (FLUX_A2AV_INWINDOW_META_TAG). The
+            # returned tensors alias op-internal buffers and are overwritten
+            # by the next derive call — safe here because forward consumes
+            # them before the next iteration derives again. The internal
+            # pinned-D2H event sync is the honest host sync the op's
+            # host-planned a2av genuinely requires.
+            sd, scd, sps_c, uc_c = op.derive_routed_meta(topk_gather_buf)
+            plan_events[i].record()
+            iter_extra = dict(extra_args)
+            if not args.no_metadata_cnt:
+                iter_extra["splits_per_source"] = sps_c
+            if comm_pattern == "a2av_hier_compress":
+                iter_extra["a2av_unique_counts"] = uc_c
             op.forward(
                 inputs_shard=ctx.inputs_shard,
                 weights=ctx.weights[0],
-                splits_gpu=ctx.splits_gpu,
-                scatter_index=ctx.scatter_index,
+                splits_gpu=sd,
+                scatter_index=scd,
                 output_scale=take_first_or_none(ctx.output_scale),
                 outputs_buf=take_first_or_none(ctx.outputs),
                 fast_accum=ctx.fast_accum,
                 sm_margin=args.sm_margin,
                 allgather_output=gathered_input,
-                **extra_args,
+                **iter_extra,
             )
         end_events[i].record()
 
+    plan_comm_times = []
+    plan_times = []
     gemm_times = []
+    total_times = []
     for i in range(total_iters):
         end_events[i].synchronize()
         if i >= warmup_iters:
-            gemm_times.append(start_events[i].elapsed_time(end_events[i]))
+            plan_comm_times.append(start_events[i].elapsed_time(plan_comm_events[i]))
+            plan_times.append(plan_comm_events[i].elapsed_time(plan_events[i]))
+            gemm_times.append(plan_events[i].elapsed_time(end_events[i]))
+            total_times.append(start_events[i].elapsed_time(end_events[i]))
 
     gemm_time_ms = sum(gemm_times) / iters
 
@@ -293,7 +354,15 @@ def perf_flux(
         scatter_time_ms=0.0,
         comm_time_ms=0.0,
     )
-    result.iter_times = {"e2e_ms": gemm_times}
+    # e2e_ms keeps its historical meaning (the op.forward window; comm-start
+    # anchor unchanged); plan_comm_ms/plan_ms sit inside total_ms but OUTSIDE
+    # e2e_ms (SCHEMA plan_ms contract). Quote total_ms for isolated latency.
+    result.iter_times = {
+        "plan_comm_ms": plan_comm_times,
+        "plan_ms": plan_times,
+        "e2e_ms": gemm_times,
+        "total_ms": total_times,
+    }
     if isolated:
         result.iter_times["iso_sync_ms"] = iso_sync_times[warmup_iters:]
     return result
@@ -414,9 +483,10 @@ def parse_args():
         "--no_metadata_cnt",
         default=False,
         action="store_true",
-        help="do not pass splits_per_source (cnt[s][e]) to forward; each rank"
-        " re-derives all metadata from splits/scatter_index inside the timed"
-        " region (pre-metadata-input behavior, for A/B comparison)",
+        help="ABLATION ONLY (never in campaign specs): derive cnt[s][e]"
+        " in-window as usual but do not pass it to forward, so the op falls"
+        " back to its internal re-derivation from splits/scatter_index"
+        " (pre-metadata-input behavior, for A/B comparison)",
     )
     return parser.parse_args()
 
@@ -481,11 +551,14 @@ if __name__ == "__main__":
         drop_token=False,
         gating_args=gating_args,
         skip_reference=args.skip_correctness,
+        local_scatter=True,
     )
 
-    # metadata-exchange result (untimed setup): cnt[s][e] = copies source rank s
-    # sends to expert e; splits is its column sum. In a real system this is a
-    # W x nexperts int allgather (~10-20 us) done right after gating.
+    # cnt[s][e] reference build (untimed setup, drift guard ONLY since the
+    # 2026-08-21 rule-5 conversion): cnt[s][e] = copies source rank s sends to
+    # expert e; splits is its column sum. The timed loops re-derive all of this
+    # per iteration via op.derive_routed_meta; this python build exists to
+    # bitwise-check that derivation once, at setup.
     W = DIST_ENV.WORLD_SIZE
     tokens_per_rank = ntokens // W
     src_of_copy = (torch.arange(ntokens, dtype=torch.long) // tokens_per_rank).repeat_interleave(
@@ -499,9 +572,8 @@ if __name__ == "__main__":
         splits_per_source_cpu.sum(0), moe_ctx.splits_cpu[: args.G].cpu().int()
     ), "splits_per_source column sums must equal splits"
 
-    # compress dedup counts (untimed setup, same contract as splits_per_source;
-    # a real system needs NO extra exchange — every rank already holds the
-    # global choosed_experts, so this is a local computation): u[s][d] = UNIQUE
+    # compress dedup counts reference build (untimed setup, drift guard ONLY —
+    # same rule-5 contract as splits_per_source above): u[s][d] = UNIQUE
     # tokens source s must deliver to rank d (any of d's experts), U[s][n] =
     # unique tokens s must deliver to the node-n union. NOT derivable from
     # cnt[s][e] — depends on which tokens overlap across experts/ranks.
@@ -520,6 +592,53 @@ if __name__ == "__main__":
         U_mat = flags.view(ntokens, nn, L).any(dim=2).view(W, tokens_per_rank, nn).sum(1)  # [W, nn]
         a2av_unique_counts_cpu = torch.cat([u_mat, U_mat], dim=1).int().contiguous()
 
+    # ---- rule-5 apparatus (SCHEMA protocol rule 5, 2026-08-21) --------------
+    # The op is constructed ONCE here (allocation is setup scope); the routing
+    # exchange + every routing-derived quantity is re-derived per iteration
+    # inside the timed windows of perf_flux/perf_torch. The only untimed
+    # routing work below is the bitwise drift guard.
+    assert flux.util.get_arch() < 90, (
+        "rule-5 per-iteration derivation uses the sm80/V2 op's"
+        " derive_routed_meta; the V3 path is not deployed here"
+    )
+    flux_op = make_flux_op(moe_ctx, args.comm_pattern)
+    topk_shard = choosed_experts[
+        TP_GROUP.rank() * tokens_per_rank : (TP_GROUP.rank() + 1) * tokens_per_rank
+    ].contiguous()
+    topk_gather_buf = torch.zeros(ntokens, args.topk, dtype=torch.int32, device="cuda")
+
+    # Drift guard (untimed, once): the in-window derivation must reproduce the
+    # replicated routing and the python reference metadata bitwise.
+    torch.distributed.all_gather_into_tensor(topk_gather_buf, topk_shard, group=TP_GROUP)
+    assert torch.equal(topk_gather_buf, choosed_experts), (
+        "allgathered routing != replicated harness routing"
+    )
+    g_sd, g_scd, g_sps, g_uc = flux_op.derive_routed_meta(topk_gather_buf)
+    assert torch.equal(
+        g_sd.cpu(), moe_ctx.splits_cpu[: args.G].cpu().int()
+    ), "derive_routed_meta splits drift vs harness reference"
+    assert torch.equal(g_scd, moe_ctx.scatter_index.int()), (
+        "derive_routed_meta stable scatter_index drift vs harness reference"
+    )
+    assert torch.equal(g_sps, splits_per_source_cpu), (
+        "derive_routed_meta splits_per_source drift vs harness reference"
+    )
+    if a2av_unique_counts_cpu is not None:
+        assert torch.equal(g_uc, a2av_unique_counts_cpu), (
+            "derive_routed_meta a2av_unique_counts drift vs harness reference"
+        )
+    # perf_torch's in-window gather_index reconstruction, guarded the same way
+    _g_gather = torch.empty(ntokens * args.topk, dtype=torch.int32, device="cuda")
+    _g_gather.scatter_(
+        0,
+        g_scd.view(-1).long(),
+        torch.arange(ntokens * args.topk, dtype=torch.int32, device="cuda") // args.topk,
+    )
+    assert torch.equal(_g_gather, moe_ctx.gather_index.int()), (
+        "in-window gather_index reconstruction drift vs harness reference"
+    )
+    del _g_gather
+
     if TP_GROUP.rank() == 0:
         experts_per_rank = args.G // DIST_ENV.WORLD_SIZE
         rows_per_rank = moe_ctx.splits_cpu.view(DIST_ENV.WORLD_SIZE, experts_per_rank).sum(dim=1)
@@ -531,6 +650,13 @@ if __name__ == "__main__":
             ntokens=ntokens,
             tokens_per_rank=ntokens // DIST_ENV.WORLD_SIZE,
             gemm_rows_per_rank=rows_per_rank.tolist(),
+            # SCHEMA protocol rule 5 (flux driver converted 2026-08-21): the
+            # routing allgather + all plan derivation timed per iteration.
+            timing_accounting="per_iter_gpu",
+            # 2026-08-21 torch-reference fix, attributable per capsule: the
+            # reference scatters only the local EP slice (W-fold less memory
+            # and scatter work); torch rows never compare across this flip.
+            torch_ref_impl="local_slice_scatter",
         )
         if args.comm_pattern in ("a2av", "a2av_ring", "a2av_hier", "a2av_hier_compress"):
             send_bytes = (matrix.sum(dim=1) - matrix.diag()).tolist()
@@ -664,13 +790,22 @@ if __name__ == "__main__":
             args.gather_input,
             ag_option,
             args.comm_pattern,
-            splits_per_source=None if args.no_metadata_cnt else splits_per_source_cpu,
-            a2av_unique_counts=a2av_unique_counts_cpu,
+            op=flux_op,
+            topk_shard=topk_shard,
+            topk_gather_buf=topk_gather_buf,
         )
         perf_result_torch = (
             None
             if args.skip_correctness
-            else perf_torch(moe_ctx, args.warmup_iters, args.iters, args.gather_input)
+            else perf_torch(
+                moe_ctx,
+                args.warmup_iters,
+                args.iters,
+                args.gather_input,
+                meta_op=flux_op,
+                topk_shard=topk_shard,
+                topk_gather_buf=topk_gather_buf,
+            )
         )
 
     if TP_GROUP.rank() == 0:

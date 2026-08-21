@@ -72,6 +72,16 @@
 namespace {
 // the copy tile size for TopkReduceScatterOp. has nothing to do with the GEMM tile_size_m
 static constexpr int kTileSizeM = 128, kTileSizeN = 1024;
+// 2026-08-21 (K3 H=3584 = 7*512): the dense-combine tile N drops to 512 when
+// n_per_split is not 1024-aligned. Single policy point — MUST agree with the
+// kernel-side dispatch in topk_gather_rs_v2.cu (tile-barrier sizing and
+// args.tile_size_n are derived from this). 1024-aligned shapes select the
+// same instantiation as before this change.
+static constexpr int kTileSizeNMin = 512;
+static inline int
+combine_tile_n(int n_dim, int n_split) {
+  return (n_dim / n_split) % kTileSizeN == 0 ? kTileSizeN : kTileSizeNMin;
+}
 long
 get_args_workspace_size(int problem_count) {
   using bytedance::flux::pad_to;
@@ -720,7 +730,8 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   void
   create_rs_barrier() {
     int m_tiles_at_most = (this->max_m + kTileSizeM - 1) / kTileSizeM + this->ep_nexperts;
-    int n_tiles = (this->n_dim + kTileSizeN - 1) / kTileSizeN;
+    const int tile_n = combine_tile_n(this->n_dim, this->n_split);
+    int n_tiles = (this->n_dim + tile_n - 1) / tile_n;
     int num_tiles = m_tiles_at_most * n_tiles;
 
     int tile_barrier_size = get_tile_barrier_size(num_tiles);
@@ -1662,7 +1673,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         .use_read_mode = this->use_read_mode,
         .threadblock_count = num_thread_blocks,
         .tile_size_m = kTileSizeM,
-        .tile_size_n = kTileSizeN,
+        .tile_size_n = combine_tile_n(this->n_dim, this->n_split),
         .rank = this->rank,
         .world_size = this->world_size,
         .n_split = this->n_split,
@@ -1846,13 +1857,31 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     return at::cuda::getStreamFromExternal(stream, at::cuda::current_device());
   }
 
-  int
-  n_split_fixed(int n_split, int n_dim) {
-    if (n_dim / n_split % kTileSizeN != 0) {
-      FLUX_CHECK_DIV(n_dim, kTileSizeN);
-      n_split = n_dim / kTileSizeN;
+  // 2026-08-21: tile-aware + a2av-aware. Legacy branches FIRST so every
+  // previously-constructible config (dense AND a2av) returns exactly what it
+  // returned before this change (rule-4: 1024-aligned shapes are untouched).
+  static int
+  n_split_fixed(int n_split, int n_dim, bool a2av) {
+    const int n_per = n_dim / n_split;
+    if (n_per % kTileSizeN == 0) {
+      return n_split;  // legacy accept
     }
-    return n_split;
+    if (n_dim % kTileSizeN == 0) {
+      return n_dim / kTileSizeN;  // legacy demotion
+    }
+    if (a2av) {
+      // the a2av combine path only needs the 8-elem pack alignment
+      FLUX_CHECK(n_dim % n_split == 0 && (n_dim / n_split) % 8 == 0)
+          << "a2av: n (" << n_dim << ") / n_split (" << n_split
+          << ") must be a multiple of 8";
+      return n_split;
+    }
+    // 512-tile dense lane (K3 H=3584 = 7*512)
+    if (n_dim % n_split == 0 && n_per % kTileSizeNMin == 0) {
+      return n_split;
+    }
+    FLUX_CHECK_DIV(n_dim, kTileSizeNMin);
+    return n_dim / kTileSizeNMin;
   }
 
  public:
@@ -1886,14 +1915,15 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         nnodes(nnodes_),
         local_rank(DistEnv(tp_group_->get_rank(), tp_group_->get_size(), nnodes_).local_rank),
         local_world_size(tp_group_->get_size() / nnodes_),
-        n_split(n_split_fixed(n_split_, n_dim)),
+        n_split(n_split_fixed(n_split_, n_dim, a2av_hier_ || a2av_hier_compress_)),
         do_all_reduce(do_all_reduce_),
         a2av_hier(a2av_hier_ || a2av_hier_compress_),
         a2av_compress(a2av_hier_compress_ && nnodes_ > 1),
         group_barrier(tp_group_, false) {
     if (this->n_split != n_split_) {
-      FLUX_LOG_FIRST_N(WARN, 1) << "warning: (n / split_n) % " << kTileSizeN
-                                << " != 0, set split_n=" << this->n_split << "\n";
+      FLUX_LOG_FIRST_N(WARN, 1) << "warning: (n / split_n) not aligned to the combine tile ("
+                                << combine_tile_n(n_dim, this->n_split)
+                                << "), set split_n=" << this->n_split << "\n";
     }
     FLUX_CHECK(!(a2av_hier_ && a2av_hier_compress_))
         << "pass a2av_hier or a2av_hier_compress, not both";

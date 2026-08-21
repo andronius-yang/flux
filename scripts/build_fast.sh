@@ -16,6 +16,15 @@ FAST_NVIDIA_DIR="$SCRIPT_DIR/../3rdparty/FAST/nvidia"
 BUILD_DIR="${FAST_BUILD_DIR:-$FAST_NVIDIA_DIR/build}"
 JOBS="${JOBS:-8}"  # login nodes OOM at 16
 
+# two-instance patch (2026-08-21): FAST is a submodule, so the change is
+# carried as a patch in the parent repo and applied per checkout (idempotent
+# — the marker symbol is grep'd first). Needed for the combined l0+l1 FAST
+# baseline (one flash_comm_t per wire direction).
+if ! grep -q flash_comm_instance_count "$FAST_NVIDIA_DIR/alltoall_nvshmem.cpp"; then
+    echo "applying scripts/fast_two_instance.patch to 3rdparty/FAST"
+    git -C "$SCRIPT_DIR/../3rdparty/FAST" apply "$SCRIPT_DIR/fast_two_instance.patch"
+fi
+
 if [ -z "${NVSHMEM_HOME:-}" ]; then
     echo "ERROR: NVSHMEM_HOME is unset; run 'source ./module.sh' (Perlmutter)" \
          "or 'source ./env_aws.sh' (AWS) first" >&2
