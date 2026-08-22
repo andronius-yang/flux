@@ -1,0 +1,36 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 2
+  - 8
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:pools=mmlu/college_mathematics+mmlu/high_school_world_history+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history;layer=92;sem=pernode"
+ffn_hidden: 4096
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 4
+nodes: 4
+notes: "A1 REVERSED twin placement axis (P4/P5/P6): 16 cells iso; pre-registered predictions in formalization 7.7 / NR-16"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+skip_correctness: false
+sm_margin: 8
+timeout_s: 900
+topk: 8
+variants:
+  - epic_l01_hc_m1_na_lc25
+  - epic_l01_hc_m1_na
+  - epic_l01_hc_m1
+  - epic_hc_m1_na_lcinf
+  - epic_hc_m1_na_rankconc
+  - epic_hc_m1_na
+  - epic_hc_m1
+  - epic_hc_m1_place_none
+warmup_iters: 5

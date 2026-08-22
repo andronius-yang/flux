@@ -345,6 +345,12 @@ def simulate_arm(topk_all, hosts, nlp, L, router, eps=None):
     elif router == "loccap_gpu":
         phys, _ = PLG.loccap_route_gpu(topk_all, p2l, l2p, lcnts, nlp, L,
                                        eps)
+    elif router == "loccap_sl":
+        # the KERNEL arm's deterministic setup reference — its route_hash
+        # is what the driver's pre-registration gate compares (the relaxed
+        # kernel iterations are audited by bounds, not hashes)
+        phys, _ = PLG.loccap_route_sl(topk_all, p2l, l2p, lcnts, nlp, L,
+                                      eps)
     else:
         phys = LC.loccap_route(topk_all, p2l, l2p, lcnts, nlp, L, eps)
     st = LC.incidence_stats(phys, nlp, L)
@@ -363,7 +369,8 @@ def simulate_arm(topk_all, hosts, nlp, L, router, eps=None):
     egress = remote_pt.sum(1).reshape(W // L, L).sum(1)
     return {
         "router": (router if eps is None
-                   else f"{router}_eps{eps:g}" if router == "loccap_gpu"
+                   else f"{router}_eps{eps:g}"
+                   if router in ("loccap_gpu", "loccap_sl")
                    else f"loccap_eps{eps:g}"),
         "incidence_remote": st["incidence_remote"],
         "mean_nodes_per_token": round(st["mean_nodes_per_token"], 4),
@@ -462,14 +469,21 @@ def ensure_placement(params, W, L, budget_mib, topk, chunk_bytes,
             nexperts=nexperts)
         topk_all = routing_tensor(rpath, W)
 
-    ladder_router = ("loccap_gpu" if mode == "placelambda_gpu"
-                     else "loccap")
     predicted = [simulate_arm(topk_all, placed["hosts"], nlp, L, "d6"),
                  simulate_arm(topk_all, placed["hosts"], nlp, L,
                               "evensplit")]
-    for eps in eps_ladder:
-        predicted.append(simulate_arm(topk_all, placed["hosts"], nlp, L,
-                                      ladder_router, eps))
+    if mode == "placelambda_gpu":
+        # the pll arms' two routers: deterministic torch (loccap_gpu) and
+        # the kernel arm's deterministic setup reference (loccap_sl)
+        for eps in eps_ladder:
+            predicted.append(simulate_arm(topk_all, placed["hosts"], nlp,
+                                          L, "loccap_gpu", eps))
+            predicted.append(simulate_arm(topk_all, placed["hosts"], nlp,
+                                          L, "loccap_sl", eps))
+    else:
+        for eps in eps_ladder:
+            predicted.append(simulate_arm(topk_all, placed["hosts"], nlp,
+                                          L, "loccap", eps))
 
     blob = {
         "version": PLACEMENT_VERSION,

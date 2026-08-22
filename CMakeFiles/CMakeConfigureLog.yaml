@@ -1,0 +1,1465 @@
+
+---
+events:
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineSystem.cmake:233 (message)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      The system is: Linux - 6.4.0-150600.23.103_15.0.27-cray_shasta_c - x86_64
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCCompiler.cmake:123 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Compiling the C compiler identification source file "CMakeCCompilerId.c" succeeded.
+      Compiler: /opt/cray/pe/gcc/12.2.0/bin/gcc 
+      Build flags: 
+      Id flags:  
+      
+      The output was:
+      0
+      
+      
+      Compilation of the C compiler identification source "CMakeCCompilerId.c" produced "a.out"
+      
+      The C compiler identification is GNU, found in:
+        /global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/3.28.3/CompilerIdC/a.out
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCXXCompiler.cmake:126 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" succeeded.
+      Compiler: /opt/cray/pe/gcc/12.2.0/bin/g++ 
+      Build flags: 
+      Id flags:  
+      
+      The output was:
+      0
+      
+      
+      Compilation of the CXX compiler identification source "CMakeCXXCompilerId.cpp" produced "a.out"
+      
+      The CXX compiler identification is GNU, found in:
+        /global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/3.28.3/CompilerIdCXX/a.out
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:1131 (message)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCUDACompiler.cmake:75 (CMAKE_DETERMINE_COMPILER_ID_VENDOR)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Checking whether the CUDA compiler is NVIDIA using "" matched "nvcc: NVIDIA \\(R\\) Cuda compiler driver":
+      nvcc: NVIDIA (R) Cuda compiler driver
+      Copyright (c) 2005-2024 NVIDIA Corporation
+      Built on Thu_Mar_28_02:18:24_PDT_2024
+      Cuda compilation tools, release 12.4, V12.4.131
+      Build cuda_12.4.r12.4/compiler.34097967_0
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerId.cmake:53 (__determine_compiler_id_test)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCUDACompiler.cmake:135 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Compiling the CUDA compiler identification source file "CMakeCUDACompilerId.cu" succeeded.
+      Compiler: /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/nvcc 
+      Build flags: 
+      Id flags: --keep;--keep-dir;tmp;-ccbin=/opt/cray/pe/gcc/12.2.0/bin/g++ -v
+      
+      The output was:
+      0
+      #$ _NVVM_BRANCH_=nvvm
+      #$ _NVVM_BRANCH_SUFFIX_=
+      #$ _SPACE_= 
+      #$ _CUDART_=cudart
+      #$ _HERE_=/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin
+      #$ _THERE_=/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin
+      #$ _TARGET_SIZE_=
+      #$ _TARGET_DIR_=
+      #$ _TARGET_DIR_=targets/x86_64-linux
+      #$ TOP=/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/..
+      #$ NVVMIR_LIBRARY_DIR=/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../nvvm/libdevice
+      #$ LD_LIBRARY_PATH=/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../lib:/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib:/global/common/software/nersc9/nccl/2.24.3/plugin/lib:/global/common/software/nersc9/nccl/2.24.3/lib:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/lib64:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/extras/CUPTI/lib64:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/extras/Debugger/lib64:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/nvvm/lib64:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/lib64:/opt/cray/pe/mpich/8.1.25/ofi/gnu/9.1/lib:/opt/cray/pe/mpich/8.1.25/gtl/lib:/opt/cray/pe/gcc/12.2.0/snos/lib64:/opt/cray/pe/papi/7.2.0.2/lib64:/global/common/software/nersc9/darshan/default/lib:/opt/cray/libfabric/1.22.0/lib64
+      #$ PATH=/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../nvvm/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin:/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/bin:/global/common/software/nersc/pe/conda/26.1.0/Miniforge3-25.11.0-1/condabin:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/compute-sanitizer:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/libnvvp:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/profilers/Nsight_Compute:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/profilers/Nsight_Systems/bin:/opt/cray/pe/mpich/8.1.25/ofi/gnu/9.1/bin:/opt/cray/pe/mpich/8.1.25/bin:/opt/cray/pe/gcc/12.2.0/bin:/opt/cray/pe/craype/2.7.35/bin:/opt/cray/pe/perftools/25.09.0/bin:/opt/cray/pe/papi/7.2.0.2/bin:/opt/nersc/pe/bin:/global/common/software/nersc/bin:/global/common/software/nersc9/darshan/default/bin:/global/common/software/nersc9/sqs/2.0/bin:/opt/cray/libfabric/1.22.0/bin:/global/homes/y/yufeid/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/lib/mit/bin:/usr/lib/mit/sbin:/opt/cray/pe/bin
+      #$ INCLUDES="-I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include"  
+      #$ LIBRARIES=  "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs" "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib"
+      #$ CUDAFE_FLAGS=
+      #$ PTXAS_FLAGS=
+      #$ rm tmp/a_dlink.reg.c
+      #$ "/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -E -x c++ -D__CUDACC__ -D__NVCC__  "-I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include"    -D__CUDACC_VER_MAJOR__=12 -D__CUDACC_VER_MINOR__=4 -D__CUDACC_VER_BUILD__=131 -D__CUDA_API_VER_MAJOR__=12 -D__CUDA_API_VER_MINOR__=4 -D__NVCC_DIAG_PRAGMA_SUPPORT__=1 -include "cuda_runtime.h" -m64 "CMakeCUDACompilerId.cu" -o "tmp/CMakeCUDACompilerId.cpp4.ii" 
+      #$ cudafe++ --c++17 --gnu_version=120200 --display_error_number --orig_src_file_name "CMakeCUDACompilerId.cu" --orig_src_path_name "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/3.28.3/CompilerIdCUDA/CMakeCUDACompilerId.cu" --allow_managed  --m64 --parse_templates --gen_c_file_name "tmp/CMakeCUDACompilerId.cudafe1.cpp" --stub_file_name "CMakeCUDACompilerId.cudafe1.stub.c" --gen_module_id_file --module_id_file_name "tmp/CMakeCUDACompilerId.module_id" "tmp/CMakeCUDACompilerId.cpp4.ii" 
+      #$ "/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH__=520 -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -E -x c++  -DCUDA_DOUBLE_MATH_FUNCTIONS -D__CUDACC__ -D__NVCC__  "-I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include"    -D__CUDACC_VER_MAJOR__=12 -D__CUDACC_VER_MINOR__=4 -D__CUDACC_VER_BUILD__=131 -D__CUDA_API_VER_MAJOR__=12 -D__CUDA_API_VER_MINOR__=4 -D__NVCC_DIAG_PRAGMA_SUPPORT__=1 -include "cuda_runtime.h" -m64 "CMakeCUDACompilerId.cu" -o "tmp/CMakeCUDACompilerId.cpp1.ii" 
+      #$ cicc --c++17 --gnu_version=120200 --display_error_number --orig_src_file_name "CMakeCUDACompilerId.cu" --orig_src_path_name "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/3.28.3/CompilerIdCUDA/CMakeCUDACompilerId.cu" --allow_managed   -arch compute_52 -m64 --no-version-ident -ftz=0 -prec_div=1 -prec_sqrt=1 -fmad=1 --include_file_name "CMakeCUDACompilerId.fatbin.c" -tused --module_id_file_name "tmp/CMakeCUDACompilerId.module_id" --gen_c_file_name "tmp/CMakeCUDACompilerId.cudafe1.c" --stub_file_name "tmp/CMakeCUDACompilerId.cudafe1.stub.c" --gen_device_file_name "tmp/CMakeCUDACompilerId.cudafe1.gpu"  "tmp/CMakeCUDACompilerId.cpp1.ii" -o "tmp/CMakeCUDACompilerId.ptx"
+      #$ ptxas -arch=sm_52 -m64  "tmp/CMakeCUDACompilerId.ptx"  -o "tmp/CMakeCUDACompilerId.sm_52.cubin" 
+      #$ fatbinary --create="tmp/CMakeCUDACompilerId.fatbin" -64 --cicc-cmdline="-ftz=0 -prec_div=1 -prec_sqrt=1 -fmad=1 " "--image3=kind=elf,sm=52,file=tmp/CMakeCUDACompilerId.sm_52.cubin" "--image3=kind=ptx,sm=52,file=tmp/CMakeCUDACompilerId.ptx" --embedded-fatbin="tmp/CMakeCUDACompilerId.fatbin.c" 
+      #$ "/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH__=520 -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -c -x c++  -DCUDA_DOUBLE_MATH_FUNCTIONS -Wno-psabi "-I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include"   -m64 "tmp/CMakeCUDACompilerId.cudafe1.cpp" -o "tmp/CMakeCUDACompilerId.o" 
+      #$ nvlink -m64 --arch=sm_52 --register-link-binaries="tmp/a_dlink.reg.c"    "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs" "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib" -cpu-arch=X86_64 "tmp/CMakeCUDACompilerId.o"  -lcudadevrt  -o "tmp/a_dlink.sm_52.cubin" --host-ccbin "/opt/cray/pe/gcc/12.2.0/bin/g++"
+      #$ fatbinary --create="tmp/a_dlink.fatbin" -64 --cicc-cmdline="-ftz=0 -prec_div=1 -prec_sqrt=1 -fmad=1 " -link "--image3=kind=elf,sm=52,file=tmp/a_dlink.sm_52.cubin" --embedded-fatbin="tmp/a_dlink.fatbin.c" 
+      #$ "/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -c -x c++ -DFATBINFILE="\\"tmp/a_dlink.fatbin.c\\"" -DREGISTERLINKBINARYFILE="\\"tmp/a_dlink.reg.c\\"" -I. -D__NV_EXTRA_INITIALIZATION= -D__NV_EXTRA_FINALIZATION= -D__CUDA_INCLUDE_COMPILER_INTERNAL_HEADERS__  -Wno-psabi "-I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include"    -D__CUDACC_VER_MAJOR__=12 -D__CUDACC_VER_MINOR__=4 -D__CUDACC_VER_BUILD__=131 -D__CUDA_API_VER_MAJOR__=12 -D__CUDA_API_VER_MINOR__=4 -D__NVCC_DIAG_PRAGMA_SUPPORT__=1 -m64 "/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/crt/link.stub" -o "tmp/a_dlink.o" 
+      #$ "/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -m64 -Wl,--start-group "tmp/a_dlink.o" "tmp/CMakeCUDACompilerId.o"   "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs" "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib"  -lcudadevrt  -lcudart_static  -lrt -lpthread  -ldl  -Wl,--end-group -o "a.out" 
+      
+      
+      Compilation of the CUDA compiler identification source "CMakeCUDACompilerId.cu" produced "a.out"
+      
+      The CUDA compiler identification is NVIDIA, found in:
+        /global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/3.28.3/CompilerIdCUDA/a.out
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/Internal/CMakeNVCCParseImplicitInfo.cmake:128 (message)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCUDACompiler.cmake:246 (cmake_nvcc_parse_implicit_info)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Parsed CUDA nvcc implicit link information:
+        found 'PATH=' string: [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../nvvm/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin:/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/bin:/global/common/software/nersc/pe/conda/26.1.0/Miniforge3-25.11.0-1/condabin:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/compute-sanitizer:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/libnvvp:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/profilers/Nsight_Compute:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/profilers/Nsight_Systems/bin:/opt/cray/pe/mpich/8.1.25/ofi/gnu/9.1/bin:/opt/cray/pe/mpich/8.1.25/bin:/opt/cray/pe/gcc/12.2.0/bin:/opt/cray/pe/craype/2.7.35/bin:/opt/cray/pe/perftools/25.09.0/bin:/opt/cray/pe/papi/7.2.0.2/bin:/opt/nersc/pe/bin:/global/common/software/nersc/bin:/global/common/software/nersc9/darshan/default/bin:/global/common/software/nersc9/sqs/2.0/bin:/opt/cray/libfabric/1.22.0/bin:/global/homes/y/yufeid/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/lib/mit/bin:/usr/lib/mit/sbin:/opt/cray/pe/bin]
+        found 'LIBRARIES=' string: ["-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs" "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib"]
+        found 'INCLUDES=' string: ["-I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include"  ]
+        considering line: [#$ rm tmp/a_dlink.reg.c]
+        considering line: ["/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -E -x c++ -D__CUDACC__ -D__NVCC__  "-I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include"    -D__CUDACC_VER_MAJOR__=12 -D__CUDACC_VER_MINOR__=4 -D__CUDACC_VER_BUILD__=131 -D__CUDA_API_VER_MAJOR__=12 -D__CUDA_API_VER_MINOR__=4 -D__NVCC_DIAG_PRAGMA_SUPPORT__=1 -include "cuda_runtime.h" -m64 "CMakeCUDACompilerId.cu" -o "tmp/CMakeCUDACompilerId.cpp4.ii" ]
+        considering line: [cudafe++ --c++17 --gnu_version=120200 --display_error_number --orig_src_file_name "CMakeCUDACompilerId.cu" --orig_src_path_name "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/3.28.3/CompilerIdCUDA/CMakeCUDACompilerId.cu" --allow_managed  --m64 --parse_templates --gen_c_file_name "tmp/CMakeCUDACompilerId.cudafe1.cpp" --stub_file_name "CMakeCUDACompilerId.cudafe1.stub.c" --gen_module_id_file --module_id_file_name "tmp/CMakeCUDACompilerId.module_id" "tmp/CMakeCUDACompilerId.cpp4.ii" ]
+        considering line: ["/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH__=520 -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -E -x c++  -DCUDA_DOUBLE_MATH_FUNCTIONS -D__CUDACC__ -D__NVCC__  "-I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include"    -D__CUDACC_VER_MAJOR__=12 -D__CUDACC_VER_MINOR__=4 -D__CUDACC_VER_BUILD__=131 -D__CUDA_API_VER_MAJOR__=12 -D__CUDA_API_VER_MINOR__=4 -D__NVCC_DIAG_PRAGMA_SUPPORT__=1 -include "cuda_runtime.h" -m64 "CMakeCUDACompilerId.cu" -o "tmp/CMakeCUDACompilerId.cpp1.ii" ]
+        considering line: [cicc --c++17 --gnu_version=120200 --display_error_number --orig_src_file_name "CMakeCUDACompilerId.cu" --orig_src_path_name "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/3.28.3/CompilerIdCUDA/CMakeCUDACompilerId.cu" --allow_managed   -arch compute_52 -m64 --no-version-ident -ftz=0 -prec_div=1 -prec_sqrt=1 -fmad=1 --include_file_name "CMakeCUDACompilerId.fatbin.c" -tused --module_id_file_name "tmp/CMakeCUDACompilerId.module_id" --gen_c_file_name "tmp/CMakeCUDACompilerId.cudafe1.c" --stub_file_name "tmp/CMakeCUDACompilerId.cudafe1.stub.c" --gen_device_file_name "tmp/CMakeCUDACompilerId.cudafe1.gpu"  "tmp/CMakeCUDACompilerId.cpp1.ii" -o "tmp/CMakeCUDACompilerId.ptx"]
+        considering line: [ptxas -arch=sm_52 -m64  "tmp/CMakeCUDACompilerId.ptx"  -o "tmp/CMakeCUDACompilerId.sm_52.cubin" ]
+        considering line: [fatbinary --create="tmp/CMakeCUDACompilerId.fatbin" -64 --cicc-cmdline="-ftz=0 -prec_div=1 -prec_sqrt=1 -fmad=1 " "--image3=kind=elf,sm=52,file=tmp/CMakeCUDACompilerId.sm_52.cubin" "--image3=kind=ptx,sm=52,file=tmp/CMakeCUDACompilerId.ptx" --embedded-fatbin="tmp/CMakeCUDACompilerId.fatbin.c" ]
+        considering line: ["/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH__=520 -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -c -x c++  -DCUDA_DOUBLE_MATH_FUNCTIONS -Wno-psabi "-I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include"   -m64 "tmp/CMakeCUDACompilerId.cudafe1.cpp" -o "tmp/CMakeCUDACompilerId.o" ]
+        considering line: [nvlink -m64 --arch=sm_52 --register-link-binaries="tmp/a_dlink.reg.c"    "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs" "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib" -cpu-arch=X86_64 "tmp/CMakeCUDACompilerId.o"  -lcudadevrt  -o "tmp/a_dlink.sm_52.cubin" --host-ccbin "/opt/cray/pe/gcc/12.2.0/bin/g++"]
+          ignoring nvlink line
+        considering line: [fatbinary --create="tmp/a_dlink.fatbin" -64 --cicc-cmdline="-ftz=0 -prec_div=1 -prec_sqrt=1 -fmad=1 " -link "--image3=kind=elf,sm=52,file=tmp/a_dlink.sm_52.cubin" --embedded-fatbin="tmp/a_dlink.fatbin.c" ]
+        considering line: ["/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -c -x c++ -DFATBINFILE="\\"tmp/a_dlink.fatbin.c\\"" -DREGISTERLINKBINARYFILE="\\"tmp/a_dlink.reg.c\\"" -I. -D__NV_EXTRA_INITIALIZATION= -D__NV_EXTRA_FINALIZATION= -D__CUDA_INCLUDE_COMPILER_INTERNAL_HEADERS__  -Wno-psabi "-I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include"    -D__CUDACC_VER_MAJOR__=12 -D__CUDACC_VER_MINOR__=4 -D__CUDACC_VER_BUILD__=131 -D__CUDA_API_VER_MAJOR__=12 -D__CUDA_API_VER_MINOR__=4 -D__NVCC_DIAG_PRAGMA_SUPPORT__=1 -m64 "/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/crt/link.stub" -o "tmp/a_dlink.o" ]
+        considering line: ["/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -m64 -Wl,--start-group "tmp/a_dlink.o" "tmp/CMakeCUDACompilerId.o"   "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs" "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib"  -lcudadevrt  -lcudart_static  -lrt -lpthread  -ldl  -Wl,--end-group -o "a.out" ]
+          extracted link line: ["/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -m64 -Wl,--start-group "tmp/a_dlink.o" "tmp/CMakeCUDACompilerId.o"   "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs" "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib"  -lcudadevrt  -lcudart_static  -lrt -lpthread  -ldl  -Wl,--end-group -o "a.out" ]
+        considering line: []
+        extracted link launcher absolute path: [/opt/cray/pe/gcc/12.2.0/bin/g++]
+      
+        link line regex: [^( *|.*[/\\])(ld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
+        link line: [cuda-fake-ld "/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -m64 -Wl,--start-group "tmp/a_dlink.o" "tmp/CMakeCUDACompilerId.o"   "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs" "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib"  -lcudadevrt  -lcudart_static  -lrt -lpthread  -ldl  -Wl,--end-group -o "a.out" ]
+          arg [cuda-fake-ld] ==> ignore
+          arg [/opt/cray/pe/gcc/12.2.0/bin/g++] ==> ignore
+          arg [-D__CUDA_ARCH_LIST__=520] ==> ignore
+          arg [-D__NV_LEGACY_LAUNCH] ==> ignore
+          arg [-m64] ==> ignore
+          arg [-Wl,--start-group] ==> ignore
+          arg [tmp/a_dlink.o] ==> ignore
+          arg [tmp/CMakeCUDACompilerId.o] ==> ignore
+          arg [-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs] ==> dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs]
+          arg [-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib] ==> dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib]
+          arg [-lcudadevrt] ==> lib [cudadevrt]
+          arg [-lcudart_static] ==> lib [cudart_static]
+          arg [-lrt] ==> lib [rt]
+          arg [-lpthread] ==> lib [pthread]
+          arg [-ldl] ==> lib [dl]
+          arg [-Wl,--end-group] ==> ignore
+          arg [-o] ==> ignore
+          arg [a.out] ==> ignore
+        collapse library dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs] ==> [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib/stubs]
+        collapse library dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib] ==> [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib]
+        implicit libs: [cudadevrt;cudart_static;rt;pthread;dl]
+        implicit objs: []
+        implicit dirs: [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib/stubs;/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib]
+        implicit fwks: []
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/Internal/CMakeNVCCParseImplicitInfo.cmake:146 (message)"
+      - "/usr/share/cmake/Modules/CMakeDetermineCUDACompiler.cmake:246 (cmake_nvcc_parse_implicit_info)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Parsed CUDA nvcc include information:
+        found 'PATH=' string: [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../nvvm/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin:/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/bin:/global/common/software/nersc/pe/conda/26.1.0/Miniforge3-25.11.0-1/condabin:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/compute-sanitizer:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/libnvvp:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/profilers/Nsight_Compute:/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/profilers/Nsight_Systems/bin:/opt/cray/pe/mpich/8.1.25/ofi/gnu/9.1/bin:/opt/cray/pe/mpich/8.1.25/bin:/opt/cray/pe/gcc/12.2.0/bin:/opt/cray/pe/craype/2.7.35/bin:/opt/cray/pe/perftools/25.09.0/bin:/opt/cray/pe/papi/7.2.0.2/bin:/opt/nersc/pe/bin:/global/common/software/nersc/bin:/global/common/software/nersc9/darshan/default/bin:/global/common/software/nersc9/sqs/2.0/bin:/opt/cray/libfabric/1.22.0/bin:/global/homes/y/yufeid/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/lib/mit/bin:/usr/lib/mit/sbin:/opt/cray/pe/bin]
+        found 'LIBRARIES=' string: ["-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs" "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib"]
+        found 'INCLUDES=' string: ["-I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include"  ]
+        considering line: [#$ rm tmp/a_dlink.reg.c]
+        considering line: ["/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -E -x c++ -D__CUDACC__ -D__NVCC__  "-I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include"    -D__CUDACC_VER_MAJOR__=12 -D__CUDACC_VER_MINOR__=4 -D__CUDACC_VER_BUILD__=131 -D__CUDA_API_VER_MAJOR__=12 -D__CUDA_API_VER_MINOR__=4 -D__NVCC_DIAG_PRAGMA_SUPPORT__=1 -include "cuda_runtime.h" -m64 "CMakeCUDACompilerId.cu" -o "tmp/CMakeCUDACompilerId.cpp4.ii" ]
+        considering line: [cudafe++ --c++17 --gnu_version=120200 --display_error_number --orig_src_file_name "CMakeCUDACompilerId.cu" --orig_src_path_name "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/3.28.3/CompilerIdCUDA/CMakeCUDACompilerId.cu" --allow_managed  --m64 --parse_templates --gen_c_file_name "tmp/CMakeCUDACompilerId.cudafe1.cpp" --stub_file_name "CMakeCUDACompilerId.cudafe1.stub.c" --gen_module_id_file --module_id_file_name "tmp/CMakeCUDACompilerId.module_id" "tmp/CMakeCUDACompilerId.cpp4.ii" ]
+        considering line: ["/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH__=520 -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -E -x c++  -DCUDA_DOUBLE_MATH_FUNCTIONS -D__CUDACC__ -D__NVCC__  "-I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include"    -D__CUDACC_VER_MAJOR__=12 -D__CUDACC_VER_MINOR__=4 -D__CUDACC_VER_BUILD__=131 -D__CUDA_API_VER_MAJOR__=12 -D__CUDA_API_VER_MINOR__=4 -D__NVCC_DIAG_PRAGMA_SUPPORT__=1 -include "cuda_runtime.h" -m64 "CMakeCUDACompilerId.cu" -o "tmp/CMakeCUDACompilerId.cpp1.ii" ]
+        considering line: [cicc --c++17 --gnu_version=120200 --display_error_number --orig_src_file_name "CMakeCUDACompilerId.cu" --orig_src_path_name "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/3.28.3/CompilerIdCUDA/CMakeCUDACompilerId.cu" --allow_managed   -arch compute_52 -m64 --no-version-ident -ftz=0 -prec_div=1 -prec_sqrt=1 -fmad=1 --include_file_name "CMakeCUDACompilerId.fatbin.c" -tused --module_id_file_name "tmp/CMakeCUDACompilerId.module_id" --gen_c_file_name "tmp/CMakeCUDACompilerId.cudafe1.c" --stub_file_name "tmp/CMakeCUDACompilerId.cudafe1.stub.c" --gen_device_file_name "tmp/CMakeCUDACompilerId.cudafe1.gpu"  "tmp/CMakeCUDACompilerId.cpp1.ii" -o "tmp/CMakeCUDACompilerId.ptx"]
+        considering line: [ptxas -arch=sm_52 -m64  "tmp/CMakeCUDACompilerId.ptx"  -o "tmp/CMakeCUDACompilerId.sm_52.cubin" ]
+        considering line: [fatbinary --create="tmp/CMakeCUDACompilerId.fatbin" -64 --cicc-cmdline="-ftz=0 -prec_div=1 -prec_sqrt=1 -fmad=1 " "--image3=kind=elf,sm=52,file=tmp/CMakeCUDACompilerId.sm_52.cubin" "--image3=kind=ptx,sm=52,file=tmp/CMakeCUDACompilerId.ptx" --embedded-fatbin="tmp/CMakeCUDACompilerId.fatbin.c" ]
+        considering line: ["/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH__=520 -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -c -x c++  -DCUDA_DOUBLE_MATH_FUNCTIONS -Wno-psabi "-I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include"   -m64 "tmp/CMakeCUDACompilerId.cudafe1.cpp" -o "tmp/CMakeCUDACompilerId.o" ]
+        considering line: [nvlink -m64 --arch=sm_52 --register-link-binaries="tmp/a_dlink.reg.c"    "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs" "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib" -cpu-arch=X86_64 "tmp/CMakeCUDACompilerId.o"  -lcudadevrt  -o "tmp/a_dlink.sm_52.cubin" --host-ccbin "/opt/cray/pe/gcc/12.2.0/bin/g++"]
+          ignoring nvlink line
+        considering line: [fatbinary --create="tmp/a_dlink.fatbin" -64 --cicc-cmdline="-ftz=0 -prec_div=1 -prec_sqrt=1 -fmad=1 " -link "--image3=kind=elf,sm=52,file=tmp/a_dlink.sm_52.cubin" --embedded-fatbin="tmp/a_dlink.fatbin.c" ]
+        considering line: ["/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -c -x c++ -DFATBINFILE="\\"tmp/a_dlink.fatbin.c\\"" -DREGISTERLINKBINARYFILE="\\"tmp/a_dlink.reg.c\\"" -I. -D__NV_EXTRA_INITIALIZATION= -D__NV_EXTRA_FINALIZATION= -D__CUDA_INCLUDE_COMPILER_INTERNAL_HEADERS__  -Wno-psabi "-I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include"    -D__CUDACC_VER_MAJOR__=12 -D__CUDACC_VER_MINOR__=4 -D__CUDACC_VER_BUILD__=131 -D__CUDA_API_VER_MAJOR__=12 -D__CUDA_API_VER_MINOR__=4 -D__NVCC_DIAG_PRAGMA_SUPPORT__=1 -m64 "/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/crt/link.stub" -o "tmp/a_dlink.o" ]
+        considering line: ["/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -m64 -Wl,--start-group "tmp/a_dlink.o" "tmp/CMakeCUDACompilerId.o"   "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs" "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib"  -lcudadevrt  -lcudart_static  -lrt -lpthread  -ldl  -Wl,--end-group -o "a.out" ]
+          extracted link line: ["/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -m64 -Wl,--start-group "tmp/a_dlink.o" "tmp/CMakeCUDACompilerId.o"   "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs" "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib"  -lcudadevrt  -lcudart_static  -lrt -lpthread  -ldl  -Wl,--end-group -o "a.out" ]
+        considering line: []
+        extracted link launcher absolute path: [/opt/cray/pe/gcc/12.2.0/bin/g++]
+      
+        link line regex: [^( *|.*[/\\])(ld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
+        link line: [cuda-fake-ld "/opt/cray/pe/gcc/12.2.0/bin"/g++ -D__CUDA_ARCH_LIST__=520 -D__NV_LEGACY_LAUNCH -m64 -Wl,--start-group "tmp/a_dlink.o" "tmp/CMakeCUDACompilerId.o"   "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs" "-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib"  -lcudadevrt  -lcudart_static  -lrt -lpthread  -ldl  -Wl,--end-group -o "a.out" ]
+          arg [cuda-fake-ld] ==> ignore
+          arg [/opt/cray/pe/gcc/12.2.0/bin/g++] ==> ignore
+          arg [-D__CUDA_ARCH_LIST__=520] ==> ignore
+          arg [-D__NV_LEGACY_LAUNCH] ==> ignore
+          arg [-m64] ==> ignore
+          arg [-Wl,--start-group] ==> ignore
+          arg [tmp/a_dlink.o] ==> ignore
+          arg [tmp/CMakeCUDACompilerId.o] ==> ignore
+          arg [-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs] ==> dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs]
+          arg [-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib] ==> dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib]
+          arg [-lcudadevrt] ==> lib [cudadevrt]
+          arg [-lcudart_static] ==> lib [cudart_static]
+          arg [-lrt] ==> lib [rt]
+          arg [-lpthread] ==> lib [pthread]
+          arg [-ldl] ==> lib [dl]
+          arg [-Wl,--end-group] ==> ignore
+          arg [-o] ==> ignore
+          arg [a.out] ==> ignore
+        collapse library dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib/stubs] ==> [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib/stubs]
+        collapse library dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/lib] ==> [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib]
+        implicit libs: [cudadevrt;cudart_static;rt;pthread;dl]
+        implicit objs: []
+        implicit dirs: [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib/stubs;/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib]
+        implicit fwks: []
+      
+      
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:57 (try_compile)"
+      - "/usr/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    checks:
+      - "Detecting C compiler ABI info"
+    directories:
+      source: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-8p6GAJ"
+      binary: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-8p6GAJ"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "CMAKE_C_ABI_COMPILED"
+      cached: true
+      stdout: |
+        Change Dir: '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-8p6GAJ'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_f911c/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_f911c.dir/build.make CMakeFiles/cmTC_f911c.dir/build
+        gmake[1]: Entering directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-8p6GAJ'
+        Building C object CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.o
+        /opt/cray/pe/gcc/12.2.0/bin/gcc   -v -o CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.o -c /usr/share/cmake/Modules/CMakeCCompilerABI.c
+        Using built-in specs.
+        COLLECT_GCC=/opt/cray/pe/gcc/12.2.0/bin/../snos/bin/gcc
+        Target: x86_64-suse-linux
+        Configured with: ../cpe-gcc-12.2.0-202211182106.97b1815c41a72/configure --prefix=/opt/cray/pe/gcc/12.2.0/snos --disable-nls --libdir=/opt/cray/pe/gcc/12.2.0/snos/lib --enable-languages=c,c++,fortran --with-gxx-include-dir=/opt/cray/pe/gcc/12.2.0/snos/include/g++ --with-slibdir=/opt/cray/pe/gcc/12.2.0/snos/lib --with-system-zlib --enable-shared --enable-__cxa_atexit --build=x86_64-suse-linux --with-ppl --with-cloog --disable-multilib
+        Thread model: posix
+        Supported LTO compression algorithms: zlib
+        gcc version 12.2.0 20220819 (HPE) (GCC) 
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_f911c.dir/'
+         /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/cc1 -quiet -v /usr/share/cmake/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_f911c.dir/ -dumpbase CMakeCCompilerABI.c.c -dumpbase-ext .c -mtune=generic -march=x86-64 -version -o /tmp/ccgSNxTe.s
+        GNU C17 (GCC) version 12.2.0 20220819 (HPE) (x86_64-suse-linux)
+        	compiled by GNU C version 12.2.0 20220819 (HPE), GMP version 6.0.0, MPFR version 3.1.3, MPC version 1.0.3, isl version isl-0.15-GMP
+        
+        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
+        ignoring nonexistent directory "/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../x86_64-suse-linux/include"
+        #include "..." search starts here:
+        #include <...> search starts here:
+         /global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include
+         /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include
+         /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include
+         /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include
+         /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include
+         /usr/local/include
+         /opt/cray/pe/gcc/12.2.0/snos/include
+         /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed
+         /usr/include
+        End of search list.
+        GNU C17 (GCC) version 12.2.0 20220819 (HPE) (x86_64-suse-linux)
+        	compiled by GNU C version 12.2.0 20220819 (HPE), GMP version 6.0.0, MPFR version 3.1.3, MPC version 1.0.3, isl version isl-0.15-GMP
+        
+        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
+        Compiler executable checksum: 2c7f1a5d32ef7d812b1411e00490b8b1
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_f911c.dir/'
+         as -v --64 -o CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.o /tmp/ccgSNxTe.s
+        GNU assembler version 2.45.0 (x86_64-suse-linux) using BFD version (GNU Binutils; SUSE Linux Enterprise 15) 2.45.0.20251103-150100757
+        COMPILER_PATH=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/
+        LIBRARY_PATH=/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../:/lib/:/usr/lib/
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.'
+        Linking C executable cmTC_f911c
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_f911c.dir/link.txt --verbose=1
+        /opt/cray/pe/gcc/12.2.0/bin/gcc  -v CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.o -o cmTC_f911c 
+        Using built-in specs.
+        COLLECT_GCC=/opt/cray/pe/gcc/12.2.0/bin/../snos/bin/gcc
+        COLLECT_LTO_WRAPPER=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/lto-wrapper
+        Target: x86_64-suse-linux
+        Configured with: ../cpe-gcc-12.2.0-202211182106.97b1815c41a72/configure --prefix=/opt/cray/pe/gcc/12.2.0/snos --disable-nls --libdir=/opt/cray/pe/gcc/12.2.0/snos/lib --enable-languages=c,c++,fortran --with-gxx-include-dir=/opt/cray/pe/gcc/12.2.0/snos/include/g++ --with-slibdir=/opt/cray/pe/gcc/12.2.0/snos/lib --with-system-zlib --enable-shared --enable-__cxa_atexit --build=x86_64-suse-linux --with-ppl --with-cloog --disable-multilib
+        Thread model: posix
+        Supported LTO compression algorithms: zlib
+        gcc version 12.2.0 20220819 (HPE) (GCC) 
+        COMPILER_PATH=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/
+        LIBRARY_PATH=/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../:/lib/:/usr/lib/
+        COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_f911c' '-mtune=generic' '-march=x86-64' '-dumpdir' 'cmTC_f911c.'
+         /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/collect2 -plugin /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/liblto_plugin.so -plugin-opt=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cciw3T03.res -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_f911c /usr/lib/../lib64/crt1.o /usr/lib/../lib64/crti.o /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtbegin.o -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0 -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../.. CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.o -lgcc --push-state --as-needed -lgcc_s --pop-state -lc -lgcc --push-state --as-needed -lgcc_s --pop-state /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtend.o /usr/lib/../lib64/crtn.o
+        COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_f911c' '-mtune=generic' '-march=x86-64' '-dumpdir' 'cmTC_f911c.'
+        gmake[1]: Leaving directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-8p6GAJ'
+        
+      exitCode: 0
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:127 (message)"
+      - "/usr/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Parsed C implicit include dir info: rv=done
+        found start of include info
+        found start of implicit include info
+          add: [/global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include]
+          add: [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include]
+          add: [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include]
+          add: [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include]
+          add: [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include]
+          add: [/usr/local/include]
+          add: [/opt/cray/pe/gcc/12.2.0/snos/include]
+          add: [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed]
+          add: [/usr/include]
+        end of search list found
+        collapse include dir [/global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include] ==> [/global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include]
+        collapse include dir [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include] ==> [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include]
+        collapse include dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include] ==> [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include]
+        collapse include dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include] ==> [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include]
+        collapse include dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include] ==> [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include]
+        collapse include dir [/usr/local/include] ==> [/usr/local/include]
+        collapse include dir [/opt/cray/pe/gcc/12.2.0/snos/include] ==> [/opt/cray/pe/gcc/12.2.0/snos/include]
+        collapse include dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed] ==> [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed]
+        collapse include dir [/usr/include] ==> [/usr/include]
+        implicit include dirs: [/global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include;/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include;/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include;/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include;/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include;/usr/local/include;/opt/cray/pe/gcc/12.2.0/snos/include;/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed;/usr/include]
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:159 (message)"
+      - "/usr/share/cmake/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Parsed C implicit link information:
+        link line regex: [^( *|.*[/\\])(ld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
+        ignore line: [Change Dir: '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-8p6GAJ']
+        ignore line: []
+        ignore line: [Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_f911c/fast]
+        ignore line: [/usr/bin/gmake  -f CMakeFiles/cmTC_f911c.dir/build.make CMakeFiles/cmTC_f911c.dir/build]
+        ignore line: [gmake[1]: Entering directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-8p6GAJ']
+        ignore line: [Building C object CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.o]
+        ignore line: [/opt/cray/pe/gcc/12.2.0/bin/gcc   -v -o CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.o -c /usr/share/cmake/Modules/CMakeCCompilerABI.c]
+        ignore line: [Using built-in specs.]
+        ignore line: [COLLECT_GCC=/opt/cray/pe/gcc/12.2.0/bin/../snos/bin/gcc]
+        ignore line: [Target: x86_64-suse-linux]
+        ignore line: [Configured with: ../cpe-gcc-12.2.0-202211182106.97b1815c41a72/configure --prefix=/opt/cray/pe/gcc/12.2.0/snos --disable-nls --libdir=/opt/cray/pe/gcc/12.2.0/snos/lib --enable-languages=c c++ fortran --with-gxx-include-dir=/opt/cray/pe/gcc/12.2.0/snos/include/g++ --with-slibdir=/opt/cray/pe/gcc/12.2.0/snos/lib --with-system-zlib --enable-shared --enable-__cxa_atexit --build=x86_64-suse-linux --with-ppl --with-cloog --disable-multilib]
+        ignore line: [Thread model: posix]
+        ignore line: [Supported LTO compression algorithms: zlib]
+        ignore line: [gcc version 12.2.0 20220819 (HPE) (GCC) ]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_f911c.dir/']
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/cc1 -quiet -v /usr/share/cmake/Modules/CMakeCCompilerABI.c -quiet -dumpdir CMakeFiles/cmTC_f911c.dir/ -dumpbase CMakeCCompilerABI.c.c -dumpbase-ext .c -mtune=generic -march=x86-64 -version -o /tmp/ccgSNxTe.s]
+        ignore line: [GNU C17 (GCC) version 12.2.0 20220819 (HPE) (x86_64-suse-linux)]
+        ignore line: [	compiled by GNU C version 12.2.0 20220819 (HPE)  GMP version 6.0.0  MPFR version 3.1.3  MPC version 1.0.3  isl version isl-0.15-GMP]
+        ignore line: []
+        ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
+        ignore line: [ignoring nonexistent directory "/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../x86_64-suse-linux/include"]
+        ignore line: [#include "..." search starts here:]
+        ignore line: [#include <...> search starts here:]
+        ignore line: [ /global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include]
+        ignore line: [ /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include]
+        ignore line: [ /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include]
+        ignore line: [ /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include]
+        ignore line: [ /usr/local/include]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/include]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed]
+        ignore line: [ /usr/include]
+        ignore line: [End of search list.]
+        ignore line: [GNU C17 (GCC) version 12.2.0 20220819 (HPE) (x86_64-suse-linux)]
+        ignore line: [	compiled by GNU C version 12.2.0 20220819 (HPE)  GMP version 6.0.0  MPFR version 3.1.3  MPC version 1.0.3  isl version isl-0.15-GMP]
+        ignore line: []
+        ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
+        ignore line: [Compiler executable checksum: 2c7f1a5d32ef7d812b1411e00490b8b1]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_f911c.dir/']
+        ignore line: [ as -v --64 -o CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.o /tmp/ccgSNxTe.s]
+        ignore line: [GNU assembler version 2.45.0 (x86_64-suse-linux) using BFD version (GNU Binutils]
+        ignore line: [ SUSE Linux Enterprise 15) 2.45.0.20251103-150100757]
+        ignore line: [COMPILER_PATH=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/]
+        ignore line: [LIBRARY_PATH=/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../:/lib/:/usr/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.']
+        ignore line: [Linking C executable cmTC_f911c]
+        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_f911c.dir/link.txt --verbose=1]
+        ignore line: [/opt/cray/pe/gcc/12.2.0/bin/gcc  -v CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.o -o cmTC_f911c ]
+        ignore line: [Using built-in specs.]
+        ignore line: [COLLECT_GCC=/opt/cray/pe/gcc/12.2.0/bin/../snos/bin/gcc]
+        ignore line: [COLLECT_LTO_WRAPPER=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/lto-wrapper]
+        ignore line: [Target: x86_64-suse-linux]
+        ignore line: [Configured with: ../cpe-gcc-12.2.0-202211182106.97b1815c41a72/configure --prefix=/opt/cray/pe/gcc/12.2.0/snos --disable-nls --libdir=/opt/cray/pe/gcc/12.2.0/snos/lib --enable-languages=c c++ fortran --with-gxx-include-dir=/opt/cray/pe/gcc/12.2.0/snos/include/g++ --with-slibdir=/opt/cray/pe/gcc/12.2.0/snos/lib --with-system-zlib --enable-shared --enable-__cxa_atexit --build=x86_64-suse-linux --with-ppl --with-cloog --disable-multilib]
+        ignore line: [Thread model: posix]
+        ignore line: [Supported LTO compression algorithms: zlib]
+        ignore line: [gcc version 12.2.0 20220819 (HPE) (GCC) ]
+        ignore line: [COMPILER_PATH=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/]
+        ignore line: [LIBRARY_PATH=/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../:/lib/:/usr/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_f911c' '-mtune=generic' '-march=x86-64' '-dumpdir' 'cmTC_f911c.']
+        link line: [ /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/collect2 -plugin /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/liblto_plugin.so -plugin-opt=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cciw3T03.res -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lgcc_s --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_f911c /usr/lib/../lib64/crt1.o /usr/lib/../lib64/crti.o /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtbegin.o -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0 -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../.. CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.o -lgcc --push-state --as-needed -lgcc_s --pop-state -lc -lgcc --push-state --as-needed -lgcc_s --pop-state /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtend.o /usr/lib/../lib64/crtn.o]
+          arg [/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/collect2] ==> ignore
+          arg [-plugin] ==> ignore
+          arg [/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/liblto_plugin.so] ==> ignore
+          arg [-plugin-opt=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/lto-wrapper] ==> ignore
+          arg [-plugin-opt=-fresolution=/tmp/cciw3T03.res] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
+          arg [-plugin-opt=-pass-through=-lc] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
+          arg [--eh-frame-hdr] ==> ignore
+          arg [-m] ==> ignore
+          arg [elf_x86_64] ==> ignore
+          arg [-dynamic-linker] ==> ignore
+          arg [/lib64/ld-linux-x86-64.so.2] ==> ignore
+          arg [-o] ==> ignore
+          arg [cmTC_f911c] ==> ignore
+          arg [/usr/lib/../lib64/crt1.o] ==> obj [/usr/lib/../lib64/crt1.o]
+          arg [/usr/lib/../lib64/crti.o] ==> obj [/usr/lib/../lib64/crti.o]
+          arg [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtbegin.o] ==> obj [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtbegin.o]
+          arg [-L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0] ==> dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0]
+          arg [-L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64] ==> dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64]
+          arg [-L/lib/../lib64] ==> dir [/lib/../lib64]
+          arg [-L/usr/lib/../lib64] ==> dir [/usr/lib/../lib64]
+          arg [-L/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib] ==> dir [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib]
+          arg [-L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../..] ==> dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../..]
+          arg [CMakeFiles/cmTC_f911c.dir/CMakeCCompilerABI.c.o] ==> ignore
+          arg [-lgcc] ==> lib [gcc]
+          arg [--push-state] ==> ignore
+          arg [--as-needed] ==> ignore
+          arg [-lgcc_s] ==> lib [gcc_s]
+          arg [--pop-state] ==> ignore
+          arg [-lc] ==> lib [c]
+          arg [-lgcc] ==> lib [gcc]
+          arg [--push-state] ==> ignore
+          arg [--as-needed] ==> ignore
+          arg [-lgcc_s] ==> lib [gcc_s]
+          arg [--pop-state] ==> ignore
+          arg [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtend.o] ==> obj [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtend.o]
+          arg [/usr/lib/../lib64/crtn.o] ==> obj [/usr/lib/../lib64/crtn.o]
+        collapse obj [/usr/lib/../lib64/crt1.o] ==> [/usr/lib64/crt1.o]
+        collapse obj [/usr/lib/../lib64/crti.o] ==> [/usr/lib64/crti.o]
+        collapse obj [/usr/lib/../lib64/crtn.o] ==> [/usr/lib64/crtn.o]
+        collapse library dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0] ==> [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0]
+        collapse library dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64] ==> [/opt/cray/pe/gcc/12.2.0/snos/lib64]
+        collapse library dir [/lib/../lib64] ==> [/lib64]
+        collapse library dir [/usr/lib/../lib64] ==> [/usr/lib64]
+        collapse library dir [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib] ==> [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib]
+        collapse library dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../..] ==> [/opt/cray/pe/gcc/12.2.0/snos/lib]
+        implicit libs: [gcc;gcc_s;c;gcc;gcc_s]
+        implicit objs: [/usr/lib64/crt1.o;/usr/lib64/crti.o;/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtbegin.o;/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtend.o;/usr/lib64/crtn.o]
+        implicit dirs: [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0;/opt/cray/pe/gcc/12.2.0/snos/lib64;/lib64;/usr/lib64;/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib;/opt/cray/pe/gcc/12.2.0/snos/lib]
+        implicit fwks: []
+      
+      
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:57 (try_compile)"
+      - "/usr/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    checks:
+      - "Detecting CXX compiler ABI info"
+    directories:
+      source: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-lvGYh6"
+      binary: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-lvGYh6"
+    cmakeVariables:
+      CMAKE_CXX_FLAGS: ""
+      CMAKE_CXX_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "CMAKE_CXX_ABI_COMPILED"
+      cached: true
+      stdout: |
+        Change Dir: '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-lvGYh6'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_a5d80/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_a5d80.dir/build.make CMakeFiles/cmTC_a5d80.dir/build
+        gmake[1]: Entering directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-lvGYh6'
+        Building CXX object CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.o
+        /opt/cray/pe/gcc/12.2.0/bin/g++   -v -o CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.o -c /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp
+        Using built-in specs.
+        COLLECT_GCC=/opt/cray/pe/gcc/12.2.0/bin/../snos/bin/g++
+        Target: x86_64-suse-linux
+        Configured with: ../cpe-gcc-12.2.0-202211182106.97b1815c41a72/configure --prefix=/opt/cray/pe/gcc/12.2.0/snos --disable-nls --libdir=/opt/cray/pe/gcc/12.2.0/snos/lib --enable-languages=c,c++,fortran --with-gxx-include-dir=/opt/cray/pe/gcc/12.2.0/snos/include/g++ --with-slibdir=/opt/cray/pe/gcc/12.2.0/snos/lib --with-system-zlib --enable-shared --enable-__cxa_atexit --build=x86_64-suse-linux --with-ppl --with-cloog --disable-multilib
+        Thread model: posix
+        Supported LTO compression algorithms: zlib
+        gcc version 12.2.0 20220819 (HPE) (GCC) 
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_a5d80.dir/'
+         /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/cc1plus -quiet -v -D_GNU_SOURCE /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_a5d80.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mtune=generic -march=x86-64 -version -o /tmp/cc4RsHVS.s
+        GNU C++17 (GCC) version 12.2.0 20220819 (HPE) (x86_64-suse-linux)
+        	compiled by GNU C version 12.2.0 20220819 (HPE), GMP version 6.0.0, MPFR version 3.1.3, MPC version 1.0.3, isl version isl-0.15-GMP
+        
+        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
+        ignoring nonexistent directory "/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../x86_64-suse-linux/include"
+        #include "..." search starts here:
+        #include <...> search starts here:
+         /global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include
+         /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include
+         /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include
+         /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include
+         /opt/cray/pe/gcc/12.2.0/snos/include/g++
+         /opt/cray/pe/gcc/12.2.0/snos/include/g++/x86_64-suse-linux
+         /opt/cray/pe/gcc/12.2.0/snos/include/g++/backward
+         /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include
+         /usr/local/include
+         /opt/cray/pe/gcc/12.2.0/snos/include
+         /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed
+         /usr/include
+        End of search list.
+        GNU C++17 (GCC) version 12.2.0 20220819 (HPE) (x86_64-suse-linux)
+        	compiled by GNU C version 12.2.0 20220819 (HPE), GMP version 6.0.0, MPFR version 3.1.3, MPC version 1.0.3, isl version isl-0.15-GMP
+        
+        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
+        Compiler executable checksum: 58e344dd6573bc9f3b4e5d4016cd9bb8
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_a5d80.dir/'
+         as -v --64 -o CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.o /tmp/cc4RsHVS.s
+        GNU assembler version 2.45.0 (x86_64-suse-linux) using BFD version (GNU Binutils; SUSE Linux Enterprise 15) 2.45.0.20251103-150100757
+        COMPILER_PATH=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/
+        LIBRARY_PATH=/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../:/lib/:/usr/lib/
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.'
+        Linking CXX executable cmTC_a5d80
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_a5d80.dir/link.txt --verbose=1
+        /opt/cray/pe/gcc/12.2.0/bin/g++  -v CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.o -o cmTC_a5d80 
+        Using built-in specs.
+        COLLECT_GCC=/opt/cray/pe/gcc/12.2.0/bin/../snos/bin/g++
+        COLLECT_LTO_WRAPPER=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/lto-wrapper
+        Target: x86_64-suse-linux
+        Configured with: ../cpe-gcc-12.2.0-202211182106.97b1815c41a72/configure --prefix=/opt/cray/pe/gcc/12.2.0/snos --disable-nls --libdir=/opt/cray/pe/gcc/12.2.0/snos/lib --enable-languages=c,c++,fortran --with-gxx-include-dir=/opt/cray/pe/gcc/12.2.0/snos/include/g++ --with-slibdir=/opt/cray/pe/gcc/12.2.0/snos/lib --with-system-zlib --enable-shared --enable-__cxa_atexit --build=x86_64-suse-linux --with-ppl --with-cloog --disable-multilib
+        Thread model: posix
+        Supported LTO compression algorithms: zlib
+        gcc version 12.2.0 20220819 (HPE) (GCC) 
+        COMPILER_PATH=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/
+        LIBRARY_PATH=/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../:/lib/:/usr/lib/
+        COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_a5d80' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'cmTC_a5d80.'
+         /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/collect2 -plugin /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/liblto_plugin.so -plugin-opt=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cc8ppDoI.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_a5d80 /usr/lib/../lib64/crt1.o /usr/lib/../lib64/crti.o /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtbegin.o -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0 -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../.. CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.o -lstdc++ -lm -lgcc_s -lgcc -lc -lgcc_s -lgcc /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtend.o /usr/lib/../lib64/crtn.o
+        COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_a5d80' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'cmTC_a5d80.'
+        gmake[1]: Leaving directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-lvGYh6'
+        
+      exitCode: 0
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:127 (message)"
+      - "/usr/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Parsed CXX implicit include dir info: rv=done
+        found start of include info
+        found start of implicit include info
+          add: [/global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include]
+          add: [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include]
+          add: [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include]
+          add: [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include]
+          add: [/opt/cray/pe/gcc/12.2.0/snos/include/g++]
+          add: [/opt/cray/pe/gcc/12.2.0/snos/include/g++/x86_64-suse-linux]
+          add: [/opt/cray/pe/gcc/12.2.0/snos/include/g++/backward]
+          add: [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include]
+          add: [/usr/local/include]
+          add: [/opt/cray/pe/gcc/12.2.0/snos/include]
+          add: [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed]
+          add: [/usr/include]
+        end of search list found
+        collapse include dir [/global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include] ==> [/global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include]
+        collapse include dir [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include] ==> [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include]
+        collapse include dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include] ==> [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include]
+        collapse include dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include] ==> [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include]
+        collapse include dir [/opt/cray/pe/gcc/12.2.0/snos/include/g++] ==> [/opt/cray/pe/gcc/12.2.0/snos/include/g++]
+        collapse include dir [/opt/cray/pe/gcc/12.2.0/snos/include/g++/x86_64-suse-linux] ==> [/opt/cray/pe/gcc/12.2.0/snos/include/g++/x86_64-suse-linux]
+        collapse include dir [/opt/cray/pe/gcc/12.2.0/snos/include/g++/backward] ==> [/opt/cray/pe/gcc/12.2.0/snos/include/g++/backward]
+        collapse include dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include] ==> [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include]
+        collapse include dir [/usr/local/include] ==> [/usr/local/include]
+        collapse include dir [/opt/cray/pe/gcc/12.2.0/snos/include] ==> [/opt/cray/pe/gcc/12.2.0/snos/include]
+        collapse include dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed] ==> [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed]
+        collapse include dir [/usr/include] ==> [/usr/include]
+        implicit include dirs: [/global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include;/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include;/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include;/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include;/opt/cray/pe/gcc/12.2.0/snos/include/g++;/opt/cray/pe/gcc/12.2.0/snos/include/g++/x86_64-suse-linux;/opt/cray/pe/gcc/12.2.0/snos/include/g++/backward;/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include;/usr/local/include;/opt/cray/pe/gcc/12.2.0/snos/include;/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed;/usr/include]
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:159 (message)"
+      - "/usr/share/cmake/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Parsed CXX implicit link information:
+        link line regex: [^( *|.*[/\\])(ld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
+        ignore line: [Change Dir: '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-lvGYh6']
+        ignore line: []
+        ignore line: [Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_a5d80/fast]
+        ignore line: [/usr/bin/gmake  -f CMakeFiles/cmTC_a5d80.dir/build.make CMakeFiles/cmTC_a5d80.dir/build]
+        ignore line: [gmake[1]: Entering directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-lvGYh6']
+        ignore line: [Building CXX object CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.o]
+        ignore line: [/opt/cray/pe/gcc/12.2.0/bin/g++   -v -o CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.o -c /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp]
+        ignore line: [Using built-in specs.]
+        ignore line: [COLLECT_GCC=/opt/cray/pe/gcc/12.2.0/bin/../snos/bin/g++]
+        ignore line: [Target: x86_64-suse-linux]
+        ignore line: [Configured with: ../cpe-gcc-12.2.0-202211182106.97b1815c41a72/configure --prefix=/opt/cray/pe/gcc/12.2.0/snos --disable-nls --libdir=/opt/cray/pe/gcc/12.2.0/snos/lib --enable-languages=c c++ fortran --with-gxx-include-dir=/opt/cray/pe/gcc/12.2.0/snos/include/g++ --with-slibdir=/opt/cray/pe/gcc/12.2.0/snos/lib --with-system-zlib --enable-shared --enable-__cxa_atexit --build=x86_64-suse-linux --with-ppl --with-cloog --disable-multilib]
+        ignore line: [Thread model: posix]
+        ignore line: [Supported LTO compression algorithms: zlib]
+        ignore line: [gcc version 12.2.0 20220819 (HPE) (GCC) ]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_a5d80.dir/']
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/cc1plus -quiet -v -D_GNU_SOURCE /usr/share/cmake/Modules/CMakeCXXCompilerABI.cpp -quiet -dumpdir CMakeFiles/cmTC_a5d80.dir/ -dumpbase CMakeCXXCompilerABI.cpp.cpp -dumpbase-ext .cpp -mtune=generic -march=x86-64 -version -o /tmp/cc4RsHVS.s]
+        ignore line: [GNU C++17 (GCC) version 12.2.0 20220819 (HPE) (x86_64-suse-linux)]
+        ignore line: [	compiled by GNU C version 12.2.0 20220819 (HPE)  GMP version 6.0.0  MPFR version 3.1.3  MPC version 1.0.3  isl version isl-0.15-GMP]
+        ignore line: []
+        ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
+        ignore line: [ignoring nonexistent directory "/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../x86_64-suse-linux/include"]
+        ignore line: [#include "..." search starts here:]
+        ignore line: [#include <...> search starts here:]
+        ignore line: [ /global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include]
+        ignore line: [ /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include]
+        ignore line: [ /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include]
+        ignore line: [ /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/include/g++]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/include/g++/x86_64-suse-linux]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/include/g++/backward]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include]
+        ignore line: [ /usr/local/include]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/include]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed]
+        ignore line: [ /usr/include]
+        ignore line: [End of search list.]
+        ignore line: [GNU C++17 (GCC) version 12.2.0 20220819 (HPE) (x86_64-suse-linux)]
+        ignore line: [	compiled by GNU C version 12.2.0 20220819 (HPE)  GMP version 6.0.0  MPFR version 3.1.3  MPC version 1.0.3  isl version isl-0.15-GMP]
+        ignore line: []
+        ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
+        ignore line: [Compiler executable checksum: 58e344dd6573bc9f3b4e5d4016cd9bb8]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_a5d80.dir/']
+        ignore line: [ as -v --64 -o CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.o /tmp/cc4RsHVS.s]
+        ignore line: [GNU assembler version 2.45.0 (x86_64-suse-linux) using BFD version (GNU Binutils]
+        ignore line: [ SUSE Linux Enterprise 15) 2.45.0.20251103-150100757]
+        ignore line: [COMPILER_PATH=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/]
+        ignore line: [LIBRARY_PATH=/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../:/lib/:/usr/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.o' '-c' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.']
+        ignore line: [Linking CXX executable cmTC_a5d80]
+        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_a5d80.dir/link.txt --verbose=1]
+        ignore line: [/opt/cray/pe/gcc/12.2.0/bin/g++  -v CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.o -o cmTC_a5d80 ]
+        ignore line: [Using built-in specs.]
+        ignore line: [COLLECT_GCC=/opt/cray/pe/gcc/12.2.0/bin/../snos/bin/g++]
+        ignore line: [COLLECT_LTO_WRAPPER=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/lto-wrapper]
+        ignore line: [Target: x86_64-suse-linux]
+        ignore line: [Configured with: ../cpe-gcc-12.2.0-202211182106.97b1815c41a72/configure --prefix=/opt/cray/pe/gcc/12.2.0/snos --disable-nls --libdir=/opt/cray/pe/gcc/12.2.0/snos/lib --enable-languages=c c++ fortran --with-gxx-include-dir=/opt/cray/pe/gcc/12.2.0/snos/include/g++ --with-slibdir=/opt/cray/pe/gcc/12.2.0/snos/lib --with-system-zlib --enable-shared --enable-__cxa_atexit --build=x86_64-suse-linux --with-ppl --with-cloog --disable-multilib]
+        ignore line: [Thread model: posix]
+        ignore line: [Supported LTO compression algorithms: zlib]
+        ignore line: [gcc version 12.2.0 20220819 (HPE) (GCC) ]
+        ignore line: [COMPILER_PATH=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/]
+        ignore line: [LIBRARY_PATH=/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../:/lib/:/usr/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_a5d80' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'cmTC_a5d80.']
+        link line: [ /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/collect2 -plugin /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/liblto_plugin.so -plugin-opt=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cc8ppDoI.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_a5d80 /usr/lib/../lib64/crt1.o /usr/lib/../lib64/crti.o /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtbegin.o -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0 -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../.. CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.o -lstdc++ -lm -lgcc_s -lgcc -lc -lgcc_s -lgcc /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtend.o /usr/lib/../lib64/crtn.o]
+          arg [/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/collect2] ==> ignore
+          arg [-plugin] ==> ignore
+          arg [/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/liblto_plugin.so] ==> ignore
+          arg [-plugin-opt=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/lto-wrapper] ==> ignore
+          arg [-plugin-opt=-fresolution=/tmp/cc8ppDoI.res] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
+          arg [-plugin-opt=-pass-through=-lc] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
+          arg [--eh-frame-hdr] ==> ignore
+          arg [-m] ==> ignore
+          arg [elf_x86_64] ==> ignore
+          arg [-dynamic-linker] ==> ignore
+          arg [/lib64/ld-linux-x86-64.so.2] ==> ignore
+          arg [-o] ==> ignore
+          arg [cmTC_a5d80] ==> ignore
+          arg [/usr/lib/../lib64/crt1.o] ==> obj [/usr/lib/../lib64/crt1.o]
+          arg [/usr/lib/../lib64/crti.o] ==> obj [/usr/lib/../lib64/crti.o]
+          arg [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtbegin.o] ==> obj [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtbegin.o]
+          arg [-L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0] ==> dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0]
+          arg [-L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64] ==> dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64]
+          arg [-L/lib/../lib64] ==> dir [/lib/../lib64]
+          arg [-L/usr/lib/../lib64] ==> dir [/usr/lib/../lib64]
+          arg [-L/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib] ==> dir [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib]
+          arg [-L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../..] ==> dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../..]
+          arg [CMakeFiles/cmTC_a5d80.dir/CMakeCXXCompilerABI.cpp.o] ==> ignore
+          arg [-lstdc++] ==> lib [stdc++]
+          arg [-lm] ==> lib [m]
+          arg [-lgcc_s] ==> lib [gcc_s]
+          arg [-lgcc] ==> lib [gcc]
+          arg [-lc] ==> lib [c]
+          arg [-lgcc_s] ==> lib [gcc_s]
+          arg [-lgcc] ==> lib [gcc]
+          arg [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtend.o] ==> obj [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtend.o]
+          arg [/usr/lib/../lib64/crtn.o] ==> obj [/usr/lib/../lib64/crtn.o]
+        collapse obj [/usr/lib/../lib64/crt1.o] ==> [/usr/lib64/crt1.o]
+        collapse obj [/usr/lib/../lib64/crti.o] ==> [/usr/lib64/crti.o]
+        collapse obj [/usr/lib/../lib64/crtn.o] ==> [/usr/lib64/crtn.o]
+        collapse library dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0] ==> [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0]
+        collapse library dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64] ==> [/opt/cray/pe/gcc/12.2.0/snos/lib64]
+        collapse library dir [/lib/../lib64] ==> [/lib64]
+        collapse library dir [/usr/lib/../lib64] ==> [/usr/lib64]
+        collapse library dir [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib] ==> [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib]
+        collapse library dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../..] ==> [/opt/cray/pe/gcc/12.2.0/snos/lib]
+        implicit libs: [stdc++;m;gcc_s;gcc;c;gcc_s;gcc]
+        implicit objs: [/usr/lib64/crt1.o;/usr/lib64/crti.o;/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtbegin.o;/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtend.o;/usr/lib64/crtn.o]
+        implicit dirs: [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0;/opt/cray/pe/gcc/12.2.0/snos/lib64;/lib64;/usr/lib64;/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib;/opt/cray/pe/gcc/12.2.0/snos/lib]
+        implicit fwks: []
+      
+      
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:57 (try_compile)"
+      - "/usr/share/cmake/Modules/CMakeTestCUDACompiler.cmake:19 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    checks:
+      - "Detecting CUDA compiler ABI info"
+    directories:
+      source: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-6O8ocB"
+      binary: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-6O8ocB"
+    cmakeVariables:
+      CMAKE_CUDA_FLAGS: ""
+      CMAKE_CUDA_FLAGS_DEBUG: "-g"
+      CMAKE_CUDA_RUNTIME_LIBRARY: "Static"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "CMAKE_CUDA_ABI_COMPILED"
+      cached: true
+      stdout: |
+        Change Dir: '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-6O8ocB'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_cf654/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_cf654.dir/build.make CMakeFiles/cmTC_cf654.dir/build
+        gmake[1]: Entering directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-6O8ocB'
+        Building CUDA object CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o
+        /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/nvcc -forward-unknown-to-host-compiler -ccbin=/opt/cray/pe/gcc/12.2.0/bin/g++   -Xcompiler=-v -MD -MT CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o -MF CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o.d -x cu -c /usr/share/cmake/Modules/CMakeCUDACompilerABI.cu -o CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o
+        Using built-in specs.
+        COLLECT_GCC=/opt/cray/pe/gcc/12.2.0/bin/../snos/bin/g++
+        Target: x86_64-suse-linux
+        Configured with: ../cpe-gcc-12.2.0-202211182106.97b1815c41a72/configure --prefix=/opt/cray/pe/gcc/12.2.0/snos --disable-nls --libdir=/opt/cray/pe/gcc/12.2.0/snos/lib --enable-languages=c,c++,fortran --with-gxx-include-dir=/opt/cray/pe/gcc/12.2.0/snos/include/g++ --with-slibdir=/opt/cray/pe/gcc/12.2.0/snos/lib --with-system-zlib --enable-shared --enable-__cxa_atexit --build=x86_64-suse-linux --with-ppl --with-cloog --disable-multilib
+        Thread model: posix
+        Supported LTO compression algorithms: zlib
+        gcc version 12.2.0 20220819 (HPE) (GCC) 
+        COLLECT_GCC_OPTIONS='-D' '__CUDA_ARCH__=520' '-D' '__CUDA_ARCH_LIST__=520' '-D' '__NV_LEGACY_LAUNCH' '-E' '-D' 'CUDA_DOUBLE_MATH_FUNCTIONS' '-D' '__CUDACC__' '-D' '__NVCC__' '-v' '-I' '/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include' '-D' '__CUDACC_VER_MAJOR__=12' '-D' '__CUDACC_VER_MINOR__=4' '-D' '__CUDACC_VER_BUILD__=131' '-D' '__CUDA_API_VER_MAJOR__=12' '-D' '__CUDA_API_VER_MINOR__=4' '-D' '__NVCC_DIAG_PRAGMA_SUPPORT__=1' '-include' 'cuda_runtime.h' '-m64' '-o' '/tmp/tmpxft_0006dd18_00000000-7_CMakeCUDACompilerABI.cpp1.ii' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' '/tmp/'
+         /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/cc1plus -E -quiet -v -I /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include -D_GNU_SOURCE -D __CUDA_ARCH__=520 -D __CUDA_ARCH_LIST__=520 -D __NV_LEGACY_LAUNCH -D CUDA_DOUBLE_MATH_FUNCTIONS -D __CUDACC__ -D __NVCC__ -D __CUDACC_VER_MAJOR__=12 -D __CUDACC_VER_MINOR__=4 -D __CUDACC_VER_BUILD__=131 -D __CUDA_API_VER_MAJOR__=12 -D __CUDA_API_VER_MINOR__=4 -D __NVCC_DIAG_PRAGMA_SUPPORT__=1 -include cuda_runtime.h /usr/share/cmake/Modules/CMakeCUDACompilerABI.cu -o /tmp/tmpxft_0006dd18_00000000-7_CMakeCUDACompilerABI.cpp1.ii -m64 -mtune=generic -march=x86-64 -dumpdir /tmp/ -dumpbase tmpxft_0006dd18_00000000-7_CMakeCUDACompilerABI.cpp1.cu -dumpbase-ext .cu
+        ignoring nonexistent directory "/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../x86_64-suse-linux/include"
+        ignoring duplicate directory "/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include"
+        #include "..." search starts here:
+        #include <...> search starts here:
+         /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include
+         /global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include
+         /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include
+         /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include
+         /opt/cray/pe/gcc/12.2.0/snos/include/g++
+         /opt/cray/pe/gcc/12.2.0/snos/include/g++/x86_64-suse-linux
+         /opt/cray/pe/gcc/12.2.0/snos/include/g++/backward
+         /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include
+         /usr/local/include
+         /opt/cray/pe/gcc/12.2.0/snos/include
+         /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed
+         /usr/include
+        End of search list.
+        COMPILER_PATH=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/
+        LIBRARY_PATH=/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../:/lib/:/usr/lib/
+        COLLECT_GCC_OPTIONS='-D' '__CUDA_ARCH__=520' '-D' '__CUDA_ARCH_LIST__=520' '-D' '__NV_LEGACY_LAUNCH' '-E' '-D' 'CUDA_DOUBLE_MATH_FUNCTIONS' '-D' '__CUDACC__' '-D' '__NVCC__' '-v' '-I' '/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include' '-D' '__CUDACC_VER_MAJOR__=12' '-D' '__CUDACC_VER_MINOR__=4' '-D' '__CUDACC_VER_BUILD__=131' '-D' '__CUDA_API_VER_MAJOR__=12' '-D' '__CUDA_API_VER_MINOR__=4' '-D' '__NVCC_DIAG_PRAGMA_SUPPORT__=1' '-include' 'cuda_runtime.h' '-m64' '-o' '/tmp/tmpxft_0006dd18_00000000-7_CMakeCUDACompilerABI.cpp1.ii' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' '/tmp/tmpxft_0006dd18_00000000-7_CMakeCUDACompilerABI.cpp1.'
+        Using built-in specs.
+        COLLECT_GCC=/opt/cray/pe/gcc/12.2.0/bin/../snos/bin/g++
+        Target: x86_64-suse-linux
+        Configured with: ../cpe-gcc-12.2.0-202211182106.97b1815c41a72/configure --prefix=/opt/cray/pe/gcc/12.2.0/snos --disable-nls --libdir=/opt/cray/pe/gcc/12.2.0/snos/lib --enable-languages=c,c++,fortran --with-gxx-include-dir=/opt/cray/pe/gcc/12.2.0/snos/include/g++ --with-slibdir=/opt/cray/pe/gcc/12.2.0/snos/lib --with-system-zlib --enable-shared --enable-__cxa_atexit --build=x86_64-suse-linux --with-ppl --with-cloog --disable-multilib
+        Thread model: posix
+        Supported LTO compression algorithms: zlib
+        gcc version 12.2.0 20220819 (HPE) (GCC) 
+        COLLECT_GCC_OPTIONS='-D' '__CUDA_ARCH_LIST__=520' '-D' '__NV_LEGACY_LAUNCH' '-E' '-D' '__CUDACC__' '-D' '__NVCC__' '-v' '-I' '/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include' '-D' '__CUDACC_VER_MAJOR__=12' '-D' '__CUDACC_VER_MINOR__=4' '-D' '__CUDACC_VER_BUILD__=131' '-D' '__CUDA_API_VER_MAJOR__=12' '-D' '__CUDA_API_VER_MINOR__=4' '-D' '__NVCC_DIAG_PRAGMA_SUPPORT__=1' '-include' 'cuda_runtime.h' '-m64' '-o' '/tmp/tmpxft_0006dd18_00000000-5_CMakeCUDACompilerABI.cpp4.ii' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' '/tmp/'
+         /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/cc1plus -E -quiet -v -I /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include -D_GNU_SOURCE -D __CUDA_ARCH_LIST__=520 -D __NV_LEGACY_LAUNCH -D __CUDACC__ -D __NVCC__ -D __CUDACC_VER_MAJOR__=12 -D __CUDACC_VER_MINOR__=4 -D __CUDACC_VER_BUILD__=131 -D __CUDA_API_VER_MAJOR__=12 -D __CUDA_API_VER_MINOR__=4 -D __NVCC_DIAG_PRAGMA_SUPPORT__=1 -include cuda_runtime.h /usr/share/cmake/Modules/CMakeCUDACompilerABI.cu -o /tmp/tmpxft_0006dd18_00000000-5_CMakeCUDACompilerABI.cpp4.ii -m64 -mtune=generic -march=x86-64 -dumpdir /tmp/ -dumpbase tmpxft_0006dd18_00000000-5_CMakeCUDACompilerABI.cpp4.cu -dumpbase-ext .cu
+        ignoring nonexistent directory "/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../x86_64-suse-linux/include"
+        ignoring duplicate directory "/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include"
+        #include "..." search starts here:
+        #include <...> search starts here:
+         /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include
+         /global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include
+         /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include
+         /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include
+         /opt/cray/pe/gcc/12.2.0/snos/include/g++
+         /opt/cray/pe/gcc/12.2.0/snos/include/g++/x86_64-suse-linux
+         /opt/cray/pe/gcc/12.2.0/snos/include/g++/backward
+         /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include
+         /usr/local/include
+         /opt/cray/pe/gcc/12.2.0/snos/include
+         /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed
+         /usr/include
+        End of search list.
+        COMPILER_PATH=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/
+        LIBRARY_PATH=/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../:/lib/:/usr/lib/
+        COLLECT_GCC_OPTIONS='-D' '__CUDA_ARCH_LIST__=520' '-D' '__NV_LEGACY_LAUNCH' '-E' '-D' '__CUDACC__' '-D' '__NVCC__' '-v' '-I' '/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include' '-D' '__CUDACC_VER_MAJOR__=12' '-D' '__CUDACC_VER_MINOR__=4' '-D' '__CUDACC_VER_BUILD__=131' '-D' '__CUDA_API_VER_MAJOR__=12' '-D' '__CUDA_API_VER_MINOR__=4' '-D' '__NVCC_DIAG_PRAGMA_SUPPORT__=1' '-include' 'cuda_runtime.h' '-m64' '-o' '/tmp/tmpxft_0006dd18_00000000-5_CMakeCUDACompilerABI.cpp4.ii' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' '/tmp/tmpxft_0006dd18_00000000-5_CMakeCUDACompilerABI.cpp4.'
+        Using built-in specs.
+        COLLECT_GCC=/opt/cray/pe/gcc/12.2.0/bin/../snos/bin/g++
+        Target: x86_64-suse-linux
+        Configured with: ../cpe-gcc-12.2.0-202211182106.97b1815c41a72/configure --prefix=/opt/cray/pe/gcc/12.2.0/snos --disable-nls --libdir=/opt/cray/pe/gcc/12.2.0/snos/lib --enable-languages=c,c++,fortran --with-gxx-include-dir=/opt/cray/pe/gcc/12.2.0/snos/include/g++ --with-slibdir=/opt/cray/pe/gcc/12.2.0/snos/lib --with-system-zlib --enable-shared --enable-__cxa_atexit --build=x86_64-suse-linux --with-ppl --with-cloog --disable-multilib
+        Thread model: posix
+        Supported LTO compression algorithms: zlib
+        gcc version 12.2.0 20220819 (HPE) (GCC) 
+        COLLECT_GCC_OPTIONS='-D' '__CUDA_ARCH__=520' '-D' '__CUDA_ARCH_LIST__=520' '-D' '__NV_LEGACY_LAUNCH' '-c' '-D' 'CUDA_DOUBLE_MATH_FUNCTIONS' '-v' '-Wno-psabi' '-I' '/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include' '-m64' '-o' 'CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_cf654.dir/'
+         /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/cc1plus -quiet -v -I /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include -D_GNU_SOURCE -D __CUDA_ARCH__=520 -D __CUDA_ARCH_LIST__=520 -D __NV_LEGACY_LAUNCH -D CUDA_DOUBLE_MATH_FUNCTIONS /tmp/tmpxft_0006dd18_00000000-6_CMakeCUDACompilerABI.cudafe1.cpp -quiet -dumpdir CMakeFiles/cmTC_cf654.dir/ -dumpbase CMakeCUDACompilerABI.cu.cpp -dumpbase-ext .cpp -m64 -mtune=generic -march=x86-64 -Wno-psabi -version -o /tmp/ccowDlBg.s
+        GNU C++17 (GCC) version 12.2.0 20220819 (HPE) (x86_64-suse-linux)
+        	compiled by GNU C version 12.2.0 20220819 (HPE), GMP version 6.0.0, MPFR version 3.1.3, MPC version 1.0.3, isl version isl-0.15-GMP
+        
+        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
+        ignoring nonexistent directory "/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../x86_64-suse-linux/include"
+        ignoring duplicate directory "/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include"
+        #include "..." search starts here:
+        #include <...> search starts here:
+         /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include
+         /global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include
+         /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include
+         /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include
+         /opt/cray/pe/gcc/12.2.0/snos/include/g++
+         /opt/cray/pe/gcc/12.2.0/snos/include/g++/x86_64-suse-linux
+         /opt/cray/pe/gcc/12.2.0/snos/include/g++/backward
+         /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include
+         /usr/local/include
+         /opt/cray/pe/gcc/12.2.0/snos/include
+         /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed
+         /usr/include
+        End of search list.
+        GNU C++17 (GCC) version 12.2.0 20220819 (HPE) (x86_64-suse-linux)
+        	compiled by GNU C version 12.2.0 20220819 (HPE), GMP version 6.0.0, MPFR version 3.1.3, MPC version 1.0.3, isl version isl-0.15-GMP
+        
+        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
+        Compiler executable checksum: 58e344dd6573bc9f3b4e5d4016cd9bb8
+        COLLECT_GCC_OPTIONS='-D' '__CUDA_ARCH__=520' '-D' '__CUDA_ARCH_LIST__=520' '-D' '__NV_LEGACY_LAUNCH' '-c' '-D' 'CUDA_DOUBLE_MATH_FUNCTIONS' '-v' '-Wno-psabi' '-I' '/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include' '-m64' '-o' 'CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_cf654.dir/'
+         as -v -I /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include --64 -o CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o /tmp/ccowDlBg.s
+        GNU assembler version 2.45.0 (x86_64-suse-linux) using BFD version (GNU Binutils; SUSE Linux Enterprise 15) 2.45.0.20251103-150100757
+        COMPILER_PATH=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/
+        LIBRARY_PATH=/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../:/lib/:/usr/lib/
+        COLLECT_GCC_OPTIONS='-D' '__CUDA_ARCH__=520' '-D' '__CUDA_ARCH_LIST__=520' '-D' '__NV_LEGACY_LAUNCH' '-c' '-D' 'CUDA_DOUBLE_MATH_FUNCTIONS' '-v' '-Wno-psabi' '-I' '/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include' '-m64' '-o' 'CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.'
+        Linking CUDA executable cmTC_cf654
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_cf654.dir/link.txt --verbose=1
+        /opt/cray/pe/gcc/12.2.0/bin/g++  -v CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o -o cmTC_cf654  -lcudadevrt -lcudart_static -lrt -lpthread -ldl  -L"/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib/stubs" -L"/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib"
+        Using built-in specs.
+        COLLECT_GCC=/opt/cray/pe/gcc/12.2.0/bin/../snos/bin/g++
+        COLLECT_LTO_WRAPPER=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/lto-wrapper
+        Target: x86_64-suse-linux
+        Configured with: ../cpe-gcc-12.2.0-202211182106.97b1815c41a72/configure --prefix=/opt/cray/pe/gcc/12.2.0/snos --disable-nls --libdir=/opt/cray/pe/gcc/12.2.0/snos/lib --enable-languages=c,c++,fortran --with-gxx-include-dir=/opt/cray/pe/gcc/12.2.0/snos/include/g++ --with-slibdir=/opt/cray/pe/gcc/12.2.0/snos/lib --with-system-zlib --enable-shared --enable-__cxa_atexit --build=x86_64-suse-linux --with-ppl --with-cloog --disable-multilib
+        Thread model: posix
+        Supported LTO compression algorithms: zlib
+        gcc version 12.2.0 20220819 (HPE) (GCC) 
+        COMPILER_PATH=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/
+        LIBRARY_PATH=/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../:/lib/:/usr/lib/
+        COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_cf654' '-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib/stubs' '-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'cmTC_cf654.'
+         /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/collect2 -plugin /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/liblto_plugin.so -plugin-opt=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/lto-wrapper -plugin-opt=-fresolution=/tmp/ccoJ9De1.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_cf654 /usr/lib/../lib64/crt1.o /usr/lib/../lib64/crti.o /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtbegin.o -L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib/stubs -L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0 -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../.. CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o -lcudadevrt -lcudart_static -lrt -lpthread -ldl -lstdc++ -lm -lgcc_s -lgcc -lc -lgcc_s -lgcc /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtend.o /usr/lib/../lib64/crtn.o
+        COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_cf654' '-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib/stubs' '-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'cmTC_cf654.'
+        gmake[1]: Leaving directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-6O8ocB'
+        
+      exitCode: 0
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:127 (message)"
+      - "/usr/share/cmake/Modules/CMakeTestCUDACompiler.cmake:19 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Parsed CUDA implicit include dir info: rv=done
+        found start of include info
+        found start of implicit include info
+          add: [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include]
+          add: [/global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include]
+          add: [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include]
+          add: [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include]
+          add: [/opt/cray/pe/gcc/12.2.0/snos/include/g++]
+          add: [/opt/cray/pe/gcc/12.2.0/snos/include/g++/x86_64-suse-linux]
+          add: [/opt/cray/pe/gcc/12.2.0/snos/include/g++/backward]
+          add: [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include]
+          add: [/usr/local/include]
+          add: [/opt/cray/pe/gcc/12.2.0/snos/include]
+          add: [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed]
+          add: [/usr/include]
+        end of search list found
+        collapse include dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include] ==> [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/include]
+        collapse include dir [/global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include] ==> [/global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include]
+        collapse include dir [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include] ==> [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include]
+        collapse include dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include] ==> [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include]
+        collapse include dir [/opt/cray/pe/gcc/12.2.0/snos/include/g++] ==> [/opt/cray/pe/gcc/12.2.0/snos/include/g++]
+        collapse include dir [/opt/cray/pe/gcc/12.2.0/snos/include/g++/x86_64-suse-linux] ==> [/opt/cray/pe/gcc/12.2.0/snos/include/g++/x86_64-suse-linux]
+        collapse include dir [/opt/cray/pe/gcc/12.2.0/snos/include/g++/backward] ==> [/opt/cray/pe/gcc/12.2.0/snos/include/g++/backward]
+        collapse include dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include] ==> [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include]
+        collapse include dir [/usr/local/include] ==> [/usr/local/include]
+        collapse include dir [/opt/cray/pe/gcc/12.2.0/snos/include] ==> [/opt/cray/pe/gcc/12.2.0/snos/include]
+        collapse include dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed] ==> [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed]
+        collapse include dir [/usr/include] ==> [/usr/include]
+        implicit include dirs: [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/include;/global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include;/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include;/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include;/opt/cray/pe/gcc/12.2.0/snos/include/g++;/opt/cray/pe/gcc/12.2.0/snos/include/g++/x86_64-suse-linux;/opt/cray/pe/gcc/12.2.0/snos/include/g++/backward;/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include;/usr/local/include;/opt/cray/pe/gcc/12.2.0/snos/include;/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed;/usr/include]
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/CMakeDetermineCompilerABI.cmake:159 (message)"
+      - "/usr/share/cmake/Modules/CMakeTestCUDACompiler.cmake:19 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Parsed CUDA implicit link information:
+        link line regex: [^( *|.*[/\\])(ld|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
+        ignore line: [Change Dir: '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-6O8ocB']
+        ignore line: []
+        ignore line: [Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_cf654/fast]
+        ignore line: [/usr/bin/gmake  -f CMakeFiles/cmTC_cf654.dir/build.make CMakeFiles/cmTC_cf654.dir/build]
+        ignore line: [gmake[1]: Entering directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-6O8ocB']
+        ignore line: [Building CUDA object CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o]
+        ignore line: [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/nvcc -forward-unknown-to-host-compiler -ccbin=/opt/cray/pe/gcc/12.2.0/bin/g++   -Xcompiler=-v -MD -MT CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o -MF CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o.d -x cu -c /usr/share/cmake/Modules/CMakeCUDACompilerABI.cu -o CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o]
+        ignore line: [Using built-in specs.]
+        ignore line: [COLLECT_GCC=/opt/cray/pe/gcc/12.2.0/bin/../snos/bin/g++]
+        ignore line: [Target: x86_64-suse-linux]
+        ignore line: [Configured with: ../cpe-gcc-12.2.0-202211182106.97b1815c41a72/configure --prefix=/opt/cray/pe/gcc/12.2.0/snos --disable-nls --libdir=/opt/cray/pe/gcc/12.2.0/snos/lib --enable-languages=c c++ fortran --with-gxx-include-dir=/opt/cray/pe/gcc/12.2.0/snos/include/g++ --with-slibdir=/opt/cray/pe/gcc/12.2.0/snos/lib --with-system-zlib --enable-shared --enable-__cxa_atexit --build=x86_64-suse-linux --with-ppl --with-cloog --disable-multilib]
+        ignore line: [Thread model: posix]
+        ignore line: [Supported LTO compression algorithms: zlib]
+        ignore line: [gcc version 12.2.0 20220819 (HPE) (GCC) ]
+        ignore line: [COLLECT_GCC_OPTIONS='-D' '__CUDA_ARCH__=520' '-D' '__CUDA_ARCH_LIST__=520' '-D' '__NV_LEGACY_LAUNCH' '-E' '-D' 'CUDA_DOUBLE_MATH_FUNCTIONS' '-D' '__CUDACC__' '-D' '__NVCC__' '-v' '-I' '/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include' '-D' '__CUDACC_VER_MAJOR__=12' '-D' '__CUDACC_VER_MINOR__=4' '-D' '__CUDACC_VER_BUILD__=131' '-D' '__CUDA_API_VER_MAJOR__=12' '-D' '__CUDA_API_VER_MINOR__=4' '-D' '__NVCC_DIAG_PRAGMA_SUPPORT__=1' '-include' 'cuda_runtime.h' '-m64' '-o' '/tmp/tmpxft_0006dd18_00000000-7_CMakeCUDACompilerABI.cpp1.ii' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' '/tmp/']
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/cc1plus -E -quiet -v -I /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include -D_GNU_SOURCE -D __CUDA_ARCH__=520 -D __CUDA_ARCH_LIST__=520 -D __NV_LEGACY_LAUNCH -D CUDA_DOUBLE_MATH_FUNCTIONS -D __CUDACC__ -D __NVCC__ -D __CUDACC_VER_MAJOR__=12 -D __CUDACC_VER_MINOR__=4 -D __CUDACC_VER_BUILD__=131 -D __CUDA_API_VER_MAJOR__=12 -D __CUDA_API_VER_MINOR__=4 -D __NVCC_DIAG_PRAGMA_SUPPORT__=1 -include cuda_runtime.h /usr/share/cmake/Modules/CMakeCUDACompilerABI.cu -o /tmp/tmpxft_0006dd18_00000000-7_CMakeCUDACompilerABI.cpp1.ii -m64 -mtune=generic -march=x86-64 -dumpdir /tmp/ -dumpbase tmpxft_0006dd18_00000000-7_CMakeCUDACompilerABI.cpp1.cu -dumpbase-ext .cu]
+        ignore line: [ignoring nonexistent directory "/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../x86_64-suse-linux/include"]
+        ignore line: [ignoring duplicate directory "/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include"]
+        ignore line: [#include "..." search starts here:]
+        ignore line: [#include <...> search starts here:]
+        ignore line: [ /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include]
+        ignore line: [ /global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include]
+        ignore line: [ /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include]
+        ignore line: [ /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/include/g++]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/include/g++/x86_64-suse-linux]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/include/g++/backward]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include]
+        ignore line: [ /usr/local/include]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/include]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed]
+        ignore line: [ /usr/include]
+        ignore line: [End of search list.]
+        ignore line: [COMPILER_PATH=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/]
+        ignore line: [LIBRARY_PATH=/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../:/lib/:/usr/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS='-D' '__CUDA_ARCH__=520' '-D' '__CUDA_ARCH_LIST__=520' '-D' '__NV_LEGACY_LAUNCH' '-E' '-D' 'CUDA_DOUBLE_MATH_FUNCTIONS' '-D' '__CUDACC__' '-D' '__NVCC__' '-v' '-I' '/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include' '-D' '__CUDACC_VER_MAJOR__=12' '-D' '__CUDACC_VER_MINOR__=4' '-D' '__CUDACC_VER_BUILD__=131' '-D' '__CUDA_API_VER_MAJOR__=12' '-D' '__CUDA_API_VER_MINOR__=4' '-D' '__NVCC_DIAG_PRAGMA_SUPPORT__=1' '-include' 'cuda_runtime.h' '-m64' '-o' '/tmp/tmpxft_0006dd18_00000000-7_CMakeCUDACompilerABI.cpp1.ii' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' '/tmp/tmpxft_0006dd18_00000000-7_CMakeCUDACompilerABI.cpp1.']
+        ignore line: [Using built-in specs.]
+        ignore line: [COLLECT_GCC=/opt/cray/pe/gcc/12.2.0/bin/../snos/bin/g++]
+        ignore line: [Target: x86_64-suse-linux]
+        ignore line: [Configured with: ../cpe-gcc-12.2.0-202211182106.97b1815c41a72/configure --prefix=/opt/cray/pe/gcc/12.2.0/snos --disable-nls --libdir=/opt/cray/pe/gcc/12.2.0/snos/lib --enable-languages=c c++ fortran --with-gxx-include-dir=/opt/cray/pe/gcc/12.2.0/snos/include/g++ --with-slibdir=/opt/cray/pe/gcc/12.2.0/snos/lib --with-system-zlib --enable-shared --enable-__cxa_atexit --build=x86_64-suse-linux --with-ppl --with-cloog --disable-multilib]
+        ignore line: [Thread model: posix]
+        ignore line: [Supported LTO compression algorithms: zlib]
+        ignore line: [gcc version 12.2.0 20220819 (HPE) (GCC) ]
+        ignore line: [COLLECT_GCC_OPTIONS='-D' '__CUDA_ARCH_LIST__=520' '-D' '__NV_LEGACY_LAUNCH' '-E' '-D' '__CUDACC__' '-D' '__NVCC__' '-v' '-I' '/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include' '-D' '__CUDACC_VER_MAJOR__=12' '-D' '__CUDACC_VER_MINOR__=4' '-D' '__CUDACC_VER_BUILD__=131' '-D' '__CUDA_API_VER_MAJOR__=12' '-D' '__CUDA_API_VER_MINOR__=4' '-D' '__NVCC_DIAG_PRAGMA_SUPPORT__=1' '-include' 'cuda_runtime.h' '-m64' '-o' '/tmp/tmpxft_0006dd18_00000000-5_CMakeCUDACompilerABI.cpp4.ii' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' '/tmp/']
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/cc1plus -E -quiet -v -I /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include -D_GNU_SOURCE -D __CUDA_ARCH_LIST__=520 -D __NV_LEGACY_LAUNCH -D __CUDACC__ -D __NVCC__ -D __CUDACC_VER_MAJOR__=12 -D __CUDACC_VER_MINOR__=4 -D __CUDACC_VER_BUILD__=131 -D __CUDA_API_VER_MAJOR__=12 -D __CUDA_API_VER_MINOR__=4 -D __NVCC_DIAG_PRAGMA_SUPPORT__=1 -include cuda_runtime.h /usr/share/cmake/Modules/CMakeCUDACompilerABI.cu -o /tmp/tmpxft_0006dd18_00000000-5_CMakeCUDACompilerABI.cpp4.ii -m64 -mtune=generic -march=x86-64 -dumpdir /tmp/ -dumpbase tmpxft_0006dd18_00000000-5_CMakeCUDACompilerABI.cpp4.cu -dumpbase-ext .cu]
+        ignore line: [ignoring nonexistent directory "/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../x86_64-suse-linux/include"]
+        ignore line: [ignoring duplicate directory "/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include"]
+        ignore line: [#include "..." search starts here:]
+        ignore line: [#include <...> search starts here:]
+        ignore line: [ /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include]
+        ignore line: [ /global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include]
+        ignore line: [ /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include]
+        ignore line: [ /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/include/g++]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/include/g++/x86_64-suse-linux]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/include/g++/backward]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include]
+        ignore line: [ /usr/local/include]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/include]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed]
+        ignore line: [ /usr/include]
+        ignore line: [End of search list.]
+        ignore line: [COMPILER_PATH=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/]
+        ignore line: [LIBRARY_PATH=/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../:/lib/:/usr/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS='-D' '__CUDA_ARCH_LIST__=520' '-D' '__NV_LEGACY_LAUNCH' '-E' '-D' '__CUDACC__' '-D' '__NVCC__' '-v' '-I' '/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include' '-D' '__CUDACC_VER_MAJOR__=12' '-D' '__CUDACC_VER_MINOR__=4' '-D' '__CUDACC_VER_BUILD__=131' '-D' '__CUDA_API_VER_MAJOR__=12' '-D' '__CUDA_API_VER_MINOR__=4' '-D' '__NVCC_DIAG_PRAGMA_SUPPORT__=1' '-include' 'cuda_runtime.h' '-m64' '-o' '/tmp/tmpxft_0006dd18_00000000-5_CMakeCUDACompilerABI.cpp4.ii' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' '/tmp/tmpxft_0006dd18_00000000-5_CMakeCUDACompilerABI.cpp4.']
+        ignore line: [Using built-in specs.]
+        ignore line: [COLLECT_GCC=/opt/cray/pe/gcc/12.2.0/bin/../snos/bin/g++]
+        ignore line: [Target: x86_64-suse-linux]
+        ignore line: [Configured with: ../cpe-gcc-12.2.0-202211182106.97b1815c41a72/configure --prefix=/opt/cray/pe/gcc/12.2.0/snos --disable-nls --libdir=/opt/cray/pe/gcc/12.2.0/snos/lib --enable-languages=c c++ fortran --with-gxx-include-dir=/opt/cray/pe/gcc/12.2.0/snos/include/g++ --with-slibdir=/opt/cray/pe/gcc/12.2.0/snos/lib --with-system-zlib --enable-shared --enable-__cxa_atexit --build=x86_64-suse-linux --with-ppl --with-cloog --disable-multilib]
+        ignore line: [Thread model: posix]
+        ignore line: [Supported LTO compression algorithms: zlib]
+        ignore line: [gcc version 12.2.0 20220819 (HPE) (GCC) ]
+        ignore line: [COLLECT_GCC_OPTIONS='-D' '__CUDA_ARCH__=520' '-D' '__CUDA_ARCH_LIST__=520' '-D' '__NV_LEGACY_LAUNCH' '-c' '-D' 'CUDA_DOUBLE_MATH_FUNCTIONS' '-v' '-Wno-psabi' '-I' '/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include' '-m64' '-o' 'CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_cf654.dir/']
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/cc1plus -quiet -v -I /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include -D_GNU_SOURCE -D __CUDA_ARCH__=520 -D __CUDA_ARCH_LIST__=520 -D __NV_LEGACY_LAUNCH -D CUDA_DOUBLE_MATH_FUNCTIONS /tmp/tmpxft_0006dd18_00000000-6_CMakeCUDACompilerABI.cudafe1.cpp -quiet -dumpdir CMakeFiles/cmTC_cf654.dir/ -dumpbase CMakeCUDACompilerABI.cu.cpp -dumpbase-ext .cpp -m64 -mtune=generic -march=x86-64 -Wno-psabi -version -o /tmp/ccowDlBg.s]
+        ignore line: [GNU C++17 (GCC) version 12.2.0 20220819 (HPE) (x86_64-suse-linux)]
+        ignore line: [	compiled by GNU C version 12.2.0 20220819 (HPE)  GMP version 6.0.0  MPFR version 3.1.3  MPC version 1.0.3  isl version isl-0.15-GMP]
+        ignore line: []
+        ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
+        ignore line: [ignoring nonexistent directory "/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../x86_64-suse-linux/include"]
+        ignore line: [ignoring duplicate directory "/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include"]
+        ignore line: [#include "..." search starts here:]
+        ignore line: [#include <...> search starts here:]
+        ignore line: [ /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include]
+        ignore line: [ /global/homes/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/nccl/build/local/include]
+        ignore line: [ /global/common/software/nersc9/nvshmem/3.2.5-1-25.03/include]
+        ignore line: [ /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/include/g++]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/include/g++/x86_64-suse-linux]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/include/g++/backward]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include]
+        ignore line: [ /usr/local/include]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/include]
+        ignore line: [ /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/include-fixed]
+        ignore line: [ /usr/include]
+        ignore line: [End of search list.]
+        ignore line: [GNU C++17 (GCC) version 12.2.0 20220819 (HPE) (x86_64-suse-linux)]
+        ignore line: [	compiled by GNU C version 12.2.0 20220819 (HPE)  GMP version 6.0.0  MPFR version 3.1.3  MPC version 1.0.3  isl version isl-0.15-GMP]
+        ignore line: []
+        ignore line: [GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072]
+        ignore line: [Compiler executable checksum: 58e344dd6573bc9f3b4e5d4016cd9bb8]
+        ignore line: [COLLECT_GCC_OPTIONS='-D' '__CUDA_ARCH__=520' '-D' '__CUDA_ARCH_LIST__=520' '-D' '__NV_LEGACY_LAUNCH' '-c' '-D' 'CUDA_DOUBLE_MATH_FUNCTIONS' '-v' '-Wno-psabi' '-I' '/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include' '-m64' '-o' 'CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_cf654.dir/']
+        ignore line: [ as -v -I /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include --64 -o CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o /tmp/ccowDlBg.s]
+        ignore line: [GNU assembler version 2.45.0 (x86_64-suse-linux) using BFD version (GNU Binutils]
+        ignore line: [ SUSE Linux Enterprise 15) 2.45.0.20251103-150100757]
+        ignore line: [COMPILER_PATH=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/]
+        ignore line: [LIBRARY_PATH=/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../:/lib/:/usr/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS='-D' '__CUDA_ARCH__=520' '-D' '__CUDA_ARCH_LIST__=520' '-D' '__NV_LEGACY_LAUNCH' '-c' '-D' 'CUDA_DOUBLE_MATH_FUNCTIONS' '-v' '-Wno-psabi' '-I' '/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/bin/../targets/x86_64-linux/include' '-m64' '-o' 'CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.']
+        ignore line: [Linking CUDA executable cmTC_cf654]
+        ignore line: [/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_cf654.dir/link.txt --verbose=1]
+        ignore line: [/opt/cray/pe/gcc/12.2.0/bin/g++  -v CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o -o cmTC_cf654  -lcudadevrt -lcudart_static -lrt -lpthread -ldl  -L"/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib/stubs" -L"/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib"]
+        ignore line: [Using built-in specs.]
+        ignore line: [COLLECT_GCC=/opt/cray/pe/gcc/12.2.0/bin/../snos/bin/g++]
+        ignore line: [COLLECT_LTO_WRAPPER=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/lto-wrapper]
+        ignore line: [Target: x86_64-suse-linux]
+        ignore line: [Configured with: ../cpe-gcc-12.2.0-202211182106.97b1815c41a72/configure --prefix=/opt/cray/pe/gcc/12.2.0/snos --disable-nls --libdir=/opt/cray/pe/gcc/12.2.0/snos/lib --enable-languages=c c++ fortran --with-gxx-include-dir=/opt/cray/pe/gcc/12.2.0/snos/include/g++ --with-slibdir=/opt/cray/pe/gcc/12.2.0/snos/lib --with-system-zlib --enable-shared --enable-__cxa_atexit --build=x86_64-suse-linux --with-ppl --with-cloog --disable-multilib]
+        ignore line: [Thread model: posix]
+        ignore line: [Supported LTO compression algorithms: zlib]
+        ignore line: [gcc version 12.2.0 20220819 (HPE) (GCC) ]
+        ignore line: [COMPILER_PATH=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/]
+        ignore line: [LIBRARY_PATH=/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64/:/lib/../lib64/:/usr/lib/../lib64/:/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib/:/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../:/lib/:/usr/lib/]
+        ignore line: [COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_cf654' '-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib/stubs' '-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib' '-shared-libgcc' '-mtune=generic' '-march=x86-64' '-dumpdir' 'cmTC_cf654.']
+        link line: [ /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/collect2 -plugin /opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/liblto_plugin.so -plugin-opt=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/lto-wrapper -plugin-opt=-fresolution=/tmp/ccoJ9De1.res -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lc -plugin-opt=-pass-through=-lgcc_s -plugin-opt=-pass-through=-lgcc --eh-frame-hdr -m elf_x86_64 -dynamic-linker /lib64/ld-linux-x86-64.so.2 -o cmTC_cf654 /usr/lib/../lib64/crt1.o /usr/lib/../lib64/crti.o /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtbegin.o -L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib/stubs -L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0 -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64 -L/lib/../lib64 -L/usr/lib/../lib64 -L/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib -L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../.. CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o -lcudadevrt -lcudart_static -lrt -lpthread -ldl -lstdc++ -lm -lgcc_s -lgcc -lc -lgcc_s -lgcc /opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtend.o /usr/lib/../lib64/crtn.o]
+          arg [/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/collect2] ==> ignore
+          arg [-plugin] ==> ignore
+          arg [/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/liblto_plugin.so] ==> ignore
+          arg [-plugin-opt=/opt/cray/pe/gcc/12.2.0/snos/libexec/gcc/x86_64-suse-linux/12.2.0/lto-wrapper] ==> ignore
+          arg [-plugin-opt=-fresolution=/tmp/ccoJ9De1.res] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
+          arg [-plugin-opt=-pass-through=-lc] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc_s] ==> ignore
+          arg [-plugin-opt=-pass-through=-lgcc] ==> ignore
+          arg [--eh-frame-hdr] ==> ignore
+          arg [-m] ==> ignore
+          arg [elf_x86_64] ==> ignore
+          arg [-dynamic-linker] ==> ignore
+          arg [/lib64/ld-linux-x86-64.so.2] ==> ignore
+          arg [-o] ==> ignore
+          arg [cmTC_cf654] ==> ignore
+          arg [/usr/lib/../lib64/crt1.o] ==> obj [/usr/lib/../lib64/crt1.o]
+          arg [/usr/lib/../lib64/crti.o] ==> obj [/usr/lib/../lib64/crti.o]
+          arg [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtbegin.o] ==> obj [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtbegin.o]
+          arg [-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib/stubs] ==> dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib/stubs]
+          arg [-L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib] ==> dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib]
+          arg [-L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0] ==> dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0]
+          arg [-L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64] ==> dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64]
+          arg [-L/lib/../lib64] ==> dir [/lib/../lib64]
+          arg [-L/usr/lib/../lib64] ==> dir [/usr/lib/../lib64]
+          arg [-L/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib] ==> dir [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib]
+          arg [-L/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../..] ==> dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../..]
+          arg [CMakeFiles/cmTC_cf654.dir/CMakeCUDACompilerABI.cu.o] ==> ignore
+          arg [-lcudadevrt] ==> lib [cudadevrt]
+          arg [-lcudart_static] ==> lib [cudart_static]
+          arg [-lrt] ==> lib [rt]
+          arg [-lpthread] ==> lib [pthread]
+          arg [-ldl] ==> lib [dl]
+          arg [-lstdc++] ==> lib [stdc++]
+          arg [-lm] ==> lib [m]
+          arg [-lgcc_s] ==> lib [gcc_s]
+          arg [-lgcc] ==> lib [gcc]
+          arg [-lc] ==> lib [c]
+          arg [-lgcc_s] ==> lib [gcc_s]
+          arg [-lgcc] ==> lib [gcc]
+          arg [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtend.o] ==> obj [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtend.o]
+          arg [/usr/lib/../lib64/crtn.o] ==> obj [/usr/lib/../lib64/crtn.o]
+        collapse obj [/usr/lib/../lib64/crt1.o] ==> [/usr/lib64/crt1.o]
+        collapse obj [/usr/lib/../lib64/crti.o] ==> [/usr/lib64/crti.o]
+        collapse obj [/usr/lib/../lib64/crtn.o] ==> [/usr/lib64/crtn.o]
+        collapse library dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib/stubs] ==> [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib/stubs]
+        collapse library dir [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib] ==> [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib]
+        collapse library dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0] ==> [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0]
+        collapse library dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../../../lib64] ==> [/opt/cray/pe/gcc/12.2.0/snos/lib64]
+        collapse library dir [/lib/../lib64] ==> [/lib64]
+        collapse library dir [/usr/lib/../lib64] ==> [/usr/lib64]
+        collapse library dir [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib] ==> [/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib]
+        collapse library dir [/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/../../..] ==> [/opt/cray/pe/gcc/12.2.0/snos/lib]
+        implicit libs: [cudadevrt;cudart_static;rt;pthread;dl;stdc++;m;gcc_s;gcc;c;gcc_s;gcc]
+        implicit objs: [/usr/lib64/crt1.o;/usr/lib64/crti.o;/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtbegin.o;/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0/crtend.o;/usr/lib64/crtn.o]
+        implicit dirs: [/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib/stubs;/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib;/opt/cray/pe/gcc/12.2.0/snos/lib/gcc/x86_64-suse-linux/12.2.0;/opt/cray/pe/gcc/12.2.0/snos/lib64;/lib64;/usr/lib64;/global/common/software/nersc9/nvshmem/3.2.5-1-25.03/lib;/opt/cray/pe/gcc/12.2.0/snos/lib]
+        implicit fwks: []
+      
+      
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake/Modules/Internal/CheckSourceCompiles.cmake:101 (try_compile)"
+      - "/usr/share/cmake/Modules/CheckCSourceCompiles.cmake:52 (cmake_check_source_compiles)"
+      - "/usr/share/cmake/Modules/FindThreads.cmake:97 (CHECK_C_SOURCE_COMPILES)"
+      - "/usr/share/cmake/Modules/FindThreads.cmake:163 (_threads_check_libc)"
+      - "/usr/share/cmake/Modules/FindCUDAToolkit.cmake:1152 (find_package)"
+      - "CMakeLists.txt:32 (find_package)"
+    checks:
+      - "Performing Test CMAKE_HAVE_LIBC_PTHREAD"
+    directories:
+      source: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-Sx38rj"
+      binary: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-Sx38rj"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/cmake/modules/"
+    buildResult:
+      variable: "CMAKE_HAVE_LIBC_PTHREAD"
+      cached: true
+      stdout: |
+        Change Dir: '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-Sx38rj'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_a1045/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_a1045.dir/build.make CMakeFiles/cmTC_a1045.dir/build
+        gmake[1]: Entering directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-Sx38rj'
+        Building C object CMakeFiles/cmTC_a1045.dir/src.c.o
+        /opt/cray/pe/gcc/12.2.0/bin/gcc -DCMAKE_HAVE_LIBC_PTHREAD   -o CMakeFiles/cmTC_a1045.dir/src.c.o -c /global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-Sx38rj/src.c
+        Linking C executable cmTC_a1045
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_a1045.dir/link.txt --verbose=1
+        /opt/cray/pe/gcc/12.2.0/bin/gcc CMakeFiles/cmTC_a1045.dir/src.c.o -o cmTC_a1045 
+        gmake[1]: Leaving directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeScratch/TryCompile-Sx38rj'
+        
+      exitCode: 0
+  -
+    kind: "try_run-v1"
+    backtrace:
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/public/cuda.cmake:99 (try_run)"
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/Caffe2Config.cmake:86 (include)"
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:68 (find_package)"
+      - "CMakeLists.txt:185 (find_package)"
+    directories:
+      source: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp"
+      binary: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80;89;90"
+      CMAKE_CXX_FLAGS: " -O3"
+      CMAKE_CXX_FLAGS_DEBUG: "-g  -Wall -O0"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/cmake/modules/;/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2;/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/public/../Modules_CUDA_fix"
+    buildResult:
+      variable: "compile_result"
+      cached: true
+      stdout: |
+        Change Dir: '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_17161/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_17161.dir/build.make CMakeFiles/cmTC_17161.dir/build
+        gmake[1]: Entering directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        Building CXX object CMakeFiles/cmTC_17161.dir/detect_cuda_version.cc.o
+        /opt/cray/pe/gcc/12.2.0/bin/g++  -I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include -O3  -std=gnu++17 -o CMakeFiles/cmTC_17161.dir/detect_cuda_version.cc.o -c /global/u1/y/yufeid/workspace/changchen/andrewy/flux/detect_cuda_version.cc
+        Linking CXX executable cmTC_17161
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_17161.dir/link.txt --verbose=1
+        /opt/cray/pe/gcc/12.2.0/bin/g++  -O3  CMakeFiles/cmTC_17161.dir/detect_cuda_version.cc.o -o cmTC_17161  -Wl,-rpath,/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/lib64 /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/lib64/libcudart.so 
+        gmake[1]: Leaving directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        
+      exitCode: 0
+    runResult:
+      variable: "run_result"
+      cached: true
+      stdout: |
+        12.4
+      exitCode: 0
+...
+
+---
+events:
+  -
+    kind: "try_run-v1"
+    backtrace:
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/public/cuda.cmake:99 (try_run)"
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/Caffe2Config.cmake:86 (include)"
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:68 (find_package)"
+      - "CMakeLists.txt:185 (find_package)"
+    directories:
+      source: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp"
+      binary: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80"
+      CMAKE_CXX_FLAGS: " -O3"
+      CMAKE_CXX_FLAGS_DEBUG: "-g  -Wall -O0"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/cmake/modules/;/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2;/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/public/../Modules_CUDA_fix"
+    buildResult:
+      variable: "compile_result"
+      cached: true
+      stdout: |
+        Change Dir: '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_920b6/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_920b6.dir/build.make CMakeFiles/cmTC_920b6.dir/build
+        gmake[1]: Entering directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        Building CXX object CMakeFiles/cmTC_920b6.dir/detect_cuda_version.cc.o
+        /opt/cray/pe/gcc/12.2.0/bin/g++  -I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include -O3  -std=gnu++17 -o CMakeFiles/cmTC_920b6.dir/detect_cuda_version.cc.o -c /global/u1/y/yufeid/workspace/changchen/andrewy/flux/detect_cuda_version.cc
+        Linking CXX executable cmTC_920b6
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_920b6.dir/link.txt --verbose=1
+        /opt/cray/pe/gcc/12.2.0/bin/g++  -O3  CMakeFiles/cmTC_920b6.dir/detect_cuda_version.cc.o -o cmTC_920b6  -Wl,-rpath,/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/lib64 /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/lib64/libcudart.so 
+        gmake[1]: Leaving directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        
+      exitCode: 0
+    runResult:
+      variable: "run_result"
+      cached: true
+      stdout: |
+        12.4
+      exitCode: 0
+...
+
+---
+events:
+  -
+    kind: "try_run-v1"
+    backtrace:
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/public/cuda.cmake:99 (try_run)"
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/Caffe2Config.cmake:86 (include)"
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:68 (find_package)"
+      - "CMakeLists.txt:185 (find_package)"
+    directories:
+      source: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp"
+      binary: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80"
+      CMAKE_CXX_FLAGS: " -O3"
+      CMAKE_CXX_FLAGS_DEBUG: "-g  -Wall -O0"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/cmake/modules/;/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2;/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/public/../Modules_CUDA_fix"
+    buildResult:
+      variable: "compile_result"
+      cached: true
+      stdout: |
+        Change Dir: '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_eddd6/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_eddd6.dir/build.make CMakeFiles/cmTC_eddd6.dir/build
+        gmake[1]: Entering directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        Building CXX object CMakeFiles/cmTC_eddd6.dir/detect_cuda_version.cc.o
+        /opt/cray/pe/gcc/12.2.0/bin/g++  -I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include -O3  -std=gnu++17 -o CMakeFiles/cmTC_eddd6.dir/detect_cuda_version.cc.o -c /global/u1/y/yufeid/workspace/changchen/andrewy/flux/detect_cuda_version.cc
+        Linking CXX executable cmTC_eddd6
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_eddd6.dir/link.txt --verbose=1
+        /opt/cray/pe/gcc/12.2.0/bin/g++  -O3  CMakeFiles/cmTC_eddd6.dir/detect_cuda_version.cc.o -o cmTC_eddd6  -Wl,-rpath,/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/lib64 /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/lib64/libcudart.so 
+        gmake[1]: Leaving directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        
+      exitCode: 0
+    runResult:
+      variable: "run_result"
+      cached: true
+      stdout: |
+        12.4
+      exitCode: 0
+...
+
+---
+events:
+  -
+    kind: "try_run-v1"
+    backtrace:
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/public/cuda.cmake:99 (try_run)"
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/Caffe2Config.cmake:86 (include)"
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:68 (find_package)"
+      - "CMakeLists.txt:185 (find_package)"
+    directories:
+      source: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp"
+      binary: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80"
+      CMAKE_CXX_FLAGS: " -O3"
+      CMAKE_CXX_FLAGS_DEBUG: "-g  -Wall -O0"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/cmake/modules/;/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2;/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/public/../Modules_CUDA_fix"
+    buildResult:
+      variable: "compile_result"
+      cached: true
+      stdout: |
+        Change Dir: '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_5e1db/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_5e1db.dir/build.make CMakeFiles/cmTC_5e1db.dir/build
+        gmake[1]: Entering directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        Building CXX object CMakeFiles/cmTC_5e1db.dir/detect_cuda_version.cc.o
+        /opt/cray/pe/gcc/12.2.0/bin/g++  -I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include -O3  -std=gnu++17 -o CMakeFiles/cmTC_5e1db.dir/detect_cuda_version.cc.o -c /global/u1/y/yufeid/workspace/changchen/andrewy/flux/detect_cuda_version.cc
+        Linking CXX executable cmTC_5e1db
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_5e1db.dir/link.txt --verbose=1
+        /opt/cray/pe/gcc/12.2.0/bin/g++  -O3  CMakeFiles/cmTC_5e1db.dir/detect_cuda_version.cc.o -o cmTC_5e1db  -Wl,-rpath,/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/lib64 /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/lib64/libcudart.so 
+        gmake[1]: Leaving directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        
+      exitCode: 0
+    runResult:
+      variable: "run_result"
+      cached: true
+      stdout: |
+        12.4
+      exitCode: 0
+...
+
+---
+events:
+  -
+    kind: "try_run-v1"
+    backtrace:
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/public/cuda.cmake:99 (try_run)"
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/Caffe2Config.cmake:86 (include)"
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:68 (find_package)"
+      - "/global/homes/y/yufeid/workspace/changchen/andrewy/flux/CMakeLists.txt:185 (find_package)"
+    directories:
+      source: "/global/homes/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp"
+      binary: "/global/homes/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80"
+      CMAKE_CXX_FLAGS: " -O3"
+      CMAKE_CXX_FLAGS_DEBUG: "-g  -Wall -O0"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/global/homes/y/yufeid/workspace/changchen/andrewy/flux/cmake/modules/;/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2;/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/public/../Modules_CUDA_fix"
+    buildResult:
+      variable: "compile_result"
+      cached: true
+      stdout: |
+        Change Dir: '/global/homes/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_c6889/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_c6889.dir/build.make CMakeFiles/cmTC_c6889.dir/build
+        gmake[1]: Entering directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        Building CXX object CMakeFiles/cmTC_c6889.dir/detect_cuda_version.cc.o
+        /opt/cray/pe/gcc/12.2.0/bin/g++   -O3  -std=gnu++17 -o CMakeFiles/cmTC_c6889.dir/detect_cuda_version.cc.o -c /global/homes/y/yufeid/workspace/changchen/andrewy/flux/detect_cuda_version.cc
+        Linking CXX executable cmTC_c6889
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_c6889.dir/link.txt --verbose=1
+        /opt/cray/pe/gcc/12.2.0/bin/g++  -O3  CMakeFiles/cmTC_c6889.dir/detect_cuda_version.cc.o -o cmTC_c6889  -Wl,-rpath,/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/lib64 /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/lib64/libcudart.so 
+        gmake[1]: Leaving directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        
+      exitCode: 0
+    runResult:
+      variable: "run_result"
+      cached: true
+      stdout: |
+        12.9
+      exitCode: 0
+...
+
+---
+events:
+  -
+    kind: "try_run-v1"
+    backtrace:
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/public/cuda.cmake:99 (try_run)"
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/Caffe2Config.cmake:86 (include)"
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:68 (find_package)"
+      - "/global/homes/y/yufeid/workspace/changchen/andrewy/flux/CMakeLists.txt:185 (find_package)"
+    directories:
+      source: "/global/homes/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp"
+      binary: "/global/homes/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80"
+      CMAKE_CXX_FLAGS: " -O3"
+      CMAKE_CXX_FLAGS_DEBUG: "-g  -Wall -O0"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/global/homes/y/yufeid/workspace/changchen/andrewy/flux/cmake/modules/;/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2;/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/public/../Modules_CUDA_fix"
+    buildResult:
+      variable: "compile_result"
+      cached: true
+      stdout: |
+        Change Dir: '/global/homes/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_2a543/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_2a543.dir/build.make CMakeFiles/cmTC_2a543.dir/build
+        gmake[1]: Entering directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        Building CXX object CMakeFiles/cmTC_2a543.dir/detect_cuda_version.cc.o
+        /opt/cray/pe/gcc/12.2.0/bin/g++   -O3  -std=gnu++17 -o CMakeFiles/cmTC_2a543.dir/detect_cuda_version.cc.o -c /global/homes/y/yufeid/workspace/changchen/andrewy/flux/detect_cuda_version.cc
+        /global/homes/y/yufeid/workspace/changchen/andrewy/flux/detect_cuda_version.cc:1:10: fatal error: cuda.h: No such file or directory
+            1 | #include <cuda.h>
+              |          ^~~~~~~~
+        compilation terminated.
+        gmake[1]: *** [CMakeFiles/cmTC_2a543.dir/build.make:78: CMakeFiles/cmTC_2a543.dir/detect_cuda_version.cc.o] Error 1
+        gmake[1]: Leaving directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        gmake: *** [Makefile:127: cmTC_2a543/fast] Error 2
+        
+      exitCode: 2
+    runResult:
+      variable: "run_result"
+      cached: true
+...
+
+---
+events:
+  -
+    kind: "try_run-v1"
+    backtrace:
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/public/cuda.cmake:99 (try_run)"
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/Caffe2Config.cmake:86 (include)"
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:68 (find_package)"
+      - "/global/homes/y/yufeid/workspace/changchen/andrewy/flux/CMakeLists.txt:185 (find_package)"
+    directories:
+      source: "/global/homes/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp"
+      binary: "/global/homes/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80"
+      CMAKE_CXX_FLAGS: " -O3"
+      CMAKE_CXX_FLAGS_DEBUG: "-g  -Wall -O0"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/global/homes/y/yufeid/workspace/changchen/andrewy/flux/cmake/modules/;/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2;/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/public/../Modules_CUDA_fix"
+    buildResult:
+      variable: "compile_result"
+      cached: true
+      stdout: |
+        Change Dir: '/global/homes/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_c00f7/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_c00f7.dir/build.make CMakeFiles/cmTC_c00f7.dir/build
+        gmake[1]: Entering directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        Building CXX object CMakeFiles/cmTC_c00f7.dir/detect_cuda_version.cc.o
+        /opt/cray/pe/gcc/12.2.0/bin/g++   -O3  -std=gnu++17 -o CMakeFiles/cmTC_c00f7.dir/detect_cuda_version.cc.o -c /global/homes/y/yufeid/workspace/changchen/andrewy/flux/detect_cuda_version.cc
+        Linking CXX executable cmTC_c00f7
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_c00f7.dir/link.txt --verbose=1
+        /opt/cray/pe/gcc/12.2.0/bin/g++  -O3  CMakeFiles/cmTC_c00f7.dir/detect_cuda_version.cc.o -o cmTC_c00f7  -Wl,-rpath,/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/lib64 /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/lib64/libcudart.so 
+        gmake[1]: Leaving directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        
+      exitCode: 0
+    runResult:
+      variable: "run_result"
+      cached: true
+      stdout: |
+        12.9
+      exitCode: 0
+...
+
+---
+events:
+  -
+    kind: "try_run-v1"
+    backtrace:
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/public/cuda.cmake:99 (try_run)"
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/Caffe2Config.cmake:86 (include)"
+      - "/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Torch/TorchConfig.cmake:68 (find_package)"
+      - "/global/homes/y/yufeid/workspace/changchen/andrewy/flux/CMakeLists.txt:185 (find_package)"
+    directories:
+      source: "/global/homes/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp"
+      binary: "/global/homes/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp"
+    cmakeVariables:
+      CMAKE_CUDA_ARCHITECTURES: "80"
+      CMAKE_CXX_FLAGS: " -O3"
+      CMAKE_CXX_FLAGS_DEBUG: "-g  -Wall -O0"
+      CMAKE_EXE_LINKER_FLAGS: ""
+      CMAKE_MODULE_PATH: "/global/homes/y/yufeid/workspace/changchen/andrewy/flux/cmake/modules/;/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2;/pscratch/sd/y/yufeid/conda_envs/andrewy-comet/lib/python3.11/site-packages/torch/share/cmake/Caffe2/public/../Modules_CUDA_fix"
+    buildResult:
+      variable: "compile_result"
+      cached: true
+      stdout: |
+        Change Dir: '/global/homes/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_ff958/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_ff958.dir/build.make CMakeFiles/cmTC_ff958.dir/build
+        gmake[1]: Entering directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        Building CXX object CMakeFiles/cmTC_ff958.dir/detect_cuda_version.cc.o
+        /opt/cray/pe/gcc/12.2.0/bin/g++  -I/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/include -O3  -std=gnu++17 -o CMakeFiles/cmTC_ff958.dir/detect_cuda_version.cc.o -c /global/homes/y/yufeid/workspace/changchen/andrewy/flux/detect_cuda_version.cc
+        Linking CXX executable cmTC_ff958
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_ff958.dir/link.txt --verbose=1
+        /opt/cray/pe/gcc/12.2.0/bin/g++  -O3  CMakeFiles/cmTC_ff958.dir/detect_cuda_version.cc.o -o cmTC_ff958  -Wl,-rpath,/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/lib64 /opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/lib64/libcudart.so 
+        gmake[1]: Leaving directory '/global/u1/y/yufeid/workspace/changchen/andrewy/flux/CMakeFiles/CMakeTmp'
+        
+      exitCode: 0
+    runResult:
+      variable: "run_result"
+      cached: true
+      stdout: |
+        12.4
+      exitCode: 0
+...

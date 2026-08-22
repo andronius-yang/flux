@@ -48,6 +48,9 @@ class MoeMlp1Ctx:
         stable: bool = True,
         gating_args: Optional[moe_gating_args] = None,  # prebuilt gating, overrides dist
         skip_reference: bool = False,  # shrink the torch-reference scatter staging
+        alloc_input_full: bool = True,  # replicated [ntokens, h] inputs (32n cost:
+        #   7 GB @ K3 b56; the epic driver opts out and materializes it only
+        #   inside check_correctness)
         # buffer to one row; only valid when the caller never runs the torch
         # reference path (MoeAgScatterWithTorch scatter/gemm impls)
         local_scatter: bool = False,  # 2026-08-21 fix: the reference scatters
@@ -138,9 +141,10 @@ class MoeMlp1Ctx:
         scatter_rows = (
             1 if skip_reference else (self.nrows_ep if local_scatter else self.ntokens * topk)
         )
+        full_rows = self.ntokens if alloc_input_full else 1
         data_config = [
             ((self.ntokens_shard, K), input_dtype, (scale_value, 0)),  # input_shard
-            ((self.ntokens, K), input_dtype, (1, 0)),  # input_full
+            ((full_rows, K), input_dtype, (1, 0)),  # input_full
             ((scatter_rows, K), input_dtype, (1, 0)),  # scatter_inputs
         ]
         self.inputs_shard, self.inputs, self.scatter_inputs = next(generate_data(data_config))

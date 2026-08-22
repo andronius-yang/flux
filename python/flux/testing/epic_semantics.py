@@ -56,6 +56,7 @@ Hence hidden_buf after all groups' scatters is bitwise equal to the
 ungrouped scatter, and cross-m output identity is a hard invariant.
 """
 
+import os
 import time
 from dataclasses import dataclass, field, replace as _dc_replace
 
@@ -1160,17 +1161,22 @@ class EpicIterPlanner:
                  kg_frozen: int = None,
                  replica_select: str = "local_static",
                  inwindow_meta: bool = False,
-                 router: str = "d6", eps: float = None):
+                 router: str = "d6", eps: float = None,
+                 route_group=None, exchange_fn=None, f_cap: int = -1):
         # local_static == the paper's own D6 rule (src mod lcnts) and
         # stays EPIC's default; local_spread is the SGLang-dynamic-analog
         # ablation (campaign-2 knob). No quota mode for epic.
         assert replica_select in ("local_static", "local_spread"), (
             replica_select)
-        assert router in ("d6", "loccap_gpu"), router
+        assert router in ("d6", "loccap_gpu", "loccap_sl"), router
         assert router == "d6" or eps is not None, (
-            "router loccap_gpu needs eps")
+            f"router {router} needs eps")
         self.router = router
         self.eps = eps
+        self.route_group = route_group
+        self.exchange_fn = exchange_fn
+        self.f_cap = f_cap
+        self.last_kernel_stats = None
         cfg = plan.cfg
         self.cfg = cfg
         self.plan = plan
@@ -1195,6 +1201,16 @@ class EpicIterPlanner:
         self._home_of_token = (
             torch.arange(ntokens, device=device, dtype=torch.int64) // cfg.S)
         self._pad_vslot = self._home_of_token * self.gpe + cfg.nlp
+        if router == "loccap_sl":
+            # relaxed kernel arm: sender-local row + communicated agreement
+            assert not self.hcc, (
+                "loccap_sl v1 excludes the l01 hier-compress combine (its "
+                "inbuf is frozen exact-size; per-iteration m_per_rank "
+                "varies under the relaxed router)")
+            self._topk_own_i32 = (topk_all[rank].int().contiguous()
+                                  .to(device))
+            self._phys_gather = torch.empty(
+                cfg.R * cfg.S * cfg.K, dtype=torch.int32, device=device)
         self.refresh_placement()
 
     def refresh_placement(self):
@@ -1210,32 +1226,64 @@ class EpicIterPlanner:
         return torch.bincount(self.topk_all[self.rank].reshape(-1),
                               minlength=self.cfg.G).to(torch.int32)
 
+    def _tok_all(self):
+        cfg = self.cfg
+        return (torch.arange(cfg.S, device=self.device, dtype=torch.int64)
+                .repeat_interleave(cfg.K).unsqueeze(0)
+                .expand(cfg.R, cfg.S * cfg.K).contiguous())
+
+    def _exchange(self, phys_own):
+        """Sender-local row exchange: agreement across ranks by
+        COMMUNICATION (the relaxed kernel's rows are authored once, never
+        recomputed elsewhere). exchange_fn overrides for single-process
+        R-emulation tests (no torch.distributed init needed)."""
+        if self.exchange_fn is not None:
+            return self.exchange_fn(phys_own)
+        import torch.distributed as dist
+        dist.all_gather_into_tensor(self._phys_gather,
+                                    phys_own.reshape(-1).contiguous(),
+                                    group=self.route_group)
+        return self._phys_gather
+
     def derive(self, loads_gather_buf: torch.Tensor) -> EpicIterPlan:
         from .ep_gpu_plan import (
-            comb_dst_slot_from_topk,
             d6_rank_quota_prefix,
-            direct_layout_entries,
             reroute_expand_all_gpu,
-            _run_ordinal,
         )
 
         cfg = self.cfg
         R, G, S, K, nlp = cfg.R, cfg.G, cfg.S, cfg.K, cfg.nlp
         dev = self.device
         tpe_all = loads_gather_buf.view(R, G)
-        if self.router == "loccap_gpu":
+        kstats = None
+        if (self.router == "loccap_sl"
+                and int(os.getenv("FLUX_PLL_FORCE_REF", "0"))):
+            # bisection hook: identical machinery (capacity mode, blob,
+            # binding) but the ROUTING never changes across iterations —
+            # discriminates capacity-mode bugs from changing-routing bugs
+            return self.derive_reference()
+        if self.router == "loccap_sl":
+            # PLACE-lambda sender-local FUSED KERNEL (relaxed; the pll_*
+            # kernel arm): own-row routing on device + the phys-row
+            # allgather, all inside the timed plan bracket. The kernel's
+            # shared tables derive from the same tpe allgather the epic
+            # path already pays.
+            import flux
+            phys_own, kstats = flux.placelambda_route_sl(
+                self._topk_own_i32, tpe_all, self.l2p, self.lcnts,
+                self.rank, nlp, self.L, self.eps, f_cap=self.f_cap)
+            phys_all = self._exchange(phys_own).long().view(R, S * K)
+            tok_all = self._tok_all()
+            rqp = None
+        elif self.router == "loccap_gpu":
             # PLACE-lambda per-token replica selection, re-derived on
-            # device per iteration (rule 5). The loads allgather stays the
-            # timed plan_comm collective (routing globally known); the
-            # router consumes the replicated routing directly.
+            # device per iteration (rule 5) — the deterministic torch arm.
             from .placelambda_gpu import loccap_route_gpu
             phys3, _ = loccap_route_gpu(
                 self.topk_all.view(R, S, K), self.p2l.int(), self.l2p,
                 self.lcnts, nlp, self.L, self.eps)
             phys_all = phys3.long().reshape(R, S * K)
-            tok_all = (torch.arange(S, device=dev, dtype=torch.int64)
-                       .repeat_interleave(K).unsqueeze(0)
-                       .expand(R, S * K).contiguous())
+            tok_all = self._tok_all()
             rqp = None
         elif self.replica_select == "local_spread":
             from .ep_gpu_plan import local_spread_rank_quota_prefix
@@ -1247,6 +1295,40 @@ class EpicIterPlanner:
         if rqp is not None:
             tok_all, phys_all = reroute_expand_all_gpu(
                 rqp, self.l2p, self.lcnts, self.topk_all, cfg.interleave)
+        self._last_phys_all = phys_all
+        ip = self._derive_from_phys(tok_all, phys_all, rqp, kstats)
+        if (self.router == "loccap_sl"
+                and getattr(self, "_check_iters", False)):
+            # validation runs (FLUX_PLL_CHECK_ITERS=1): audit EVERY
+            # iteration's relaxed routing — perturbs timing, G1-gate only
+            self.check_relaxed(ip, self.relaxed_bounds,
+                               ref_incidence=getattr(
+                                   self, "ref_incidence", None))
+        return ip
+
+    def derive_reference(self) -> EpicIterPlan:
+        """Deterministic ip from the setup reference routing
+        (plan.phys_override) — the bitwise-checkable side of the relaxed
+        contract, used for the setup drift guard and the final
+        deterministic correctness iteration."""
+        ov = self.plan.phys_override
+        assert ov is not None, "derive_reference needs plan.phys_override"
+        cfg = self.cfg
+        phys_all = ov.long().to(self.device).view(cfg.R, cfg.S * cfg.K)
+        self._last_phys_all = phys_all
+        return self._derive_from_phys(self._tok_all(), phys_all, None, None)
+
+    def _derive_from_phys(self, tok_all, phys_all, rqp,
+                          kstats=None) -> EpicIterPlan:
+        from .ep_gpu_plan import (
+            comb_dst_slot_from_topk,
+            direct_layout_entries,
+            _run_ordinal,
+        )
+
+        cfg = self.cfg
+        R, G, S, K, nlp = cfg.R, cfg.G, cfg.S, cfg.K, cfg.nlp
+        dev = self.device
         order = torch.argsort(phys_all * (S + 1) + tok_all, dim=1,
                               stable=True)
         ent_tok = torch.gather(tok_all, 1, order)
@@ -1340,6 +1422,8 @@ class EpicIterPlanner:
                 hcc_state.update(uc=uc_t.cpu(), wire=[wp, wc],
                                  redcsr=[rp, rr])
 
+        if kstats is not None:
+            d2h.append(kstats.reshape(-1))  # kernel stats ride the one D2H
         # the batched D2H of the phase
         blob = torch.cat([t.reshape(-1) for t in d2h]).cpu()
         off = 0
@@ -1392,6 +1476,14 @@ class EpicIterPlanner:
                 hc_vce=None,
             )
 
+        if kstats is not None:
+            kstats_h = take(4).tolist()
+            assert kstats_h[2] == 0, (
+                f"loccap_sl forced budget exhausted ({kstats_h[2]} entries "
+                "over the per-(src,dst) f_cap) — sizing-contract breach; "
+                "raise --pll_f_cap")
+            self.last_kernel_stats = kstats_h
+
         segments = []
         base = self.rank * nlp
         for p in range(nlp):
@@ -1440,13 +1532,15 @@ class EpicIterPlanner:
         assert ip.seg_start == runner.elay.seg_start, "seg_start drift"
         assert ip.gemm_segments == runner.elay.gemm_segments
         assert ip.max_pair_rows == runner.elay.max_pair_rows
-        if self.router == "loccap_gpu":
+        if self.router in ("loccap_gpu", "loccap_sl"):
+            # loccap_sl: check_against runs on derive_reference()'s ip
+            # (deterministic side of the relaxed contract)
             ov = self.plan.phys_override
             ref_loads = torch.bincount(ov.long().reshape(-1),
                                        minlength=self.cfg.P)
             assert torch.equal(ip.slot_loads.cpu(), ref_loads), (
-                "loccap_gpu slot loads drift vs the setup CPU routing — "
-                "cross-device determinism bug")
+                f"{self.router} slot loads drift vs the setup CPU routing"
+                " — cross-device determinism bug")
         else:
             assert torch.equal(ip.slot_loads.cpu(),
                                slot_batch_loads(self.plan))
@@ -1475,6 +1569,70 @@ class EpicIterPlanner:
                 for got, ref in zip(ip.hcc_wire + ip.hcc_redcsr,
                                     e["wire"] + e["redcsr"]):
                     assert torch.equal(got.cpu(), ref.cpu())
+
+    def check_relaxed(self, ip: EpicIterPlan, bounds,
+                      ref_incidence: int = None,
+                      band: float = 0.05) -> dict:
+        """Relaxed drift guard for the loccap_sl kernel arm (user ruling
+        2026-08-21: invariants + bounds + incidence band replace bitwise
+        identity). Audits the ASSEMBLED routing (every rank holds the full
+        allgathered phys, so each rank verifies all ranks):
+          1. conservation: every entry's slot maps back to its expert
+          2. splits consistency: ip's in/out splits == phys bincounts
+          3. sizing-bound compliance: per-rank recv <= recv_ub, per-pair
+             rows <= pair_ub (elementwise) — the provable table bounds
+          4. incidence within `band` of the setup reference (optional)
+        Cheap (a few bincounts); run at setup always, per-iteration under
+        FLUX_PLL_CHECK_ITERS=1. Returns audit facts."""
+        cfg = self.cfg
+        R, S, K, nlp = cfg.R, cfg.S, cfg.K, cfg.nlp
+        phys = self._last_phys_all
+        assert phys is not None
+        assert bool(self.p2l[phys].eq(
+            self.topk_all.view(R, S * K)).all()), (
+            "loccap_sl conservation violated in the assembled routing")
+        serve_rank = phys // nlp
+        recv = torch.bincount(serve_rank.reshape(-1), minlength=R)
+        pair = torch.bincount(
+            (torch.arange(R, device=phys.device, dtype=torch.int64)
+             .unsqueeze(1) * R + serve_rank).reshape(-1),
+            minlength=R * R).view(R, R)
+        in_mine = torch.bincount(serve_rank[self.rank], minlength=R)
+        assert torch.equal(ip.in_splits.cpu().long(), in_mine.cpu()), (
+            "in_splits != own-row bincount")
+        assert sum(ip.recv_counts) == ip.n_recv
+        assert int(recv[self.rank]) == ip.n_recv, (
+            "assembled recv rows != ip.n_recv")
+        ru = bounds["recv_ub"].to(recv.device)
+        pu = bounds["pair_ub"].to(pair.device)
+        assert bool((recv <= ru).all()), (
+            "recv bound violated: "
+            f"{(recv - ru).clamp(min=0).max().item()} rows over")
+        assert bool((pair <= pu).all()), (
+            "pair bound violated: "
+            f"{(pair - pu).clamp(min=0).max().item()} rows over")
+        facts = {"recv_max": int(recv.max()),
+                 "pair_max": int(pair.max()),
+                 "kernel_stats": self.last_kernel_stats}
+        if ref_incidence is not None and ref_incidence > 0:
+            node = serve_rank // self.L
+            on = torch.zeros(R * S, self.nn, dtype=torch.bool,
+                             device=phys.device)
+            on.view(-1).scatter_(
+                0, (torch.arange(R * S, device=phys.device,
+                                 dtype=torch.int64)
+                    .repeat_interleave(K) * self.nn
+                    + node.reshape(-1)), True)
+            home = (torch.arange(R * S, device=phys.device,
+                                 dtype=torch.int64) // S) // self.L
+            inc = int(on.sum()) - int(
+                on.gather(1, home.unsqueeze(1)).sum())
+            facts["incidence_remote"] = inc
+            drift = abs(inc - ref_incidence) / ref_incidence
+            assert drift <= band, (
+                f"incidence {inc} outside the {band:.0%} band of the "
+                f"reference {ref_incidence}")
+        return facts
 
 
 # ---------------------------------------------------------------------------
@@ -1621,17 +1779,22 @@ class EpicLayer0Runner(EPLBLayer0Runner):
     # -- transports ---------------------------------------------------------
 
     def enable_nvshmem(self, local_world_size: int, num_comm_sm: int = 8,
-                       split_headroom: float = 2.0):
+                       split_headroom: float = 2.0,
+                       max_split_floor: int = 0):
         """One All2AllSingle pair reused across all m group calls.
 
         max_split = headroom * current max per-(group, src->dst) pair rows
         (the op never validates per-call splits against max_split, so the
         runner asserts them itself on every layout rebuild — a hard failure
-        beats silent staging overflow after migration reshapes the wire)."""
+        beats silent staging overflow after migration reshapes the wire).
+        max_split_floor: loccap_sl capacity mode — the PROVABLE per-pair
+        bound (loccap_sl_bounds.pair_cap; replicated-deterministic, so the
+        op's cross-rank max_split equality FLUX_CHECK holds)."""
         import flux  # GPU-side only
 
         self._epic_max_split = max(
-            1, int(self.elay.max_pair_rows * split_headroom))
+            1, int(self.elay.max_pair_rows * split_headroom),
+            int(max_split_floor))
         self._a2a_hidden = flux.All2AllSingle(
             self.group, self._epic_max_split, self.cfg.H, local_world_size,
             self.dtype,
@@ -1643,6 +1806,27 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         self._num_comm_sm = num_comm_sm
         self.transport = "nvshmem"
         self._refresh_nvshmem_splits()
+
+    def reserve_recv_capacity(self, cap_rows: int):
+        """loccap_sl capacity mode: grow the recv-side buffers to the
+        PROVABLE recv bound (loccap_sl_bounds.recv_cap) so the relaxed
+        kernel's per-iteration n_recv may vary underneath it. Call after
+        the ctor and BEFORE enable_hier_compress/enable_grouped_gemm
+        (bundles/backends snapshot buffer views). bind_iter_plan then
+        tracks the exact per-iteration extent (recv_off/n_recv)."""
+        cap_rows = int(cap_rows)
+        self._recv_capacity = cap_rows
+        if cap_rows > self.recv_buf.shape[0]:
+            dev, dt = self.device, self.dtype
+            H = self.cfg.H
+            self.recv_buf = torch.empty(cap_rows, H, dtype=dt, device=dev)
+            self.wrecv_buf = torch.empty(cap_rows, dtype=torch.float32,
+                                         device=dev)
+            self.hidden_buf = torch.zeros(cap_rows, H, dtype=dt, device=dev)
+            self.weights_buf = torch.zeros(cap_rows, dtype=torch.float32,
+                                           device=dev)
+            self.out_buf = torch.zeros(cap_rows, self.ffn_size_shard,
+                                       dtype=dt, device=dev)
 
     def _refresh_nvshmem_splits(self):
         dev = self.device
@@ -1662,12 +1846,27 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         EpicIterPlan (m=1). Called inside the timed `plan` bracket every
         iteration; on swap-applying iterations the driver re-derives after
         the (host) migration rebuild, so sizes here always match the
-        current buffers — asserted, never silently grown."""
+        current buffers — asserted, never silently grown.
+
+        CAPACITY mode (loccap_sl, set via reserve_recv_capacity): the
+        relaxed kernel's realized n_recv varies per iteration under the
+        provable bound; buffers are capacity, ip carries the exact counts,
+        and GEMM/scatter touch only [0, n_recv) (segment lists come from
+        ip). Without capacity mode the historical exact-match assert
+        stands (d6 / loccap_gpu arms — no behavior change)."""
         assert self.m == 1, "per-iteration planning is scoped to m=1 arms"
-        assert ip.n_recv == self.n_recv, (
-            f"iteration recv rows {ip.n_recv} != current sizing "
-            f"{self.n_recv} (derive must run AFTER any migration rebuild)"
-        )
+        if getattr(self, "_recv_capacity", None) is not None:
+            assert ip.n_recv <= self._recv_capacity, (
+                f"iteration recv rows {ip.n_recv} exceed the reserved "
+                f"capacity {self._recv_capacity} — provable-bound breach "
+                "(sizing bug, never noise)")
+            self.n_recv = ip.n_recv
+        else:
+            assert ip.n_recv == self.n_recv, (
+                f"iteration recv rows {ip.n_recv} != current sizing "
+                f"{self.n_recv} (derive must run AFTER any migration "
+                "rebuild)"
+            )
         dev = self.device
         self.g_send_row_index[0] = ip.send_row_index
         self.g_send_entry_logical[0] = ip.send_entry_logical
@@ -1684,6 +1883,11 @@ class EpicLayer0Runner(EPLBLayer0Runner):
                                 seg_rows=ip.seg_rows)],
             seg_start=ip.seg_start, seg_rows=ip.seg_rows,
             gemm_segments=ip.gemm_segments,
+            # capacity mode: track the iteration's EXACT recv extent —
+            # dispatch/scatter/combine slice recv_buf by recv_off, and
+            # leaving the stale value silently corrupts (plan Hole-1)
+            recv_off=[0, ip.n_recv],
+            n_recv=ip.n_recv,
         )
         self._group_splits_cpu[0] = torch.tensor(ip.seg_rows,
                                                  dtype=torch.int64)
@@ -1720,7 +1924,9 @@ class EpicLayer0Runner(EPLBLayer0Runner):
                              headroom: float = 1.5,
                              relay: str = "identity",
                              inkernel_swap: bool = False,
-                             wire: str = "relay_identity"):
+                             wire: str = "relay_identity",
+                             cap_floors: dict = None,
+                             fixed_kg: list = None):
         """EPIC Mode-2 dispatch transport: per-group GemmGroupedV2AGScatterOp
         instances (a2av_hier_compress) driven through dispatch_only over the
         virtual physical-slot expert space. relay='identity' is the faithful
@@ -1767,8 +1973,16 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         self._hc_L = local_world_size
         self._hc_headroom = headroom
         self._hc_tp_env = tp_env
+        # loccap_sl capacity mode: fixed_kg pins the vce width (K_g == K
+        # analytically at m=1 — every router emits exactly K entries per
+        # token, so this equals the organic value; the pin makes the
+        # invariant explicit under per-iteration routing variance).
+        # cap_floors raises the FLUX_A2AV_MAX_* ctor knobs to the PROVABLE
+        # table bounds so no iteration can overflow the frozen panels.
+        self._hc_cap_floors = dict(cap_floors or {})
         self._hc_bundles = build_epic_hc_bundles(
-            self.plan, self._topk_all, self.m, local_world_size)
+            self.plan, self._topk_all, self.m, local_world_size,
+            fixed_kg=fixed_kg)
         self._hc_kg = [b.K_g for b in self._hc_bundles]
         self._hc_ops = []
         self._hc_splits_gpu = []
@@ -1792,7 +2006,9 @@ class EpicLayer0Runner(EPLBLayer0Runner):
             else:
                 os.environ.pop("FLUX_A2AV_INKERNEL_SWAP", None)
             knobs = epic_hc_required_knobs(b, self.cfg.R, local_world_size)
-            caps = {k: int(int(v) * headroom) + 1 for k, v in knobs.items()}
+            caps = {k: max(int(int(v) * headroom) + 1,
+                           int(self._hc_cap_floors.get(k, 0)))
+                    for k, v in knobs.items()}
             for k, v in caps.items():
                 os.environ[k] = str(v)
             self._hc_caps.append(caps)

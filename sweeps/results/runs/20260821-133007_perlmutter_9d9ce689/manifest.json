@@ -1,0 +1,89 @@
+{
+  "artifacts": [
+    {
+      "bytes": 5119,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260821-133007_perlmutter_9d9ce689/cells/l01_fast_trace-55b808_b8_k16_e2e/records/rank_000.jsonl",
+      "sha256": "c7f4bc605031461ec2cc9aaa1bab503b3cf31db5636f0bb1ee51e8ba6d943b88"
+    },
+    {
+      "bytes": 4814,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260821-133007_perlmutter_9d9ce689/cells/l01_fast_trace-55b808_b8_k16_e2e/records/rank_001.jsonl",
+      "sha256": "fa802452e34eab0823d8467909ef85d359da51f0708f90435a5942faf24e5128"
+    },
+    {
+      "bytes": 4830,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260821-133007_perlmutter_9d9ce689/cells/l01_fast_trace-55b808_b8_k16_e2e/records/rank_002.jsonl",
+      "sha256": "aa46c8e00e6984e96e89873308189f125d6bd971f8db42975abe3bbfdae1aeca"
+    },
+    {
+      "bytes": 4888,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260821-133007_perlmutter_9d9ce689/cells/l01_fast_trace-55b808_b8_k16_e2e/records/rank_003.jsonl",
+      "sha256": "f3799a3d16ee74f11005e205b94b92fa2193d2f89cd41321580175b251d55436"
+    },
+    {
+      "bytes": 4809,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260821-133007_perlmutter_9d9ce689/cells/l01_fast_trace-55b808_b8_k16_e2e/records/rank_004.jsonl",
+      "sha256": "a7a39f0be48afaa76133a5db85bbcdcbe8ac8db984bfbeda7357ed3ce76fcd5b"
+    },
+    {
+      "bytes": 4862,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260821-133007_perlmutter_9d9ce689/cells/l01_fast_trace-55b808_b8_k16_e2e/records/rank_005.jsonl",
+      "sha256": "62e43387d74aca4288f9134ef7fb296f7401e238546c01d2d9a0664491fe87fe"
+    },
+    {
+      "bytes": 4843,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260821-133007_perlmutter_9d9ce689/cells/l01_fast_trace-55b808_b8_k16_e2e/records/rank_006.jsonl",
+      "sha256": "311c36833c8098dc32d4ed97093e96bcd7546635c316bf8d0861516021c9efa1"
+    },
+    {
+      "bytes": 4848,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260821-133007_perlmutter_9d9ce689/cells/l01_fast_trace-55b808_b8_k16_e2e/records/rank_007.jsonl",
+      "sha256": "c095725b8ff1fee86f7a9be7acbf5e4c4ef19d607a2502e01b201890aab894d2"
+    }
+  ],
+  "capabilities": {
+    "3rdparty/FAST/nvidia/libflash.so": true
+  },
+  "cells": [
+    {
+      "cell_id": "l01_fast_trace-55b808_b8_k16_e2e",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260821-133007_perlmutter_9d9ce689/cells/l01_fast_trace-55b808_b8_k16_e2e",
+      "status": "ok"
+    }
+  ],
+  "created": "2026-08-21T13:30:38Z",
+  "flux_libs": [
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib/libflux_cuda.so",
+      "sha256": "15ff5a568b50a96b3b48bf08dd36c2c0543d2d26a4e75eca6641d38570a3a08d"
+    },
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib/libflux_cuda_ths_op.so",
+      "sha256": "c6be99b499ae1fd31e27f9ddf48988175cbedd2baf569394dd050965bf3074bd"
+    },
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib64/libflux_cuda.so",
+      "sha256": "15ff5a568b50a96b3b48bf08dd36c2c0543d2d26a4e75eca6641d38570a3a08d"
+    },
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib64/libflux_cuda_ths_op.so",
+      "sha256": "c6be99b499ae1fd31e27f9ddf48988175cbedd2baf569394dd050965bf3074bd"
+    },
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/3rdparty/FAST/nvidia/libflash.so",
+      "sha256": "835ddc549549c8189a1c0ee811f8ee00dc2ccf1d49d9f668d5b49003d8d552f2"
+    }
+  ],
+  "git": {
+    "dirty": true,
+    "sha": "a1c42c123533957d37d116d46acd7ee416b14b7b"
+  },
+  "host": "login13",
+  "platform": {
+    "fabric": "cxi",
+    "name": "perlmutter",
+    "ranks_per_node": 4
+  },
+  "run_id": "20260821-133007_perlmutter_9d9ce689",
+  "staging_root": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260821-133007_perlmutter_9d9ce689"
+}

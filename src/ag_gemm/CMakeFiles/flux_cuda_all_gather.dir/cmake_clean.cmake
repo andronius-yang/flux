@@ -1,0 +1,35 @@
+file(REMOVE_RECURSE
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_bf16_bf16_bf16_bf16_fp32_fp32_sm80_a100_agkernel_rcr_gemmv2_false_nil.cu.o"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_bf16_bf16_bf16_bf16_fp32_fp32_sm80_a100_agkernel_rcr_gemmv2_false_nil.cu.o.d"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_bf16_bf16_bf16_bf16_fp32_fp32_sm80_a100_agkernel_rrr_gemmv2_false_nil.cu.o"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_bf16_bf16_bf16_bf16_fp32_fp32_sm80_a100_agkernel_rrr_gemmv2_false_nil.cu.o.d"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_bf16_bf16_void_bf16_fp32_fp32_sm80_a100_agkernel_rcr_gemmv2_false_nil.cu.o"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_bf16_bf16_void_bf16_fp32_fp32_sm80_a100_agkernel_rcr_gemmv2_false_nil.cu.o.d"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_bf16_bf16_void_bf16_fp32_fp32_sm80_a100_agkernel_rrr_gemmv2_false_nil.cu.o"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_bf16_bf16_void_bf16_fp32_fp32_sm80_a100_agkernel_rrr_gemmv2_false_nil.cu.o.d"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_fp16_fp16_fp16_fp16_fp32_fp32_sm80_a100_agkernel_rcr_gemmv2_false_nil.cu.o"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_fp16_fp16_fp16_fp16_fp32_fp32_sm80_a100_agkernel_rcr_gemmv2_false_nil.cu.o.d"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_fp16_fp16_fp16_fp16_fp32_fp32_sm80_a100_agkernel_rrr_gemmv2_false_nil.cu.o"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_fp16_fp16_fp16_fp16_fp32_fp32_sm80_a100_agkernel_rrr_gemmv2_false_nil.cu.o.d"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_fp16_fp16_void_fp16_fp32_fp32_sm80_a100_agkernel_rcr_gemmv2_false_nil.cu.o"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_fp16_fp16_void_fp16_fp32_fp32_sm80_a100_agkernel_rcr_gemmv2_false_nil.cu.o.d"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_fp16_fp16_void_fp16_fp32_fp32_sm80_a100_agkernel_rrr_gemmv2_false_nil.cu.o"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_fp16_fp16_void_fp16_fp32_fp32_sm80_a100_agkernel_rrr_gemmv2_false_nil.cu.o.d"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_s8_s8_bf16_bf16_s32_fp32_sm80_a100_agkernel_rcr_gemmv2_false_nil.cu.o"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_s8_s8_bf16_bf16_s32_fp32_sm80_a100_agkernel_rcr_gemmv2_false_nil.cu.o.d"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_s8_s8_void_bf16_s32_fp32_sm80_a100_agkernel_rcr_gemmv2_false_nil.cu.o"
+  "CMakeFiles/flux_cuda_all_gather.dir/registers/flux_s8_s8_void_bf16_s32_fp32_sm80_a100_agkernel_rcr_gemmv2_false_nil.cu.o.d"
+  "CMakeFiles/flux_cuda_all_gather.dir/tuning_config/config_ag_gemm_kernel_sm80_A100_tp4_nnodes1.cu.o"
+  "CMakeFiles/flux_cuda_all_gather.dir/tuning_config/config_ag_gemm_kernel_sm80_A100_tp4_nnodes1.cu.o.d"
+  "CMakeFiles/flux_cuda_all_gather.dir/tuning_config/config_ag_gemm_kernel_sm80_A100_tp8_nnodes1.cu.o"
+  "CMakeFiles/flux_cuda_all_gather.dir/tuning_config/config_ag_gemm_kernel_sm80_A100_tp8_nnodes1.cu.o.d"
+  "CMakeFiles/flux_cuda_all_gather.dir/tuning_config/config_ag_gemm_kernel_sm90_H800_tp4_nnodes1.cu.o"
+  "CMakeFiles/flux_cuda_all_gather.dir/tuning_config/config_ag_gemm_kernel_sm90_H800_tp4_nnodes1.cu.o.d"
+  "CMakeFiles/flux_cuda_all_gather.dir/tuning_config/config_ag_gemm_kernel_sm90_H800_tp8_nnodes1.cu.o"
+  "CMakeFiles/flux_cuda_all_gather.dir/tuning_config/config_ag_gemm_kernel_sm90_H800_tp8_nnodes1.cu.o.d"
+)
+
+# Per-language clean rules from dependency scanning.
+foreach(lang CUDA)
+  include(CMakeFiles/flux_cuda_all_gather.dir/cmake_clean_${lang}.cmake OPTIONAL)
+endforeach()

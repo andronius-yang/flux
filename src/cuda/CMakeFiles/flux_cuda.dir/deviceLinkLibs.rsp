@@ -1,0 +1,1 @@
+  -L/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/lib64  -L"/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib/stubs"  -L"/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/cuda/12.4/targets/x86_64-linux/lib"  -lnvshmem_host  -lnvshmem_device -lcudadevrt -lcudart_static -lrt -lpthread -ldl 

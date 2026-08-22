@@ -146,6 +146,31 @@ def main():
         assert dec0["gain_ppm"] == 0 and dec0["trigger"] == 0
         assert dec0["moves_add"] == 0 and dec0["moves_remove"] == 0
 
+    # -- sender-local router (the kernel algorithm) -----------------------
+    topk_s = random_topk(R, S, K, G, seed=2, skew=4.0)
+    p2n, l2n, lcn = LC.plan_tensors_from_hosts(hosts, R, nlp)
+    for eps in (0.0, 0.0625, math.inf):
+        cap = (R * S * K if math.isinf(eps)
+               else int(math.ceil((1 + eps) * S * K)))
+        a, sa = PL.loccap_route_sl(topk_s, p2n, l2n, lcn, nlp, L, eps)
+        b, sb = PL.loccap_route_sl(topk_s, p2n, l2n, lcn, nlp, L, eps)
+        assert bool(a.eq(b).all()) and sa == sb, "sl router not deterministic"
+        check_route(topk_s, a, p2n, nlp, cap, sa)
+        g_ref, _ = PL.loccap_route_gpu(topk_s, p2n, l2n, lcn, nlp, L, eps)
+        i_sl = LC.incidence_stats(a, nlp, L)["incidence_remote"]
+        i_gl = LC.incidence_stats(g_ref, nlp, L)["incidence_remote"]
+        d6 = LC.d6_route(topk_s, l2n, lcn)
+        i_d6 = LC.incidence_stats(d6, nlp, L)["incidence_remote"]
+        assert i_sl <= i_d6, (eps, i_sl, i_d6, "sl lost to D6")
+        print(f"OK sl eps={eps:g}: incidence {i_sl} (global {i_gl}, d6 "
+              f"{i_d6}); rows_max {sa['rows_max']} cap {cap} overflow "
+              f"{sa['over_cap_rows']} forced {sa['forced_overflow']}")
+    # pure locality on the replicated placement: zero remote incidence
+    topk2 = random_topk(R, S, K, G2, seed=1)
+    a, sa = PL.loccap_route_sl(topk2, p2l, l2p, lcnts, nlp2, L, math.inf)
+    assert LC.incidence_stats(a, nlp2, L)["incidence_remote"] == 0, sa
+    print("OK sl replicated/eps=inf: zero remote incidence")
+
     # -- cross-device bit-identity (only when CUDA is present) ------------
     if torch.cuda.is_available():
         dev = "cuda"
@@ -158,6 +183,12 @@ def main():
                                            nlp, L, eps)
             assert bool(a_cpu.eq(a_gpu.cpu()).all()), (
                 f"CPU/GPU routing mismatch at eps={eps}")
+            s_cpu, _ = PL.loccap_route_sl(topk_s, p2n, l2n, lcn, nlp, L, eps)
+            s_gpu, _ = PL.loccap_route_sl(topk_s.to(dev), p2n.to(dev),
+                                          l2n.to(dev), lcn.to(dev),
+                                          nlp, L, eps)
+            assert bool(s_cpu.eq(s_gpu.cpu()).all()), (
+                f"sl CPU/GPU routing mismatch at eps={eps}")
         pl_cpu = PL.build_placement_gpu(topk_s, L, nlp, G)
         pl_gpu = PL.build_placement_gpu(topk_s.to(dev), L, nlp, G)
         assert pl_cpu["hosts"] == pl_gpu["hosts"], "CPU/GPU placement mismatch"

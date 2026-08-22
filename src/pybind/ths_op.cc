@@ -19,7 +19,9 @@
 
 #include <c10/cuda/CUDAStream.h>
 
+#include <cmath>
 #include <stdexcept>
+#include <tuple>
 
 #include "a2a_transpose_gemm/ths_op/all_to_all_types.h"
 #include "coll/ths_op/all_gather_types.h"
@@ -73,6 +75,49 @@ calc_scatter_index_impl(
       splits.numel(),
       stream);
   return scatter_index;
+}
+
+std::tuple<torch::Tensor, torch::Tensor>
+placelambda_route_sl_impl(
+    const torch::Tensor topk_own,  // [S, K] int32 cuda
+    const torch::Tensor d,         // [R, G] int32 cuda
+    const torch::Tensor l2p,       // [G, Cmax] int32 cuda
+    const torch::Tensor lcnts,     // [G] int32 cuda
+    int64_t my_rank,
+    int64_t nlp,
+    int64_t ranks_per_node,
+    double eps,
+    int64_t f_cap) {
+  CHECK_INPUT(topk_own, at::ScalarType::Int);
+  CHECK_INPUT(d, at::ScalarType::Int);
+  CHECK_INPUT(l2p, at::ScalarType::Int);
+  CHECK_INPUT(lcnts, at::ScalarType::Int);
+  int S = topk_own.size(0), K = topk_own.size(1);
+  int R = d.size(0), G = d.size(1);
+  int Cmax = l2p.size(1);
+  TORCH_CHECK(lcnts.size(0) == G && l2p.size(0) == G);
+  TORCH_CHECK(G <= 4096 && R <= 1024, "placelambda_route_sl size guard");
+  long long cap64 = std::isinf(eps)
+                        ? (long long)S * K * R
+                        : (long long)std::ceil((1.0 + eps) * S * K);
+  torch::Tensor phys = at::empty_like(topk_own);
+  torch::Tensor stats =
+      at::zeros({4}, topk_own.options().dtype(at::ScalarType::Long));
+  torch::Tensor ws = at::empty(
+      {(int64_t)placelambda_route_sl_workspace_bytes(G, R, ranks_per_node)},
+      topk_own.options().dtype(at::ScalarType::Byte));
+  auto stream = at::cuda::getCurrentCUDAStream();
+  placelambda_route_sl(
+      topk_own.data_ptr<int>(),
+      d.data_ptr<int>(),
+      l2p.data_ptr<int>(),
+      lcnts.data_ptr<int>(),
+      phys.data_ptr<int>(),
+      (long long *)stats.data_ptr<int64_t>(),
+      ws.data_ptr(),
+      S, K, G, R, Cmax, nlp, ranks_per_node, my_rank, cap64, (int)f_cap,
+      stream);
+  return {phys, stats};
 }
 
 void
@@ -318,6 +363,19 @@ PYBIND11_MODULE(FLUX_TORCH_EXTENSION_NAME, m) {
       &calc_scatter_index_impl,
       py::arg("choosed_experts"),
       py::arg("splits"));
+
+  m.def(
+      "placelambda_route_sl",
+      &placelambda_route_sl_impl,
+      py::arg("topk_own"),
+      py::arg("d"),
+      py::arg("l2p"),
+      py::arg("lcnts"),
+      py::arg("my_rank"),
+      py::arg("nlp"),
+      py::arg("ranks_per_node"),
+      py::arg("eps"),
+      py::arg("f_cap") = -1);
 
   init_tuning_record(m);
   init_profiling_context(m);

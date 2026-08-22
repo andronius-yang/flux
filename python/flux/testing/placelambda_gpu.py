@@ -415,6 +415,330 @@ def loccap_route_gpu(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
 
 
 # --------------------------------------------------------------------------
+# Sender-local LocCap (the kernel algorithm; user relaxation 2026-08-21)
+# --------------------------------------------------------------------------
+
+def loccap_route_sl(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
+                    rounds=3, f_cap=None, return_tables=False):
+    """Sender-LOCAL LocCap — the algorithm the fused CUDA kernel implements
+    (user relaxation ruling 2026-08-21). [R, S, K] -> ([R, S, K] int32,
+    stats).
+
+    Contract: every shared quantity is a pure ORDER-INDEPENDENT integer
+    function of the allgathered demand histogram d[R, G] (the plan_comm
+    collective epic already pays) — quota and share tables agree across
+    ranks with no determinism machinery, exactly like the transport's
+    cumsum/splits. Every PER-ROW decision belongs to exactly one source
+    rank: rank src assigns only its own S*K entries, consuming its
+    pre-partitioned SHARES of each destination's capacity; receivers learn
+    realized counts from the wire metadata as always. A production rank
+    computes only its own row; this reference computes all rows at once
+    (per-source math is independent, so the batch IS the per-rank result).
+
+    Tiers 1-2 are identical to loccap_route_gpu (they were already pure
+    functions of d). Tier 3 replaces live global capacity feedback with
+    per-(source, destination-rank) shares of the post-tier-2 residual
+    (largest-remainder proportional to each source's leftover hosted
+    demand): per-token greedy min-node-cover unchanged — only the capacity
+    state it consults is now the source's own shares. No repair pass: caps
+    hold by construction of the shares; what the shares cannot place is
+    forced (accounted). The known cost vs the global algorithm: no
+    DONATION — one source's unused share cannot be claimed by another
+    (the offline quality gate measures this gap).
+    """
+    R, S, K = topk_all.shape
+    dev = topk_all.device
+    G = int(lcnts.numel())
+    L = ranks_per_node
+    assert R % L == 0
+    NN = R // L
+    topk = topk_all.long()
+    ipr, ion, hosted_rg = instance_tables_gpu(l2p.to(dev), lcnts.to(dev),
+                                              nlp, L, R=R)
+    node_of_rank = torch.arange(R, device=dev, dtype=torch.int64) // L
+
+    total_rows = R * S * K
+    cap = total_rows if math.isinf(eps) else int(math.ceil((1.0 + eps) * S * K))
+    cap_vec = torch.full((R,), cap, dtype=torch.int64, device=dev)
+
+    flat = topk.reshape(R, S * K)
+    assert bool(((flat >= 0) & (flat < G)).all()), "expert ids out of range"
+    d = torch.bincount(
+        (torch.arange(R, device=dev, dtype=torch.int64).unsqueeze(1) * G
+         + flat).reshape(-1), minlength=R * G).view(R, G)
+
+    # ---- tiers 1+2: identical shared-table math to loccap_route_gpu -----
+    q1 = _largest_remainder_rows(d * hosted_rg.long(), cap_vec)
+    load = q1.sum(1)
+    rd = d - q1
+    nh = ion.t()[node_of_rank]
+    t2_want = rd * nh.long()
+    t2_nlg = t2_want.view(NN, L, G)
+    D = t2_nlg.sum(1)
+    resid = (cap_vec - load).clamp(min=0)
+    hosts_nl = hosted_rg.view(NN, L, G).permute(0, 2, 1)
+    w2 = (resid.view(NN, L).clamp(max=_W_CLAMP).unsqueeze(1)
+          * hosts_nl.long())
+    alloc = _largest_remainder_rows(
+        (w2 * D.unsqueeze(-1)).reshape(NN * G, L),
+        D.reshape(-1)).view(NN, G, L)
+    alloc = _largest_remainder_rows(
+        alloc.permute(0, 2, 1).reshape(NN * L, G),
+        resid.reshape(-1),
+    ).view(NN, L, G).permute(0, 2, 1).contiguous()
+    src_pref = torch.cumsum(t2_nlg, dim=1) - t2_nlg
+    cumA = torch.cumsum(alloc, dim=-1)
+    lo_b = torch.cat([torch.zeros(NN, G, 1, dtype=torch.int64, device=dev),
+                      cumA[..., :-1]], dim=-1)
+    A2 = (torch.minimum(src_pref.permute(0, 2, 1).unsqueeze(3)
+                        + t2_nlg.permute(0, 2, 1).unsqueeze(3),
+                        cumA.unsqueeze(2))
+          - torch.maximum(src_pref.permute(0, 2, 1).unsqueeze(3),
+                          lo_b.unsqueeze(2))).clamp(min=0)
+    load = load + alloc.sum(1).reshape(-1)
+
+    # materialize tiers 1+2 (canonical entry order; same as the global fn)
+    ent_src = (torch.arange(R, device=dev, dtype=torch.int64)
+               .unsqueeze(1).expand(R, S * K).reshape(-1))
+    ent_g = flat.reshape(-1)
+    canon_key = ent_src * G + ent_g
+    order = torch.argsort(canon_key, stable=True)
+    ord_in_seg = _run_ordinal(canon_key[order])
+    src_local = torch.arange(R, device=dev, dtype=torch.int64) % L
+    A2_src = A2.permute(0, 2, 1, 3).reshape(R, G, L)
+    own_extra = torch.gather(
+        A2_src, 2, src_local.view(R, 1, 1).expand(R, G, 1)).squeeze(2)
+    amounts = A2_src.scatter(
+        2, src_local.view(R, 1, 1).expand(R, G, 1),
+        torch.zeros(R, G, 1, dtype=torch.int64, device=dev))
+    own_amt = q1 + own_extra
+    node_base = (torch.arange(R, device=dev, dtype=torch.int64) // L) * L
+    others = torch.argsort(
+        (torch.arange(L, device=dev, dtype=torch.int64).unsqueeze(0)
+         == src_local.unsqueeze(1)).long(), dim=1, stable=True)
+    perm = torch.cat([src_local.unsqueeze(1), others[:, :L - 1]], dim=1)
+    tgt_ranks = node_base.unsqueeze(1) + perm
+    tgt_amounts = torch.cat(
+        [own_amt.unsqueeze(2),
+         torch.gather(amounts, 2,
+                      perm[:, 1:].unsqueeze(1).expand(R, G, L - 1))],
+        dim=2)
+    granted2 = tgt_amounts.sum(2)
+    seq_ranks = torch.repeat_interleave(
+        tgt_ranks.unsqueeze(1).expand(R, G, L).reshape(-1),
+        tgt_amounts.reshape(-1))
+    in_quota = ord_in_seg < granted2.reshape(-1)[canon_key[order]]
+    phys_flat = torch.full((R * S * K,), UNASSIGNED, dtype=torch.int64,
+                           device=dev)
+    ent_pos = order[in_quota]
+    phys_flat[ent_pos] = ipr[ent_g[ent_pos], seq_ranks]
+    # sizing tables (deterministic; equal on every rank): tier-1/2 pair
+    # counts and the post-tier-2 loads — with myshare below they give the
+    # PROVABLE pair/recv upper bounds (see loccap_sl_bounds)
+    pair12 = torch.bincount(ent_src[ent_pos] * R + seq_ranks,
+                            minlength=R * R).view(R, R)
+    load_t2 = load.clone()
+
+    # ---- tier-3 SHARE tables (pure functions of d) ----------------------
+    resid3 = (cap_vec - load).clamp(min=0)                  # [R]
+    leftover = (d - granted2).clamp(min=0)                  # [R, G]
+    # source weight toward destination r = its leftover demand for experts
+    # hosted on r (clamped; only proportions matter)
+    # fp64 matmul: every partial sum is an exact integer < 2^53, so the
+    # result is order-independent and bit-exact on any device (int64
+    # matmul has no CUDA kernel)
+    w3 = ((leftover.clamp(max=_W_CLAMP).double()
+           @ hosted_rg.double().t()).long()).clamp(max=_W_CLAMP)
+    myshare = _largest_remainder_rows(
+        (w3 * resid3.unsqueeze(0)).t().contiguous(),        # rows = dst
+        resid3,
+    ).t().contiguous()                                      # [Rsrc, Rdst]
+    myshare0 = myshare.clone()                              # sizing table
+
+    # ---- tier 3: per-source greedy cover on own shares ------------------
+    forced_overflow = 0
+    rounds_used = 0
+    tok_of_entry = (ent_src * S
+                    + (torch.arange(R * S * K, device=dev,
+                                    dtype=torch.int64) // K) % S)
+    nn_ar = torch.arange(NN, device=dev, dtype=torch.int64)
+    hosts_gnl = hosted_rg.view(NN, L, G).permute(2, 0, 1)   # [G, NN, L]
+    for _round in range(rounds):
+        rem = (phys_flat == UNASSIGNED).nonzero(as_tuple=True)[0]
+        if rem.numel() == 0:
+            break
+        rounds_used = _round + 1
+        # coverable[src, g, n]: expert g hosted on node n at a rank where
+        # THIS source still holds share
+        pos = (myshare > 0).view(R, NN, L)                  # [Rs, NN, L]
+        covOK = (pos.unsqueeze(1)
+                 & hosts_gnl.unsqueeze(0)).any(-1)          # [Rs, G, NN]
+        # per-token cover counts over remaining experts
+        tok_ids = tok_of_entry[rem]
+        cnt = torch.zeros(R * S * NN, dtype=torch.int64, device=dev)
+        cnt.index_add_(0, (tok_ids.unsqueeze(1) * NN + nn_ar).reshape(-1),
+                       covOK[ent_src[rem], ent_g[rem]].long().reshape(-1))
+        cnt = cnt.view(R * S, NN)
+        home_t = (torch.arange(R * S, device=dev, dtype=torch.int64)
+                  // (L * S))
+        is_home = nn_ar.unsqueeze(0) == home_t.unsqueeze(1)
+        key = (cnt * 2 + is_home.long()) * NN + (NN - 1 - nn_ar)
+        best, _ = key.max(dim=1)
+        n_star = NN - 1 - (best % NN)
+        covers = (best // NN) >= 2
+        n_of_entry = n_star[tok_of_entry[rem]]
+        sel = (covOK[ent_src[rem], ent_g[rem], n_of_entry]
+               & covers[tok_of_entry[rem]])
+        e_sel = rem[sel]
+        if e_sel.numel() == 0:
+            break
+        # rank within the chosen node: the source's max-share hosting rank
+        # (tie lower); key embeds rank for order-free decode
+        s_sel, g_sel, n_sel = ent_src[e_sel], ent_g[e_sel], n_of_entry[sel]
+        l_ar = torch.arange(L, device=dev, dtype=torch.int64)
+        sh_cand = myshare.view(R, NN, L)[s_sel, n_sel]      # [E, L]
+        hosted_cand = hosts_gnl[g_sel, n_sel]               # [E, L]
+        keyr = (sh_cand.clamp(max=_W_CLAMP) * L + (L - 1 - l_ar))
+        found_r, best_r = _min_by_key(-keyr, hosted_cand & (sh_cand > 0))
+        dst = n_sel * L + (L - 1 - ((-best_r) % L))
+        ok = found_r
+        # grant: first myshare[src, dst] candidates per (src, dst) in
+        # canonical order (within one source — sender-local sequencing)
+        e_ok = e_sel[ok]
+        dst_ok = dst[ok]
+        sd = ent_src[e_ok] * R + dst_ok
+        o3 = torch.argsort(sd * (total_rows + 1) + e_ok, stable=True)
+        ord3 = _run_ordinal(sd[o3])
+        take = ord3 < myshare.reshape(-1)[sd[o3]]
+        e_take = e_ok[o3[take]]
+        d_take = dst_ok[o3[take]]
+        if e_take.numel() == 0:
+            break
+        phys_flat[e_take] = ipr[ent_g[e_take], d_take]
+        spent = torch.bincount(ent_src[e_take] * R + d_take,
+                               minlength=R * R).view(R, R)
+        myshare = myshare - spent
+        load = load + spent.sum(0)
+
+    # ---- forced: estimated least-loaded hosting rank --------------------
+    # under f_cap (the kernel mirror): each (src, dst) pair admits at most
+    # f_cap forced rows — fallback first, then the other hosting ranks
+    # ascending, each with its own budget; a fully exhausted candidate list
+    # still assigns the fallback (routing stays total) and is counted in
+    # forced_budget_overflow (the driver-side sizing-contract breach signal)
+    forced_budget_overflow = 0
+    rem = (phys_flat == UNASSIGNED).nonzero(as_tuple=True)[0]
+    if rem.numel():
+        keyf = (load.unsqueeze(0) * R
+                + torch.arange(R, device=dev,
+                               dtype=torch.int64).unsqueeze(0)).expand(G, R)
+        found, best = _min_by_key(keyf, ipr >= 0)
+        g_rem = ent_g[rem]
+        assert bool(found[g_rem].all()), "expert with no instance anywhere"
+        r_fb = best[g_rem] % R
+        if f_cap is None or f_cap <= 0:
+            r_final = r_fb
+        else:
+            # per-expert hosting ranks ascending, padded -1: cand[g, j]
+            hr = ipr >= 0
+            ords = hr.long().cumsum(1) - 1
+            cand = torch.full((G, R), -1, dtype=torch.int64, device=dev)
+            gh, rh = hr.nonzero(as_tuple=True)
+            cand.view(-1)[gh * R + ords[gh, rh]] = rh
+            fleft = torch.full((R * R,), f_cap, dtype=torch.int64,
+                               device=dev)
+            r_final = torch.full((rem.numel(),), -1, dtype=torch.int64,
+                                 device=dev)
+            src_rem = ent_src[rem]
+            for j in range(R + 1):
+                pend = (r_final < 0).nonzero(as_tuple=True)[0]
+                if pend.numel() == 0:
+                    break
+                tgt_j = (r_fb[pend] if j == 0
+                         else cand[g_rem[pend], j - 1])
+                valid = tgt_j >= 0
+                pend = pend[valid]
+                tgt_j = tgt_j[valid]
+                if pend.numel() == 0:
+                    break
+                sd = src_rem[pend] * R + tgt_j
+                o = torch.argsort(sd * (rem.numel() + 1)
+                                  + torch.arange(pend.numel(), device=dev),
+                                  stable=True)
+                take = _run_ordinal(sd[o]) < fleft[sd[o]]
+                adm = pend[o[take]]
+                r_final[adm] = tgt_j[o[take]]
+                fleft = fleft - torch.bincount(sd[o[take]],
+                                               minlength=R * R)
+            still = (r_final < 0)
+            forced_budget_overflow = int(still.sum())
+            r_final = torch.where(still, r_fb, r_final)
+        phys_flat[rem] = ipr[g_rem, r_final]
+        add = torch.bincount(r_final, minlength=R)
+        over_add = ((load + add - cap_vec).clamp(min=0)
+                    - (load - cap_vec).clamp(min=0))
+        forced_overflow += int(over_add.sum())
+        load = load + add
+
+    assert not bool((phys_flat == UNASSIGNED).any())
+    phys = phys_flat.view(R, S, K)
+    p2l_l = p2l.to(dev).long()
+    assert bool(p2l_l[phys].eq(topk).all()), "conservation violated"
+    rows = torch.bincount(phys_flat // nlp, minlength=R)
+    stats = {
+        "cap": cap,
+        "forced_overflow": forced_overflow,
+        "forced_budget_overflow": forced_budget_overflow,
+        "cover_rounds": rounds_used,
+        "repair_moved": 0,
+        "rows_max": int(rows.max()),
+        "over_cap_rows": int((rows - cap_vec).clamp(min=0).sum()),
+    }
+    if return_tables:
+        stats["pair12"] = pair12
+        stats["myshare"] = myshare0
+        stats["load_t2"] = load_t2
+        # reference forced-flow table: realized pair rows beyond the
+        # tier-1/2 + share quotas — the auto-f_cap / recv-slack basis
+        serve_r = phys_flat.view(R, S * K) // nlp
+        pair_all = torch.bincount(
+            (torch.arange(R, device=dev, dtype=torch.int64).unsqueeze(1)
+             * R + serve_r).reshape(-1), minlength=R * R).view(R, R)
+        stats["forced_pair"] = (pair_all - pair12 - myshare0).clamp(min=0)
+    return phys.to(torch.int32), stats
+
+
+def loccap_sl_bounds(aux, R, f_cap=None):
+    """Sizing bounds for the sender-local router, from the deterministic
+    tables (loccap_route_sl(..., return_tables=True) stats).
+
+    pair_ub is PROVABLE by construction: tier-1/2 pair counts are
+    ticket-exact, tier-3 <= myshare, forced <= f_cap per (src, dst)
+    (kernel forced_left tickets). f_cap=None auto-derives from the
+    reference's forced-flow table (measured on real K3 routing 2026-08-21:
+    per-pair forced peaks 60-275 at eps=0.0625, exactly 0 at eps=0.125 —
+    a fixed small constant is wrong at tight eps).
+
+    recv_ub's forced term is a SLACK bound (2x the reference forced
+    ingress + 8R), not a ticket proof — the relaxed kernel's tier-3 greedy
+    can strand somewhat more than the reference; check_relaxed's loud
+    assert is the contract. Replicated-deterministic on every rank."""
+    fp = aux["forced_pair"]
+    if f_cap is None or f_cap <= 0:
+        f_cap = max(16, 2 * int(fp.max()) + 8)
+    pair_ub = aux["pair12"] + aux["myshare"] + f_cap            # [R, R]
+    forced_recv_ub = 2 * fp.sum(0) + 8 * R                      # [R] slack
+    recv_ub = aux["load_t2"] + aux["myshare"].sum(0) + forced_recv_ub
+    return {
+        "f_cap": int(f_cap),
+        "pair_cap": int(pair_ub.max()),
+        "recv_cap": int(recv_ub.max()),
+        "pair_ub": pair_ub,
+        "recv_ub": recv_ub,
+    }
+
+
+# --------------------------------------------------------------------------
 # PLACE-lambda placement solver (untimed-or-timed per the ablation toggle)
 # --------------------------------------------------------------------------
 

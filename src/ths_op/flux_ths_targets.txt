@@ -1,0 +1,1 @@
+FLUX_THS_TARGETS=ths_op;gemm_grouped_v2_gather_rs;gemm_grouped_v3_gather_rs;gemm_grouped_v2_ag_scatter;gemm_grouped_v3_ag_scatter;quantization;inplace_cast;a2a_transpose_gemm;gemm_a2a_transpose;gemm_rs;ag_gemm;flux_coll_op;gemm_only;
