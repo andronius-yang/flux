@@ -202,6 +202,8 @@ def perf_epic(
     torch.cuda.synchronize()
 
     isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))
+    _hb = (print if int(os.getenv("FLUX_PLL_DEBUG", "0"))
+           else (lambda *a, **k: None))
     iso_sync_times = []
     mig_host_times = []
     mig_swaps_per_iter = []
@@ -213,6 +215,7 @@ def perf_epic(
             torch.cuda.synchronize()
             torch.distributed.barrier()
             iso_sync_times.append((time.perf_counter() - t_iso) * 1e3)
+        _hb(f"[pll-hb] r{runner.rank} iter {i} enter", flush=True)
         nvtx_tag = f"iter{i}_warmup" if i < warmup_iters else f"iter{i}"
         with torch.cuda.nvtx.range(nvtx_tag):
             ev["start"][i].record()
@@ -288,6 +291,7 @@ def perf_epic(
                 mig_swaps_per_iter.append(len(swaps))
                 mig_host_times.append((time.perf_counter() - t_mig) * 1e3)
             ev["mig"][i].record()
+            _hb(f"[pll-hb] r{runner.rank} iter {i} planned", flush=True)
             runner.pack(ctx.inputs_shard, probs_shard)
             ev["pack"][i].record()
             if single_stream:
@@ -458,6 +462,8 @@ def check_correctness(runner, ctx, plan, topk_all, w_all, atol, rtol):
     cfg = runner.cfg
     rank, R, S = runner.rank, cfg.R, cfg.S
     ok_bitwise = True
+    if int(os.environ.get("FLUX_PLL_DEBUG", "0")):
+        print(f"[pll-hb] r{rank} check_correctness enter", flush=True)
 
     # materialize the replicated inputs ONLY here (ctx opts out of the
     # resident [ntokens, h] copy — 7 GB @ K3 b56 32n); freed on return
@@ -473,21 +479,42 @@ def check_correctness(runner, ctx, plan, topk_all, w_all, atol, rtol):
     seg_fill = list(runner.elay.seg_start)
     n_rows_check = 0
     per_instance_rows = [0] * cfg.nlp
+    _dbg = int(os.environ.get("FLUX_PLL_DEBUG", "0"))
+    # vectorized expectation build (2026-08-21): the per-row python loop
+    # was O(n_recv) GPU row-copies — minutes at K3 shape; this is seconds.
+    dev_e = expected_hidden.device
+    p2l_dev = plan.p2l.long().to(dev_e)
     for src in range(R):
+        if _dbg:
+            print(f"[pll-hb] r{rank} check src {src}", flush=True)
         tok, phys = reroute_expand(cfg, plan, src, topk_all[src])
         order = torch.argsort(phys * (S + 1) + tok, stable=True)
         tok, phys = tok[order], phys[order]
         msk = (phys // cfg.nlp) == rank
         tok, phys = tok[msk], phys[msk]
-        for t, p in zip(tok.tolist(), phys.tolist()):
-            p_local = p - rank * cfg.nlp
-            slot = seg_fill[p_local]
-            seg_fill[p_local] += 1
-            expected_hidden[slot] = inputs_full[src * S + t]
-            logical = int(plan.p2l[p])
-            expected_probs[slot] = float(w_all[src][t, logical])
-            per_instance_rows[p_local] += 1
-            n_rows_check += 1
+        if tok.numel() == 0:
+            continue
+        pl = (phys - rank * cfg.nlp).to(dev_e)
+        tok_d = tok.to(dev_e)
+        # rows arrive sorted by phys -> contiguous per-p_local runs;
+        # slot = current seg_fill[p_local] + ordinal within the run
+        first = torch.ones_like(pl, dtype=torch.bool)
+        first[1:] = pl[1:] != pl[:-1]
+        idx = torch.arange(pl.numel(), device=dev_e)
+        starts = torch.where(first, idx, torch.zeros_like(idx))
+        ordinal = idx - torch.cummax(starts, 0).values
+        base = torch.tensor(seg_fill, dtype=torch.int64, device=dev_e)
+        slot = base[pl] + ordinal
+        expected_hidden[slot] = inputs_full[src * S + tok_d]
+        logical = p2l_dev[phys.to(dev_e)]
+        expected_probs[slot] = (
+            w_all[src].to(dev_e)[tok_d, logical].to(expected_probs.dtype))
+        cnt_pl = torch.bincount(pl, minlength=cfg.nlp).cpu()
+        for b in range(cfg.nlp):
+            c = int(cnt_pl[b])
+            seg_fill[b] += c
+            per_instance_rows[b] += c
+        n_rows_check += int(tok.numel())
 
     assert n_rows_check == runner.n_recv, (
         f"rank {rank}: recomputed {n_rows_check} rows != runner {runner.n_recv}"
@@ -646,7 +673,14 @@ def check_correctness(runner, ctx, plan, topk_all, w_all, atol, rtol):
           f"{'bitwise-exact' if ok_bitwise else 'MISMATCH'}, "
           f"{what} {'allclose' if ok_allclose else 'MISMATCH'}")
     RECORDER.emit_correctness(bitwise=ok_bitwise, allclose=ok_allclose)
-    assert ok_bitwise and ok_allclose
+    # COLLECTIVE verdict (2026-08-21): a partial per-rank assert leaves the
+    # surviving ranks wedged in the next barrier and the srun step alive —
+    # reduce the flag so every rank raises (or passes) together and
+    # torchrun tears down cleanly.
+    flag = torch.tensor([int(ok_bitwise and ok_allclose)], device="cuda")
+    torch.distributed.all_reduce(flag, op=torch.distributed.ReduceOp.MIN,
+                                 group=TP_GROUP)
+    assert int(flag) == 1, "correctness failed on at least one rank"
     return ok_bitwise and ok_allclose
 
 
@@ -1488,9 +1522,16 @@ if __name__ == "__main__":
         # forward so output_sha and check_correctness validate the data
         # plane against plan.phys_override, while the timed iterations
         # above used the relaxed kernel routing.
+        _dbg = int(os.environ.get("FLUX_PLL_DEBUG", "0"))
+        if _dbg:
+            print(f"[pll-hb] r{rank} final: derive_reference", flush=True)
         ip_ref = iter_planner.derive_reference()
         runner.bind_iter_plan(ip_ref)
+        if _dbg:
+            print(f"[pll-hb] r{rank} final: forward", flush=True)
         run_one_forward(runner, moe_ctx, probs_shard, args.sm_margin)
+        if _dbg:
+            print(f"[pll-hb] r{rank} final: forward done", flush=True)
         RECORDER.emit_info(
             epic_route_relaxed=1,
             epic_pll_f_cap=args.pll_f_cap,

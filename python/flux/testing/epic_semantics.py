@@ -56,6 +56,7 @@ Hence hidden_buf after all groups' scatters is bitwise equal to the
 ungrouped scatter, and cross-m output identity is a hard invariant.
 """
 
+import os
 import time
 from dataclasses import dataclass, field, replace as _dc_replace
 
@@ -1255,6 +1256,12 @@ class EpicIterPlanner:
         dev = self.device
         tpe_all = loads_gather_buf.view(R, G)
         kstats = None
+        if (self.router == "loccap_sl"
+                and int(os.getenv("FLUX_PLL_FORCE_REF", "0"))):
+            # bisection hook: identical machinery (capacity mode, blob,
+            # binding) but the ROUTING never changes across iterations —
+            # discriminates capacity-mode bugs from changing-routing bugs
+            return self.derive_reference()
         if self.router == "loccap_sl":
             # PLACE-lambda sender-local FUSED KERNEL (relaxed; the pll_*
             # kernel arm): own-row routing on device + the phys-row
@@ -1308,6 +1315,7 @@ class EpicIterPlanner:
         assert ov is not None, "derive_reference needs plan.phys_override"
         cfg = self.cfg
         phys_all = ov.long().to(self.device).view(cfg.R, cfg.S * cfg.K)
+        self._last_phys_all = phys_all
         return self._derive_from_phys(self._tok_all(), phys_all, None, None)
 
     def _derive_from_phys(self, tok_all, phys_all, rqp,
