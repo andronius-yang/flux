@@ -93,3 +93,12 @@ layer0+layer1 campaign live there (`07_dashboard.html` is the visual summary);
 campaign winners (F+E default-ON under LB_UNION; `l01_lbunion_compress` as the
 reference combined config; FANOUT and RS_EAGER closed as losers) landed
 2026-08-16 — `sweeps/variants.py` notes are the arm-level authority.
+
+**Comm-only production readiness (2026-08-22): `10_comm_baselines_production_and_ladder.md`**
+— the rule-5 conversion of all comm-only arms (per-iteration timed planning,
+K3 enablement incl. the 512-tile dense combine + topk-16, the FAST combined
+arm on real routing, nominal byte ladder, homog canon pool), the validated
+b1–b64 sweep procedure with the never-mix registry, the current K3 4n
+standings, and the warnings/gates for 8n/16n/32n allocations (FAST 64-rank
+segfault, W64 closure, kA2AVMaxWorld/Nodes limits blocking 32n, SM-budget
+re-probing per rung). Supersedes `09` for the comm-only lane.
