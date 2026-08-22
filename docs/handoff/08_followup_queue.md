@@ -308,9 +308,39 @@ cells hang, bincount the routing for empty experts before anything else.
   stage. **Verified fix: `FLUX_A2AV_BLOCKING_WIRE=1`** → 16/16 bitwise on
   every arm INCLUDING the kernel arm (G1 re-gate PASSED: loccap_sl plan
   4.5 ms, comm 5.4, total 13.3 ms) at comm +16-21% / e2e +10-14%.
-  Candidate cheaper fix F2 `FLUX_A2AV_WIRE_SIGNAL_FENCE=1` (data nbi →
-  one quiet → signals; tag FLUX_A2AV_WIRE_SIGNAL_FENCE_TAG) written,
-  build pending, unverified. SCHEMA protocol rule 6 records the never-mix
+  Candidate F2 `FLUX_A2AV_WIRE_SIGNAL_FENCE=1` (data nbi → one quiet →
+  signals; tag kept) built and REFUTED on job 57405794 (16/16 stale on
+  loccap_gpu, 4/16 on the kernel arm = T4-like residue) — a stream quiet
+  before the signal is not sufficient. Same-build 10-iter A/B: BLOCKING
+  comm 5.81 / e2e 8.58 ms vs nbi 5.07 / 7.85 (+15% / +9%). Stage 2b
+  derive_combine_meta drift guard PASSED at setup on the epic l01 K3 cell
+  (the cell then failed only on the wire staleness under F2). F3 candidate
+  = GPUDirect-RDMA visibility: gateway node_sig wait is a raw
+  CUStreamWaitValue64 GEQ poll without CU_STREAM_WAIT_VALUE_FLUSH → toggle
+  `FLUX_A2AV_WAIT_FLUSH=1` (flush flag on all a2av front-end waits, tag
+  FLUX_A2AV_WAIT_FLUSH_TAG) — DEAD here: Perlmutter A100 reports
+  cudaDevAttrCanFlushRemoteWrites=0 (job 57406271, ctor guard fired on
+  every F3 cell). F4 `FLUX_A2AV_NVSHMEM_WAIT=1` (tag
+  FLUX_A2AV_NVSHMEM_WAIT_TAG): the union gateway node_sig wait and the
+  gather-gateway t_wait use nvshmemx_signal_wait_until_on_stream (NVSHMEM
+  proxy-enforced GDR consistency; gather_rs.cc:2039 already does this for
+  its inter-node signals) — built and REFUTED (ladder10, job 57406405:
+  loccap_gpu + d6 16/16 one-epoch-stale; BLOCKING 16/16 again, comm 5.74
+  vs nbi 5.06 = +13%). ROOT MECHANISM (NVSHMEM libfabric transport
+  source): put_signal = data `fi_write` (RDMA into GPU memory) + signal as
+  a separate `fi_send` message applied by the TARGET host proxy, no
+  FI_FENCE between them; `fi_info -p cxi` shows msg_order [] on the
+  endpoint type in use → flag-before-data is legal; sender quiet
+  (delivery-complete ≠ GPU-visible) and receiver NVSHMEM wait cannot
+  order it; the blocking variant works because the data completes before
+  the flag message is issued. **SHIPPING FIX = `FLUX_A2AV_BLOCKING_WIRE=1`**
+  (4/4 cells incl. 10-iter + kernel arm). DECISIONS FOR THE USER: (1)
+  canonicalize (flip the default; rule-4 boundary + SCHEMA note) or keep
+  env-carried; (2) the expert-movement sweep (plan Stage 4) and any
+  re-quoted comm-only numbers must run with it (prior hc capsules are
+  never-mix). NEXT: audit gather_rs (8 nbi put_signal sites) and
+  fused_ep_dispatch under FLUX_PLL_RANDOM_PAYLOAD; G2 capsule with the
+  fix; Stages 2-4. SCHEMA protocol rule 6 records the never-mix
   boundary and the new correctness requirement. OPEN: audit layer1
   gather_rs (8 nbi put_signal sites) + fused_ep_dispatch (eplb/epic) under
   the same probe; decide the canonical wire fix (blocking vs F2) by a

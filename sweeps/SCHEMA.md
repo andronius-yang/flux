@@ -896,10 +896,31 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
    `FLUX_PLL_RANDOM_PAYLOAD=1` (per-iteration payload randomization +
    payload-provenance probe in test_moe_epic_traffic.py). Verified fix:
    `FLUX_A2AV_BLOCKING_WIRE=1` (blocking put_signal; 16/16 bitwise incl.
-   the kernel arm; comm +16-21%, e2e +10-14% at 4n K3 b7). Candidate
-   cheaper fix under test: `FLUX_A2AV_WIRE_SIGNAL_FENCE=1` (data
-   `putmem_nbi` → one `quiet_on_stream` → signal ops; binary tag
-   `FLUX_A2AV_WIRE_SIGNAL_FENCE_TAG`). Consequences: (a) any capsule
+   the kernel arm; comm +16-21%, e2e +10-14% at 4n K3 b7). Candidate F2
+   `FLUX_A2AV_WIRE_SIGNAL_FENCE=1` (data `putmem_nbi` → one `quiet_on_stream`
+   → signal ops; tag `FLUX_A2AV_WIRE_SIGNAL_FENCE_TAG`) was REFUTED the same
+   night (16/16 one-epoch-stale on loccap_gpu, 4/16 on the kernel arm): a
+   quiet before the signal is NOT what closes it. Mechanism candidate F3
+   (GPUDirect-RDMA visibility: the gateway gates on node_sig with a raw
+   CUStreamWaitValue64 GEQ poll and no CU_STREAM_WAIT_VALUE_FLUSH, so chunk
+   bytes that reached the GPU can be invisible to the forward when the flag
+   is seen) → toggle `FLUX_A2AV_WAIT_FLUSH=1` (tag FLUX_A2AV_WAIT_FLUSH_TAG) — DEAD on
+   Perlmutter: A100 reports cudaDevAttrCanFlushRemoteWrites=0 (ctor guard
+   fires). F4 `FLUX_A2AV_NVSHMEM_WAIT=1` (tag FLUX_A2AV_NVSHMEM_WAIT_TAG):
+   gate the RDMA-written node_sig with nvshmemx_signal_wait_until_on_stream
+   (NVSHMEM-owned consistency, the pattern gather_rs already uses) instead
+   of the raw memop poll — REFUTED too (ladder10: loccap_gpu + d6 16/16
+   one-epoch-stale; only the kernel-arm cell passed by timing). Transport
+   reading (NVSHMEM libfabric.cpp): the put_signal's SIGNAL is a separate
+   `fi_send` message applied by the TARGET HOST PROXY while the data is a
+   direct `fi_write` into GPU memory, with no FI_FENCE between them (FI_FENCE
+   only in enforce_cst); `fi_info -p cxi` shows the endpoint NVSHMEM uses with
+   `msg_order: []` — flag-before-data is legal on this transport, and neither a
+   sender quiet (delivery-complete ≠ GPU-visible) nor a receiver NVSHMEM wait
+   can order it. **Shipping fix: `FLUX_A2AV_BLOCKING_WIRE=1`** (4/4 cells
+   16/16 incl. 10-iter, kernel arm; comm +13-21%, e2e +9-14% at 4n K3 b7).
+   Canonicalizing it (default flip) is a rule-4 boundary = user decision;
+   until then every hc cell MUST carry the env. Consequences: (a) any capsule
    whose env lacks one of the two wire fixes is **wire-correctness
    suspect and a never-mix boundary** against fixed capsules (env_json
    records the flip); (b) correctness cells must set

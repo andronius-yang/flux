@@ -1382,6 +1382,13 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
             # PLACE-lambda sidecar (predict_placement.py): placement input
             # only — matrix identity unchanged, sha recorded as a cell fact
             test_args += ["--placement_file", placement_path]
+        if v["driver"] in ("epic", "moonep_fused") and v.get("layer") == "l01":
+            # 2026-08-22 (plan eager-juggling-glacier Stage 3): the l01
+            # split-N combine depth follows the shape preset (K3 -> 7 ->
+            # n_per 512; Qwen3 -> 4 -> 1024). Previously hardcoded 4 in the
+            # drivers -> n_per 896 at K3. eplb / staged moonep l01 use a
+            # plain a2a combine (no split-N) and take no such flag.
+            test_args += ["--l1_n_split", str(spec["n_split_l1"])]
     else:
         test_args = [
             TEST,

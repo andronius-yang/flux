@@ -353,7 +353,22 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   const bool relay_poison_;
   const bool relay_blocking_pull_;
   const bool epoch_quiet_;
-  const bool wire_sig_fence_;  // F2 (2026-08-22): wire data as putmem_nbi, ONE
+  const bool wire_sig_fence_;
+  const bool wait_flush_;  // F3 (2026-08-22): CU_STREAM_WAIT_VALUE_FLUSH on every
+  // front-end signal wait. GPUDirect-RDMA writes that reached the device
+  // before the flag are NOT guaranteed visible to downstream device work
+  // without the flush (cuStreamWaitValue64 driver doc); the raw GEQ poll on
+  // node_sig let the gateway forward the previous epoch's stage.
+  const bool nvshmem_wait_;  // F4 (2026-08-22): gate RDMA-delivered node_sig with
+  // nvshmemx_signal_wait_until_on_stream (NVSHMEM enforces GPUDirect-RDMA
+  // consistency via its proxy flush) instead of a raw CUStreamWaitValue64
+  // poll — the pattern gather_rs already uses for its inter-node signals.
+  // A100@Perlmutter reports cudaDevAttrCanFlushRemoteWrites=0, so the
+  // CU_STREAM_WAIT_VALUE_FLUSH route (wait_flush_) is unavailable here.
+  unsigned int
+  a2av_wait_flags() const {
+    return CU_STREAM_WAIT_VALUE_GEQ | (wait_flush_ ? CU_STREAM_WAIT_VALUE_FLUSH : 0u);
+  }  // F2 (2026-08-22): wire data as putmem_nbi, ONE
   // quiet, THEN the node_sig signal ops — never rely on put_signal
   // data-before-signal ordering on the libfabric/CXI wire (one-epoch-stale
   // gateway forwards under per-iteration payload change)
@@ -575,7 +590,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
               this->cp_stream,
               reinterpret_cast<CUdeviceptr>(op.sig),
               op.val,
-              CU_STREAM_WAIT_VALUE_GEQ));
+              this->a2av_wait_flags()));
           break;
         case DeferredWireOp::kRecordHierEvent:
           CUDA_CHECK(cudaEventRecord(this->hier_dispatch_event_, this->cp_stream));
@@ -691,6 +706,8 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         relay_blocking_pull_(get_int_from_env("FLUX_A2AV_RELAY_BLOCKING_PULL", 0) != 0),
         epoch_quiet_(get_int_from_env("FLUX_A2AV_EPOCH_QUIET", 0) != 0),
         wire_sig_fence_(get_int_from_env("FLUX_A2AV_WIRE_SIGNAL_FENCE", 0) != 0),
+        wait_flush_(get_int_from_env("FLUX_A2AV_WAIT_FLUSH", 0) != 0),
+        nvshmem_wait_(get_int_from_env("FLUX_A2AV_NVSHMEM_WAIT", 0) != 0),
         fanout_eager_(get_int_from_env("FLUX_A2AV_FANOUT", 0) != 0),
         fused_stage2_(
             get_int_from_env(
@@ -997,6 +1014,13 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     CUDA_CHECK(cudaEventCreateWithFlags(&this->fwd_index_event_, cudaEventDisableTiming));
     CUDA_CHECK(cudaEventCreateWithFlags(&this->fwd_cnt_event_, cudaEventDisableTiming));
     CUDA_CHECK(cudaEventCreateWithFlags(&this->relay_send_event_, cudaEventDisableTiming));
+    if (this->wait_flush_) {
+      int dev = 0, can_flush = 0;
+      CUDA_CHECK(cudaGetDevice(&dev));
+      CUDA_CHECK(cudaDeviceGetAttribute(&can_flush, cudaDevAttrCanFlushRemoteWrites, dev));
+      FLUX_CHECK(can_flush) << "FLUX_A2AV_WAIT_FLUSH=1 but the device cannot flush remote "
+                               "writes (cudaDevAttrCanFlushRemoteWrites=0)";
+    }
     CUDA_CHECK(cudaEventCreateWithFlags(&this->signal_done_event_, cudaEventDisableTiming));
     for (int i = 0; i < kNumTimingEvents; i++) {
       CUDA_CHECK(cudaEventCreate(&this->timing_events_[i]));  // timing-capable
@@ -2332,7 +2356,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             this->cp_stream,
             reinterpret_cast<CUdeviceptr>(ptr),
             this->run_id_,
-            CU_STREAM_WAIT_VALUE_GEQ));
+            this->a2av_wait_flags()));
       }
     };
     auto emit_hier_event = [&]() {
@@ -2357,11 +2381,15 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         defer_wire ? (cudaStream_t)this->pack_stream_ : (cudaStream_t)this->cp_stream;
     auto t_wait_event = [&](cudaEvent_t ev) { CUDA_CHECK(cudaStreamWaitEvent(tail_stream, ev)); };
     auto t_wait = [&](uint64_t *ptr) {
+      if (this->nvshmem_wait_) {
+        nvshmemx_signal_wait_until_on_stream(ptr, NVSHMEM_CMP_GE, this->run_id_, tail_stream);
+        return;
+      }
       CU_CHECK(CUStreamWaitValue64(
           tail_stream,
           reinterpret_cast<CUdeviceptr>(ptr),
           this->run_id_,
-          CU_STREAM_WAIT_VALUE_GEQ));
+          this->a2av_wait_flags()));
     };
     auto t_signal = [&](uint64_t *sig, int pe) {
       nvshmemx_signal_op_on_stream(sig, this->run_id_, NVSHMEM_SIGNAL_SET, pe, tail_stream);
@@ -2784,7 +2812,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                   this->cp_stream_inter_node,
                   reinterpret_cast<CUdeviceptr>(pack_ready + sl),
                   this->run_id_,
-                  CU_STREAM_WAIT_VALUE_GEQ));
+                  this->a2av_wait_flags()));
               pulled_peer = true;
               if (this->relay_blocking_pull_) {
                 // T3 diagnostic: blocking get (local completion at return)
@@ -2927,11 +2955,18 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
               const cudaStream_t rs = this->fanout_eager_
                                           ? (cudaStream_t)this->fanout_streams_[dn - 1]
                                           : tail_stream;
-              CU_CHECK(CUStreamWaitValue64(
-                  rs,
-                  reinterpret_cast<CUdeviceptr>(node_sig + ns),
-                  this->run_id_,
-                  CU_STREAM_WAIT_VALUE_GEQ));  // one writer: relay (ns, my_lr)
+              if (this->nvshmem_wait_) {
+                // F4: NVSHMEM-owned wait = consistency-enforced observation of
+                // the RDMA-written chunk (one writer: relay (ns, my_lr))
+                nvshmemx_signal_wait_until_on_stream(
+                    node_sig + ns, NVSHMEM_CMP_GE, this->run_id_, rs);
+              } else {
+                CU_CHECK(CUStreamWaitValue64(
+                    rs,
+                    reinterpret_cast<CUdeviceptr>(node_sig + ns),
+                    this->run_id_,
+                    this->a2av_wait_flags()));  // one writer: relay (ns, my_lr)
+              }
               const int64_t win_a = chunk_bound(ns, my_node, my_lr);
               const int64_t win_b = chunk_bound(ns, my_node, my_lr + 1);
               char *wstage = stage_base + stage_off_chunk(my_node, my_lr, ns) * row_bytes;
@@ -3078,7 +3113,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                     this->cp_stream_signal,
                     reinterpret_cast<CUdeviceptr>(gw_sig + (dn - 1) * L + gl),
                     this->run_id_,
-                    CU_STREAM_WAIT_VALUE_GEQ));
+                    this->a2av_wait_flags()));
               }
               for (int sl = 0; sl < L; sl++) {
                 int s = dist_env.local_rank_to_global_rank(sl, ns);
@@ -3437,6 +3472,8 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     // payloads). Verified fix = FLUX_A2AV_BLOCKING_WIRE=1; candidate
     // FLUX_A2AV_WIRE_SIGNAL_FENCE=1 (data nbi -> quiet -> signal). Binary tag:
     (void)get_int_from_env("FLUX_A2AV_WIRE_SIGNAL_FENCE_TAG", 0);
+    (void)get_int_from_env("FLUX_A2AV_WAIT_FLUSH_TAG", 0);
+    (void)get_int_from_env("FLUX_A2AV_NVSHMEM_WAIT_TAG", 0);
     FLUX_CHECK(a2av_dispatch_) << "dispatch_only requires an a2av-mode op";
     FLUX_CHECK(!pack_overlap_)
         << "dispatch_only is untested with FLUX_A2AV_PACK_OVERLAP";
@@ -3504,7 +3541,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             stream,
             reinterpret_cast<CUdeviceptr>(sig + s),
             this->run_id_,
-            CU_STREAM_WAIT_VALUE_GEQ));
+            this->a2av_wait_flags()));
       }
     }
     // delivery barrier: after this, every rank's epoch-n puts have landed
