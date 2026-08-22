@@ -571,11 +571,13 @@ compress_plan_token_kernel(A2AVCompressPlanArguments args) {
   }
 }
 
-// one-warp running scans over the small per-token arrays (tens of KB): wire
-// row numbering + wire CSR bases, red CSR bases, remote one-cumsum columns.
-// Lane-strided 32-chunk warp scans with a serial running offset (the
-// reduce_utils.cuh pattern), fully deterministic.
-__global__ void __launch_bounds__(32, 1)
+// running scans over the small per-token arrays (tens of KB): wire row
+// numbering + wire CSR bases (warp 0), red CSR bases (warp 1), remote
+// one-cumsum columns (warps 2+, one node column per warp, strided). The
+// three phases are data-independent, so they run in parallel warps;
+// each is a lane-strided 32-chunk warp scan with a serial running offset
+// (the reduce_utils.cuh pattern), fully deterministic.
+__global__ void __launch_bounds__(256, 1)
 compress_plan_scan_kernel(A2AVCompressPlanArguments args) {
   const int64_t ntokens = args.m_full / args.topk;
   const int64_t tpr = ntokens / args.world_size;
@@ -583,12 +585,14 @@ compress_plan_scan_kernel(A2AVCompressPlanArguments args) {
   const int NN = args.nnodes;
   const int L = args.local_world_size;
   const int my_node = args.rank / L;
-  const int lane = threadIdx.x;
+  const int lane = threadIdx.x % 32;
+  const int warp = threadIdx.x / 32;
+  const int nwarps = blockDim.x / 32;
   const unsigned kFull = 0xffffffffu;
 
   // phase A: wire rows over (seg-major, token asc): exclusive flag scan ->
   // wire_row_of; inclusive conv_count scan -> wire_ptr[row + 1]
-  {
+  if (warp == 0) {
     const int64_t n = (int64_t)(NN - 1) * tpr;
     int64_t run_rows = 0;
     int64_t run_cnt = 0;
@@ -620,10 +624,9 @@ compress_plan_scan_kernel(A2AVCompressPlanArguments args) {
       run_cnt += __shfl_sync(kFull, pc, 31);
     }
   }
-  __syncwarp();
 
   // phase B: red_ptr over my tokens (own copies + contributing remote nodes)
-  {
+  if (warp == 1) {
     int64_t run = 0;
     if (lane == 0) {
       args.red_ptr[0] = 0;
@@ -656,10 +659,13 @@ compress_plan_scan_kernel(A2AVCompressPlanArguments args) {
       run += __shfl_sync(kFull, p, 31);
     }
   }
-  __syncwarp();
 
-  // phase C: remote one-cumsum per node column (exclusive over my tokens)
-  for (int m = 0; m < NN; m++) {
+  // phase C: remote one-cumsum per node column (exclusive over my tokens),
+  // one column per warp among warps 2..nwarps-1, strided
+  if (warp < 2) {
+    return;
+  }
+  for (int m = warp - 2; m < NN; m += nwarps - 2) {
     if (m == my_node) {
       continue;
     }
@@ -783,7 +789,7 @@ a2av_compress_plan(A2AVCompressPlanArguments const &args, cudaStream_t stream) {
   constexpr int kThreads = 256;
   compress_plan_token_kernel<<<(int)((ntokens + kThreads - 1) / kThreads), kThreads, 0, stream>>>(
       args);
-  compress_plan_scan_kernel<<<1, 32, 0, stream>>>(args);
+  compress_plan_scan_kernel<<<1, 256, 0, stream>>>(args);
   compress_plan_conv_kernel<<<
       (int)((args.m_full + kThreads - 1) / kThreads),
       kThreads,

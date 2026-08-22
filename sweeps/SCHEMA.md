@@ -482,7 +482,12 @@ Highlights (full list = header row):
   to the sort formulation, FLUX_A2AV_RS_CHECK_IDENTITY cross-checks both);
   l01_allgather_dense carries FLUX_RS_BLOCKS=20 (the dense combine was
   CTA-starved at topk-16: K3 b32 e2e 104 -> 60 ms over the {3..24} knob
-  sweep, knee ~20) — env flip = never-byte-compare boundary.
+  sweep, knee ~20) — env flip = never-byte-compare boundary. The a2av
+  combine was starved the SAME way: 2026-08-22 both a2av l01 arms carry
+  FLUX_A2AV_RS_{PACK,REDUCE,PRERED}_BLOCKS = 6/6/4 (K3 b32 compress e2e
+  61.9 -> 51.0; 12/12/8 regresses — margin starves the GEMMs). The
+  compress plan is additionally fully sort-free since 2026-08-22
+  (reduce_index by the same scd arithmetic).
   Driver l01_fast (--impl fast, 2026-08-21): the FAST+FAST combined
   unfused baseline on REAL routing — dispatch alltoallv -> grouped GEMM0
   -> GELU -> grouped GEMM1 -> combine alltoallv (transposed matrix) ->

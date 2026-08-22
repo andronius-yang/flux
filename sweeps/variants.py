@@ -1360,12 +1360,19 @@ VARIANTS = {
             "--l0_comm_pattern", "a2av_hier_compress",
             "--l1_comm_pattern", "a2av_hier",
         ],
+        # a2av combine CTA canonicalization 3/3/2 -> 6/6/4 (2026-08-22): same
+        # starvation class as dense's FLUX_RS_BLOCKS — K3 b32 e2e 61.9 -> 51.0
+        # over the knob ladder, knee at 6/6/4 (12/12/8 regresses: margin
+        # starves the GEMMs). Env flip = never-byte-compare boundary.
+        # a2av combine CTA canonicalization 3/3/2 -> 6/6/4 (2026-08-22): same
+        # starvation class as dense's FLUX_RS_BLOCKS — K3 b32 e2e 61.9 -> 51.0
+        # over the knob ladder, knee at 6/6/4 (12/12/8 regresses: margin
+        # starves the GEMMs). Env flip = never-byte-compare boundary.
         env={
             "FLUX_A2AV_LB_UNION": "1",
             "FLUX_A2AV_FUSED_STAGE2": "1",
             "FLUX_A2AV_EARLY_LAUNCH": "1",
-            "CUDA_DEVICE_MAX_CONNECTIONS": "8",
-        },
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "6", "FLUX_A2AV_RS_REDUCE_BLOCKS": "6", "FLUX_A2AV_RS_PRERED_BLOCKS": "4"},
         requires=[
             "FLUX_A2AV_LB_UNION",
             "FLUX_A2AV_FUSED_STAGE2",
@@ -1396,8 +1403,7 @@ VARIANTS = {
             "FLUX_A2AV_LB_UNION": "1",
             "FLUX_A2AV_FUSED_STAGE2": "1",
             "FLUX_A2AV_EARLY_LAUNCH": "1",
-            "CUDA_DEVICE_MAX_CONNECTIONS": "8",
-        },
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "6", "FLUX_A2AV_RS_REDUCE_BLOCKS": "6", "FLUX_A2AV_RS_PRERED_BLOCKS": "4"},
         requires=[
             "FLUX_A2AV_LB_UNION",
             "FLUX_A2AV_FUSED_STAGE2",

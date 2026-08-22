@@ -230,17 +230,42 @@ namespace {
       pack_index = torch::empty({0}, torch::TensorOptions(torch::kCUDA).dtype(torch::kInt));
     }
 
-    // reduce index: my copies sorted by (expert, copy index) == recv-panel order
-    // (owner-major falls out because experts are owner-contiguous). Keys are
-    // unique (one entry per copy), so no tie-break is needed.
-    auto iota_c = torch::arange(cpr, opt_i64);
+    // reduce index: my copies sorted by (expert, copy index) == recv-panel
+    // order. SORT-FREE since 2026-08-22: the rank of a local copy among my
+    // copies in (e, copy) order is pure scd arithmetic — my exclusive
+    // per-expert prefix + the copy's rank inside its (e, home==me) A-order
+    // sub-block (scd - expert_base - home_base(e, me)). Same identity family
+    // as the pack side above; bitwise == the old argsort (unique keys).
     auto routing_slice =
         routing_idx.narrow(0, (int64_t)rank * cpr, cpr).to(torch::kLong);
     auto splits_cum = splits_gpu.to(torch::kLong).cumsum(0);
     auto e_of = torch::searchsorted(splits_cum, routing_slice, /*out_int32=*/false, /*right=*/true)
                     .clamp_max_(nex - 1);
-    auto perm = (e_of * cpr + iota_c).argsort();
-    auto reduce_index = torch::empty({cpr}, opt_i64).scatter_(0, perm, iota_c).to(torch::kInt);
+    torch::Tensor rtab = torch::empty({3, nex}, torch::TensorOptions().dtype(torch::kLong));
+    {
+      int64_t *my_cum = rtab[0].data_ptr<int64_t>();
+      int64_t *e_base = rtab[1].data_ptr<int64_t>();
+      int64_t *h_base = rtab[2].data_ptr<int64_t>();
+      int64_t acc_my = 0;
+      int64_t acc_e = 0;
+      for (int64_t e = 0; e < nex; e++) {
+        my_cum[e] = acc_my;
+        e_base[e] = acc_e;
+        int64_t hb = 0;
+        for (int h = 0; h < W; h++) {
+          if (h == rank) {
+            h_base[e] = hb;
+          }
+          hb += cnt_at(h, e);
+        }
+        acc_my += cnt_at(rank, e);
+        acc_e += hb;
+      }
+    }
+    auto rtab_dev = rtab.to(torch::kCUDA, /*non_blocking=*/true);
+    auto reduce_index = (rtab_dev[0].index_select(0, e_of) + routing_slice -
+                         rtab_dev[1].index_select(0, e_of) - rtab_dev[2].index_select(0, e_of))
+                            .to(torch::kInt);
 
     static const bool kCheckIdentity =
         get_int_from_env("FLUX_A2AV_RS_CHECK_IDENTITY", 0) != 0;
