@@ -2091,19 +2091,31 @@ class EpicLayer0Runner(EPLBLayer0Runner):
             self._iter_hc = dict(sps=sps_cpu, uc=uc_cpu,
                                  pad_mine=self._iter_pad_mine)
             if getattr(self, "hcc_enabled", False):
-                # the combine op rebuilds pack/red/wire/redcsr internally
-                # from routing when they are not passed (the
-                # RS_CHECK_IDENTITY-verified in-op builders). Its
-                # unique_counts arg is the COMBINE U [W, NN] — the last NN
+                # The combine plan in-window (rule 5). Default since
+                # 2026-08-22 (plan eager-juggling-glacier 2b): ONE C++ call
+                # TopkReduceScatterOp.derive_combine_meta (sort-free
+                # compress builders, tag FLUX_A2AV_RS_DERIVE_COMBINE_RS_TAG)
+                # inside this dispatch bracket, so run() no longer self-
+                # builds with the slow sort-based builders on the combine
+                # path. FLUX_EPIC_HCC_DERIVE=0 restores the in-op self-build
+                # (ablation / bisection only — a rule-4 boundary).
+                # unique_counts = the COMBINE U [W, NN] — the last NN
                 # columns of the dispatch-side [W, W+NN] concat.
                 W = self.cfg.R
                 nn = W // self._hc_L
+                routing_flat = scd.reshape(-1).contiguous()
+                uc_comb = (uc_cpu[:, W:].contiguous() if nn > 1 else None)
+                pack = red = wire = redcsr = None
+                if getattr(self, "_hcc_derive_fused", True):
+                    outs = self._hcc[g]["op"].derive_combine_meta(
+                        sd, routing_flat, sps_cpu, uc_comb)
+                    pack, red = outs[0], outs[1]
+                    if len(outs) > 2:
+                        wire = [outs[2], outs[3]]
+                        redcsr = [outs[4], outs[5]]
                 self._hcc[g].update(
-                    routing=scd.reshape(-1).contiguous(), pack=None,
-                    red=None,
-                    uc=(uc_cpu[:, W:].contiguous() if nn > 1 else None),
-                    wire=None, redcsr=None,
-                    sps=sps_cpu)
+                    routing=routing_flat, pack=pack, red=red,
+                    uc=uc_comb, wire=wire, redcsr=redcsr, sps=sps_cpu)
         ihc = getattr(self, "_iter_hc", None)
         sps = ihc["sps"] if ihc is not None else b.meta.splits_per_source
         ucs = ihc["uc"] if ihc is not None else b.meta.a2av_unique_counts
@@ -2188,6 +2200,12 @@ class EpicLayer0Runner(EPLBLayer0Runner):
 
         assert self.hc_enabled, "enable_hier_compress must run first"
         assert self.layers == "l01", "hc combine is an l01 phase"
+        # a2av combine tiles need (H // n_split) % 8 == 0; the K3 shape
+        # preset's n_split_l1=7 gives n_per=512 (2026-08-22: n_split was
+        # never threaded to the expert-movement drivers — hardcoded 4 ->
+        # n_per=896 at H=3584, legal for a2av but off the 512-tile lane)
+        assert (self.cfg.H // n_split) % 8 == 0 and \
+            self.cfg.H % n_split == 0, (self.cfg.H, n_split)
         W = self.cfg.R
         L = self._hc_L
         nn = W // L
@@ -2230,6 +2248,30 @@ class EpicLayer0Runner(EPLBLayer0Runner):
             self._refresh_hcc_entry(entry, b)
             self._hcc.append(entry)
         self.hcc_enabled = True
+        # fused in-window combine derive (default ON; FLUX_EPIC_HCC_DERIVE=0
+        # = in-op self-build ablation). Untimed one-shot drift guard: the C++
+        # entry must reproduce the python builders bitwise on the setup
+        # routing (same discipline as test_moe_l0l1_traffic's guard).
+        self._hcc_derive_fused = bool(int(os.environ.get(
+            "FLUX_EPIC_HCC_DERIVE", "1")))
+        if self._hcc_derive_fused:
+            for entry, b in zip(self._hcc, self._hc_bundles):
+                uc_ref = (entry["uc"] if nn > 1 else None)
+                outs = entry["op"].derive_combine_meta(
+                    b.meta.splits.to(self.device).int().contiguous(),
+                    entry["routing"].int().contiguous(),
+                    b.meta.splits_per_source.int().contiguous(),
+                    uc_ref)
+                assert torch.equal(outs[0].cpu(), entry["pack"].cpu()), (
+                    "derive_combine_meta pack_index != python builder")
+                assert torch.equal(outs[1].cpu(), entry["red"].cpu()), (
+                    "derive_combine_meta reduce_index != python builder")
+                if nn > 1:
+                    for got, ref in zip(outs[2:6],
+                                        entry["wire"] + entry["redcsr"]):
+                        assert torch.equal(got.cpu(), ref.cpu()), (
+                            "derive_combine_meta compress CSR != python "
+                            "builder")
 
     def _hcc_rs_demands(self, b):
         """Exact send/stage/conv/wire demands, replicating the op's

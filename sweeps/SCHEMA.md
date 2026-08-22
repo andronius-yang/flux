@@ -879,3 +879,34 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
    trigger facts are `epic_place_lb_cur/lb_new/gain_ppm/moves_add/`
    `moves_remove/trigger` (identical across iterations under static
    per-cell routing — asserted, recorded once).
+
+6. **Wire-ordering correctness boundary (2026-08-22).** The `hier_compress`
+   dispatch wire (`GemmGroupedV2AGScatterOp::a2av_dispatch`, relay +
+   lb_union gateway path, and by code-sharing every hc arm incl. the
+   comm-only baselines) issued its inter-node chunk as
+   `nvshmemx_putmem_signal_nbi_on_stream`. On Perlmutter's libfabric/CXI
+   transport the gateway's `node_sig` GEQ wait can observe the signal
+   before the chunk bytes (or across-epoch reordered), so the gateway
+   forwards the PREVIOUS epoch's stage — **~35-45% of inter-node rows
+   exactly one epoch stale at 4n K3 b7**, on every arm (d6 / loccap_gpu /
+   loccap_sl), every mode (e2e, isolated, single-stream). Invisible with
+   static payloads and static routing (an unrewritten row keeps correct
+   bytes) — i.e. in EVERY capsule before this date; first seen as the
+   3-5% kernel-arm residue (changing routing) and quantified with
+   `FLUX_PLL_RANDOM_PAYLOAD=1` (per-iteration payload randomization +
+   payload-provenance probe in test_moe_epic_traffic.py). Verified fix:
+   `FLUX_A2AV_BLOCKING_WIRE=1` (blocking put_signal; 16/16 bitwise incl.
+   the kernel arm; comm +16-21%, e2e +10-14% at 4n K3 b7). Candidate
+   cheaper fix under test: `FLUX_A2AV_WIRE_SIGNAL_FENCE=1` (data
+   `putmem_nbi` → one `quiet_on_stream` → signal ops; binary tag
+   `FLUX_A2AV_WIRE_SIGNAL_FENCE_TAG`). Consequences: (a) any capsule
+   whose env lacks one of the two wire fixes is **wire-correctness
+   suspect and a never-mix boundary** against fixed capsules (env_json
+   records the flip); (b) correctness cells must set
+   `FLUX_PLL_RANDOM_PAYLOAD=1` (or an equivalent per-iteration payload
+   change) — a static-payload bitwise pass proves nothing about the wire;
+   (c) the same nbi put_signal pattern exists in
+   `gemm_grouped_v2_gather_rs.cc` (layer1, 8 sites) and
+   `coll/ths_op/fused_ep_dispatch.cc` (eplb/epic fused dispatch) — those
+   paths are UNAUDITED under payload change and must not be quoted as
+   correct until they pass the same probe.

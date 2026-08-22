@@ -1772,6 +1772,99 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
     return output;
   }
 
+  // Combine/compress plan as ONE C++ call for the a2av_hier TopkReduceScatter
+  // path (2026-08-22, plan eager-juggling-glacier Stage 2b; mirrors
+  // GemmGroupedV2GatherRSOp::derive_combine_meta): pack/reduce gather
+  // indices (+ the SORT-FREE compress wire/reduce CSRs) derived from this
+  // iteration's splits/routing/splits_per_source — the epic/pll l01
+  // harnesses call it inside the rule-5 plan bracket instead of letting
+  // run() self-build with the slow sort-based builder on the timed path.
+  // ep geometry follows run(): nex_total = ep_nexperts * ep_world_size,
+  // e_loc = nex_total / world_size, ep_start = rank * e_loc.
+  std::vector<torch::Tensor>
+  derive_combine_meta(
+      torch::Tensor splits_gpu,
+      torch::Tensor routing_idx,
+      torch::Tensor splits_per_source,
+      c10::optional<torch::Tensor> a2av_unique_counts) {
+    (void)get_int_from_env("FLUX_A2AV_RS_DERIVE_COMBINE_RS_TAG", 0);
+    FLUX_CHECK(this->a2av_hier)
+        << "TopkReduceScatterOp::derive_combine_meta requires the a2av_hier ctor flag";
+    CHECK_INPUT(routing_idx, at::ScalarType::Int);
+    CHECK_INPUT(splits_gpu, at::ScalarType::Int);
+    const int64_t nex_total = (int64_t)this->ep_nexperts * this->ep_world_size;
+    const int64_t e_loc = nex_total / this->world_size;
+    CHECK_1D(splits_gpu, nex_total);
+    FLUX_CHECK(splits_per_source.device().is_cpu()) << "splits_per_source must be CPU";
+    CHECK_2D(splits_per_source, this->world_size, nex_total);
+    FLUX_CHECK(splits_per_source.scalar_type() == at::ScalarType::Int);
+    FLUX_CHECK(splits_per_source.is_contiguous());
+    const int64_t m_full = routing_idx.numel();
+    FLUX_CHECK_DIV(m_full, (int64_t)this->world_size * this->topk);
+    const int32_t *cnt = splits_per_source.data_ptr<int32_t>();
+    const int64_t ep_start = (int64_t)this->rank * e_loc;
+    int64_t m_this_ep = 0;
+    for (int h = 0; h < this->world_size; h++) {
+      for (int64_t e = ep_start; e < ep_start + e_loc; e++) {
+        m_this_ep += cnt[h * nex_total + e];
+      }
+    }
+    auto [pack_idx, reduce_idx] = build_a2av_combine_indices(
+        routing_idx,
+        splits_gpu,
+        splits_per_source,
+        m_this_ep,
+        m_full,
+        this->world_size,
+        this->rank,
+        nex_total,
+        e_loc,
+        ep_start);
+    std::vector<torch::Tensor> out{pack_idx, reduce_idx};
+    if (this->a2av_compress_) {
+      FLUX_CHECK(a2av_unique_counts.has_value())
+          << "a2av_compress derive requires a2av_unique_counts ([W, nnodes] int32 CPU)";
+      auto [wp, wc, rp, rr] = build_a2av_compress_indices_fast(
+          routing_idx,
+          splits_gpu,
+          splits_per_source,
+          a2av_unique_counts.value(),
+          m_full,
+          this->world_size,
+          this->nnodes,
+          this->local_world_size,
+          this->rank,
+          nex_total,
+          e_loc,
+          this->topk);
+      static const bool kCheckIdentity =
+          get_int_from_env("FLUX_A2AV_RS_CHECK_IDENTITY", 0) != 0;
+      if (kCheckIdentity) {
+        auto [wp_ref, wc_ref, rp_ref, rr_ref] = build_a2av_compress_indices(
+            routing_idx,
+            splits_gpu,
+            splits_per_source,
+            a2av_unique_counts.value(),
+            m_full,
+            this->world_size,
+            this->nnodes,
+            this->local_world_size,
+            this->rank,
+            nex_total,
+            e_loc,
+            this->topk);
+        FLUX_CHECK(torch::equal(wp, wp_ref)) << "RS compress plan wire_ptr identity mismatch";
+        FLUX_CHECK(torch::equal(wc, wc_ref)) << "RS compress plan wire_copy identity mismatch";
+        FLUX_CHECK(torch::equal(rp, rp_ref)) << "RS compress plan red_ptr identity mismatch";
+        FLUX_CHECK(torch::equal(rr, rr_ref)) << "RS compress plan red_row identity mismatch";
+      }
+      out.push_back(wp);
+      out.push_back(wc);
+      out.push_back(rp);
+      out.push_back(rr);
+    }
+    return out;
+  }
   torch::Tensor
   run(std::vector<torch::Tensor> gemm_outs,  // of group_size
       c10::optional<torch::Tensor> output_,
@@ -3039,6 +3132,20 @@ TopkReduceScatterOp::run(
       std::move(unique_counts),
       std::move(wire_csr),
       std::move(reduce_csr));
+}
+
+std::vector<torch::Tensor>
+TopkReduceScatterOp::derive_combine_meta(
+    torch::Tensor splits_gpu,
+    torch::Tensor routing_idx,
+    torch::Tensor splits_per_source,
+    c10::optional<torch::Tensor> a2av_unique_counts) {
+  FLUX_CHECK(impl_ != nullptr) << "TopkReduceScatterOp not initialized";
+  return impl_->derive_combine_meta(
+      std::move(splits_gpu),
+      std::move(routing_idx),
+      std::move(splits_per_source),
+      std::move(a2av_unique_counts));
 }
 
 GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOp(

@@ -249,6 +249,13 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("unique_counts") = py::none(),
             py::arg("wire_csr") = py::none(),
             py::arg("reduce_csr") = py::none())
+        .def(
+            "derive_combine_meta",
+            &TopkReduceScatterOpCls::derive_combine_meta,
+            py::arg("splits_gpu"),
+            py::arg("routing_idx"),
+            py::arg("splits_per_source"),
+            py::arg("a2av_unique_counts") = py::none())
         .def("reset_buffer", &TopkReduceScatterOpCls::reset_buffer);
   });
   return 0;

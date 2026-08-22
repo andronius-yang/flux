@@ -292,3 +292,27 @@ cells hang, bincount the routing for empty experts before anything else.
   persist workspace/memsets across iterations, fold into the dispatch
   launch (planner_impl=fused_dispatch), counts-only exchange instead of
   the phys-row allgather.
+- **2026-08-22 — DISPATCH WIRE ORDERING BUG ROOT-CAUSED (the "op-level
+  cross-iteration staleness" of 08-21 PART 5).** Toggle ladders on 4n K3 b7
+  (job 57405130, ~2 nh): relay-pull fence (T1), relay-panel poison (T2),
+  blocking pull (T3) — all REFUTED (C2 dead; poison sentinel never
+  delivered); epoch quiets (T4) reduce 10x but leave node2←node3 (round-1)
+  residue; `FLUX_PLL_RANDOM_PAYLOAD=1` (new driver guard: per-iteration
+  payload randomization + payload-provenance probe) showed the bug is
+  PRODUCTION-WIDE: d6, loccap_gpu, loccap_sl all fail 16/16 with ~35-45%
+  inter-node rows carrying EXACTLY the previous epoch's payload (ledger
+  probe), in e2e, isolated and single-stream modes; FORCE_REF's lockstep
+  standalone forward was the only pass. **Mechanism:** the inter-node
+  chunk `putmem_signal_nbi` lets the gateway's `node_sig` wait pass before
+  the chunk bytes land → the lb_union forward ships the previous epoch's
+  stage. **Verified fix: `FLUX_A2AV_BLOCKING_WIRE=1`** → 16/16 bitwise on
+  every arm INCLUDING the kernel arm (G1 re-gate PASSED: loccap_sl plan
+  4.5 ms, comm 5.4, total 13.3 ms) at comm +16-21% / e2e +10-14%.
+  Candidate cheaper fix F2 `FLUX_A2AV_WIRE_SIGNAL_FENCE=1` (data nbi →
+  one quiet → signals; tag FLUX_A2AV_WIRE_SIGNAL_FENCE_TAG) written,
+  build pending, unverified. SCHEMA protocol rule 6 records the never-mix
+  boundary and the new correctness requirement. OPEN: audit layer1
+  gather_rs (8 nbi put_signal sites) + fused_ep_dispatch (eplb/epic) under
+  the same probe; decide the canonical wire fix (blocking vs F2) by a
+  same-capsule A/B; Stage 2b derive_combine_meta compile+validate; then
+  G2 and the plan's Stages 2-4.

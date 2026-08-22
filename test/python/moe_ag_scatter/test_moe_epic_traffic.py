@@ -204,6 +204,15 @@ def perf_epic(
     isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))
     _hb = (print if int(os.getenv("FLUX_PLL_DEBUG", "0"))
            else (lambda *a, **k: None))
+    _rand_payload = bool(int(os.getenv("FLUX_PLL_RANDOM_PAYLOAD", "0")))
+    _rand_gen = (torch.Generator(device=ctx.inputs_shard.device)
+                 .manual_seed(4242 + 7919 * runner.rank)
+                 if _rand_payload else None)
+    if _rand_payload:
+        # provenance ledger for the correctness probe: payload 0 = the
+        # pre-loop (setup) shard, payload k = the one dispatched in loop
+        # iteration k-1
+        ctx._pll_payloads = [ctx.inputs_shard.clone()]
     iso_sync_times = []
     mig_host_times = []
     mig_swaps_per_iter = []
@@ -292,6 +301,18 @@ def perf_epic(
                 mig_host_times.append((time.perf_counter() - t_mig) * 1e3)
             ev["mig"][i].record()
             _hb(f"[pll-hb] r{runner.rank} iter {i} planned", flush=True)
+            if _rand_payload:
+                # regression guard (2026-08-22): per-iteration payload
+                # change makes stale-delivery visible even under identical
+                # routing metadata (static payloads masked the relay-pull
+                # race); check_correctness allgathers the FINAL shard, so
+                # the deterministic final iteration stays consistent
+                ctx.inputs_shard.copy_(
+                    (torch.rand(ctx.inputs_shard.shape,
+                                device=ctx.inputs_shard.device,
+                                generator=_rand_gen) * 0.01)
+                    .to(ctx.inputs_shard.dtype))
+                ctx._pll_payloads.append(ctx.inputs_shard.clone())
             runner.pack(ctx.inputs_shard, probs_shard)
             ev["pack"][i].record()
             if single_stream:
@@ -588,6 +609,45 @@ def check_correctness(runner, ctx, plan, topk_all, w_all, atol, rtol):
             print(f"  probe rank {rank}: bad {n_bad}/{runner.n_recv} rows, "
                   f"{zero_bad} all-zero, permutation={perm}, "
                   f"bad-by-src-node {dict(sorted(cnt.items()))}")
+            # provenance vs the payload ledger (FLUX_PLL_RANDOM_PAYLOAD):
+            # which earlier payload do the bad rows carry? Also counts the
+            # T2 poison sentinel (0xA5A5 in every element).
+            ledger = getattr(ctx, "_pll_payloads", None)
+            if ledger is not None and n_bad > 0:
+                # per-row expected source index (src*S + tok), rebuilt from
+                # the same expansion the expectation used
+                src_row = torch.full((expected_hidden.shape[0],), -1,
+                                     dtype=torch.int64)
+                fill_q = list(runner.elay.seg_start)
+                for src in range(cfg.R):
+                    tok_q, phys_q = reroute_expand(cfg, plan, src,
+                                                   topk_all[src])
+                    order_q = torch.argsort(phys_q * (S + 1) + tok_q,
+                                            stable=True)
+                    tok_q, phys_q = tok_q[order_q], phys_q[order_q]
+                    msk_q = (phys_q // cfg.nlp) == rank
+                    for t, p in zip(tok_q[msk_q].tolist(),
+                                    phys_q[msk_q].tolist()):
+                        pl = p - rank * cfg.nlp
+                        src_row[fill_q[pl]] = src * S + t
+                        fill_q[pl] += 1
+                bad_src = src_row[bad_idx].to(got.device)
+                got_bad = got[bad_idx.to(got.device)]
+                prov = {}
+                for k, pay in enumerate(ledger):
+                    full_k = torch.empty(
+                        ctx.ntokens, pay.shape[1], dtype=pay.dtype,
+                        device=pay.device)
+                    torch.distributed.all_gather_into_tensor(
+                        full_k, pay, group=TP_GROUP)
+                    prov[k] = int((got_bad == full_k[bad_src]).all(
+                        dim=1).sum())
+                    del full_k
+                sent = int((got_bad.view(torch.int16) == -23131).all(
+                    dim=1).sum())
+                print(f"  probe rank {rank}: bad-by-payload {prov} "
+                      f"(ledger {len(ledger)}, last = expected), "
+                      f"poison-sentinel {sent}", flush=True)
     if not torch.equal(runner.weights_buf[:runner.n_recv],
                        expected_probs[:runner.n_recv]):
         ok_bitwise = False
@@ -843,6 +903,10 @@ def parse_args():
                         "correctness iteration")
     parser.add_argument("--eps", type=float, default=0.25,
                         help="LocCap balance slack; 'inf' = pure locality")
+    parser.add_argument("--l1_n_split", type=int, default=4,
+                        help="l01 combine split-N pipeline depth (the sweep "
+                        "passes the shape preset's n_split_l1: K3 -> 7, "
+                        "n_per=512; H//n_split must be 8-aligned)")
     parser.add_argument("--pll_f_cap", type=int, default=0,
                         help="loccap_sl per-(src,dst) forced-admission "
                         "budget — the ONE sizing clamp that makes the "
@@ -1224,7 +1288,7 @@ if __name__ == "__main__":
             wire=args.hc_wire, **hc_kwargs)
         if args.layers == "l01":
             # Mode-2 combine: per-group TopkReduceScatterOp (S3)
-            runner.enable_hc_combine()
+            runner.enable_hc_combine(n_split=args.l1_n_split)
 
     place_bytes, place_ms = runner.place_weights(TP_GROUP)
     # AFTER place_weights: the grouped backend snapshots compacted weight

@@ -61,6 +61,13 @@ class TopkReduceScatterOp {
       c10::optional<torch::Tensor> unique_counts = c10::nullopt,
       c10::optional<std::vector<torch::Tensor>> wire_csr = c10::nullopt,
       c10::optional<std::vector<torch::Tensor>> reduce_csr = c10::nullopt);
+  // One-call combine/compress plan for the a2av_hier path (rule-5 plan
+  // bracket; outputs feed run()'s pack/reduce/wire_csr/reduce_csr).
+  std::vector<torch::Tensor> derive_combine_meta(
+      torch::Tensor splits_gpu,
+      torch::Tensor routing_idx,
+      torch::Tensor splits_per_source,
+      c10::optional<torch::Tensor> a2av_unique_counts = c10::nullopt);
 
  private:
   class TopkReduceScatterOpImpl;

@@ -343,6 +343,20 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // CUDA_DEVICE_MAX_CONNECTIONS=1 that kernel serializes ahead of the GEMM;
   // for overlap visualization raise the env (launch.sh default is :-1).
   const bool blocking_wire_;
+  // 2026-08-22 relay-pull ordering fix + diagnostics (cross-iteration stale
+  // delivery under per-call-changing metadata; plan eager-juggling-glacier
+  // Stage 1). relay_fence_: quiet on cp_stream_inter_node between the
+  // relay phase-1 nbi gets and the phase-2 wire put (the F1 fix).
+  // relay_poison_/relay_blocking_pull_/epoch_quiet_: mechanism-isolation
+  // toggles (T2/T3/T4), never set in campaign specs.
+  const bool relay_fence_;
+  const bool relay_poison_;
+  const bool relay_blocking_pull_;
+  const bool epoch_quiet_;
+  const bool wire_sig_fence_;  // F2 (2026-08-22): wire data as putmem_nbi, ONE
+  // quiet, THEN the node_sig signal ops — never rely on put_signal
+  // data-before-signal ordering on the libfabric/CXI wire (one-epoch-stale
+  // gateway forwards under per-iteration payload change)
   // FLUX_A2AV_FANOUT=1 (lb_union Tier B only; NR-06 re-check 2026-08-07):
   // eager per-round gateway forwards — round dn's node_sig wait + window puts
   // enqueue on fanout_streams_[dn-1] instead of the single tail stream, so a
@@ -672,6 +686,11 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                     : 0) != 0 &&
             a2av_dispatch),
         blocking_wire_(get_int_from_env("FLUX_A2AV_BLOCKING_WIRE", 0) != 0),
+        relay_fence_(get_int_from_env("FLUX_A2AV_RELAY_FENCE", 0) != 0),
+        relay_poison_(get_int_from_env("FLUX_A2AV_RELAY_POISON", 0) != 0),
+        relay_blocking_pull_(get_int_from_env("FLUX_A2AV_RELAY_BLOCKING_PULL", 0) != 0),
+        epoch_quiet_(get_int_from_env("FLUX_A2AV_EPOCH_QUIET", 0) != 0),
+        wire_sig_fence_(get_int_from_env("FLUX_A2AV_WIRE_SIGNAL_FENCE", 0) != 0),
         fanout_eager_(get_int_from_env("FLUX_A2AV_FANOUT", 0) != 0),
         fused_stage2_(
             get_int_from_env(
@@ -2724,6 +2743,17 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             }
             return acc;
           };
+          if (this->relay_poison_) {
+            // T2 diagnostic: sentinel-fill the relay panel so any row the
+            // wire ships before its pull landed is unmistakable (0xA5)
+            CUDA_CHECK(cudaMemsetAsync(
+                relay_base,
+                0xA5,
+                (size_t)this->a2av_relay_stage_.numel() *
+                    this->a2av_relay_stage_.element_size(),
+                this->cp_stream_inter_node));
+          }
+          bool pulled_peer = false;
           for (int dn = 1; dn < NN; dn++) {
             int tn = (my_node - dn + NN) % NN;
             const int64_t a_me = chunk_bound(my_node, tn, my_lr);
@@ -2755,12 +2785,23 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                   reinterpret_cast<CUdeviceptr>(pack_ready + sl),
                   this->run_id_,
                   CU_STREAM_WAIT_VALUE_GEQ));
-              nvshmemx_getmem_nbi_on_stream(
-                  relay_base + (relay_round_base(my_lr, dn) + (lo - a_me)) * row_bytes,
-                  send_base + (peer_seg_base(sl, tn) + (lo - s0)) * row_bytes,
-                  (hi - lo) * row_bytes,
-                  prank,
-                  this->cp_stream_inter_node);
+              pulled_peer = true;
+              if (this->relay_blocking_pull_) {
+                // T3 diagnostic: blocking get (local completion at return)
+                nvshmemx_getmem_on_stream(
+                    relay_base + (relay_round_base(my_lr, dn) + (lo - a_me)) * row_bytes,
+                    send_base + (peer_seg_base(sl, tn) + (lo - s0)) * row_bytes,
+                    (hi - lo) * row_bytes,
+                    prank,
+                    this->cp_stream_inter_node);
+              } else {
+                nvshmemx_getmem_nbi_on_stream(
+                    relay_base + (relay_round_base(my_lr, dn) + (lo - a_me)) * row_bytes,
+                    send_base + (peer_seg_base(sl, tn) + (lo - s0)) * row_bytes,
+                    (hi - lo) * row_bytes,
+                    prank,
+                    this->cp_stream_inter_node);
+              }
             }
           }
           // GEMM gate: piece transfers are issued (local nbi work; pull adds
@@ -2769,10 +2810,21 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           // (forward_impl waits on this instead of fetch_remote_event in
           // relay mode)
           CUDA_CHECK(cudaEventRecord(this->relay_send_event_, this->cp_stream_inter_node));
+          if (this->relay_fence_ && pulled_peer) {
+            // F1: complete the phase-1 nbi gets BEFORE the wire reads
+            // relay_base. Stream FIFO gives issue order only; a proxy-
+            // lowered get can land after the put has read its source, which
+            // ships the PREVIOUS epoch's relay bytes — invisible while
+            // routing metadata and payloads repeat, corrupting under
+            // per-iteration change. Own-only / self-copy rounds never set
+            // pulled_peer and pay nothing.
+            nvshmemx_quiet_on_stream(this->cp_stream_inter_node);
+          }
 
           // ---- phase 2: wire loop, mirror node order. One contiguous put of
           // my chunk per round; node_sig keeps its single-writer-per-slot
           // semantics (the round's chunk k comes only from relay (ns, k)).
+          std::vector<int> fenced_sig_targets;  // F2: signal after the quiet
           for (int dn = 1; dn < NN; dn++) {
             int tn = (my_node - dn + NN) % NN;
             int g = dist_env.local_rank_to_global_rank(my_lr, tn);
@@ -2800,6 +2852,20 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
               // signal to wait for (relay_sig retired with the push design)
               wire_src = relay_base + relay_round_base(my_lr, dn) * row_bytes;
             }
+            if (this->wire_sig_fence_) {
+              // F2: data only; the round's node_sig is SET after a PE-wide
+              // quiet below, so the gateway's GEQ wait can never observe the
+              // signal ahead of (or reordered across epochs relative to) the
+              // chunk bytes it certifies.
+              nvshmemx_putmem_nbi_on_stream(
+                  stage_base + stage_off_chunk(tn, my_lr, my_node) * row_bytes,
+                  wire_src,
+                  rows * row_bytes,
+                  g,
+                  this->cp_stream_inter_node);
+              fenced_sig_targets.push_back(g);
+              continue;
+            }
             // blocking_wire_ (instrumented): local-completion put whose proxy
             // entrypoint kernel spans the wire drain on the timeline
             if (this->blocking_wire_) {
@@ -2817,6 +2883,17 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                   stage_base + stage_off_chunk(tn, my_lr, my_node) * row_bytes,
                   wire_src,
                   rows * row_bytes,
+                  node_sig + my_node,
+                  this->run_id_,
+                  NVSHMEM_SIGNAL_SET,
+                  g,
+                  this->cp_stream_inter_node);
+            }
+          }
+          if (this->wire_sig_fence_ && !fenced_sig_targets.empty()) {
+            nvshmemx_quiet_on_stream(this->cp_stream_inter_node);
+            for (int g : fenced_sig_targets) {
+              nvshmemx_signal_op_on_stream(
                   node_sig + my_node,
                   this->run_id_,
                   NVSHMEM_SIGNAL_SET,
@@ -3354,6 +3431,12 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     (void)get_int_from_env("FLUX_A2AV_DISPATCH_ONLY_TAG", 0);
     (void)get_int_from_env("FLUX_A2AV_INKERNEL_SWAP_TAG", 0);
     (void)get_int_from_env("FLUX_A2AV_DELIVERY_GATE_TAG", 0);  // NR-16 D1 fix
+    // 2026-08-22 wire-ordering finding: the nbi wire put_signal lets the
+    // gateway observe node_sig before the chunk bytes (one-epoch-stale
+    // forwards under per-iteration payload change; invisible with static
+    // payloads). Verified fix = FLUX_A2AV_BLOCKING_WIRE=1; candidate
+    // FLUX_A2AV_WIRE_SIGNAL_FENCE=1 (data nbi -> quiet -> signal). Binary tag:
+    (void)get_int_from_env("FLUX_A2AV_WIRE_SIGNAL_FENCE_TAG", 0);
     FLUX_CHECK(a2av_dispatch_) << "dispatch_only requires an a2av-mode op";
     FLUX_CHECK(!pack_overlap_)
         << "dispatch_only is untested with FLUX_A2AV_PACK_OVERLAP";
@@ -3440,6 +3523,14 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
 
     // epoch-close barrier: iteration n+1 remote puts must not race the
     // gather above (dense is private memory past this point)
+    if (this->epoch_quiet_) {
+      // T4 diagnostic (only if T1 fails): explicit PE-wide drains on every
+      // issuing stream before the barrier — a fix here would indicate the
+      // platform barrier lacks full quiet semantics for proxy ops
+      nvshmemx_quiet_on_stream(this->cp_stream);
+      nvshmemx_quiet_on_stream(this->cp_stream_inter_node);
+      nvshmemx_quiet_on_stream(stream);
+    }
     nvshmemx_barrier_all_on_stream(stream);
     return {dense, st.sorted_scatter_index, st.sorted_splits_cumsum,
             (int64_t)st.M_this_ep};
