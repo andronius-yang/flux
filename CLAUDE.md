@@ -138,6 +138,20 @@ Four invariants, never violate:
 2. **Perf runs need `FLUX_TEST_DETERMINISTIC=0`** — the runner enforces it and the capsule's `deterministic` column records it; a perf number is only valid if that column says 0 (deterministic `scatter_` serializes ~500x and lands on the compress/relay paths).
 3. **Instrumented modes never compare against clean ones** — `phases` (FLUX_A2AV_TIMING) and `nsys` force per-iteration device syncs; they are for breakdowns, never latency. Quote **`isolated`** mode for latency (per-layer, inference semantics) and `e2e` for pipelined throughput — and never compare those two against each other either.
 4. **Compare arms inside one capsule, built from one binary.** `git_sha` is not a build identity (124 capsules span 5 shas but 28 distinct `.so` builds); the same configuration moved 6–33% across builds, which is larger than every headline result. See `sweeps/SCHEMA.md` protocol rule 4.
+5. **Wire-ordering HARD RULE (2026-08-22, proven NVSHMEM-only).** On Perlmutter
+   (nvshmem/3.2.5-1 + libfabric/CXI) `nvshmemx_putmem_signal_nbi_on_stream`
+   exposes the signal BEFORE the data for MB-class puts in essentially every
+   iteration (`docs/handoff/11_nvshmem_put_signal_evidence/`, SCHEMA protocol
+   rule 6). Therefore: (a) any inter-node put whose consumer gates on its
+   signal must use the BLOCKING `putmem_signal_on_stream` (ag_scatter wire:
+   `FLUX_A2AV_BLOCKING_WIRE=1`) or a fence proven by the payload probe — no
+   new optimization may introduce an nbi put_signal gate; (b) every
+   correctness cell must change the payload per iteration
+   (`FLUX_PLL_RANDOM_PAYLOAD=1` or equivalent) — a static-payload bitwise pass
+   proves nothing about the wire; (c) capsules without the fix are never-mix
+   against fixed ones; (d) `gather_rs` (8 nbi sites), `fused_ep_dispatch`,
+   `weight_push_multicast` are UNAUDITED and must pass the probe before their
+   arms are quoted.
 
 ## Formatting
 

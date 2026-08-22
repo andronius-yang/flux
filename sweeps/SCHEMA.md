@@ -880,7 +880,7 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
    `moves_remove/trigger` (identical across iterations under static
    per-cell routing — asserted, recorded once).
 
-6. **Wire-ordering correctness boundary (2026-08-22).** The `hier_compress`
+6. **Wire-ordering correctness boundary — HARD RULE (2026-08-22; proven NVSHMEM-only, see docs/handoff/11_nvshmem_put_signal_evidence/).** The `hier_compress`
    dispatch wire (`GemmGroupedV2AGScatterOp::a2av_dispatch`, relay +
    lb_union gateway path, and by code-sharing every hc arm incl. the
    comm-only baselines) issued its inter-node chunk as
