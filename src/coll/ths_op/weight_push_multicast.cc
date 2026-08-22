@@ -39,6 +39,34 @@ namespace ths_op {
 using torch::Tensor;
 
 namespace {
+
+// 2026-08-22 wire-ordering HARD RULE (CLAUDE.md invariant 5 / SCHEMA rule 6):
+// on libfabric/CXI the nbi put_signal exposes the flag before the data, so
+// every weight-push put a consumer gates on is BLOCKING by default.
+// FLUX_WPM_BLOCKING_WIRE=0 restores the refuted nbi wire (ablation only).
+static inline bool
+flux_wpm_blocking_wire() {
+  static const bool v =
+      bytedance::flux::get_int_from_env("FLUX_WPM_BLOCKING_WIRE", 1) != 0;
+  return v;
+}
+static inline void
+flux_wpm_put_signal(
+    void *dst,
+    const void *src,
+    size_t bytes,
+    uint64_t *sig,
+    uint64_t val,
+    int sig_op,
+    int pe,
+    cudaStream_t stream) {
+  if (flux_wpm_blocking_wire()) {
+    nvshmemx_putmem_signal_on_stream(dst, src, bytes, sig, val, sig_op, pe, stream);
+  } else {
+    nvshmemx_putmem_signal_nbi_on_stream(dst, src, bytes, sig, val, sig_op, pe, stream);
+  }
+}
+
 struct PushLeg {
   int32_t dst_rank;
   int32_t dst_slot;
@@ -126,9 +154,9 @@ class WeightPushMulticast::WeightPushMulticastImpl {
     int peer = static_cast<int>((this->rank_ / L) * L + (this->rank_ + 1) % L);
     char *buf = static_cast<char *>(this->prime_buf_.data_ptr());
     uint64_t *sig = reinterpret_cast<uint64_t *>(this->prime_sig_.data_ptr());
-    nvshmemx_putmem_signal_nbi_on_stream(
+    flux_wpm_put_signal(
         buf, buf, 16, sig, 0, NVSHMEM_SIGNAL_SET, peer, stream);
-    nvshmemx_putmem_signal_nbi_on_stream(
+    flux_wpm_put_signal(
         buf, buf, 16, sig, 0, NVSHMEM_SIGNAL_ADD, peer, stream);
     nvshmemx_signal_op_on_stream(sig, 0, NVSHMEM_SIGNAL_SET, this->rank_, stream);
     nvshmemx_quiet_on_stream(stream);
@@ -161,6 +189,7 @@ class WeightPushMulticast::WeightPushMulticastImpl {
         rank_(pg->get_rank()),
         world_size_(pg->get_size()),
         dtype_(dtype) {
+    (void)bytedance::flux::get_int_from_env("FLUX_WPM_BLOCKING_WIRE_DEFAULT_TAG", 0);  // 2026-08-22
     FLUX_CHECK(n_experts_local > 0 && n_slots > 0 && row_dim0 > 0 && row_dim1 > 0);
     // Collective, uniform across ranks. Contiguous [epn + B] layout: the
     // single weights operand the fused a2av GEMM takes, and both the put
@@ -376,7 +405,7 @@ class WeightPushMulticast::WeightPushMulticastImpl {
         // is the putmem_signal contract. The nbi tail is quieted by the
         // token a2av's end-of-iteration barrier_all (every iteration runs
         // one), and slot rows are rewritten only after that barrier.
-        nvshmemx_putmem_signal_nbi_on_stream(
+        flux_wpm_put_signal(
             dst,
             src,
             this->expert_bytes_,
@@ -422,13 +451,13 @@ class WeightPushMulticast::WeightPushMulticastImpl {
               // ...and it lands directly in the final slot (dst_lr match)
               char *dst = slots_base + static_cast<int64_t>(s.dst_slot) * this->expert_bytes_ +
                           s.byte_off + coff;
-              nvshmemx_putmem_signal_nbi_on_stream(
+              flux_wpm_put_signal(
                   dst, src, b, arrive_base + s.dst_slot, 1, NVSHMEM_SIGNAL_ADD, s.dst_rank,
                   stream);
             } else {
               char *dst = in_stage_base +
                           static_cast<int64_t>(s.in_slot_idx) * this->max_shard_bytes_ + coff;
-              nvshmemx_putmem_signal_nbi_on_stream(
+              flux_wpm_put_signal(
                   dst, src, b,
                   reinterpret_cast<uint64_t *>(this->in_sig_.data_ptr()) +
                       s.in_slot_idx * this->shard_maxc_ + c,
@@ -439,7 +468,7 @@ class WeightPushMulticast::WeightPushMulticastImpl {
             // so its NIC push of chunk c overlaps my stage of chunk c+1
             char *dst = eg_stage_base +
                         static_cast<int64_t>(s.eg_slot_idx) * this->max_shard_bytes_ + coff;
-            nvshmemx_putmem_signal_nbi_on_stream(
+            flux_wpm_put_signal(
                 dst, src, b, eg_sig_base + s.eg_slot_idx * this->shard_maxc_ + c, epoch,
                 NVSHMEM_SIGNAL_SET, s.egress_rank, stream);
           }
@@ -498,7 +527,7 @@ class WeightPushMulticast::WeightPushMulticastImpl {
       }
       char *dst = slots_base + static_cast<int64_t>(f.dst_slot) * this->expert_bytes_;
       char *src = slots_base + static_cast<int64_t>(f.gw_slot) * this->expert_bytes_;
-      nvshmemx_putmem_signal_nbi_on_stream(
+      flux_wpm_put_signal(
           dst,
           src,
           this->expert_bytes_,
@@ -543,13 +572,13 @@ class WeightPushMulticast::WeightPushMulticastImpl {
           // fast path shard_idx == dst_lr: land directly in the final slot
           char *dst = slots_base + static_cast<int64_t>(s.dst_slot) * this->expert_bytes_ +
                       s.byte_off + coff;
-          nvshmemx_putmem_signal_nbi_on_stream(
+          flux_wpm_put_signal(
               dst, my_stage + coff, b, arrive_base + s.dst_slot, 1, NVSHMEM_SIGNAL_ADD,
               s.dst_rank, stream);
         } else {
           char *dst = in_stage_base +
                       static_cast<int64_t>(s.in_slot_idx) * this->max_shard_bytes_ + coff;
-          nvshmemx_putmem_signal_nbi_on_stream(
+          flux_wpm_put_signal(
               dst, my_stage + coff, b,
               reinterpret_cast<uint64_t *>(this->in_sig_.data_ptr()) +
                   s.in_slot_idx * this->shard_maxc_ + c,
@@ -588,7 +617,7 @@ class WeightPushMulticast::WeightPushMulticastImpl {
             CU_STREAM_WAIT_VALUE_GEQ));
         char *dst = slots_base + static_cast<int64_t>(s.dst_slot) * this->expert_bytes_ +
                     s.byte_off + coff;
-        nvshmemx_putmem_signal_nbi_on_stream(
+        flux_wpm_put_signal(
             dst, my_stage + coff, b, arrive_base + s.dst_slot, 1, NVSHMEM_SIGNAL_ADD, s.dst_rank,
             stream);
       }

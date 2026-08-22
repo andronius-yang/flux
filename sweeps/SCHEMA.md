@@ -931,3 +931,17 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
    `coll/ths_op/fused_ep_dispatch.cc` (eplb/epic fused dispatch) — those
    paths are UNAUDITED under payload change and must not be quoted as
    correct until they pass the same probe.
+
+7. **Blocking wire is the DEFAULT since 2026-08-22** (user decision after the
+   NVSHMEM-only proof): `FLUX_A2AV_BLOCKING_WIRE` (ag_scatter dispatch wire),
+   `FLUX_A2AV_RS_BLOCKING_WIRE` (gather_rs combine wire, 8 sites) and
+   `FLUX_WPM_BLOCKING_WIRE` (weight_push_multicast, 10 sites) all default to 1;
+   `=0` is the refuted nbi wire, ablation only, never quotable. Binary tags
+   `FLUX_A2AV_BLOCKING_WIRE_DEFAULT_TAG`, `FLUX_A2AV_RS_BLOCKING_WIRE_DEFAULT_TAG`,
+   `FLUX_WPM_BLOCKING_WIRE_DEFAULT_TAG` mark the rule-4 boundary: capsules from
+   binaries without these tags (every capsule before this date) are never-mix
+   against tagged ones for any hc / gather_rs / weight-push arm. Untouched by
+   the flip (no nbi put_signal gate): NCCL/torch/FAST a2a arms; the
+   FusedEpDispatch device path (putmem_nbi -> __threadfence -> nvshmem_fence ->
+   signal_op) and moonep getmem pulls are NOT flipped and must pass the
+   payload probe before being quoted.

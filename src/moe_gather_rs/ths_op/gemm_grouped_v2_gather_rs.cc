@@ -103,6 +103,34 @@ as_optional_vec(c10::optional<torch::Tensor> &t) {
   return {};
 }
 
+// 2026-08-22 wire-ordering HARD RULE (CLAUDE.md invariant 5 / SCHEMA rule 6):
+// on libfabric/CXI the nbi put_signal exposes the flag before the data, so
+// every combine-wire put a consumer gates on is BLOCKING by default.
+// FLUX_A2AV_RS_BLOCKING_WIRE=0 restores the refuted nbi wire (ablation only).
+static inline bool
+flux_rs_blocking_wire() {
+  static const bool v =
+      bytedance::flux::get_int_from_env("FLUX_A2AV_RS_BLOCKING_WIRE", 1) != 0;
+  return v;
+}
+static inline void
+flux_rs_put_signal(
+    void *dst,
+    const void *src,
+    size_t bytes,
+    uint64_t *sig,
+    uint64_t val,
+    int sig_op,
+    int pe,
+    cudaStream_t stream) {
+  if (flux_rs_blocking_wire()) {
+    nvshmemx_putmem_signal_on_stream(dst, src, bytes, sig, val, sig_op, pe, stream);
+  } else {
+    nvshmemx_putmem_signal_nbi_on_stream(dst, src, bytes, sig, val, sig_op, pe, stream);
+  }
+}
+
+
 void *
 data_ptr_or(c10::optional<torch::Tensor> &t, void *other) {
   return t.has_value() ? t->data_ptr() : other;
@@ -854,7 +882,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         if (this->local_world_size > 1) {
           int peer = this->node_idx * this->local_world_size +
                      (this->local_rank + 1) % this->local_world_size;
-          nvshmemx_putmem_signal_nbi_on_stream(
+          flux_rs_put_signal(
               sig, sig, sizeof(uint64_t), sig + 1, 0, NVSHMEM_SIGNAL_SET, peer, stream);
           // BARE signal_op to a P2P peer is a DISTINCT transport kernel from
           // both the self signal_op and putmem_signal — it is what the
@@ -867,7 +895,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         if (this->nnodes > 1) {
           int peer = ((this->node_idx + 1) % this->nnodes) * this->local_world_size +
                      this->local_rank;
-          nvshmemx_putmem_signal_nbi_on_stream(
+          flux_rs_put_signal(
               sig, sig, sizeof(uint64_t), sig + 1, 0, NVSHMEM_SIGNAL_SET, peer, stream);
           // Same for the INTER-NODE bare signal_op (NIC/proxy transport):
           // emitted iff a remote lane has zero rows — U[d][n] == 0 in the
@@ -1527,7 +1555,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
               nvshmemx_signal_op_on_stream(
                   slot, this->run_id_, NVSHMEM_SIGNAL_SET, gw, conv_stream);
             } else if (rows > 0) {
-              nvshmemx_putmem_signal_nbi_on_stream(
+              flux_rs_put_signal(
                   conv_ptr(sid, coff),
                   send_ptr(sid, send_off[d]),
                   rows * row_bytes,
@@ -1556,7 +1584,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
               CU_STREAM_WAIT_VALUE_GEQ));
           int64_t rows = U[d * NN + my_node];
           if (rows > 0) {
-            nvshmemx_putmem_signal_nbi_on_stream(
+            flux_rs_put_signal(
                 recv_ptr(sid, recv_off_cp(this->rank, d)),
                 wire_ptr_at(sid, wire_seg_off(tn)),
                 rows * row_bytes,
@@ -1590,7 +1618,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
               CU_STREAM_WAIT_VALUE_GEQ));
           int64_t rows = node_chunk(this->rank, tn);
           if (rows > 0) {
-            nvshmemx_putmem_signal_nbi_on_stream(
+            flux_rs_put_signal(
                 stage_ptr(sid, seg_off(tn, my_lr, my_node)),
                 send_ptr(sid, send_off[tn * L]),
                 rows * row_bytes,
@@ -1635,7 +1663,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         int d = dist_env.local_rank_to_global_rank((my_lr - dl + L) % L, my_node);
         int64_t rows = chunk_at(this->rank, d);
         if (rows > 0) {
-          nvshmemx_putmem_signal_nbi_on_stream(
+          flux_rs_put_signal(
               recv_ptr(sid, recv_off_active(this->rank, d)),
               send_ptr(sid, send_off[d]),
               rows * row_bytes,
@@ -1690,7 +1718,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
                   this->rank,
                   gateway_stream);
             } else if (sub_rows > 0) {
-              nvshmemx_putmem_signal_nbi_on_stream(
+              flux_rs_put_signal(
                   recv_ptr(sid, recv_off_of(s, d)),
                   stage_ptr(sid, seg + within),
                   sub_rows * row_bytes,
@@ -1788,6 +1816,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       torch::Tensor splits_per_source,
       c10::optional<torch::Tensor> a2av_unique_counts) {
     (void)get_int_from_env("FLUX_A2AV_RS_DERIVE_COMBINE_RS_TAG", 0);
+    (void)get_int_from_env("FLUX_A2AV_RS_BLOCKING_WIRE_DEFAULT_TAG", 0);  // 2026-08-22
     FLUX_CHECK(this->a2av_hier)
         << "TopkReduceScatterOp::derive_combine_meta requires the a2av_hier ctor flag";
     CHECK_INPUT(routing_idx, at::ScalarType::Int);
@@ -2018,7 +2047,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
               (CUdeviceptr)(this->group_flags.get() + idx),
               1,
               CU_STREAM_WAIT_VALUE_GEQ));
-          nvshmemx_putmem_signal_nbi_on_stream(
+          flux_rs_put_signal(
               recv_base + (int64_t)(this->node_idx * this->n_split + sid) * slot_bytes,
               send_base + (int64_t)idx * slot_bytes,
               chunk_bytes,

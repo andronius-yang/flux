@@ -700,7 +700,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                     ? 1
                     : 0) != 0 &&
             a2av_dispatch),
-        blocking_wire_(get_int_from_env("FLUX_A2AV_BLOCKING_WIRE", 0) != 0),
+        blocking_wire_(get_int_from_env("FLUX_A2AV_BLOCKING_WIRE", 1) != 0),  // DEFAULT ON 2026-08-22 (wire-ordering HARD RULE)
         relay_fence_(get_int_from_env("FLUX_A2AV_RELAY_FENCE", 0) != 0),
         relay_poison_(get_int_from_env("FLUX_A2AV_RELAY_POISON", 0) != 0),
         relay_blocking_pull_(get_int_from_env("FLUX_A2AV_RELAY_BLOCKING_PULL", 0) != 0),
@@ -3474,6 +3474,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     (void)get_int_from_env("FLUX_A2AV_WIRE_SIGNAL_FENCE_TAG", 0);
     (void)get_int_from_env("FLUX_A2AV_WAIT_FLUSH_TAG", 0);
     (void)get_int_from_env("FLUX_A2AV_NVSHMEM_WAIT_TAG", 0);
+    // 2026-08-22: blocking wire is the DEFAULT (FLUX_A2AV_BLOCKING_WIRE=0 = the
+    // refuted nbi wire, ablation only). Binary identity for rule 4:
+    (void)get_int_from_env("FLUX_A2AV_BLOCKING_WIRE_DEFAULT_TAG", 0);
     FLUX_CHECK(a2av_dispatch_) << "dispatch_only requires an a2av-mode op";
     FLUX_CHECK(!pack_overlap_)
         << "dispatch_only is untested with FLUX_A2AV_PACK_OVERLAP";
