@@ -880,6 +880,21 @@ VARIANTS = {
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
     ),
+    # THE KERNEL ARM: relaxed sender-local fused router
+    # (flux.placelambda_route_sl) — per-iteration kernel + phys-row
+    # allgather timed in plan_ms; routing varies legitimately run-to-run;
+    # verified by invariants + provable table bounds (auto f_cap) + a
+    # final deterministic correctness iteration. Never compare its
+    # routings bitwise against the loccap_gpu deterministic arm.
+    "pll_hc_sl0625": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "placelambda_gpu", "--groups", "1", "--router",
+                   "loccap_sl", "--eps", "0.0625"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG",
+                  "FLUX_PLACELAMBDA_ROUTE_SL_TAG"],
+    ),
     # trigger probe on a STALE resident (fixed placement + dynamic
     # decision): measures the decision apparatus where re-placement
     # genuinely pays — the trigger must fire here and stay silent on the

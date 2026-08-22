@@ -427,7 +427,28 @@ Highlights (full list = header row):
   routings legitimately vary run-to-run. The torch `loccap_gpu` global
   router remains the deterministic reference arm; never conflate the
   three routers (`loccap` exact / `loccap_gpu` global-deterministic /
-  `loccap_sl` kernel-relaxed) in one comparison without saying so.
+  `loccap_sl` kernel-relaxed) in one comparison without saying so. **Kernel-arm wiring
+  (2026-08-21, plan eager-juggling-glacier): variant `pll_hc_sl0625`,
+  driver `--router loccap_sl`.** Per iteration, inside the timed plan
+  bracket: the fused kernel routes the rank's own rows, then a phys-row
+  allgather (S*K*4 B/rank) assembles the agreed global routing —
+  plan_ms therefore INCLUDES the exchange (the counts-only refinement is
+  queued). Sizing is provable, not headroom-hoped: the setup reference
+  (deterministic torch loccap_route_sl) emits tables whose bounds
+  (loccap_sl_bounds) floor every frozen buffer — per-pair rows are
+  ticket-exact + the AUTO-derived f_cap forced-admission clamp (2x the
+  reference's max per-pair forced flow + 8; measured on real K3 routing:
+  forced peaks 60-275 at eps=0.0625, exactly 0 at eps=0.125); the recv
+  bound carries 2x-slack on the forced ingress, enforced by the loud
+  check_relaxed assert. Correctness: after the timed iterations one
+  FINAL DETERMINISTIC iteration binds the reference routing, so
+  out_sha/allclose validate the data plane while perf came from the
+  relaxed kernel. Facts: `epic_route_relaxed=1`, `epic_pll_f_cap`,
+  `epic_pll_recv_cap`, `epic_pll_pair_cap`, `epic_pll_kernel_stats`.
+  l01 x hc-combine is excluded from the kernel arm in v1 (frozen
+  exact-size combine inbuf). Allocation-free scale proof: the
+  test_placelambda_sl_{scale,planner} suites emulate R up to 128 (32n)
+  on one GPU via the injectable exchange.
 - `correct_bitwise`, `correct_allclose` — AND over ranks; empty when
   `skip_correctness` ran. Note bitwise may legitimately be 0 with determinism
   off; allclose is the correctness verdict.

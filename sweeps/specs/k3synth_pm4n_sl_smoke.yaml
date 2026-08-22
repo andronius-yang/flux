@@ -1,0 +1,50 @@
+# PLACE-lambda KERNEL-arm 4n K3 bring-up smoke (plan eager-juggling-glacier,
+# user decisions 2026-08-21: kernel-focused scope, budgets b7+b28+b56).
+#
+# Arms: pll_hc_sl0625 = THE fused-kernel arm (relaxed loccap_sl router,
+# auto f_cap, plan_ms includes the phys-row allgather); pll_hc_d6 = the
+# rule-5 control on the same placement; pll_hc_lcg0625 = the deterministic
+# torch router arm (never compare its routings bitwise vs the kernel's).
+# 9 cells isolated. Correctness is intentionally OFF here (perf capsule) —
+# the G1 gate runs one manual b7 cell with skip_correctness off AND
+# FLUX_PLL_CHECK_ITERS=1 (per-iteration relaxed audits + the final
+# deterministic iteration allclose) BEFORE this capsule:
+#   srun --jobid=<id> --nodes=4 --ntasks-per-node=1 --gpus-per-node=4 \
+#     ./launch.sh test/python/moe_ag_scatter/test_moe_epic_traffic.py \
+#     --traffic_matrix <w16x4 b7 k16 matrix> --routing_file <routing> \
+#     --transport hier_compress --placement placelambda_gpu --groups 1 \
+#     --router loccap_sl --eps 0.0625 --topk 16 --G 896 --H 3584 \
+#     --chunk_bytes 7168 --ffn_hidden_size 3072 --dtype bfloat16 \
+#     --iters 5 --warmup_iters 2 --sm_margin 8
+#   (env: FLUX_PLL_CHECK_ITERS=1 + the launch.sh defaults)
+# Abort criteria: any check_relaxed failure or knob FLUX_CHECK = sizing/
+# determinism bug — STOP, never retry-as-data. WORKTREE BINARY (tag
+# FLUX_PLACELAMBDA_ROUTE_SL_TAG): rule-4 boundary vs main-built capsules.
+platform: perlmutter
+nodes: 4
+shape: k3
+variants:
+  - pll_hc_sl0625
+  - pll_hc_d6
+  - pll_hc_lcg0625
+families:
+  - "trace:model=Kimi-K3-synth;pools=mmlu/college_mathematics+mmlu/high_school_world_history+livecodebench/execution+mmlu/professional_law;layer=92;sem=pernode"
+budgets_mib:
+  - 7
+  - 28
+  - 56
+dtype: bfloat16
+modes:
+  - isolated
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+sm_margin: 8
+matrix_instance: "001"
+retries: 1
+timeout_s: 1800
+idle_timeout_s: 300
+skip_correctness: true
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
+notes: "pll kernel-arm 4n K3 bring-up (G2): loccap_sl vs d6 vs loccap_gpu, b7/28/56 iso; G1 manual cell precedes; worktree binary"

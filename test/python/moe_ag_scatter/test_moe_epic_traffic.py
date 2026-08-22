@@ -459,8 +459,13 @@ def check_correctness(runner, ctx, plan, topk_all, w_all, atol, rtol):
     rank, R, S = runner.rank, cfg.R, cfg.S
     ok_bitwise = True
 
+    # materialize the replicated inputs ONLY here (ctx opts out of the
+    # resident [ntokens, h] copy — 7 GB @ K3 b56 32n); freed on return
+    inputs_full = torch.empty(
+        ctx.ntokens, ctx.inputs_shard.shape[1],
+        dtype=ctx.inputs_shard.dtype, device=ctx.inputs_shard.device)
     torch.distributed.all_gather_into_tensor(
-        ctx.inputs, ctx.inputs_shard, group=TP_GROUP
+        inputs_full, ctx.inputs_shard, group=TP_GROUP
     )
 
     expected_hidden = torch.zeros_like(runner.hidden_buf)
@@ -478,7 +483,7 @@ def check_correctness(runner, ctx, plan, topk_all, w_all, atol, rtol):
             p_local = p - rank * cfg.nlp
             slot = seg_fill[p_local]
             seg_fill[p_local] += 1
-            expected_hidden[slot] = ctx.inputs[src * S + t]
+            expected_hidden[slot] = inputs_full[src * S + t]
             logical = int(plan.p2l[p])
             expected_probs[slot] = float(w_all[src][t, logical])
             per_instance_rows[p_local] += 1
@@ -1117,6 +1122,7 @@ if __name__ == "__main__":
         nexperts=args.G, topk=args.topk,
         input_dtype=input_dtype, output_dtype=output_dtype,
         dist="uniform", fast_accum=False, weight_groups=1, drop_token=False,
+        alloc_input_full=False,
         gating_args=gating_args, skip_reference=True,
     )
 
