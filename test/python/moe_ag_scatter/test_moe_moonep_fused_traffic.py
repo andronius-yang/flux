@@ -70,6 +70,7 @@ from flux.testing.moonep_fused_map import (
 )
 from flux.testing.moonep_semantics import MoonEPConfig, compute_moonep_plan
 from flux.testing.recorder import RECORDER
+from flux.testing.payload_probe import PayloadProbe, payload_probe_enabled
 
 DIST_ENV = flux.get_dist_env()
 TP_GROUP = DIST_ENV.get_world()
@@ -266,8 +267,12 @@ def perf_moonep_fused(args, op, op_w, moe_ctx, wfull, splits_gpu, scatter_gpu,
         )
     torch.cuda.synchronize()
     torch.distributed.barrier()
+    # wire-ordering audit (CLAUDE.md invariant 5): per-iteration payload
+    # randomization; op.forward reads moe_ctx.inputs_shard every iteration
+    probe = PayloadProbe(moe_ctx.inputs_shard, TP_GROUP.rank())
     for i in range(total_iters):
         op.clear_buffers()
+        probe.step(i)
         if isolated:
             t_iso = time.perf_counter()
             torch.cuda.synchronize()
@@ -486,16 +491,25 @@ def check_correctness_l01(args, moe_ctx, choosed_experts, w_tok, full_w2,
         ref[s_idx] += h2.float() * w_tok[rank * S + s_idx.cpu(), k_idx.cpu()].to(
             x.device
         ).unsqueeze(1)
+    ok = True
     try:
         flux.torch_allclose(l1_out, ref.to(l1_out.dtype), atol=atol, rtol=rtol)
-    except Exception as e:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
+        ok = False
         print(f"❌ rank {rank}: l01 combined output vs two-layer reference"
               " MISMATCH")
         RECORDER.emit_correctness(bitwise=False, allclose=False)
         RECORDER.flush()
-        raise e
-    print(f"✅ rank {rank}: l01 combined output matches the two-layer"
-          " reference (allclose)")
+    else:
+        print(f"✅ rank {rank}: l01 combined output matches the two-layer"
+              " reference (allclose)")
+    # collective verdict (wire-ordering audit hygiene): a per-rank assert
+    # wedges the surviving ranks in the next collective and holds the srun
+    # step; fail together instead.
+    _flag = torch.tensor([int(ok)], device="cuda")
+    torch.distributed.all_reduce(_flag, op=torch.distributed.ReduceOp.MIN,
+                                 group=TP_GROUP)
+    assert int(_flag) == 1, "correctness failed on at least one rank"
 
 
 @torch.no_grad()
@@ -552,6 +566,10 @@ def check_correctness(args, plan, vmap, meta, moe_ctx, op_w, wfull, out_buf):
         except RuntimeError:
             ok_allclose = False
             print(f"rank {rank}: V3b virtual expert {v} (group {g}) mismatch")
+            if payload_probe_enabled():
+                _bad = (~torch.isclose(got, ref, atol=1e-2, rtol=1.5e-2)).any(dim=1)
+                print(f"  probe rank {rank}: virtual expert {v}: bad {int(_bad.sum())}/{cnt} "
+                      "rows (payload randomized per iteration)", flush=True)
         base += cnt
 
     if args.check_staged:
@@ -585,7 +603,17 @@ def check_correctness(args, plan, vmap, meta, moe_ctx, op_w, wfull, out_buf):
             print(f"rank {rank}: staged-vs-fused row-map mismatch")
 
     RECORDER.emit_correctness(bitwise=ok_bitwise, allclose=ok_allclose)
-    assert ok_bitwise and ok_allclose, "correctness check failed"
+    _st = "✅" if (ok_bitwise and ok_allclose) else "❌"
+    print(f"{_st} rank {rank}: moonep_fused V3a "
+          f"{'bitwise-exact' if ok_bitwise else 'MISMATCH'}, V3b gemm "
+          f"{'allclose' if ok_allclose else 'MISMATCH'}", flush=True)
+    # collective verdict (wire-ordering audit hygiene): a per-rank assert
+    # wedges the surviving ranks in the next collective and holds the srun
+    # step; fail together instead.
+    _flag = torch.tensor([int(ok_bitwise and ok_allclose)], device="cuda")
+    torch.distributed.all_reduce(_flag, op=torch.distributed.ReduceOp.MIN,
+                                 group=TP_GROUP)
+    assert int(_flag) == 1, "correctness failed on at least one rank"
 
 
 if __name__ == "__main__":

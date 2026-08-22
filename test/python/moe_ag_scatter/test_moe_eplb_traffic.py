@@ -103,6 +103,7 @@ from flux.testing.ultraep_semantics import (
     wire_matrix,
 )
 from flux.testing.recorder import RECORDER
+from flux.testing.payload_probe import PayloadProbe, payload_probe_enabled
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from eplb_oracle import rebalance_experts  # noqa: E402  (vendored algorithm)
@@ -174,12 +175,16 @@ def perf_eplb(
 
     isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))
     iso_sync_times = []
+    # wire-ordering audit (CLAUDE.md invariant 5): per-iteration payload
+    # randomization; both paths read ctx.inputs_shard inside the iteration
+    probe = PayloadProbe(ctx.inputs_shard, runner.rank)
     for i in range(total_iters):
         if isolated:
             t_iso = time.perf_counter()
             torch.cuda.synchronize()
             torch.distributed.barrier()
             iso_sync_times.append((time.perf_counter() - t_iso) * 1e3)
+        probe.step(i)
         nvtx_tag = f"iter{i}_warmup" if i < warmup_iters else f"iter{i}"
         fused = runner.transport == "fused"
         with torch.cuda.nvtx.range(nvtx_tag):
@@ -339,6 +344,11 @@ def check_correctness(runner, ctx, plan, topk_all, w_all, gemm_only_op,
                        expected_hidden[:runner.n_recv]):
         ok_bitwise = False
         print(f"❌ rank {rank}: dispatched rows differ from plan prediction")
+        if payload_probe_enabled():
+            _bad = (runner.hidden_buf[:runner.n_recv]
+                    != expected_hidden[:runner.n_recv]).any(dim=1)
+            print(f"  probe rank {rank}: bad {int(_bad.sum())}/{runner.n_recv} "
+                  "rows (payload randomized per iteration)", flush=True)
     if not torch.equal(runner.weights_buf[:runner.n_recv],
                        expected_probs[:runner.n_recv]):
         ok_bitwise = False
@@ -413,7 +423,13 @@ def check_correctness(runner, ctx, plan, topk_all, w_all, gemm_only_op,
           f"{'bitwise-exact' if ok_bitwise else 'MISMATCH'}, "
           f"{what} {'allclose' if ok_allclose else 'MISMATCH'}")
     RECORDER.emit_correctness(bitwise=ok_bitwise, allclose=ok_allclose)
-    assert ok_bitwise and ok_allclose
+    # collective verdict (wire-ordering audit hygiene): a per-rank assert
+    # wedges the surviving ranks in the next collective and holds the srun
+    # step; fail together instead.
+    _flag = torch.tensor([int(ok_bitwise and ok_allclose)], device="cuda")
+    torch.distributed.all_reduce(_flag, op=torch.distributed.ReduceOp.MIN,
+                                 group=TP_GROUP)
+    assert int(_flag) == 1, "correctness failed on at least one rank"
     return ok_bitwise and ok_allclose
 
 

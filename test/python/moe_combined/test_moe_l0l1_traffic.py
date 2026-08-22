@@ -102,6 +102,7 @@ import torch.distributed
 
 import flux
 import flux.testing
+from flux.testing.payload_probe import PayloadProbe, payload_probe_enabled
 from flux.testing import (
     DTYPE_MAP,
     MoeAgScatterWithTorch,
@@ -186,7 +187,7 @@ class PerfResult:
 
 
 @torch.no_grad()
-def perf_combined(name: str, iters: int, warmup_iters: int, prep_fn, plan_comm_fn, plan_fn, l0_fn, l1_fn):
+def perf_combined(name: str, iters: int, warmup_iters: int, prep_fn, plan_comm_fn, plan_fn, l0_fn, l1_fn, probe=None):
     """One timed window per iteration (SCHEMA rule 5, converted 2026-08-21):
     plan_comm_fn() [routing allgather] -> plan_fn() [ALL routing-derived
     metadata for BOTH layers, on GPU] -> l0_fn(plan) -> GELU ->
@@ -210,6 +211,12 @@ def perf_combined(name: str, iters: int, warmup_iters: int, prep_fn, plan_comm_f
     output = None
     for i in range(total_iters):
         prep_fn()
+        if probe is not None:
+            # wire-ordering audit (CLAUDE.md invariant 5): per-iteration payload
+            # change OUTSIDE the window; both layers read moe_ctx.inputs_shard /
+            # the freshly computed intermediate each pass, and the correctness
+            # reference (run_torch_two_layer) runs AFTER the loop on the final shard
+            probe.step(i)
         if isolated:
             t_iso = time.perf_counter()
             torch.cuda.synchronize()
@@ -885,6 +892,7 @@ if __name__ == "__main__":
                 flux_plan,
                 flux_l0,
                 flux_l1,
+                probe=PayloadProbe(moe_ctx.inputs_shard, RANK, keep_ledger=False),
             )
     elif args.impl == "torch":  # torch arm: same window discipline, unfused impls
         # preallocated derivation scratch (contents re-derived per iteration)
@@ -951,6 +959,7 @@ if __name__ == "__main__":
                 torch_plan,
                 torch_l0,
                 torch_l1,
+                probe=PayloadProbe(moe_ctx.inputs_shard, RANK, keep_ledger=False),
             )
     else:  # --impl fast (2026-08-21): FAST+FAST combined — the authoritative
         # unfused paper baseline on REAL routing: trace-driven dispatch
@@ -1046,6 +1055,9 @@ if __name__ == "__main__":
             c_wire = [0.0] * total_iters
             out = out1 = gemm_in0 = None
             full = torch.empty(M // WORLD_SIZE, H, dtype=input_dtype, device="cuda")
+            # wire-ordering audit: send0 is re-gathered from inputs_shard each
+            # iteration; the reference runs after the loop on the final shard
+            probe = PayloadProbe(moe_ctx.inputs_shard, RANK, keep_ledger=False)
             torch.distributed.barrier()
             torch.cuda.synchronize()
             for i in range(total_iters):
@@ -1055,6 +1067,7 @@ if __name__ == "__main__":
                 combine_comm.alltoallv_reset()
                 reset_ms[i] = (time.perf_counter() - t_r0) * 1e3
                 torch.cuda.synchronize()
+                probe.step(i)
 
                 nvtx_tag = f"iter{i}_warmup" if i < warmup_iters else f"iter{i}"
                 with torch.cuda.nvtx.range(nvtx_tag):
@@ -1173,6 +1186,11 @@ if __name__ == "__main__":
             try:
                 flux.torch_allclose(flux_output, torch_output, atol=atol, rtol=rtol)
             except Exception as e:
+                if payload_probe_enabled():
+                    d = (flux_output.float() - torch_output.float()).abs()
+                    bad = (d > atol + rtol * torch_output.float().abs()).any(dim=1)
+                    print(f"  probe rank {RANK}: {int(bad.sum())}/{bad.numel()} final"
+                          " output rows off-tolerance vs the final-payload reference")
                 dump_dir = os.environ.get("FLUX_DEBUG_DUMP_DIR", "/tmp")
                 os.makedirs(dump_dir, exist_ok=True)
                 torch.save(flux_output, os.path.join(dump_dir, f"l01_flux_output_{RANK}.pt"))

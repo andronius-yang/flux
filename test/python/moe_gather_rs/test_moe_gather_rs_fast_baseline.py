@@ -85,6 +85,7 @@ from flux.testing import (
     traffic_matrix_to_choosed_experts,
 )
 from flux.testing.recorder import RECORDER
+from flux.testing.payload_probe import PayloadProbe
 
 # reuse the layer1 traffic bench's combine index math (pack_index orders this
 # rank's gemm rows home-major with (expert, copy)-ordered blocks == FAST's
@@ -185,6 +186,11 @@ def perf_fast(
     isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))
 
     out = packed = recv_u8 = None
+    # wire-ordering audit (CLAUDE.md invariant 5): the GEMM input is read
+    # afresh every iteration, so randomizing it (outside the window) changes
+    # the packed rows the FAST combine wire moves; the reference is built
+    # from the final `inputs` after the loop
+    probe = PayloadProbe(inputs, TP_GROUP.rank(), keep_ledger=False)
     torch.distributed.barrier()
     torch.cuda.synchronize()
     for i in range(total_iters):
@@ -194,6 +200,7 @@ def perf_fast(
         comm.alltoallv_reset()
         reset_ms[i] = (time.perf_counter() - t_r0) * 1e3
         torch.cuda.synchronize()
+        probe.step(i)
         if isolated:
             # sweep-runner uniformity: drain + realign right before the window
             # (mostly redundant here — this baseline is structurally isolated —

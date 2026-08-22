@@ -76,6 +76,7 @@ from flux.testing.moonep_fused_map import (
 )
 from flux.testing.moonep_semantics import MoonEPConfig, compute_moonep_plan
 from flux.testing.recorder import RECORDER
+from flux.testing.payload_probe import PayloadProbe, payload_probe_enabled
 from flux.testing.traffic_matrix import (
     choosed_experts_to_matrix_chunks,
     load_routing_file,
@@ -290,6 +291,12 @@ if __name__ == "__main__":
 
     x_bytes = ntokens * args.topk * args.K * input_dtype.itemsize
     run_v2 = (not args.skip_correctness) and x_bytes <= args.v2_max_bytes
+    if payload_probe_enabled():
+        # wire-ordering audit: the combine input is re-randomized every
+        # iteration, so the matched-input V2 identity (inputs == X rows) no
+        # longer holds by construction -- V1 (fused vs torch on the FINAL
+        # inputs, last-iteration output) is the audited gate
+        run_v2 = False
     if run_v2:
         # matched per-copy activations: X[t, k] is the gemm2 input row of copy
         # (t, k) in EVERY space, so the two torch references are comparable
@@ -327,7 +334,15 @@ if __name__ == "__main__":
         a2av_hier_compress=use_compress,
     )
 
+    # wire-ordering audit (CLAUDE.md invariant 5): per-iteration payload
+    # randomization of the combine input (in place; V1 recomputes the torch
+    # reference from the FINAL inputs below)
+    probe = PayloadProbe(inputs, RANK)
+    _it = [0]
+
     def fn():
+        probe.step(_it[0])
+        _it[0] += 1
         return op.forward_gather_rs(
             inputs, w_virtual, split_cpu, routing_idx,
             input_scale=input_scales,
@@ -380,13 +395,25 @@ if __name__ == "__main__":
     ok = True
     try:
         flux.torch_allclose(flux_output, torch_v, atol=atol, rtol=rtol)
-    except Exception as e:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         ok = False
         RECORDER.emit_correctness(bitwise=False, allclose=False)
         RECORDER.flush()
         print(f"❌ rank {RANK}: V1 flux vs torch (virtual space) mismatch")
-        raise e
-    print(f"✅ rank {RANK}: V1 flux vs torch (virtual space) allclose")
+        if payload_probe_enabled():
+            _bad = (~torch.isclose(flux_output.float(), torch_v.float(),
+                                   atol=atol, rtol=rtol)).any(dim=1)
+            print(f"  probe rank {RANK}: bad {int(_bad.sum())}/{flux_output.shape[0]} "
+                  "rows (payload randomized per iteration)", flush=True)
+    else:
+        print(f"✅ rank {RANK}: V1 flux vs torch (virtual space) allclose")
+    # collective verdict (wire-ordering audit hygiene): a per-rank assert
+    # wedges the surviving ranks in the next collective and holds the srun
+    # step; fail together instead.
+    _flag = torch.tensor([int(ok)], device="cuda")
+    torch.distributed.all_reduce(_flag, op=torch.distributed.ReduceOp.MIN,
+                                 group=TP_GROUP)
+    assert int(_flag) == 1, "correctness failed on at least one rank"
 
     # V2: replication transparency — virtual-space combine == original-space
     # combine on matched inputs (small cells only)

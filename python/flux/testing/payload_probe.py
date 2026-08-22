@@ -53,9 +53,15 @@ class PayloadProbe:
         iteration's pack/dispatch). No-op when the probe is disabled."""
         if not self.enabled:
             return
+        # Alternate the SIGN per iteration: drivers that compare GEMM
+        # outputs under allclose (atol 1e-2) would not see a stale
+        # U[0,0.01) row (it moves a GEMM row by ~2e-3); a sign flip makes a
+        # one-epoch-stale row differ by ~2|y| — always outside tolerance.
+        # Bitwise row checks (hidden_buf) are unaffected either way.
+        sign = 1.0 if (it % 2 == 0) else -1.0
         self.shard.copy_(
             (torch.rand(self.shard.shape, device=self.shard.device,
-                        generator=self.gen) * 0.01).to(self.shard.dtype))
+                        generator=self.gen) * (0.01 * sign)).to(self.shard.dtype))
         if self.keep_ledger:
             self.ledger.append(self.shard.clone())
 

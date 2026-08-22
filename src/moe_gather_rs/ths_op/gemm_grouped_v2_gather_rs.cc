@@ -122,8 +122,15 @@ flux_rs_put_signal(
     uint64_t val,
     int sig_op,
     int pe,
-    cudaStream_t stream) {
-  if (flux_rs_blocking_wire()) {
+    cudaStream_t stream,
+    int local_world_size,
+    int my_node) {
+  // INTER-NODE only: the ordering hazard is the libfabric/CXI proxy path.
+  // Intra-node (P2P) puts stay nbi — CE-ordered, and the blocking on-stream
+  // variant runs a device kernel that dereferences host-staged sources
+  // (unspecified launch failure, 2026-08-22 audit).
+  const bool inter_node = (pe / local_world_size) != my_node;
+  if (inter_node && flux_rs_blocking_wire()) {
     nvshmemx_putmem_signal_on_stream(dst, src, bytes, sig, val, sig_op, pe, stream);
   } else {
     nvshmemx_putmem_signal_nbi_on_stream(dst, src, bytes, sig, val, sig_op, pe, stream);
@@ -883,7 +890,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           int peer = this->node_idx * this->local_world_size +
                      (this->local_rank + 1) % this->local_world_size;
           flux_rs_put_signal(
-              sig, sig, sizeof(uint64_t), sig + 1, 0, NVSHMEM_SIGNAL_SET, peer, stream);
+              sig, sig, sizeof(uint64_t), sig + 1, 0, NVSHMEM_SIGNAL_SET, peer, stream, this->local_world_size, this->node_idx);
           // BARE signal_op to a P2P peer is a DISTINCT transport kernel from
           // both the self signal_op and putmem_signal — it is what the
           // ladders emit for ZERO-ROW intra-node lanes (always-signal
@@ -896,7 +903,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           int peer = ((this->node_idx + 1) % this->nnodes) * this->local_world_size +
                      this->local_rank;
           flux_rs_put_signal(
-              sig, sig, sizeof(uint64_t), sig + 1, 0, NVSHMEM_SIGNAL_SET, peer, stream);
+              sig, sig, sizeof(uint64_t), sig + 1, 0, NVSHMEM_SIGNAL_SET, peer, stream, this->local_world_size, this->node_idx);
           // Same for the INTER-NODE bare signal_op (NIC/proxy transport):
           // emitted iff a remote lane has zero rows — U[d][n] == 0 in the
           // compress wire ladder, node_chunk == 0 in plain hier — which is
@@ -1563,7 +1570,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
                   this->run_id_,
                   NVSHMEM_SIGNAL_SET,
                   gw,
-                  conv_stream);
+                  conv_stream, this->local_world_size, this->node_idx);
             } else {
               nvshmemx_signal_op_on_stream(
                   slot, this->run_id_, NVSHMEM_SIGNAL_SET, gw, conv_stream);
@@ -1592,7 +1599,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
                 this->run_id_,
                 NVSHMEM_SIGNAL_SET,
                 d,
-                this->internode_stream);
+                this->internode_stream, this->local_world_size, this->node_idx);
           } else {
             nvshmemx_signal_op_on_stream(
                 recv_sig + this->rank * this->n_split + sid,
@@ -1626,7 +1633,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
                 this->run_id_,
                 NVSHMEM_SIGNAL_SET,
                 g,
-                this->internode_stream);
+                this->internode_stream, this->local_world_size, this->node_idx);
           } else {
             nvshmemx_signal_op_on_stream(
                 arrival_sig + my_node * this->n_split + sid,
@@ -1671,7 +1678,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
               this->run_id_,
               NVSHMEM_SIGNAL_SET,
               d,
-              intra_stream);
+              intra_stream, this->local_world_size, this->node_idx);
         } else {
           nvshmemx_signal_op_on_stream(
               recv_sig + this->rank * this->n_split + sid,
@@ -1726,7 +1733,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
                   this->run_id_,
                   NVSHMEM_SIGNAL_SET,
                   d,
-                  gateway_stream);
+                  gateway_stream, this->local_world_size, this->node_idx);
             } else {
               nvshmemx_signal_op_on_stream(
                   recv_sig + s * this->n_split + sid,
@@ -2055,7 +2062,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
               this->run_id_,
               NVSHMEM_SIGNAL_SET,
               /*pe=*/g * this->local_world_size + this->local_rank,
-              this->internode_stream);
+              this->internode_stream, this->local_world_size, this->node_idx);
         }
       }
       // receiver side: wait for every remote node's partial of my token shard, then

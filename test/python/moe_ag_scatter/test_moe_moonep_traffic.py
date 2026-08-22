@@ -65,6 +65,7 @@ from flux.testing.moonep_semantics import (
     derive_moonep_layout_gpu,
 )
 from flux.testing.recorder import RECORDER
+from flux.testing.payload_probe import PayloadProbe, payload_probe_enabled
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from moonep_oracle.planning_port import (  # noqa: E402  (ported planner)
@@ -158,6 +159,9 @@ def perf_moonep(
 
     isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))
     iso_sync_times = []
+    # wire-ordering audit (CLAUDE.md invariant 5): per-iteration payload
+    # randomization; runner.pack reads ctx.inputs_shard every iteration
+    probe = PayloadProbe(ctx.inputs_shard, runner.rank)
     for i in range(total_iters):
         if isolated:
             # sweeps SCHEMA.md isolated mode; also the lawful stand-in for
@@ -166,6 +170,7 @@ def perf_moonep(
             torch.cuda.synchronize()
             torch.distributed.barrier()
             iso_sync_times.append((time.perf_counter() - t_iso) * 1e3)
+        probe.step(i)
         nvtx_tag = f"iter{i}_warmup" if i < warmup_iters else f"iter{i}"
         with torch.cuda.nvtx.range(nvtx_tag):
             ev["start"][i].record()
@@ -320,6 +325,11 @@ def check_correctness(runner, ctx, plan, w_all, gemm_only_op, atol, rtol,
     if not torch.equal(runner.hidden_buf[covered], expected_hidden[covered]):
         ok_bitwise = False
         print(f"❌ rank {rank}: dispatched rows differ from plan prediction")
+        if payload_probe_enabled():
+            _bad = (runner.hidden_buf[covered]
+                    != expected_hidden[covered]).any(dim=1)
+            print(f"  probe rank {rank}: bad {int(_bad.sum())}/{int(covered.sum())} "
+                  "rows (payload randomized per iteration)", flush=True)
     if not torch.equal(runner.weights_buf[covered], expected_weights[covered]):
         ok_bitwise = False
         print(f"❌ rank {rank}: route weights differ from plan prediction")
@@ -367,7 +377,13 @@ def check_correctness(runner, ctx, plan, w_all, gemm_only_op, atol, rtol,
           f"{'bitwise-exact' if ok_bitwise else 'MISMATCH'}, "
           f"gemm {'allclose' if ok_allclose else 'MISMATCH'}")
     RECORDER.emit_correctness(bitwise=ok_bitwise, allclose=ok_allclose)
-    assert ok_bitwise and ok_allclose
+    # collective verdict (wire-ordering audit hygiene): a per-rank assert
+    # wedges the surviving ranks in the next collective and holds the srun
+    # step; fail together instead.
+    _flag = torch.tensor([int(ok_bitwise and ok_allclose)], device="cuda")
+    torch.distributed.all_reduce(_flag, op=torch.distributed.ReduceOp.MIN,
+                                 group=TP_GROUP)
+    assert int(_flag) == 1, "correctness failed on at least one rank"
     return ok_bitwise and ok_allclose
 
 
@@ -406,15 +422,22 @@ def check_correctness_l01(runner, ctx, w_all, full_w2, topk_shard, atol, rtol):
     try:
         flux.torch_allclose(runner.final_out, ref.to(runner.final_out.dtype),
                             atol=atol, rtol=rtol)
-    except Exception as e:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         ok = False
         print(f"❌ rank {rank}: l01 combined output vs two-layer reference"
               " MISMATCH")
         RECORDER.emit_correctness(bitwise=False, allclose=False)
         RECORDER.flush()
-        raise e
-    print(f"✅ rank {rank}: l01 combined output matches the two-layer"
-          " reference (allclose)")
+    else:
+        print(f"✅ rank {rank}: l01 combined output matches the two-layer"
+              " reference (allclose)")
+    # collective verdict (wire-ordering audit hygiene): a per-rank assert
+    # wedges the surviving ranks in the next collective and holds the srun
+    # step; fail together instead.
+    _flag = torch.tensor([int(ok)], device="cuda")
+    torch.distributed.all_reduce(_flag, op=torch.distributed.ReduceOp.MIN,
+                                 group=TP_GROUP)
+    assert int(_flag) == 1, "correctness failed on at least one rank"
     return ok
 
 

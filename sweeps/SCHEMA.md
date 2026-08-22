@@ -923,9 +923,11 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
    until then every hc cell MUST carry the env. Consequences: (a) any capsule
    whose env lacks one of the two wire fixes is **wire-correctness
    suspect and a never-mix boundary** against fixed capsules (env_json
-   records the flip); (b) correctness cells must set
-   `FLUX_PLL_RANDOM_PAYLOAD=1` (or an equivalent per-iteration payload
-   change) — a static-payload bitwise pass proves nothing about the wire;
+   records the flip); (b) correctness cells must change the payload per iteration —
+   sweep.py exports `FLUX_RANDOM_PAYLOAD=1` (+ the `FLUX_PLL_` alias) for every
+   cell without `skip_correctness` (shared `flux.testing.payload_probe`:
+   U[0,0.01) with alternating sign per iteration so GEMM-allclose checks see a
+   stale row too) — a static-payload bitwise pass proves nothing about the wire;
    (c) the same nbi put_signal pattern exists in
    `gemm_grouped_v2_gather_rs.cc` (layer1, 8 sites) and
    `coll/ths_op/fused_ep_dispatch.cc` (eplb/epic fused dispatch) — those

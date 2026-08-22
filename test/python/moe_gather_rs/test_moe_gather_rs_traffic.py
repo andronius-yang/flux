@@ -58,6 +58,7 @@ from flux.testing import (
     traffic_matrix_to_choosed_experts,
 )
 from flux.testing.perf_db_helper import log_perf, set_global_args, should_log_to_rds
+from flux.testing.payload_probe import PayloadProbe, payload_probe_enabled
 from flux.testing.recorder import RECORDER
 from flux.testing.traffic_matrix import choosed_experts_to_matrix_chunks, load_routing_file
 from flux.util import get_arch
@@ -74,7 +75,7 @@ class PerfResult:
         return f"{self.name}: gemm {self.gemm_time_ms:.3f} ms"
 
 
-def perf_gemm(iters: int, warmup_iters: int, name: str, fn: callable):
+def perf_gemm(iters: int, warmup_iters: int, name: str, fn: callable, probe=None):
     """Per-iteration CUDA-event timing, mirroring the layer0 harness: warmup
     iterations run inside the same loop and are filtered at collection; NVTX
     tags segment warmup vs timed for nsys captures without device syncs; the
@@ -89,6 +90,12 @@ def perf_gemm(iters: int, warmup_iters: int, name: str, fn: callable):
     isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))
     iso_sync_times = []
     for i in range(total_iters):
+        if probe is not None:
+            # wire-ordering audit (CLAUDE.md invariant 5): the combine op
+            # reads its GEMM input afresh every forward; randomize it in
+            # place (outside the window) so the combine wire moves changing
+            # bytes. Torch and flux probes share the seed -> same final payload.
+            probe.step(i)
         if isolated:
             t_iso = time.perf_counter()
             torch.cuda.synchronize()
@@ -147,6 +154,7 @@ def perf_torch(
             do_all_reduce,
             fast_acc=args.fastacc,
         ),
+        probe=PayloadProbe(inputs, TP_GROUP.rank(), keep_ledger=False),
     )
 
 
@@ -262,7 +270,10 @@ def perf_flux(
             **a2av_kwargs,
         )
 
-    return perf_gemm(iters, warmup_iters, f"flux #{TP_GROUP.rank()}", fn)
+    return perf_gemm(
+        iters, warmup_iters, f"flux #{TP_GROUP.rank()}", fn,
+        probe=PayloadProbe(input, TP_GROUP.rank(), keep_ledger=False),
+    )
 
 
 def parse_args():
@@ -594,6 +605,11 @@ if __name__ == "__main__":
         try:
             flux.torch_allclose(flux_output, torch_output, atol=atol, rtol=rtol)
         except Exception as e:
+            if payload_probe_enabled():
+                d = (flux_output.float() - torch_output.float()).abs()
+                bad = (d > atol + rtol * torch_output.float().abs()).any(dim=1)
+                print(f"  probe rank {TP_GROUP.rank()}: {int(bad.sum())}/{bad.numel()}"
+                      " combined output rows off-tolerance vs the final-payload reference")
             torch.save(flux_output, f"flux_output_{TP_GROUP.rank()}.pt")
             torch.save(torch_output, f"torch_output_{TP_GROUP.rank()}.pt")
             print("❌ flux and torch not matches")

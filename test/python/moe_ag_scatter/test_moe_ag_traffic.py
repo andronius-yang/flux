@@ -61,6 +61,7 @@ from flux.testing import (
     traffic_matrix_to_choosed_experts,
 )
 from flux.testing.perf_db_helper import log_perf, set_global_args, should_log_to_rds
+from flux.testing.payload_probe import PayloadProbe, payload_probe_enabled
 from flux.testing.recorder import RECORDER
 
 DIST_ENV = flux.get_dist_env()
@@ -158,10 +159,16 @@ def perf_torch(
     token_of_copy = (
         torch.arange(n_copies, dtype=torch.int32, device="cuda") // topk
     )
+    # wire-ordering audit (CLAUDE.md invariant 5): per-iteration payload change.
+    # SAME seed as perf_flux's probe (both loops run total_iters steps) so both
+    # loops end on the identical final payload and the flux-vs-torch output
+    # comparison below stays valid. No-op unless FLUX_RANDOM_PAYLOAD=1.
+    probe = PayloadProbe(ctx.inputs_shard, TP_GROUP.rank(), keep_ledger=False)
     torch.distributed.barrier()
     torch.cuda.synchronize()
 
     for i in range(total_iters):
+        probe.step(i)
         start_events[i].record()
         # rule 5 (SCHEMA protocol): routing exchange + ALL routing-derived
         # metadata inside the timed window, every iteration.
@@ -286,9 +293,15 @@ def perf_flux(
     # a per-rank straggler indicator: it is the wait for the slowest rank.
     isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))
     iso_sync_times = []
+    # wire-ordering audit (CLAUDE.md invariant 5): the op re-reads
+    # ctx.inputs_shard every forward, so an in-place per-iteration
+    # randomization (outside the timed window) exercises the wire with
+    # changing bytes; a static payload hides a one-epoch-stale delivery.
+    probe = PayloadProbe(ctx.inputs_shard, TP_GROUP.rank(), keep_ledger=False)
     for i in range(total_iters):
         ctx.clear_outputs()
         op.clear_buffers()
+        probe.step(i)
         if isolated:
             t_iso = time.perf_counter()
             torch.cuda.synchronize()
@@ -843,9 +856,26 @@ if __name__ == "__main__":
             else:
                 bitwise_all = False
                 print(f"❌ {name_x} and torch not bitwise match")
+                if payload_probe_enabled():
+                    bad = (x != y).any(dim=1)
+                    print(f"  probe rank {TP_GROUP.rank()}: {int(bad.sum())}/{x.shape[0]}"
+                          f" output rows differ (GEMM rows of the local EP block)")
             try:
                 flux.torch_allclose(x, y, atol=atol, rtol=rtol)
             except Exception as e:
+                # audit detail: how many ROWS violate tolerance (a stale row
+                # under the sign-alternating probe violates it in every elem;
+                # a tolerance artifact shows as scattered elements)
+                viol = ((x.float() - y.float()).abs() > (atol + rtol * y.float().abs()))
+                rows_bad = int(viol.any(dim=1).sum())
+                rows_all = int(viol.all(dim=1).sum())
+                idx = viol.any(dim=1).nonzero(as_tuple=True)[0][:8].tolist()
+                per = [int(viol[i].sum()) for i in idx]
+                print(f"  probe rank {TP_GROUP.rank()}: allclose violation rows "
+                      f"{rows_bad}/{x.shape[0]} (rows violating in EVERY element: {rows_all}; "
+                      f"max|x-y| {float((x.float()-y.float()).abs().max()):.4g}; "
+                      f"first rows {idx} violating elems/row {per}; "
+                      f"|y| scale {float(y.float().abs().mean()):.4g})", flush=True)
                 dump_dir = os.environ.get("FLUX_DEBUG_DUMP_DIR", "/tmp")
                 os.makedirs(dump_dir, exist_ok=True)
                 torch.save(x, os.path.join(dump_dir, f"{name_x}_{TP_GROUP.rank()}.pt"))
@@ -859,9 +889,19 @@ if __name__ == "__main__":
         RECORDER.emit_correctness(bitwise=bitwise_all, allclose=True)
 
     if perf_result_torch is not None:
-        flux.exec_in_rank_order(
-            TP_GROUP, lambda: check_result(perf_result_flux, perf_result_torch, "flux", "torch")
-        )
+        _ok = [True]
+
+        def _check_no_raise():
+            try:
+                check_result(perf_result_flux, perf_result_torch, "flux", "torch")
+            except Exception as e:  # per-rank raise would wedge the other ranks
+                _ok[0] = False
+                print(f"❌ rank {TP_GROUP.rank()}: check raised {type(e).__name__}", flush=True)
+
+        flux.exec_in_rank_order(TP_GROUP, _check_no_raise)
+        _flag = torch.tensor([int(_ok[0])], device="cuda")
+        torch.distributed.all_reduce(_flag, op=torch.distributed.ReduceOp.MIN, group=TP_GROUP)
+        assert int(_flag) == 1, "correctness failed on at least one rank"
 
     TP_GROUP.barrier()
     torch.cuda.synchronize()

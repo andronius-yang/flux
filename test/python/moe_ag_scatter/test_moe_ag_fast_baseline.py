@@ -74,6 +74,7 @@ from flux.testing import (
     traffic_matrix_to_choosed_experts,
 )
 from flux.testing.recorder import RECORDER
+from flux.testing.payload_probe import PayloadProbe, payload_probe_enabled
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fast_baseline_utils import build_pack_index, build_unpack_index, derive_fast_meta_gpu
@@ -194,6 +195,10 @@ def perf_fast(
     wire_us = [0.0] * total_iters
 
     out = None
+    # wire-ordering audit (CLAUDE.md invariant 5): send_rows is re-gathered
+    # from ctx.inputs_shard every iteration, so an in-place randomization
+    # here (outside the window) exercises the FAST wire with changing bytes
+    probe = PayloadProbe(ctx.inputs_shard, TP_GROUP.rank(), keep_ledger=False)
     torch.distributed.barrier()
     torch.cuda.synchronize()
     for i in range(total_iters):
@@ -203,6 +208,7 @@ def perf_fast(
         comm.alltoallv_reset()
         reset_ms[i] = (time.perf_counter() - t_r0) * 1e3
         torch.cuda.synchronize()
+        probe.step(i)
 
         # rule 5 (SCHEMA protocol): routing exchange + ALL routing-derived
         # metadata (pack/unpack indices, gemm splits, the BvN input matrix)
@@ -485,9 +491,13 @@ if __name__ == "__main__":
     # pure GEMM and stay comparable.
     moe_ctx.output_scale[0].fill_(1.0)
 
-    # ---- torch reference (untimed): populates ctx.inputs / scatter_inputs / outputs ----
+    # ---- torch reference (untimed): populates ctx.inputs / scatter_inputs / outputs.
+    # Runs AFTER the timed loop (2026-08-22 wire-ordering audit): the loop may
+    # re-randomize inputs_shard per iteration, and the reference must be built
+    # from the FINAL payload the last FAST iteration actually moved ----
     torch_outputs = None
-    if not args.skip_correctness:
+
+    def run_torch_reference():
         gemm_only_op = flux.GemmOnly(
             moe_ctx.inputs.dtype,
             moe_ctx.inputs.dtype,
@@ -498,8 +508,9 @@ if __name__ == "__main__":
         MoeAgScatterWithTorch.comm_impl(moe_ctx, TP_GROUP)
         MoeAgScatterWithTorch.scatter_impl(moe_ctx)
         MoeAgScatterWithTorch.gemm_impl(moe_ctx, gemm_only_op)
-        torch_outputs = moe_ctx.get_outputs_clone()
+        outs = moe_ctx.get_outputs_clone()
         torch.cuda.synchronize()
+        return outs
 
     # ---- timed FAST baseline ----
     gemm_op = flux.GemmGroupedV2(
@@ -519,6 +530,8 @@ if __name__ == "__main__":
 
     flux.exec_in_rank_order(TP_GROUP, lambda: print(perf_result))
     RECORDER.emit_iters("fast", perf_result.iter_times)
+    if not args.skip_correctness:
+        torch_outputs = run_torch_reference()  # from the FINAL payload
 
     # ---- correctness ----
     # Numerics tolerance for GemmGroupedV2 (CUTLASS) vs the per-expert
@@ -540,6 +553,10 @@ if __name__ == "__main__":
         if flux.testing.bitwise_eq(fast_gemm_input, ref_block):
             print("✅ FAST wire + unpack bitwise-match the reference scatter block")
         else:
+            if payload_probe_enabled():
+                bad = (fast_gemm_input != ref_block).any(dim=1)
+                print(f"  probe rank {rank}: {int(bad.sum())}/{ref_block.shape[0]}"
+                      " dispatched rows differ from the final-payload reference")
             RECORDER.emit_correctness(bitwise=False, allclose=False)
             raise AssertionError("❌ FAST gemm input does not match the reference scatter block")
         # same-op check: GemmGroupedV2 on the reference block must reproduce the

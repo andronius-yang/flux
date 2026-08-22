@@ -1097,6 +1097,12 @@ def build_cell_env(spec, plat, cell, staging, matrix):
         # (SCHEMA.md: isolated per-layer latency; quote max-across-ranks)
         env["FLUX_SWEEP_ISOLATED_ITERS"] = "1"
     env["FLUX_TEST_DETERMINISTIC"] = "0"
+    if not spec["skip_correctness"]:
+        # wire-ordering HARD RULE (CLAUDE.md invariant 5 / SCHEMA rule 6): a
+        # correctness-enabled cell must change the payload per iteration;
+        # a static-payload bitwise pass proves nothing about the wire.
+        env["FLUX_RANDOM_PAYLOAD"] = "1"
+        env["FLUX_PLL_RANDOM_PAYLOAD"] = "1"
     env["FLUX_SWEEP_RECORD_DIR"] = os.path.join(staging, "records")
     env["FLUX_EXTRA_TORCHRUN_ARGS"] = f"--redirects 3 --log-dir {os.path.join(staging, 'torchrun')}"
     env.update(spec.get("extra_env") or {})
