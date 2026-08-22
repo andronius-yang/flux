@@ -701,31 +701,52 @@ def check_correctness(runner, ctx, plan, topk_all, w_all, atol, rtol):
     # accumulation in fp32. Staging coverage is structurally guaranteed by
     # the comb_dst_slot permutation assert in the layout builder.
     if runner.layers == "l01":
-        x = ctx.inputs_shard.float()
         topk = topk_all[rank].long()
-        ref = torch.zeros(cfg.S, cfg.H, dtype=torch.float32,
-                          device=runner.device)
-        for l in range(cfg.G):
-            toks = (topk == l).any(dim=1).nonzero(as_tuple=True)[0]
-            if toks.numel() == 0:
-                continue
-            toks_dev = toks.to(runner.device)
-            fc1 = runner.make_canonical_fc1(l).to(runner.device).float()
-            fc2 = runner.make_canonical_fc2(l).to(runner.device).float()
-            h0 = (x[toks_dev] @ fc1.t()).to(runner.dtype)
-            a = torch.nn.functional.gelu(h0)
-            y1 = (a.float() @ fc2.t()).to(runner.dtype)
-            wgt = w_all[rank][toks, l].to(runner.device).unsqueeze(1)
-            contrib = (y1.float() * wgt).to(runner.dtype).float()
-            ref.index_add_(0, toks_dev, contrib)
+
+        def _l01_ref(x_shard):
+            x = x_shard.float()
+            ref = torch.zeros(cfg.S, cfg.H, dtype=torch.float32,
+                              device=runner.device)
+            for l in range(cfg.G):
+                toks = (topk == l).any(dim=1).nonzero(as_tuple=True)[0]
+                if toks.numel() == 0:
+                    continue
+                toks_dev = toks.to(runner.device)
+                fc1 = runner.make_canonical_fc1(l).to(runner.device).float()
+                fc2 = runner.make_canonical_fc2(l).to(runner.device).float()
+                h0 = (x[toks_dev] @ fc1.t()).to(runner.dtype)
+                a = torch.nn.functional.gelu(h0)
+                y1 = (a.float() @ fc2.t()).to(runner.dtype)
+                wgt = w_all[rank][toks, l].to(runner.device).unsqueeze(1)
+                contrib = (y1.float() * wgt).to(runner.dtype).float()
+                ref.index_add_(0, toks_dev, contrib)
+            return ref
+
+        ref = _l01_ref(ctx.inputs_shard)
         try:
             flux.torch_allclose(runner.final_out.float(), ref,
                                 atol=atol, rtol=rtol)
         except Exception:
             ok_allclose = False
-            diff = (runner.final_out.float() - ref).abs()
-            print(f"❌ rank {rank}: l01 final output mismatch "
-                  f"(max abs {float(diff.max()):.4f})")
+            out = runner.final_out.float()
+            diff = (out - ref).abs()
+            viol = diff > (atol + rtol * ref.abs())
+            bad = viol.any(dim=1)
+            msg = (f"❌ rank {rank}: l01 final output mismatch "
+                   f"(max abs {float(diff.max()):.4f}; bad token rows "
+                   f"{int(bad.sum())}/{cfg.S}, first {bad.nonzero(as_tuple=True)[0][:6].tolist()}, "
+                   f"|ref| scale {float(ref.abs().mean()):.4g})")
+            ledger = getattr(ctx, "_pll_payloads", None)
+            if ledger is not None and len(ledger) >= 2 and int(bad.sum()) > 0:
+                # provenance: do the bad rows equal the l01 chain on the
+                # PREVIOUS payload (stale-by-one) ?
+                ref_prev = _l01_ref(ledger[-2])
+                close_prev = ((out[bad] - ref_prev[bad]).abs()
+                              <= (atol + rtol * ref_prev[bad].abs())).all(dim=1)
+                # or a MIX: the final payload's own contribution missing/duplicated?
+                msg += (f"; of bad rows {int(close_prev.sum())} match the PREVIOUS "
+                        f"payload's chain (stale-by-one), {int((~close_prev).sum())} neither")
+            print(msg, flush=True)
 
     status = "✅" if (ok_bitwise and ok_allclose) else "❌"
     what = ("full journey" if runner.layers == "l01" else "gemm")

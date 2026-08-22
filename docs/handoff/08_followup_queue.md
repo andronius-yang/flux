@@ -346,3 +346,40 @@ cells hang, bincount the routing for empty experts before anything else.
   the same probe; decide the canonical wire fix (blocking vs F2) by a
   same-capsule A/B; Stage 2b derive_combine_meta compile+validate; then
   G2 and the plan's Stages 2-4.
+- **2026-08-22 (night) — WIRE-ORDERING AUDIT, rounds 1-3 (payload probe = U[0,0.01)
+  with alternating sign per iteration; blocking-default binary; 4n K3 b7, 10 iters).**
+  PASS 16/16: pll loccap_gpu l0, pll d6 l0, eplb fused l0 + l01 (FusedEpDispatch
+  already fences), moonep staged l0 (nvshmem All2AllSingle + getmem), flux
+  allgather l0, stock COMET allgather_dense l01, lbunion_hier l01, lbunion_compress
+  l01, gather_rs compress/hier/dense l1. FAIL/OPEN: (a) layer-1 nbi combine wire
+  fails (epic l01 with FLUX_A2AV_RS_BLOCKING_WIRE=0: dispatch rows bitwise-exact,
+  final output wrong 16/16) -> gather_rs blocking default justified; blocking must be
+  INTER-NODE only (the on-stream blocking variant faults on intra-node host-staged
+  sources: "unspecified launch failure" until fixed in 1197597). (b) epic l01 still
+  mismatches with RS blocking (max 0.33) -> NOT the wire; bisect (probe off /
+  FLUX_EPIC_HCC_DERIVE=0) in round 4 — Stage 2b derive_combine_meta suspect. (c)
+  FUSED-forward-path residual: l0 hc_lb_union (comm-only) 4/16 ranks with exactly 1
+  wrong row each (rank 7 row 9936, 1270/3072 elems, max 0.046 vs |y|~0.007),
+  moonep_fused l0 3/16 ranks 1 row each on the SAME virtual experts every run —
+  deterministic; dispatch_only arms clean; provenance (prev-payload torch reference)
+  in round 4. (d) moonep l01 / moonep l1 standalone / moonep_fused l01 host-OOM at
+  K3 under manual sizing — need the sweep's per-cell sizing, not a verdict. Runner
+  lessons: `srun` inside `while read` must take `< /dev/null`; per-rank raises wedge
+  the step -> collective verdicts everywhere; flag names differ per driver (l01/l1
+  use -G). sweep.py now exports FLUX_RANDOM_PAYLOAD=1 for every correctness cell.
+- **2026-08-22 (later) — audit rounds 4-5.** (1) epic l01 probe-only mismatch is NOT
+  Stage 2b (FLUX_EPIC_HCC_DERIVE=0 gives the identical max-abs per rank) and NOT the
+  RS wire: provenance shows ~45 % of token rows off by ~7 % (max 0.41 on |ref| 5.9),
+  only a handful equal the previous payload's chain -> a MINORITY OF PER-EXPERT
+  CONTRIBUTIONS is stale-by-one inside the epic runner's layer-1 path (dispatch rows
+  bitwise-exact). Prime suspect: stream ordering between the runner's combine_pack
+  (group1_outputs -> e["inbuf"] on comm_stream) and TopkReduceScatterOp.run's
+  internal streams / host-staged intra-node nbi puts reading inbuf; static payloads
+  hide it. epic l01 (and the future pll l01) numbers are correctness-suspect until
+  fixed. (2) FUSED-forward-path residual (comm-only hc_lb_union l0, moonep_fused l0):
+  one fixed row per failing rank (r7 row 9936, r10 row 18028, r13 row 7722), wrong-
+  element count varies 88..2344/3072 per run, and when nearly whole it EQUALS the
+  previous payload -> the fused GEMM reads that row while it is still being
+  overwritten (element-granular old/new mix at a structural position = tile/window
+  boundary of the Tier-B window gating). dispatch_only arms (pll/epic l0, eplb fused)
+  are clean. Both are pre-existing bugs made visible by the payload probe.

@@ -297,11 +297,13 @@ def perf_flux(
     # ctx.inputs_shard every forward, so an in-place per-iteration
     # randomization (outside the timed window) exercises the wire with
     # changing bytes; a static payload hides a one-epoch-stale delivery.
-    probe = PayloadProbe(ctx.inputs_shard, TP_GROUP.rank(), keep_ledger=False)
+    probe = PayloadProbe(ctx.inputs_shard, TP_GROUP.rank(), keep_ledger=True)
     for i in range(total_iters):
         ctx.clear_outputs()
         op.clear_buffers()
         probe.step(i)
+        # provenance (audit): the payload BEFORE this iteration's = ledger[-2]
+        ctx._probe_prev = probe.ledger[-2] if len(probe.ledger) >= 2 else None
         if isolated:
             t_iso = time.perf_counter()
             torch.cuda.synchronize()
@@ -876,6 +878,14 @@ if __name__ == "__main__":
                       f"max|x-y| {float((x.float()-y.float()).abs().max()):.4g}; "
                       f"first rows {idx} violating elems/row {per}; "
                       f"|y| scale {float(y.float().abs().mean()):.4g})", flush=True)
+                if perf_result_torch_prev is not None:
+                    yp = perf_result_torch_prev.outputs[perf_out_x.outputs.index(x)]
+                    bad_rows = viol.any(dim=1).nonzero(as_tuple=True)[0]
+                    close_prev = ((x.float()[bad_rows] - yp.float()[bad_rows]).abs()
+                                  <= (atol + rtol * yp.float()[bad_rows].abs())).all(dim=1)
+                    print(f"  probe rank {TP_GROUP.rank()}: of {int(bad_rows.numel())} bad rows, "
+                          f"{int(close_prev.sum())} match the PREVIOUS payload's torch output "
+                          f"(stale-by-one), {int((~close_prev).sum())} match neither", flush=True)
                 dump_dir = os.environ.get("FLUX_DEBUG_DUMP_DIR", "/tmp")
                 os.makedirs(dump_dir, exist_ok=True)
                 torch.save(x, os.path.join(dump_dir, f"{name_x}_{TP_GROUP.rank()}.pt"))
@@ -887,6 +897,29 @@ if __name__ == "__main__":
             else:
                 print(f"✅ {name_x} check passed")
         RECORDER.emit_correctness(bitwise=bitwise_all, allclose=True)
+
+    perf_result_torch_prev = None
+    if (perf_result_torch is not None and payload_probe_enabled()
+            and getattr(moe_ctx, "_probe_prev", None) is not None):
+        # PROVENANCE (collective): torch reference on the PREVIOUS payload so a
+        # wrong flux row can be classified as "stale = previous iteration".
+        _saved = moe_ctx.inputs_shard.clone()
+        moe_ctx.inputs_shard.copy_(moe_ctx._probe_prev)
+        _envs = {k: os.environ.get(k) for k in ("FLUX_RANDOM_PAYLOAD", "FLUX_PLL_RANDOM_PAYLOAD")}
+        os.environ["FLUX_RANDOM_PAYLOAD"] = "0"
+        os.environ["FLUX_PLL_RANDOM_PAYLOAD"] = "0"
+        try:
+            perf_result_torch_prev = perf_torch(
+                moe_ctx, 0, 1, args.gather_input, meta_op=flux_op,
+                topk_shard=topk_shard, topk_gather_buf=topk_gather_buf)
+        finally:
+            for k, v in _envs.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+            moe_ctx.inputs_shard.copy_(_saved)
+        torch.cuda.synchronize()
 
     if perf_result_torch is not None:
         _ok = [True]
