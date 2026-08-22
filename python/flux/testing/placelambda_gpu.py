@@ -419,7 +419,7 @@ def loccap_route_gpu(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
 # --------------------------------------------------------------------------
 
 def loccap_route_sl(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
-                    rounds=3):
+                    rounds=3, f_cap=None, return_tables=False):
     """Sender-LOCAL LocCap — the algorithm the fused CUDA kernel implements
     (user relaxation ruling 2026-08-21). [R, S, K] -> ([R, S, K] int32,
     stats).
@@ -532,6 +532,12 @@ def loccap_route_sl(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
                            device=dev)
     ent_pos = order[in_quota]
     phys_flat[ent_pos] = ipr[ent_g[ent_pos], seq_ranks]
+    # sizing tables (deterministic; equal on every rank): tier-1/2 pair
+    # counts and the post-tier-2 loads — with myshare below they give the
+    # PROVABLE pair/recv upper bounds (see loccap_sl_bounds)
+    pair12 = torch.bincount(ent_src[ent_pos] * R + seq_ranks,
+                            minlength=R * R).view(R, R)
+    load_t2 = load.clone()
 
     # ---- tier-3 SHARE tables (pure functions of d) ----------------------
     resid3 = (cap_vec - load).clamp(min=0)                  # [R]
@@ -547,6 +553,7 @@ def loccap_route_sl(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
         (w3 * resid3.unsqueeze(0)).t().contiguous(),        # rows = dst
         resid3,
     ).t().contiguous()                                      # [Rsrc, Rdst]
+    myshare0 = myshare.clone()                              # sizing table
 
     # ---- tier 3: per-source greedy cover on own shares ------------------
     forced_overflow = 0
@@ -614,6 +621,12 @@ def loccap_route_sl(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
         load = load + spent.sum(0)
 
     # ---- forced: estimated least-loaded hosting rank --------------------
+    # under f_cap (the kernel mirror): each (src, dst) pair admits at most
+    # f_cap forced rows — fallback first, then the other hosting ranks
+    # ascending, each with its own budget; a fully exhausted candidate list
+    # still assigns the fallback (routing stays total) and is counted in
+    # forced_budget_overflow (the driver-side sizing-contract breach signal)
+    forced_budget_overflow = 0
     rem = (phys_flat == UNASSIGNED).nonzero(as_tuple=True)[0]
     if rem.numel():
         keyf = (load.unsqueeze(0) * R
@@ -622,9 +635,46 @@ def loccap_route_sl(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
         found, best = _min_by_key(keyf, ipr >= 0)
         g_rem = ent_g[rem]
         assert bool(found[g_rem].all()), "expert with no instance anywhere"
-        r_forced = best[g_rem] % R
-        phys_flat[rem] = ipr[g_rem, r_forced]
-        add = torch.bincount(r_forced, minlength=R)
+        r_fb = best[g_rem] % R
+        if f_cap is None or f_cap <= 0:
+            r_final = r_fb
+        else:
+            # per-expert hosting ranks ascending, padded -1: cand[g, j]
+            hr = ipr >= 0
+            ords = hr.long().cumsum(1) - 1
+            cand = torch.full((G, R), -1, dtype=torch.int64, device=dev)
+            gh, rh = hr.nonzero(as_tuple=True)
+            cand.view(-1)[gh * R + ords[gh, rh]] = rh
+            fleft = torch.full((R * R,), f_cap, dtype=torch.int64,
+                               device=dev)
+            r_final = torch.full((rem.numel(),), -1, dtype=torch.int64,
+                                 device=dev)
+            src_rem = ent_src[rem]
+            for j in range(R + 1):
+                pend = (r_final < 0).nonzero(as_tuple=True)[0]
+                if pend.numel() == 0:
+                    break
+                tgt_j = (r_fb[pend] if j == 0
+                         else cand[g_rem[pend], j - 1])
+                valid = tgt_j >= 0
+                pend = pend[valid]
+                tgt_j = tgt_j[valid]
+                if pend.numel() == 0:
+                    break
+                sd = src_rem[pend] * R + tgt_j
+                o = torch.argsort(sd * (rem.numel() + 1)
+                                  + torch.arange(pend.numel(), device=dev),
+                                  stable=True)
+                take = _run_ordinal(sd[o]) < fleft[sd[o]]
+                adm = pend[o[take]]
+                r_final[adm] = tgt_j[o[take]]
+                fleft = fleft - torch.bincount(sd[o[take]],
+                                               minlength=R * R)
+            still = (r_final < 0)
+            forced_budget_overflow = int(still.sum())
+            r_final = torch.where(still, r_fb, r_final)
+        phys_flat[rem] = ipr[g_rem, r_final]
+        add = torch.bincount(r_final, minlength=R)
         over_add = ((load + add - cap_vec).clamp(min=0)
                     - (load - cap_vec).clamp(min=0))
         forced_overflow += int(over_add.sum())
@@ -638,12 +688,54 @@ def loccap_route_sl(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
     stats = {
         "cap": cap,
         "forced_overflow": forced_overflow,
+        "forced_budget_overflow": forced_budget_overflow,
         "cover_rounds": rounds_used,
         "repair_moved": 0,
         "rows_max": int(rows.max()),
         "over_cap_rows": int((rows - cap_vec).clamp(min=0).sum()),
     }
+    if return_tables:
+        stats["pair12"] = pair12
+        stats["myshare"] = myshare0
+        stats["load_t2"] = load_t2
+        # reference forced-flow table: realized pair rows beyond the
+        # tier-1/2 + share quotas — the auto-f_cap / recv-slack basis
+        serve_r = phys_flat.view(R, S * K) // nlp
+        pair_all = torch.bincount(
+            (torch.arange(R, device=dev, dtype=torch.int64).unsqueeze(1)
+             * R + serve_r).reshape(-1), minlength=R * R).view(R, R)
+        stats["forced_pair"] = (pair_all - pair12 - myshare0).clamp(min=0)
     return phys.to(torch.int32), stats
+
+
+def loccap_sl_bounds(aux, R, f_cap=None):
+    """Sizing bounds for the sender-local router, from the deterministic
+    tables (loccap_route_sl(..., return_tables=True) stats).
+
+    pair_ub is PROVABLE by construction: tier-1/2 pair counts are
+    ticket-exact, tier-3 <= myshare, forced <= f_cap per (src, dst)
+    (kernel forced_left tickets). f_cap=None auto-derives from the
+    reference's forced-flow table (measured on real K3 routing 2026-08-21:
+    per-pair forced peaks 60-275 at eps=0.0625, exactly 0 at eps=0.125 —
+    a fixed small constant is wrong at tight eps).
+
+    recv_ub's forced term is a SLACK bound (2x the reference forced
+    ingress + 8R), not a ticket proof — the relaxed kernel's tier-3 greedy
+    can strand somewhat more than the reference; check_relaxed's loud
+    assert is the contract. Replicated-deterministic on every rank."""
+    fp = aux["forced_pair"]
+    if f_cap is None or f_cap <= 0:
+        f_cap = max(16, 2 * int(fp.max()) + 8)
+    pair_ub = aux["pair12"] + aux["myshare"] + f_cap            # [R, R]
+    forced_recv_ub = 2 * fp.sum(0) + 8 * R                      # [R] slack
+    recv_ub = aux["load_t2"] + aux["myshare"].sum(0) + forced_recv_ub
+    return {
+        "f_cap": int(f_cap),
+        "pair_cap": int(pair_ub.max()),
+        "recv_cap": int(recv_ub.max()),
+        "pair_ub": pair_ub,
+        "recv_ub": recv_ub,
+    }
 
 
 # --------------------------------------------------------------------------

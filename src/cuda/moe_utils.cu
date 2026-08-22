@@ -358,7 +358,8 @@ pll_w3_kernel(
 __global__ void
 pll_shares_kernel(
     const long long *w3, const int *load, const int *ipr, int *share_my,
-    int *fallback, int my_rank, int G, int R, int cap) {
+    int *fallback, int *forced_left, int f_cap, int my_rank, int G, int R,
+    int cap) {
   extern __shared__ long long s_frac[];  // [R]
   int r = blockIdx.x;
   long long resid = max(0, cap - load[r]);
@@ -399,6 +400,10 @@ pll_shares_kernel(
     }
   }
   if (threadIdx.x == 0) share_my[r] = mine;
+  // per-(src, dst) forced-admission budget (the ONE sizing clamp — makes
+  // pair_ub/recv_ub provable; <=0 means unlimited)
+  if (threadIdx.x == 0)
+    forced_left[r] = (f_cap <= 0) ? (INT_MAX / 2) : f_cap;
   // forced fallback per expert: least-loaded hosting rank (grid-stride on
   // block 0 only, once)
   if (r == 0) {
@@ -440,8 +445,9 @@ pll_route12_kernel(
 __global__ void
 pll_route3_kernel(
     const int *topk_own, const unsigned *covmask, const int *ipr,
-    const int *fallback, int *share_my, int *phys_own, long long *stats,
-    int S, int K, int G, int R, int L, int NN, int home_node) {
+    const int *fallback, int *share_my, int *forced_left, int *phys_own,
+    long long *stats, int S, int K, int G, int R, int L, int NN,
+    int home_node) {
   int s = blockIdx.x * blockDim.x + threadIdx.x;
   if (s >= S) return;
   int gs[32];
@@ -499,7 +505,28 @@ pll_route3_kernel(
   for (int i = 0; i < nrem; ++i) {
     int k = gs[i];
     int g = topk_own[s * K + k];
-    phys_own[s * K + k] = ipr[g * R + fallback[g]];
+    // forced admission under the per-(src, dst) budget: fallback first,
+    // then the other hosting ranks ascending; a fully exhausted budget
+    // assigns the fallback anyway and bumps the LOUD overflow counter
+    // stats[2] (the driver asserts it stays 0 — sizing-contract breach)
+    int r = fallback[g];
+    int old = atomicSub(&forced_left[r], 1);
+    if (old <= 0) {
+      atomicAdd(&forced_left[r], 1);
+      bool ok = false;
+      for (int rr = 0; rr < R && !ok; ++rr) {
+        if (rr == r || ipr[g * R + rr] < 0) continue;
+        int o2 = atomicSub(&forced_left[rr], 1);
+        if (o2 > 0) {
+          r = rr;
+          ok = true;
+        } else {
+          atomicAdd(&forced_left[rr], 1);
+        }
+      }
+      if (!ok) atomicAdd((unsigned long long *)&stats[2], 1ull);
+    }
+    phys_own[s * K + k] = ipr[g * R + r];
     atomicAdd((unsigned long long *)&stats[0], 1ull);
   }
 }
@@ -513,10 +540,11 @@ placelambda_route_sl(
     const int *l2p,        // [G, Cmax]
     const int *lcnts,      // [G]
     int *phys_own,         // [S, K] out
-    long long *stats,      // [4] out (zeroed): forced, tier3_entries
+    long long *stats,      // [4] out (zeroed): forced, tier3_entries,
+                           //                   forced_budget_overflow
     void *workspace,       // placelambda_route_sl_workspace_bytes(...)
     int S, int K, int G, int R, int Cmax, int nlp, int ranks_per_node,
-    int my_rank, long long cap64, cudaStream_t stream) {
+    int my_rank, long long cap64, int f_cap, cudaStream_t stream) {
   // capability tag: the literal below in the built .so is the sweep
   // runner's probe for this kernel (never remove)
   static const char *kTag = "FLUX_PLACELAMBDA_ROUTE_SL_TAG";
@@ -537,6 +565,7 @@ placelambda_route_sl(
   int *share_my = (int *)ws;            ws += sizeof(int) * R;
   int *fallback = (int *)ws;            ws += sizeof(int) * G;
   int *cnt = (int *)ws;                 ws += sizeof(int) * G;
+  int *forced_left = (int *)ws;         ws += sizeof(int) * R;
 
   CUDA_CHECK(cudaMemsetAsync(ipr, 0xFF, sizeof(int) * G * R, stream));
   CUDA_CHECK(cudaMemsetAsync(covmask, 0, sizeof(int) * G, stream));
@@ -556,12 +585,13 @@ placelambda_route_sl(
   pll_w3_kernel<<<blocks(R * R), tb, 0, stream>>>(
       d, granted2, ipr, w3, G, R);
   pll_shares_kernel<<<R, tb, smemR, stream>>>(
-      w3, load, ipr, share_my, fallback, my_rank, G, R, cap);
+      w3, load, ipr, share_my, fallback, forced_left, f_cap, my_rank, G, R,
+      cap);
   pll_route12_kernel<<<blocks(S * K), tb, 0, stream>>>(
       topk_own, bound, tgt, ipr, cnt, phys_own, stats, S, K, G, R, L);
   pll_route3_kernel<<<blocks(S), tb, 0, stream>>>(
-      topk_own, covmask, ipr, fallback, share_my, phys_own, stats,
-      S, K, G, R, L, NN, my_rank / L);
+      topk_own, covmask, ipr, fallback, share_my, forced_left, phys_own,
+      stats, S, K, G, R, L, NN, my_rank / L);
   CUDA_CHECK(cudaGetLastError());
 }
 
@@ -581,6 +611,7 @@ placelambda_route_sl_workspace_bytes(int G, int R, int ranks_per_node) {
   b += sizeof(int) * R;                // share_my
   b += sizeof(int) * G;                // fallback
   b += sizeof(int) * G;                // cnt
+  b += sizeof(int) * R;                // forced_left (f_cap tickets)
   return b;
 }
 

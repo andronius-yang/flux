@@ -97,6 +97,8 @@ from flux.testing.epic_semantics import (
 from flux.testing.placelambda_gpu import (
     build_placement_gpu,
     loccap_route_gpu,
+    loccap_route_sl,
+    loccap_sl_bounds,
     place_decision,
     placement_hash,
 )
@@ -650,6 +652,29 @@ def _tensor_bytes(t: torch.Tensor) -> bytes:
     return t.numpy().tobytes()
 
 
+def run_one_forward(runner, ctx, probs_shard, sm_margin):
+    """One untimed single-stream forward (the loccap_sl arm's FINAL
+    DETERMINISTIC iteration: the runner is bound to the setup-reference
+    routing before this call, so the output validates against
+    plan.phys_override)."""
+    disp_fn = (runner.dispatch_group_hc if runner.hc_enabled
+               else runner.dispatch_group)
+    runner.pack(ctx.inputs_shard, probs_shard)
+    for g in range(runner.m):
+        disp_fn(g)
+        runner.scatter_group(g)
+        runner.gemm_group(g, sm_margin=sm_margin)
+        if runner.layers == "l01":
+            runner.act_group(g)
+            runner.gemm1_group(g, sm_margin=sm_margin)
+            runner.combine_pack_group(g)
+            runner.combine_group(g)
+            runner.accumulate_group(g)
+    if runner.layers == "l01":
+        runner.finalize_sum()
+    torch.cuda.synchronize()
+
+
 def output_sha(runner) -> str:
     """Digest of the received rows + all group GEMM outputs (cross-m and
     single-stream-vs-two-stream identity lever). Under l01 the digest is of
@@ -758,7 +783,8 @@ def parse_args():
                         " local_spread = per-source equal split (SGLang"
                         " dynamic analog, ablation). Both sender-local.")
     parser.add_argument("--router", default="d6",
-                        choices=["d6", "loccap", "evensplit", "loccap_gpu"],
+                        choices=["d6", "loccap", "evensplit", "loccap_gpu",
+                                 "loccap_sl"],
                         help="replica selection: d6 = src mod lcnts (the "
                         "EPIC baseline rule; re-derived per iteration on "
                         "device under SCHEMA rule 5); loccap = per-token "
@@ -769,9 +795,22 @@ def parse_args():
                         "capsules until its GPU port lands); loccap_gpu = "
                         "the PLACE-lambda bounded-round device port "
                         "(flux.testing.placelambda_gpu) — rule-5 path, "
-                        "re-derived per iteration in-window (plan_ms)")
+                        "re-derived per iteration in-window (plan_ms); "
+                        "loccap_sl = the RELAXED sender-local FUSED KERNEL "
+                        "(flux.placelambda_route_sl) — per-iteration "
+                        "kernel + phys-row allgather in plan_ms, routing "
+                        "varies legitimately, verified by invariants + "
+                        "provable table bounds + a final deterministic "
+                        "correctness iteration")
     parser.add_argument("--eps", type=float, default=0.25,
                         help="LocCap balance slack; 'inf' = pure locality")
+    parser.add_argument("--pll_f_cap", type=int, default=0,
+                        help="loccap_sl per-(src,dst) forced-admission "
+                        "budget — the ONE sizing clamp that makes the "
+                        "kernel arm's pair bounds provable; the kernel's "
+                        "overflow counter must stay 0 (asserted). 0 = "
+                        "AUTO from the reference forced-flow table "
+                        "(2x max per-pair forced + 8; real-K3-measured)")
     parser.add_argument("--place_dynamic", default="static",
                         choices=["static", "dynamic"],
                         help="PLACE-lambda ablation toggle (placement "
@@ -996,6 +1035,7 @@ if __name__ == "__main__":
     assert args.router == "d6" or args.migration == "off", (
         "--router loccap is incompatible with --migration: K_g and the RS "
         "capacity caps are frozen from the loccap layout at ctor")
+    pll_bounds = None
     t_r = time.perf_counter()
     if args.router == "loccap" and rank == 0:
         # heartbeat: the python router port can be silent for minutes at
@@ -1016,6 +1056,19 @@ if __name__ == "__main__":
             topk_all.long().cpu(), plan.p2l, plan.l2p, plan.lcnts,
             cfg.nlp, DIST_ENV.LOCAL_WORLD_SIZE, args.eps)
         plan.phys_override = phys_all_route
+    elif args.router == "loccap_sl":
+        # KERNEL arm (relaxed): the setup reference is the deterministic
+        # torch sender-local route — it sizes every frozen buffer and is
+        # the final-iteration correctness routing; its tables give the
+        # PROVABLE per-pair/recv bounds every relaxed kernel iteration
+        # obeys by construction (f_cap = the one admission clamp).
+        phys_all_route, pll_aux = loccap_route_sl(
+            topk_all.long().cpu(), plan.p2l, plan.l2p, plan.lcnts,
+            cfg.nlp, DIST_ENV.LOCAL_WORLD_SIZE, args.eps,
+            return_tables=True)
+        plan.phys_override = phys_all_route
+        pll_bounds = loccap_sl_bounds(pll_aux, W, args.pll_f_cap)
+        args.pll_f_cap = pll_bounds["f_cap"]  # resolve auto for planner/facts
     elif args.router == "evensplit":
         phys_all_route = evensplit_route(topk_all.long(), plan.l2p,
                                          plan.lcnts).cpu()
@@ -1031,6 +1084,8 @@ if __name__ == "__main__":
         want = ("evensplit" if args.router == "evensplit"
                 else f"loccap_gpu_eps{args.eps:g}"
                 if args.router == "loccap_gpu"
+                else f"loccap_sl_eps{args.eps:g}"
+                if args.router == "loccap_sl"
                 else f"loccap_eps{args.eps:g}")
         pred = [p for p in pblob.get("predicted", [])
                 if p.get("router") == want]
@@ -1081,9 +1136,16 @@ if __name__ == "__main__":
         comm_group=comm_group,
         layers=args.layers,
     )
+    # loccap_sl capacity mode: recv-side buffers + wire panels are sized to
+    # the PROVABLE table bounds (never to the reference's realized rows),
+    # so every relaxed kernel iteration fits by construction.
+    if args.router == "loccap_sl":
+        runner.reserve_recv_capacity(pll_bounds["recv_cap"])
     if args.transport in ("nvshmem", "hier_compress"):
         runner.enable_nvshmem(DIST_ENV.LOCAL_WORLD_SIZE, args.num_comm_sm,
-                              split_headroom=args.a2a_split_headroom)
+                              split_headroom=args.a2a_split_headroom,
+                              max_split_floor=(pll_bounds["pair_cap"]
+                                               if pll_bounds else 0))
     if args.migration == "inkernel":
         assert args.transport == "hier_compress", (
             "--migration inkernel is the fused hc-dispatch phase; use the "
@@ -1094,11 +1156,32 @@ if __name__ == "__main__":
         assert args.hc_wire == "relay_identity" or \
             args.migration != "inkernel", (
                 "--hc_wire lb_union x --migration inkernel is untested")
+        hc_kwargs = {}
+        if args.router == "loccap_sl":
+            L_ = DIST_ENV.LOCAL_WORLD_SIZE
+            NN_ = W // L_
+            pu = pll_bounds["pair_ub"]
+            # node-aggregated pair bounds: unique (dedup) counts never
+            # exceed raw pair rows, so cross-node sums of pair_ub dominate
+            # the stage/relay demands (mirrors required_a2av_knobs shapes)
+            node_pair = pu.view(NN_, L_, NN_, L_).sum(3).sum(1)  # [NN, NN]
+            offdiag = node_pair - torch.diag(torch.diag(node_pair))
+            stage_ub = int(offdiag.sum(0).max()) if NN_ > 1 else 0
+            hc_kwargs = dict(
+                cap_floors={
+                    "FLUX_A2AV_MAX_RECV_NTOKENS": pll_bounds["recv_cap"],
+                    "FLUX_A2AV_MAX_STAGE_NTOKENS": stage_ub,
+                    "FLUX_A2AV_MAX_RELAY_NTOKENS": stage_ub,
+                },
+                # K_g == K analytically at m=1 (every router emits exactly
+                # K entries per token); the pin makes it explicit
+                fixed_kg=[args.topk] * args.groups,
+            )
         runner.enable_hier_compress(
             tp_env, DIST_ENV.LOCAL_WORLD_SIZE,
             headroom=args.hc_headroom, relay=args.hc_relay,
             inkernel_swap=(args.migration == "inkernel"),
-            wire=args.hc_wire)
+            wire=args.hc_wire, **hc_kwargs)
         if args.layers == "l01":
             # Mode-2 combine: per-group TopkReduceScatterOp (S3)
             runner.enable_hc_combine()
@@ -1132,7 +1215,8 @@ if __name__ == "__main__":
     # D6 arms — the sweep's quotable configurations. m>1 and the loccap
     # router stay on the legacy setup-time path and are marked
     # legacy_untimed_plan in cells.csv (visible, never silently mixed).
-    per_iter = (args.groups == 1 and args.router in ("d6", "loccap_gpu"))
+    per_iter = (args.groups == 1
+                and args.router in ("d6", "loccap_gpu", "loccap_sl"))
     iter_planner = None
     if per_iter:
         iter_planner = EpicIterPlanner(
@@ -1146,21 +1230,47 @@ if __name__ == "__main__":
             inwindow_meta=(args.hc_meta == "inwindow"
                            and runner.hc_enabled),
             router=args.router,
-            eps=(args.eps if args.router == "loccap_gpu" else None),
+            eps=(args.eps if args.router in ("loccap_gpu", "loccap_sl")
+                 else None),
+            route_group=TP_GROUP,
+            f_cap=args.pll_f_cap,
         )
         # Setup-time drift guard (untimed): one derive from the known
         # loads must reproduce the CPU reference state bitwise.
         assert torch.equal(iter_planner.local_loads().cpu(), tpe[rank])
         loads_gather_buf.copy_(tpe.reshape(-1).to(loads_gather_buf.device))
-        ip0 = iter_planner.derive(loads_gather_buf)
-        iter_planner.check_against(ip0, runner)
+        if args.router == "loccap_sl":
+            # relaxed contract: bitwise guard runs on the DETERMINISTIC
+            # reference ip; the real kernel derive is audited by
+            # invariants + provable bounds + incidence band instead.
+            ip_ref = iter_planner.derive_reference()
+            iter_planner.check_against(ip_ref, runner)
+            iter_planner.relaxed_bounds = pll_bounds
+            iter_planner.ref_incidence = route_stats["incidence_remote"]
+            iter_planner._check_iters = bool(int(os.environ.get(
+                "FLUX_PLL_CHECK_ITERS", "0")))
+            ip0 = iter_planner.derive(loads_gather_buf)
+            facts0 = iter_planner.check_relaxed(
+                ip0, pll_bounds,
+                ref_incidence=iter_planner.ref_incidence)
+            if rank == 0:
+                print(f"loccap_sl setup audit: {facts0} "
+                      f"(bounds recv_cap {pll_bounds['recv_cap']} "
+                      f"pair_cap {pll_bounds['pair_cap']})", flush=True)
+        else:
+            ip0 = iter_planner.derive(loads_gather_buf)
+            iter_planner.check_against(ip0, runner)
         if iter_planner.inwindow_meta:
             # v2b guard: the op's in-window derivation must be bitwise-
             # equal to the python reference bundle (stable scatter index
-            # determinism is the load-bearing property).
+            # determinism is the load-bearing property). For loccap_sl the
+            # guard consumes the REFERENCE vce (the setup bundle was built
+            # from the reference routing).
+            vce_chk = (ip_ref.hc_vce if args.router == "loccap_sl"
+                       else ip0.hc_vce)
             b0 = runner._hc_bundles[0]
             sd, scd, sps_c, uc_c = runner._hc_ops[0].derive_routed_meta(
-                ip0.hc_vce)
+                vce_chk)
             assert torch.equal(sd.cpu(), b0.meta.splits), "iw splits drift"
             assert torch.equal(scd.cpu(), b0.meta.scatter_index), (
                 "in-window stable scatter index != python reference")
@@ -1224,7 +1334,7 @@ if __name__ == "__main__":
               f"{imb_after:.3f}")
         print(f"router: {args.router}"
               + (f" (eps {args.eps:g})"
-                 if args.router in ("loccap", "loccap_gpu") else "")
+                 if args.router in ("loccap", "loccap_gpu", "loccap_sl") else "")
               + f"; incidence_remote {route_stats['incidence_remote']} "
               f"(mean nodes/token {route_stats['mean_nodes_per_token']:.3f});"
               f" loccap_plan_host_ms {loccap_plan_host_ms:.1f} "
@@ -1265,7 +1375,8 @@ if __name__ == "__main__":
             epic_gemm_backend=args.gemm_backend,
             epic_router=args.router,
             epic_loccap_eps=(f"{args.eps:g}"
-                             if args.router in ("loccap", "loccap_gpu")
+                             if args.router in ("loccap", "loccap_gpu",
+                                                "loccap_sl")
                              else ""),
             epic_place_dynamic=args.place_dynamic,
             epic_place_solver_ms=place_solver_ms,
@@ -1364,6 +1475,23 @@ if __name__ == "__main__":
         TP_GROUP, lambda: print(f"epic #{rank}: {fmt(iter_times)}")
     )
     RECORDER.emit_iters("epic", iter_times)
+
+    if args.router == "loccap_sl" and iter_planner is not None:
+        # FINAL DETERMINISTIC ITERATION (untimed; user decision
+        # 2026-08-21): bind the setup-reference routing and run one
+        # forward so output_sha and check_correctness validate the data
+        # plane against plan.phys_override, while the timed iterations
+        # above used the relaxed kernel routing.
+        ip_ref = iter_planner.derive_reference()
+        runner.bind_iter_plan(ip_ref)
+        run_one_forward(runner, moe_ctx, probs_shard, args.sm_margin)
+        RECORDER.emit_info(
+            epic_route_relaxed=1,
+            epic_pll_f_cap=args.pll_f_cap,
+            epic_pll_recv_cap=pll_bounds["recv_cap"],
+            epic_pll_pair_cap=pll_bounds["pair_cap"],
+            epic_pll_kernel_stats=(iter_planner.last_kernel_stats or []),
+        )
 
     sha = output_sha(runner)
     flux.exec_in_rank_order(

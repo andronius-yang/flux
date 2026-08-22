@@ -86,7 +86,8 @@ placelambda_route_sl_impl(
     int64_t my_rank,
     int64_t nlp,
     int64_t ranks_per_node,
-    double eps) {
+    double eps,
+    int64_t f_cap) {
   CHECK_INPUT(topk_own, at::ScalarType::Int);
   CHECK_INPUT(d, at::ScalarType::Int);
   CHECK_INPUT(l2p, at::ScalarType::Int);
@@ -114,7 +115,7 @@ placelambda_route_sl_impl(
       phys.data_ptr<int>(),
       (long long *)stats.data_ptr<int64_t>(),
       ws.data_ptr(),
-      S, K, G, R, Cmax, nlp, ranks_per_node, my_rank, cap64,
+      S, K, G, R, Cmax, nlp, ranks_per_node, my_rank, cap64, (int)f_cap,
       stream);
   return {phys, stats};
 }
@@ -373,7 +374,8 @@ PYBIND11_MODULE(FLUX_TORCH_EXTENSION_NAME, m) {
       py::arg("my_rank"),
       py::arg("nlp"),
       py::arg("ranks_per_node"),
-      py::arg("eps"));
+      py::arg("eps"),
+      py::arg("f_cap") = -1);
 
   init_tuning_record(m);
   init_profiling_context(m);

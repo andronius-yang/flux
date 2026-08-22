@@ -43,8 +43,11 @@ void calc_scatter_index(
  * tables are order-independent functions of the allgathered demand d;
  * per-entry assignment uses relaxed atomic tickets (no bit-determinism —
  * see moe_utils.cu preamble). stats[4] int64 (pre-zeroed by caller):
- * [0] forced entries, [1] tier-3 entries. cap64 = ceil((1+eps)*S*K)
- * (huge value = pure locality).
+ * [0] forced entries, [1] tier-3 entries, [2] forced-budget overflow
+ * (must stay 0 under a positive f_cap — sizing-contract breach otherwise).
+ * cap64 = ceil((1+eps)*S*K) (huge value = pure locality). f_cap = the
+ * per-(src, dst) forced-admission budget (<= 0 unlimited) — the one clamp
+ * that makes the pair/recv sizing bounds provable.
  */
 void placelambda_route_sl(
     const int *topk_own,  // [S, K]
@@ -55,7 +58,7 @@ void placelambda_route_sl(
     long long *stats,     // [4] out, pre-zeroed
     void *workspace,      // >= placelambda_route_sl_workspace_bytes(...)
     int S, int K, int G, int R, int Cmax, int nlp, int ranks_per_node,
-    int my_rank, long long cap64, cudaStream_t stream);
+    int my_rank, long long cap64, int f_cap, cudaStream_t stream);
 
 size_t placelambda_route_sl_workspace_bytes(int G, int R, int ranks_per_node);
 
