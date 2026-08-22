@@ -391,3 +391,13 @@ cells hang, bincount the routing for empty experts before anything else.
   single-stream) and A0b (unfenced, isolated) controls still fail identically -> the
   cp_stream seam was the bug, not the two-stream loop. Side effect: epic l01 `comb_ms`
   was launch-latency before (SCHEMA rule 8, never-mix).
+- **2026-08-22 — bug (b) ROOT-CAUSED + FIXED (plan eager-juggling-glacier v2):** fused
+  stage-2 consumer build (`sort_util.cu a2av_consumer_build_kernel`) used SOURCE-keyed A
+  groups; Tier-B gate partitions by LANE (`a2av_gating_cumsum_`); windows cut through
+  source regions -> a tile interior to one lane read a row from the next window before
+  it landed (torn row, fixed index per rank). B0: `FLUX_A2AV_FUSED_STAGE2=0` passes
+  16/16 on hc_lb_union and moonep_fused. B2: two-pass lane-keyed build (hist ->
+  cumsum+offA_lane -> assign), CHECK_COMPRESS lane-monotonicity assert, tag
+  FLUX_A2AV_FUSED_STAGE2_LANE_ORDER_TAG; proof ladder: fused hc_lb_union x3 (first with
+  the CHECK on), moonep_fused, lbunion_compress l01, epic_l01 (see results below).
+  SCHEMA rule 9.

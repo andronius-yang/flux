@@ -672,11 +672,8 @@ a2av_consumer_build_kernel(A2AVConsumerBuildArguments args) {
       continue;
     }
     const int64_t e = args.e_all[p];
-    const int64_t g = (e - args.ep_start) * W + args.s_all[p];
-    const int64_t row = args.offA[g] + atomicAdd(&args.blk_cnt[g], 1);
     const int64_t recv_row = args.c_excl[p / args.topk];
-    args.gather[row] = (int32_t)recv_row;
-    args.scatter[row] = (int32_t)(args.flat_dst[p] - args.expert_base[e]);
+    int lane = 0;
     if (args.lane_end != nullptr) {
       // gating lane = first w with recv_row < lane_end[w] (rows always fall
       // below the last lane end == total dedup recv rows)
@@ -689,8 +686,32 @@ a2av_consumer_build_kernel(A2AVConsumerBuildArguments args) {
           lo = mid + 1;
         }
       }
-      atomicAdd(&args.gate_hist[(e - args.ep_start) * W + lo], 1);
+      lane = lo;
     }
+    if (args.hist_only) {
+      // pass 1 (Tier B lane-keyed order): per-(expert, lane) counts only
+      atomicAdd(&args.gate_hist[(e - args.ep_start) * W + lane], 1);
+      continue;
+    }
+    int64_t row;
+    if (args.offA_lane != nullptr) {
+      // pass 3: LANE-keyed A order — rows of expert e are lane-contiguous, so
+      // the A-position partition by gating_cumsum is exact (the tile gate's
+      // invariant); interior order within a lane stays arbitrary, which no
+      // consumer observes
+      const int64_t g = (e - args.ep_start) * W + lane;
+      row = args.offA_lane[g] + atomicAdd(&args.blk_cnt[g], 1);
+    } else {
+      // legacy single pass: SOURCE-keyed groups (non-Tier-B gating compares
+      // per-source boundaries, ssc)
+      const int64_t g = (e - args.ep_start) * W + args.s_all[p];
+      row = args.offA[g] + atomicAdd(&args.blk_cnt[g], 1);
+      if (args.lane_end != nullptr && args.gate_hist != nullptr) {
+        atomicAdd(&args.gate_hist[(e - args.ep_start) * W + lane], 1);
+      }
+    }
+    args.gather[row] = (int32_t)recv_row;
+    args.scatter[row] = (int32_t)(args.flat_dst[p] - args.expert_base[e]);
   }
 }
 
@@ -710,7 +731,11 @@ a2av_gating_cumsum_kernel(A2AVGatingCumsumArguments args) {
   for (int e = blockIdx.x * blockDim.x + threadIdx.x; e < args.ep_nexperts;
        e += gridDim.x * blockDim.x) {
     int32_t acc = 0;
+    const int64_t base = (args.offA_lane != nullptr) ? args.offA[(int64_t)e * args.world_size] : 0;
     for (int w = 0; w < args.world_size; w++) {
+      if (args.offA_lane != nullptr) {
+        args.offA_lane[(int64_t)e * args.world_size + w] = base + acc;  // exclusive
+      }
       acc += args.gate_hist[e * args.world_size + w];
       args.gating_cumsum[e * args.world_size + w] = acc;
     }

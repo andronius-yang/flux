@@ -957,3 +957,18 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
    latency of the combine, not the combine. Fix = `FLUX_EPIC_HCC_STREAM_EDGES` (default
    1; `=0` is the unfenced form, bisection only). All epic l01 (and future pll l01)
    capsules before this date are never-mix for layer-1 timing AND correctness.
+
+9. **Fused stage-2 LANE-keyed A order under Tier B (2026-08-22).** With
+   `FLUX_A2AV_FUSED_STAGE2=1` (default under LB_UNION) the fused consumer build assigned
+   each expert's A rows by SOURCE-keyed groups with arbitrary interior order, while the
+   Tier-B tile gate partitions an expert's A rows by LANE (window) via the gating cumsum
+   — and windows (`chunk_bound`) cut through source regions. A tile lying inside one
+   lane could therefore carry a row whose recv row lives in the next window and never
+   wait for it: one torn row per affected rank under changing payloads (comm-only
+   hc_lb_union l0, moonep_fused l0), invisible with static payloads. Fix = lane-keyed
+   two-pass fused build (lane histogram → gating cumsum + exclusive lane offsets →
+   lane-keyed assignment) + `FLUX_A2AV_CHECK_COMPRESS=1` now asserts the Tier-B
+   lane-monotonicity invariant; binary tag `FLUX_A2AV_FUSED_STAGE2_LANE_ORDER_TAG`.
+   Discriminator: `FLUX_A2AV_FUSED_STAGE2=0` (ATen build, lane-monotone by key) passed
+   16/16 on both arms before the fix. Fused-forward capsules from binaries without the
+   tag are correctness-suspect (1 row/rank class) and never-mix for fused-arm claims.

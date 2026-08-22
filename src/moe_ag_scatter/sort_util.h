@@ -164,6 +164,17 @@ struct A2AVConsumerBuildArguments {
   // (i.e. end(0..W-1)); gate_hist accumulates per-(e_loc, lane) row counts
   int64_t const *lane_end;    // [W]
   int32_t *gate_hist;         // [E * W], pre-zeroed
+  // 2026-08-22 LANE-KEYED A order (Tier B): the tile gate partitions an
+  // expert's A rows by LANE (window) via gating_cumsum, so the A order must be
+  // lane-monotone within each expert; source-keyed groups (offA) are NOT —
+  // windows cut through source regions (audit bug (b): one torn row per
+  // rank under changing payloads). Two-pass protocol:
+  //   hist_only = true            -> only gate_hist is accumulated (pass 1)
+  //   offA_lane != nullptr        -> row = offA_lane[e_loc*W + lane] + atomic
+  //                                  in-lane rank (pass 3; gate_hist untouched)
+  //   both unset                  -> legacy source-keyed single pass
+  bool hist_only;
+  int64_t const *offA_lane;   // [E * W] lane-keyed A-order group starts
 };
 void a2av_consumer_build_impl(A2AVConsumerBuildArguments const &args, cudaStream_t stream);
 
@@ -174,6 +185,10 @@ struct A2AVGatingCumsumArguments {
   int world_size;              // W
   int32_t const *gate_hist;    // [E * W]
   int32_t *gating_cumsum;      // [E * W] out
+  // optional lane-keyed A offsets: offA_lane[e*W + w] = offA[e*W] (the
+  // expert's first A row, source-keyed table) + exclusive lane prefix
+  int64_t const *offA;         // [E * W] or nullptr
+  int64_t *offA_lane;          // [E * W] out or nullptr
 };
 void a2av_gating_cumsum_impl(A2AVGatingCumsumArguments const &args, cudaStream_t stream);
 

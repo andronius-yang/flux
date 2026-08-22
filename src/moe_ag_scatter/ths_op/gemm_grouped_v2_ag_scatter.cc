@@ -467,6 +467,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // Fed to args.accum_per_rank_ptr so the bucket build and the per-tile spin
   // ballot are window-keyed with zero kernel changes.
   torch::Tensor a2av_gating_cumsum_;
+  torch::Tensor a2av_offA_lane_;  // i64 [E*W] lane-keyed A-order starts (Tier B fused stage-2)
   // fused_stage2_ only: persistent consumer-build outputs and the per-group
   // atomic rank counters (+ gating histogram in the second half)
   torch::Tensor a2av_sorted_gather_;   // i32 [n_copies_max]
@@ -1938,14 +1939,22 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       if (compress && this->fused_stage2_) {
         // ---- fused consumer build (FLUX_A2AV_FUSED_STAGE2): the ATen
         // key/argsort/index_select chain and the Tier B gating searchsorted
-        // collapse into one cumsum + two kernels. Stage 1 already wrote the
-        // per-token keep flags; A rows are assigned per (expert, source)
-        // group from the host offA table plus an atomic in-group rank —
-        // interior order is arbitrary, which no consumer observes (gather /
-        // scatter are per-row indirections, the tile gating compares only
-        // group boundaries). Timing-mark remap under this path:
+        // collapse into one cumsum + a few kernels. Stage 1 already wrote the
+        // per-token keep flags. A-row assignment:
+        //   non-Tier-B: per (expert, source) group from the host offA table
+        //     plus an atomic in-group rank — interior order arbitrary, the
+        //     per-source tile gating (ssc) compares only group boundaries;
+        //   Tier B (lb_union): per (expert, LANE) group — the tile gate
+        //     partitions an expert's A rows by lane via gating_cumsum, and
+        //     lanes (chunk_bound windows) cut through source regions, so a
+        //     source-keyed order violated the gate's invariant (2026-08-22
+        //     audit bug (b): one torn row per rank under changing payloads).
+        //     Two-pass: lane histogram -> cumsum + exclusive lane offsets ->
+        //     lane-keyed assignment. Tag FLUX_A2AV_FUSED_STAGE2_LANE_ORDER_TAG.
+        // Timing-mark remap under this path:
         //   keyA = scratch memset, sortA = mine cumsum,
-        //   keyR = consumer build kernel, sortR = Tier B gating cumsum.
+        //   keyR = consumer build kernel(s), sortR = Tier B gating cumsum.
+        (void)get_int_from_env("FLUX_A2AV_FUSED_STAGE2_LANE_ORDER_TAG", 0);
         const int64_t ntokens = (int64_t)tokens_per_rank * W;
         auto mine_n = this->a2av_mine_token_.narrow(0, 0, ntokens + 1);
         CUDA_CHECK(cudaMemsetAsync(
@@ -1955,40 +1964,59 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         mark(3);
         const bool tier_b = this->union_bcast_ && !this->relay_identity_ && dist_env.nnodes > 1;
         int32_t *blk_cnt = this->a2av_blk_cnt_.data_ptr<int32_t>();
-        a2av_consumer_build_impl(
-            A2AVConsumerBuildArguments{
-                .n_copies = n_copies,
-                .topk = (int)topk,
-                .ep_start = (int)ep_start,
-                .ep_nexperts = (int)E,
-                .world_size = W,
-                .e_all = e_all.data_ptr<int64_t>(),
-                .s_all = s_all.data_ptr<int64_t>(),
-                .flat_dst = flat_dst.data_ptr<int64_t>(),
-                .not_mine = not_mine.data_ptr<bool>(),
-                .c_excl = c_excl.data_ptr<int64_t>(),
-                .offA = offA_dev.data_ptr<int64_t>(),
-                .expert_base = expert_base_dev.data_ptr<int64_t>(),
-                .blk_cnt = blk_cnt,
-                .gather = this->a2av_sorted_gather_.data_ptr<int32_t>(),
-                .scatter = this->a2av_sorted_scatter_.data_ptr<int32_t>(),
-                // gate_q row 0 is [0, end(0), ..., end(W-1)]: skip the base
-                .lane_end = tier_b ? gate_q_dev.data_ptr<int64_t>() + 1 : nullptr,
-                .gate_hist = tier_b ? blk_cnt + nexG : nullptr},
-            stream);
-        mark(4);
+        A2AVConsumerBuildArguments cb_args{
+            .n_copies = n_copies,
+            .topk = (int)topk,
+            .ep_start = (int)ep_start,
+            .ep_nexperts = (int)E,
+            .world_size = W,
+            .e_all = e_all.data_ptr<int64_t>(),
+            .s_all = s_all.data_ptr<int64_t>(),
+            .flat_dst = flat_dst.data_ptr<int64_t>(),
+            .not_mine = not_mine.data_ptr<bool>(),
+            .c_excl = c_excl.data_ptr<int64_t>(),
+            .offA = offA_dev.data_ptr<int64_t>(),
+            .expert_base = expert_base_dev.data_ptr<int64_t>(),
+            .blk_cnt = blk_cnt,
+            .gather = this->a2av_sorted_gather_.data_ptr<int32_t>(),
+            .scatter = this->a2av_sorted_scatter_.data_ptr<int32_t>(),
+            // gate_q row 0 is [0, end(0), ..., end(W-1)]: skip the base
+            .lane_end = tier_b ? gate_q_dev.data_ptr<int64_t>() + 1 : nullptr,
+            .gate_hist = tier_b ? blk_cnt + nexG : nullptr,
+            .hist_only = false,
+            .offA_lane = nullptr};
         if (tier_b) {
           if (!this->a2av_gating_cumsum_.defined()) {
             this->a2av_gating_cumsum_ = torch::empty(
                 {(int64_t)E, (int64_t)W}, torch::TensorOptions(torch::kCUDA).dtype(torch::kInt));
           }
+          if (!this->a2av_offA_lane_.defined()) {
+            this->a2av_offA_lane_ = torch::empty(
+                {(int64_t)E * W}, torch::TensorOptions(torch::kCUDA).dtype(torch::kLong));
+          }
+          // pass 1: per-(expert, lane) histogram
+          cb_args.hist_only = true;
+          a2av_consumer_build_impl(cb_args, stream);
+          mark(4);
+          // pass 2: inclusive gating cumsum + exclusive lane-keyed A offsets
           a2av_gating_cumsum_impl(
               A2AVGatingCumsumArguments{
                   .ep_nexperts = (int)E,
                   .world_size = W,
                   .gate_hist = blk_cnt + nexG,
-                  .gating_cumsum = this->a2av_gating_cumsum_.data_ptr<int32_t>()},
+                  .gating_cumsum = this->a2av_gating_cumsum_.data_ptr<int32_t>(),
+                  .offA = offA_dev.data_ptr<int64_t>(),
+                  .offA_lane = this->a2av_offA_lane_.data_ptr<int64_t>()},
               stream);
+          // pass 3: lane-keyed row assignment (blk_cnt region is still zero —
+          // pass 1 touched only gate_hist)
+          cb_args.hist_only = false;
+          cb_args.gate_hist = nullptr;
+          cb_args.offA_lane = this->a2av_offA_lane_.data_ptr<int64_t>();
+          a2av_consumer_build_impl(cb_args, stream);
+        } else {
+          a2av_consumer_build_impl(cb_args, stream);
+          mark(4);
         }
         mark(5);
         sorted_gather_index = this->a2av_sorted_gather_.narrow(0, 0, n_copies);
@@ -2007,15 +2035,40 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           auto iota_m = iota.narrow(0, 0, M_this_ep);
           auto inv = torch::empty({n_copies}, opt_i64).scatter_(0, flat_dst, iota);
           auto g_of = torch::searchsorted(cumA_dev, iota_m, /*out_int32=*/false, /*right=*/true);
-          auto e_row = g_of.div((int64_t)W, "floor").add((int64_t)ep_start);
+          // expert of each A row from the EXPERT-level boundaries (valid for
+          // both the source-keyed and the lane-keyed interior order)
+          auto cumE = cumA_dev.view({(int64_t)E, (int64_t)W}).select(1, W - 1).contiguous();
+          auto e_row = torch::searchsorted(cumE, iota_m, /*out_int32=*/false, /*right=*/true)
+                           .add((int64_t)ep_start);
           auto s_row = g_of.remainder((int64_t)W);
           auto flat_of_row = sorted_scatter_index.narrow(0, 0, M_this_ep).to(torch::kLong) +
                              expert_base_dev.index_select(0, e_row);
           auto p_of_row = inv.index_select(0, flat_of_row);
           FLUX_CHECK(torch::equal(e_all.index_select(0, p_of_row), e_row))
               << "a2av fused consumer: expert-group membership mismatch";
-          FLUX_CHECK(torch::equal(s_all.index_select(0, p_of_row), s_row))
-              << "a2av fused consumer: source-group membership mismatch";
+          if (!tier_b) {
+            FLUX_CHECK(torch::equal(s_all.index_select(0, p_of_row), s_row))
+                << "a2av fused consumer: source-group membership mismatch";
+          } else {
+            // Tier B invariant (audit bug (b)): within each expert the A order
+            // must be LANE-monotone and the per-(expert, lane) counts must equal
+            // the gating cumsum the tile gate partitions by.
+            auto lane_end_dev = gate_q_dev.narrow(0, 1, W);  // end(0..W-1)
+            auto got_rows = sorted_gather_index.narrow(0, 0, M_this_ep).to(torch::kLong);
+            auto lane_of_row = torch::searchsorted(lane_end_dev, got_rows,
+                                                   /*out_int32=*/false, /*right=*/true);
+            auto key_el = e_row.sub((int64_t)ep_start).mul((int64_t)W).add(lane_of_row);
+            FLUX_CHECK(torch::all(key_el.narrow(0, 1, M_this_ep - 1)
+                                      .ge(key_el.narrow(0, 0, M_this_ep - 1)))
+                           .item<bool>())
+                << "a2av fused consumer (Tier B): A order is not lane-monotone within experts";
+            auto cnt_el = torch::bincount(key_el, {}, (int64_t)E * W).to(torch::kInt).view({(int64_t)E, (int64_t)W});
+            auto gc = this->a2av_gating_cumsum_;
+            auto gdiff = gc.clone();
+            gdiff.narrow(1, 1, W - 1) -= gc.narrow(1, 0, W - 1);
+            FLUX_CHECK(torch::equal(cnt_el, gdiff))
+                << "a2av fused consumer (Tier B): per-(expert, lane) counts != gating cumsum";
+          }
           // row_of_tok[t] = the dedup recv row of kept token t (a row's copy is
           // always kept, so the dropped-token fill never reaches `want`)
           auto row_of_tok = c_excl.narrow(0, 0, ntokens)
