@@ -519,4 +519,278 @@ a2av_combine_reduce(
   CUDA_CHECK(cudaGetLastError());
 }
 
+// ---- sort-free compress-plan derivation (2026-08-21) -----------------------
+// Every ordering in the compress CSRs is arithmetic on the layer0 stable
+// scatter_index (A-order position per copy) plus host cnt/U prefix tables:
+// - conv panel position = conv bucket base (seg, expert) + the copy's rank
+//   inside its (expert, home) A-suborder = scd - expert_base - home_base;
+// - wire slot = per-(seg, token) CSR base + the copy's rank among its token's
+//   conv siblings (O(topk) compare loop, conv-position ascending == the old
+//   stable sort's tie-break);
+// - red rows = C'-remapped recv positions (same scd arithmetic restricted to
+//   home == me) interleaved own-slots-then-remote-nodes per token.
+// Deterministic direct writes; bitwise-identical to the argsort formulation
+// (kept as the FLUX_A2AV_RS_CHECK_IDENTITY reference in the ths_op builder).
+namespace {
+
+__global__ void
+compress_plan_token_kernel(A2AVCompressPlanArguments args) {
+  const int64_t ntokens = args.m_full / args.topk;
+  const int64_t tpr = ntokens / args.world_size;
+  const int L = args.local_world_size;
+  const int my_node = args.rank / L;
+  const int my_lr = args.rank % L;
+  const int NN = args.nnodes;
+  for (int64_t t = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; t < ntokens;
+       t += (int64_t)gridDim.x * blockDim.x) {
+    const int h = (int)(t / tpr);
+    const int hn = h / L;
+    const int64_t tl = t - (int64_t)h * tpr;
+    if (hn != my_node && h % L == my_lr) {
+      // source side: I am the gateway lane for home rank h
+      const int seg = hn - (hn > my_node ? 1 : 0);
+      int cntc = 0;
+      for (int k = 0; k < args.topk; k++) {
+        const int64_t e = args.e_of_copy[t * args.topk + k];
+        if ((int)(e / args.ep_nexperts) / L == my_node) {
+          cntc++;
+        }
+      }
+      args.conv_count[(int64_t)seg * tpr + tl] = cntc;
+    }
+    if (h == args.rank) {
+      // destination side: my tokens' per-node contribution flags
+      for (int k = 0; k < args.topk; k++) {
+        const int64_t e = args.e_of_copy[t * args.topk + k];
+        const int on = (int)(e / args.ep_nexperts) / L;
+        if (on != my_node) {
+          args.red_flags[tl * NN + on] = 1;
+        }
+      }
+    }
+  }
+}
+
+// one-warp running scans over the small per-token arrays (tens of KB): wire
+// row numbering + wire CSR bases, red CSR bases, remote one-cumsum columns.
+// Lane-strided 32-chunk warp scans with a serial running offset (the
+// reduce_utils.cuh pattern), fully deterministic.
+__global__ void __launch_bounds__(32, 1)
+compress_plan_scan_kernel(A2AVCompressPlanArguments args) {
+  const int64_t ntokens = args.m_full / args.topk;
+  const int64_t tpr = ntokens / args.world_size;
+  const int64_t ntok_local = tpr;
+  const int NN = args.nnodes;
+  const int L = args.local_world_size;
+  const int my_node = args.rank / L;
+  const int lane = threadIdx.x;
+  const unsigned kFull = 0xffffffffu;
+
+  // phase A: wire rows over (seg-major, token asc): exclusive flag scan ->
+  // wire_row_of; inclusive conv_count scan -> wire_ptr[row + 1]
+  {
+    const int64_t n = (int64_t)(NN - 1) * tpr;
+    int64_t run_rows = 0;
+    int64_t run_cnt = 0;
+    if (lane == 0 && args.wire_ptr != nullptr) {
+      args.wire_ptr[0] = 0;
+    }
+    const int64_t n_pad = (n + 31) / 32 * 32;
+    for (int64_t i = lane; i < n_pad; i += 32) {
+      const int c = i < n ? args.conv_count[i] : 0;
+      const int f = c > 0 ? 1 : 0;
+      int pf = f;
+      int pc = c;
+      for (int d = 1; d < 32; d <<= 1) {
+        const int uf = __shfl_up_sync(kFull, pf, d);
+        const int uc = __shfl_up_sync(kFull, pc, d);
+        if (lane >= d) {
+          pf += uf;
+          pc += uc;
+        }
+      }
+      if (i < n) {
+        const int64_t row_excl = run_rows + pf - f;
+        args.wire_row_of[i] = f ? (int32_t)row_excl : -1;
+        if (f) {
+          args.wire_ptr[row_excl + 1] = (int32_t)(run_cnt + pc);
+        }
+      }
+      run_rows += __shfl_sync(kFull, pf, 31);
+      run_cnt += __shfl_sync(kFull, pc, 31);
+    }
+  }
+  __syncwarp();
+
+  // phase B: red_ptr over my tokens (own copies + contributing remote nodes)
+  {
+    int64_t run = 0;
+    if (lane == 0) {
+      args.red_ptr[0] = 0;
+    }
+    const int64_t n_pad = (ntok_local + 31) / 32 * 32;
+    for (int64_t tl = lane; tl < n_pad; tl += 32) {
+      int cnt = 0;
+      if (tl < ntok_local) {
+        const int64_t t = (int64_t)args.rank * tpr + tl;
+        for (int k = 0; k < args.topk; k++) {
+          const int64_t e = args.e_of_copy[t * args.topk + k];
+          if ((int)(e / args.ep_nexperts) / L == my_node) {
+            cnt++;
+          }
+        }
+        for (int m = 0; m < NN; m++) {
+          cnt += args.red_flags[tl * NN + m];
+        }
+      }
+      int p = cnt;
+      for (int d = 1; d < 32; d <<= 1) {
+        const int u = __shfl_up_sync(kFull, p, d);
+        if (lane >= d) {
+          p += u;
+        }
+      }
+      if (tl < ntok_local) {
+        args.red_ptr[tl + 1] = (int32_t)(run + p);
+      }
+      run += __shfl_sync(kFull, p, 31);
+    }
+  }
+  __syncwarp();
+
+  // phase C: remote one-cumsum per node column (exclusive over my tokens)
+  for (int m = 0; m < NN; m++) {
+    if (m == my_node) {
+      continue;
+    }
+    int64_t run = 0;
+    const int64_t n_pad = (ntok_local + 31) / 32 * 32;
+    for (int64_t tl = lane; tl < n_pad; tl += 32) {
+      const int f = tl < ntok_local ? args.red_flags[tl * NN + m] : 0;
+      int p = f;
+      for (int d = 1; d < 32; d <<= 1) {
+        const int u = __shfl_up_sync(kFull, p, d);
+        if (lane >= d) {
+          p += u;
+        }
+      }
+      if (tl < ntok_local) {
+        args.rem_pos[tl * NN + m] = (int32_t)(run + p - f);
+      }
+      run += __shfl_sync(kFull, p, 31);
+    }
+    __syncwarp();
+  }
+}
+
+__global__ void
+compress_plan_conv_kernel(A2AVCompressPlanArguments args) {
+  const int64_t cpr = args.m_full / args.world_size;
+  const int64_t ntokens = args.m_full / args.topk;
+  const int64_t tpr = ntokens / args.world_size;
+  const int L = args.local_world_size;
+  const int my_node = args.rank / L;
+  const int my_lr = args.rank % L;
+  const int64_t node_e0 = (int64_t)my_node * L * args.ep_nexperts;
+  for (int64_t c = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; c < args.m_full;
+       c += (int64_t)gridDim.x * blockDim.x) {
+    const int h = (int)(c / cpr);
+    const int hn = h / L;
+    if (hn == my_node || h % L != my_lr) {
+      continue;
+    }
+    const int64_t e = args.e_of_copy[c];
+    if ((int)(e / args.ep_nexperts) / L != my_node) {
+      continue;
+    }
+    const int seg = hn - (hn > my_node ? 1 : 0);
+    const int64_t conv_pos =
+        args.conv_base[(int64_t)seg * L * args.ep_nexperts + (e - node_e0)] +
+        (int64_t)args.scatter_index[c] - args.expert_base[e] -
+        args.home_base[e * args.world_size + h];
+    // rank among my token's conv siblings, conv-position ascending (== the
+    // old stable sort's copy-index tie-break inside each (expert, home) block)
+    const int64_t t = c / args.topk;
+    int rank_in_group = 0;
+    for (int k = 0; k < args.topk; k++) {
+      const int64_t c2 = t * args.topk + k;
+      if (c2 == c) {
+        continue;
+      }
+      const int64_t e2 = args.e_of_copy[c2];
+      if ((int)(e2 / args.ep_nexperts) / L != my_node) {
+        continue;
+      }
+      const int64_t conv_pos2 =
+          args.conv_base[(int64_t)seg * L * args.ep_nexperts + (e2 - node_e0)] +
+          (int64_t)args.scatter_index[c2] - args.expert_base[e2] -
+          args.home_base[e2 * args.world_size + h];
+      if (conv_pos2 < conv_pos) {
+        rank_in_group++;
+      }
+    }
+    const int64_t tl = t - (int64_t)h * tpr;
+    const int32_t wire_row = args.wire_row_of[(int64_t)seg * tpr + tl];
+    args.wire_copy[args.wire_ptr[wire_row] + rank_in_group] = (int32_t)conv_pos;
+  }
+}
+
+__global__ void
+compress_plan_red_kernel(A2AVCompressPlanArguments args) {
+  const int64_t cpr = args.m_full / args.world_size;
+  const int64_t ntokens = args.m_full / args.topk;
+  const int64_t tpr = ntokens / args.world_size;
+  const int L = args.local_world_size;
+  const int my_node = args.rank / L;
+  const int NN = args.nnodes;
+  for (int64_t tl = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; tl < tpr;
+       tl += (int64_t)gridDim.x * blockDim.x) {
+    const int64_t t = (int64_t)args.rank * tpr + tl;
+    int64_t slot = args.red_ptr[tl];
+    for (int k = 0; k < args.topk; k++) {
+      const int64_t c = t * args.topk + k;
+      const int64_t e = args.e_of_copy[c];
+      const int owner = (int)(e / args.ep_nexperts);
+      if (owner / L != my_node) {
+        continue;
+      }
+      // recv row under C, then the C' lane remap (intra-lane order preserved)
+      const int64_t rows_c = args.my_cnt_cum[e] + (int64_t)args.scatter_index[c] -
+                             args.expert_base[e] -
+                             args.home_base[e * args.world_size + args.rank];
+      args.red_row[slot++] =
+          (int32_t)(rows_c - args.recv_off_C[owner] + args.recv_off_Cp[owner]);
+    }
+    for (int m = 0; m < NN; m++) {
+      if (m == my_node || args.red_flags[tl * NN + m] == 0) {
+        continue;
+      }
+      args.red_row[slot++] = (int32_t)(args.rem_base[m] + args.rem_pos[tl * NN + m]);
+    }
+  }
+}
+
+}  // namespace
+
+void
+a2av_compress_plan(A2AVCompressPlanArguments const &args, cudaStream_t stream) {
+  const int64_t ntokens = args.m_full / args.topk;
+  const int64_t tpr = ntokens / args.world_size;
+  const int64_t seg_tokens = (int64_t)(args.nnodes - 1) * tpr;
+  CUDA_CHECK(cudaMemsetAsync(args.conv_count, 0, seg_tokens * sizeof(int32_t), stream));
+  CUDA_CHECK(
+      cudaMemsetAsync(args.red_flags, 0, tpr * args.nnodes * sizeof(int32_t), stream));
+  constexpr int kThreads = 256;
+  compress_plan_token_kernel<<<(int)((ntokens + kThreads - 1) / kThreads), kThreads, 0, stream>>>(
+      args);
+  compress_plan_scan_kernel<<<1, 32, 0, stream>>>(args);
+  compress_plan_conv_kernel<<<
+      (int)((args.m_full + kThreads - 1) / kThreads),
+      kThreads,
+      0,
+      stream>>>(args);
+  compress_plan_red_kernel<<<(int)((tpr + kThreads - 1) / kThreads), kThreads, 0, stream>>>(args);
+  CUDA_CHECK(cudaGetLastError());
+}
+
 }  // namespace bytedance::flux

@@ -477,6 +477,12 @@ Highlights (full list = header row):
   still in-window) -> GELU -> layer1 forward. `total_ms = plan_comm +
   plan + e2e`; e2e/l0/act/l1 anchors unchanged vs pre-conversion l01
   capsules — never compare planning-inclusive totals across the boundary.
+  2026-08-21 canonicalizations on this lane: the compress-arm plan uses the
+  SORT-FREE scd-arithmetic kernels (a2av_compress_plan; bitwise-identical
+  to the sort formulation, FLUX_A2AV_RS_CHECK_IDENTITY cross-checks both);
+  l01_allgather_dense carries FLUX_RS_BLOCKS=20 (the dense combine was
+  CTA-starved at topk-16: K3 b32 e2e 104 -> 60 ms over the {3..24} knob
+  sweep, knee ~20) — env flip = never-byte-compare boundary.
   Driver l01_fast (--impl fast, 2026-08-21): the FAST+FAST combined
   unfused baseline on REAL routing — dispatch alltoallv -> grouped GEMM0
   -> GELU -> grouped GEMM1 -> combine alltoallv (transposed matrix) ->

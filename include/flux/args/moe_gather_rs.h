@@ -257,6 +257,48 @@ struct A2AVCombineReduceArguments {
   int threadblock_count;
 };
 
+// Sort-free compress-plan derivation (2026-08-21): every ordering in the
+// compress CSRs is arithmetic on the layer0 stable scatter_index plus host
+// cnt/U prefix tables (the conv panel is the destination A-order restricted
+// per (segment, owner-lane) block; wire/red groupings are per-token O(topk)
+// ranks). 4 kernels, no sorts, deterministic direct writes. Replaces the
+// argsort-based build_a2av_compress_indices on the derive path (which stays
+// as the FLUX_A2AV_RS_CHECK_IDENTITY reference).
+struct A2AVCompressPlanArguments {
+  // per-copy inputs (device)
+  int32_t const *scatter_index;  // [m_full] global A-order position per copy
+  int32_t const *e_of_copy;      // [m_full] expert of each copy
+  // prefix tables (device; built host-side from cnt/U, no device sync)
+  int32_t const *home_base;    // [nex * W] exclusive per-expert home prefix
+  int64_t const *expert_base;  // [nex] exclusive A-order expert base
+  int64_t const *conv_base;    // [(NN-1) * L * E_loc] conv bucket bases
+  int64_t const *my_cnt_cum;   // [nex] exclusive prefix of cnt[rank][e]
+  int64_t const *recv_off_C;   // [W]
+  int64_t const *recv_off_Cp;  // [W]
+  int64_t const *rem_base;     // [NN]
+  // scratch (device, zeroed by the launcher where required)
+  int32_t *conv_count;   // [(NN-1) * tokens_per_rank] conv copies per (seg, t)
+  int32_t *wire_row_of;  // [(NN-1) * tokens_per_rank] (seg, t) -> wire row, -1 if none
+  int32_t *red_flags;    // [ntok_local * NN] token contributes from node m
+  int32_t *rem_pos;      // [ntok_local * NN] column-exclusive one-cumsum
+  // outputs (device int32, sized by the host from cnt/U totals)
+  int32_t *wire_ptr;   // [wire_total + 1]
+  int32_t *wire_copy;  // [conv_total]
+  int32_t *red_ptr;    // [ntok_local + 1]
+  int32_t *red_row;    // [own_total + rem_total]
+  // geometry
+  int64_t m_full;
+  int topk;
+  int world_size;
+  int nnodes;
+  int local_world_size;
+  int rank;
+  int64_t nexperts;
+  int64_t ep_nexperts;  // experts per owner rank
+};
+
+void a2av_compress_plan(A2AVCompressPlanArguments const &args, cudaStream_t stream);
+
 constexpr int kA2AVMaxWorld = 64;
 
 // Eager (arrival-order) destination reduce: ONE persistent kernel per forward,

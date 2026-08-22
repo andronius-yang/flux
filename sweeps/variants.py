@@ -1335,7 +1335,11 @@ VARIANTS = {
             "--l0_comm_pattern", "allgather",
             "--l1_comm_pattern", "dense",
         ],
-        env={},
+        # FLUX_RS_BLOCKS canonicalized 3 -> 20 (2026-08-21): the dense combine
+        # was CTA-starved at topk-16 (K3 b32 e2e 104 -> 60 ms over the {3..24}
+        # knob sweep, knee ~20). Env flip = rule-4-style boundary; never
+        # byte-compare env_json across it.
+        env={"FLUX_RS_BLOCKS": "20"},
         requires=["FLUX_A2AV_RS_MAX_SEND_ROWS"],
         l1_pattern="dense",
     ),

@@ -481,6 +481,175 @@ namespace {
     }
     return {wire_ptr, wire_copy, red_ptr, red_row};
   }
+
+  // Sort-free compress-plan builder (2026-08-21): identical outputs to
+  // build_a2av_compress_indices above, but every ordering is arithmetic on
+  // the layer0 stable scatter_index + host cnt/U prefix tables — 4 kernels
+  // (a2av_compress_plan), no radix sorts, deterministic. The sort-based
+  // sibling stays as the FLUX_A2AV_RS_CHECK_IDENTITY reference.
+  std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+  build_a2av_compress_indices_fast(
+      torch::Tensor const &routing_idx,
+      torch::Tensor const &splits_gpu,
+      torch::Tensor const &splits_per_source,  // CPU int32 [W, nex]
+      torch::Tensor const &unique_counts,      // CPU int32 [W, NN]
+      int64_t m_full,
+      int world_size,
+      int nnodes,
+      int local_world_size,
+      int rank,
+      int64_t total_num_experts,
+      int64_t ep_nexperts,
+      int topk) {
+    const int W = world_size;
+    const int NN = nnodes;
+    const int L = local_world_size;
+    const int my_node = rank / L;
+    const int my_lr = rank % L;
+    const int64_t nex = total_num_experts;
+    const int64_t E_loc = ep_nexperts;
+    const int64_t cpr = m_full / W;
+    const int64_t ntok_local = cpr / topk;
+    const int64_t tpr = ntok_local;  // tokens per rank (uniform homing)
+    auto opt_i32 = torch::TensorOptions(torch::kCUDA).dtype(torch::kInt);
+    const int32_t *U = unique_counts.data_ptr<int32_t>();
+    const int32_t *cnt = splits_per_source.data_ptr<int32_t>();
+
+    // ---- host tables (all from cnt/U; no device sync) ----
+    std::vector<int64_t> C((size_t)W * W, 0);
+    for (int s = 0; s < W; s++) {
+      for (int d = 0; d < W; d++) {
+        int64_t acc = 0;
+        for (int64_t e = s * E_loc; e < (s + 1) * E_loc; e++) {
+          acc += cnt[d * nex + e];
+        }
+        C[s * W + d] = acc;
+      }
+    }
+    const int64_t n_i64 = nex /*expert_base*/ + nex /*my_cnt_cum*/ +
+                          (int64_t)(NN - 1) * L * E_loc /*conv_base*/ + W /*recv_off_C*/ +
+                          W /*recv_off_Cp*/ + NN /*rem_base*/;
+    torch::Tensor t64 = torch::empty({n_i64}, torch::TensorOptions().dtype(torch::kLong));
+    int64_t *p64 = t64.data_ptr<int64_t>();
+    int64_t *expert_base = p64;
+    int64_t *my_cnt_cum = expert_base + nex;
+    int64_t *conv_base = my_cnt_cum + nex;
+    int64_t *recv_off_C = conv_base + (int64_t)(NN - 1) * L * E_loc;
+    int64_t *recv_off_Cp = recv_off_C + W;
+    int64_t *rem_base = recv_off_Cp + W;
+    torch::Tensor t32 = torch::empty({nex * W}, torch::TensorOptions().dtype(torch::kInt));
+    int32_t *home_base = t32.data_ptr<int32_t>();
+    {
+      int64_t acc_e = 0;
+      int64_t acc_my = 0;
+      for (int64_t e = 0; e < nex; e++) {
+        expert_base[e] = acc_e;
+        my_cnt_cum[e] = acc_my;
+        int64_t hb = 0;
+        for (int h = 0; h < W; h++) {
+          home_base[e * W + h] = (int32_t)hb;
+          hb += cnt[h * nex + e];
+        }
+        acc_e += hb;
+        acc_my += cnt[rank * nex + e];
+      }
+    }
+    int64_t own_total = 0;
+    {
+      int64_t accC = 0;
+      int64_t accCp = 0;
+      for (int s = 0; s < W; s++) {
+        recv_off_C[s] = accC;
+        recv_off_Cp[s] = accCp;
+        accC += C[s * W + rank];
+        if (s / L == my_node) {
+          accCp += C[s * W + rank];
+          own_total += C[s * W + rank];
+        } else if (s % L == my_lr) {
+          accCp += U[rank * NN + s / L];
+        }
+      }
+    }
+    int64_t conv_total = 0;
+    int64_t wire_total = 0;
+    {
+      const int64_t node_e0 = (int64_t)my_node * L * E_loc;
+      int64_t acc = 0;
+      for (int tn = 0, seg = 0; tn < NN; tn++) {
+        if (tn == my_node) {
+          continue;
+        }
+        const int h = tn * L + my_lr;
+        wire_total += U[h * NN + my_node];
+        for (int64_t j = 0; j < L * E_loc; j++) {
+          conv_base[(int64_t)seg * L * E_loc + j] = acc;
+          acc += cnt[h * nex + node_e0 + j];
+        }
+        seg++;
+      }
+      conv_total = acc;
+    }
+    int64_t rem_total = 0;
+    for (int m = 0; m < NN; m++) {
+      rem_base[m] = 0;
+      if (m == my_node) {
+        continue;
+      }
+      rem_base[m] = recv_off_Cp[m * L + my_lr];
+      rem_total += U[rank * NN + m];
+    }
+    if (conv_total == 0) {
+      FLUX_CHECK_EQ(wire_total, 0)
+          << "compress: conv_total == 0 but a2av_unique_counts claims " << wire_total
+          << " wire rows (inconsistent transposed U)";
+    }
+
+    // ---- device inputs / scratch / outputs ----
+    auto splits_cum = splits_gpu.to(torch::kLong).cumsum(0);
+    auto e_of = torch::searchsorted(
+                    splits_cum, routing_idx.to(torch::kLong), false, /*right=*/true)
+                    .clamp_max_(nex - 1)
+                    .to(torch::kInt);
+    auto t64_dev = t64.to(torch::kCUDA, /*non_blocking=*/true);
+    auto t32_dev = t32.to(torch::kCUDA, /*non_blocking=*/true);
+    const int64_t seg_tokens = (int64_t)(NN - 1) * tpr;
+    auto scratch = torch::empty({2 * seg_tokens + 2 * tpr * NN}, opt_i32);
+    auto wire_ptr = torch::empty({wire_total + 1}, opt_i32);
+    auto wire_copy = torch::empty({conv_total}, opt_i32);
+    auto red_ptr = torch::empty({ntok_local + 1}, opt_i32);
+    auto red_row = torch::empty({own_total + rem_total}, opt_i32);
+
+    int64_t *d64 = t64_dev.data_ptr<int64_t>();
+    int32_t *scr = scratch.data_ptr<int32_t>();
+    A2AVCompressPlanArguments args{
+        .scatter_index = routing_idx.data_ptr<int32_t>(),
+        .e_of_copy = e_of.data_ptr<int32_t>(),
+        .home_base = t32_dev.data_ptr<int32_t>(),
+        .expert_base = d64,
+        .conv_base = d64 + 2 * nex,
+        .my_cnt_cum = d64 + nex,
+        .recv_off_C = d64 + 2 * nex + (int64_t)(NN - 1) * L * E_loc,
+        .recv_off_Cp = d64 + 2 * nex + (int64_t)(NN - 1) * L * E_loc + W,
+        .rem_base = d64 + 2 * nex + (int64_t)(NN - 1) * L * E_loc + 2 * W,
+        .conv_count = scr,
+        .wire_row_of = scr + seg_tokens,
+        .red_flags = scr + 2 * seg_tokens,
+        .rem_pos = scr + 2 * seg_tokens + tpr * NN,
+        .wire_ptr = wire_ptr.data_ptr<int32_t>(),
+        .wire_copy = wire_copy.data_ptr<int32_t>(),
+        .red_ptr = red_ptr.data_ptr<int32_t>(),
+        .red_row = red_row.data_ptr<int32_t>(),
+        .m_full = m_full,
+        .topk = topk,
+        .world_size = W,
+        .nnodes = NN,
+        .local_world_size = L,
+        .rank = rank,
+        .nexperts = nex,
+        .ep_nexperts = E_loc};
+    a2av_compress_plan(args, c10::cuda::getCurrentCUDAStream());
+    return {wire_ptr, wire_copy, red_ptr, red_row};
+  }
 }  // namespace
 
 class TopkReduceScatterOp::TopkReduceScatterOpImpl {
@@ -1886,7 +2055,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     if (this->a2av_compress) {
       FLUX_CHECK(a2av_unique_counts.has_value())
           << "a2av_hier_compress derive requires a2av_unique_counts ([W, nnodes] int32 CPU)";
-      auto [wp, wc, rp, rr] = build_a2av_compress_indices(
+      // sort-free path (2026-08-21): scd-arithmetic kernels, no radix sorts
+      auto [wp, wc, rp, rr] = build_a2av_compress_indices_fast(
           routing_idx,
           splits_gpu,
           splits_per_source,
@@ -1899,6 +2069,27 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
           this->total_num_experts,
           this->ep_nexperts,
           this->topk);
+      static const bool kCheckIdentity =
+          get_int_from_env("FLUX_A2AV_RS_CHECK_IDENTITY", 0) != 0;
+      if (kCheckIdentity) {
+        auto [wp_ref, wc_ref, rp_ref, rr_ref] = build_a2av_compress_indices(
+            routing_idx,
+            splits_gpu,
+            splits_per_source,
+            a2av_unique_counts.value(),
+            m_full,
+            this->world_size,
+            this->nnodes,
+            this->local_world_size,
+            this->rank,
+            this->total_num_experts,
+            this->ep_nexperts,
+            this->topk);
+        FLUX_CHECK(torch::equal(wp, wp_ref)) << "compress plan wire_ptr identity mismatch";
+        FLUX_CHECK(torch::equal(wc, wc_ref)) << "compress plan wire_copy identity mismatch";
+        FLUX_CHECK(torch::equal(rp, rp_ref)) << "compress plan red_ptr identity mismatch";
+        FLUX_CHECK(torch::equal(rr, rr_ref)) << "compress plan red_row identity mismatch";
+      }
       out.push_back(wp);
       out.push_back(wc);
       out.push_back(rp);
