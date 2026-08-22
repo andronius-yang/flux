@@ -947,3 +947,13 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
    FusedEpDispatch device path (putmem_nbi -> __threadfence -> nvshmem_fence ->
    signal_op) and moonep getmem pulls are NOT flipped and must pass the
    payload probe before being quoted.
+
+8. **EPIC-runner layer-1 stream-edge fix (2026-08-22).** `EpicRunner.combine_group`
+   ran `TopkReduceScatterOp.run` on a private side stream with no IN/OUT CUDA-event
+   edges to the caller (both reference callers of the op have them). Consequences
+   before the fix: (i) correctness — per-lane stale-by-one combine contributions under
+   changing payloads (probe: ~45 % token rows ~7 % off; static payloads masked it);
+   (ii) timing — `comb{g}_ms` / `l1_ms` in every epic l01 capsule measured the launch
+   latency of the combine, not the combine. Fix = `FLUX_EPIC_HCC_STREAM_EDGES` (default
+   1; `=0` is the unfenced form, bisection only). All epic l01 (and future pll l01)
+   capsules before this date are never-mix for layer-1 timing AND correctness.

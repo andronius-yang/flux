@@ -383,3 +383,11 @@ cells hang, bincount the routing for empty experts before anything else.
   overwritten (element-granular old/new mix at a structural position = tile/window
   boundary of the Tier-B window gating). dispatch_only arms (pll/epic l0, eplb fused)
   are clean. Both are pre-existing bugs made visible by the payload probe.
+- **2026-08-22 — bug (a) FIXED (plan eager-juggling-glacier, dissect-and-fix):** epic
+  runner `combine_group` now brackets `TopkReduceScatterOp.run` with
+  `_hcc_stream.wait_stream(current)` (IN) and `current.wait_stream(_hcc_stream)` (OUT,
+  before the closing barrier / flag zero_ / accumulate), + `record_stream` on the
+  per-iteration index tensors + inbuf rows assert. Probe: A1 16/16; A0a (unfenced,
+  single-stream) and A0b (unfenced, isolated) controls still fail identically -> the
+  cp_stream seam was the bug, not the two-stream loop. Side effect: epic l01 `comb_ms`
+  was launch-latency before (SCHEMA rule 8, never-mix).

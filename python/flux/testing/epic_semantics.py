@@ -2116,6 +2116,12 @@ class EpicLayer0Runner(EPLBLayer0Runner):
                 self._hcc[g].update(
                     routing=routing_flat, pack=pack, red=red,
                     uc=uc_comb, wire=wire, redcsr=redcsr, sps=sps_cpu)
+                # lifetime: these are allocated on the current (comm) stream
+                # and read by kernels on self._hcc_stream; pin them to that
+                # stream so the caching allocator never recycles them early
+                for _t in (pack, red, *(wire or ()), *(redcsr or ())):
+                    if torch.is_tensor(_t):
+                        _t.record_stream(self._hcc_stream)
         ihc = getattr(self, "_iter_hc", None)
         sps = ihc["sps"] if ihc is not None else b.meta.splits_per_source
         ucs = ihc["uc"] if ihc is not None else b.meta.a2av_unique_counts
@@ -2212,6 +2218,9 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         self._hcc_nsplit = n_split
         self._hcc_pack_blocks = pack_blocks
         self._hcc_stream = torch.cuda.Stream(priority=-1)
+        import os as _os
+        self._hcc_stream_edges = _os.environ.get(
+            "FLUX_EPIC_HCC_STREAM_EDGES", "1") == "1"
         self._hcc_group_barrier = flux.GroupBarrier(self.group, False)
         self._hcc = []
         self._hcc_knob_caps = []
@@ -2561,6 +2570,12 @@ class EpicLayer0Runner(EPLBLayer0Runner):
                 return
             e = self._hcc[g]
             base = self.elay.seg_start[grp.slot_lo]
+            # the op packs M_this_ep = inbuf.size(0) rows: a per-iteration
+            # row count below that would leave stale tail rows in the pack
+            assert e["inbuf"].size(0) == n_rows, (
+                f"group {g}: hcc inbuf rows {e['inbuf'].size(0)} != "
+                f"layout rows {n_rows} (per-iteration routing variance is "
+                "not supported by the frozen hcc inbuf yet)")
             e["inbuf"][:n_rows].copy_(self.group1_outputs[g])
             e["scale"][:n_rows].copy_(
                 self.weights_buf[base:base + n_rows])
@@ -2582,6 +2597,21 @@ class EpicLayer0Runner(EPLBLayer0Runner):
             e = self._hcc[g]
             b = self._hc_bundles[g]
             stream = torch.cuda.current_stream()
+            # 2026-08-22 fix (audit bug (a)): TopkReduceScatterOp.run lands ALL
+            # its work on the private side stream self._hcc_stream and joins
+            # its internal streams only into that stream. The two reference
+            # callers of the same op (C++ forward_gather_rs_impl, triton
+            # moe_gather_rs.py) bracket it with an IN edge (cp_stream waits the
+            # caller) and an OUT edge (caller waits cp_stream); this runner had
+            # neither, so combine_pack's inbuf/scale writes, the closing
+            # barrier, the barrier flag zero_ and accumulate_group's read of
+            # e["partial"] were unordered against the op -> per-lane
+            # stale-by-one contributions under changing payloads (static
+            # payloads masked it). FLUX_EPIC_HCC_STREAM_EDGES=0 restores the
+            # unfenced form for bisection only.
+            edges = getattr(self, "_hcc_stream_edges", True)
+            if edges:
+                self._hcc_stream.wait_stream(stream)
             e["barriers"][self.rank % self._hc_L].fill_(1)
             self._hcc_group_barrier.barrier_all(stream.cuda_stream)
             e["op"].run(
@@ -2597,6 +2627,8 @@ class EpicLayer0Runner(EPLBLayer0Runner):
                 e["pack"], e["red"],
                 e["uc"], e["wire"], e["redcsr"],
             )
+            if edges:
+                stream.wait_stream(self._hcc_stream)
             self._hcc_group_barrier.barrier_all(stream.cuda_stream)
             e["barriers"][self.rank % self._hc_L].zero_()
             e["op"].reset_buffer()
