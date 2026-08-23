@@ -1467,6 +1467,13 @@ VARIANTS = {
     # here. Keep the stories straight: STANDALONE l1 verdicts differ (hier
     # wins iso at small budgets — handoff 07 §3.1/§4.1); never quote this
     # combined win as a standalone-l1 recommendation.
+    # WinCast canonicalization (2026-08-23, M4): the RS split wire
+    # (RS_WIRE_STREAMS=2) and CTA 10/8/6 are BINARY DEFAULTS now; the env
+    # pins below are explicit pins of those defaults (spec self-
+    # documentation, same pattern as the F+E pins). The DEFAULT-tag
+    # requires make pre-flip binaries skipped_capability instead of
+    # silently measuring 6/6/4 single-stream. NEVER byte-compare env_json
+    # across the flip; pre-flip capsules stay valid via their recorded env.
     "l01_lbunion_compress": dict(
         comm_pattern="l01_lbunion_compress",  # cells.csv label only
         driver="l01",
@@ -1480,11 +1487,43 @@ VARIANTS = {
             "FLUX_A2AV_LB_UNION": "1",
             "FLUX_A2AV_FUSED_STAGE2": "1",
             "FLUX_A2AV_EARLY_LAUNCH": "1",
-            "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "6", "FLUX_A2AV_RS_REDUCE_BLOCKS": "6", "FLUX_A2AV_RS_PRERED_BLOCKS": "4"},
+            "FLUX_A2AV_RS_WIRE_STREAMS": "2",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10", "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_RS_PRERED_BLOCKS": "6"},
         requires=[
             "FLUX_A2AV_LB_UNION",
             "FLUX_A2AV_FUSED_STAGE2",
             "FLUX_A2AV_EARLY_LAUNCH",
+            "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT2_TAG",
+            "FLUX_A2AV_RS_CTA_1086_TAG",
+            "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS",
+            "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+        ],
+        l1_pattern="a2av_hier_compress",
+    ),
+    # bare-defaults twin: NO RS env at all — must equal the pinned arm
+    # within noise (the default-flip validation cell; keep for future
+    # binary-identity checks)
+    "l01_wincast_bare": dict(
+        comm_pattern="l01_wincast_bare",
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "a2av_hier_compress",
+            "--l1_comm_pattern", "a2av_hier_compress",
+        ],
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=[
+            "FLUX_A2AV_LB_UNION",
+            "FLUX_A2AV_FUSED_STAGE2",
+            "FLUX_A2AV_EARLY_LAUNCH",
+            "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT2_TAG",
+            "FLUX_A2AV_RS_CTA_1086_TAG",
             "FLUX_A2AV_RS_MAX_SEND_ROWS",
             "FLUX_A2AV_RS_MAX_CONV_ROWS",
             "FLUX_A2AV_RS_MAX_WIRE_ROWS",
@@ -1702,3 +1741,12 @@ VARIANTS = {
         l1_pattern="a2av_hier",
     ),
 }
+
+# WinCast (2026-08-23): the concise canonical name for the dispatch leg of
+# the LLC trio — PLACE-lambda (placement), LocCap (routing), WinCast
+# (dispatch) — i.e. hier_compress + LB_UNION Tier-B windowed union
+# broadcast + FUSED_STAGE2 + EARLY_LAUNCH + split RS wire + rebalanced
+# combine CTAs, all binary defaults. Alias KEYS only: cells.csv labels stay
+# the historical comm_pattern strings so capsules remain comparable.
+VARIANTS["wincast"] = VARIANTS["hier_compress_lb_union"]
+VARIANTS["l01_wincast"] = VARIANTS["l01_lbunion_compress"]

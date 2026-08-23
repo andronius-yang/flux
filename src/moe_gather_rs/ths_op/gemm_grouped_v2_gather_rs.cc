@@ -152,17 +152,24 @@ get_rs_threadblock_count() {
 // reduce must find free SMs while the GEMM still spins on later splits).
 int
 get_a2av_pack_blocks() {
-  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_PACK_BLOCKS", 3);
+  // WinCast canonicalization (2026-08-23): 10/8/6 replaces 3/3/2 (specs had
+  // pinned 6/6/4). The ladders do payload-proportional work behind fixed
+  // grids and were CTA-starved at high budgets: 10/8/6 cuts l1 by
+  // 1.9-2.1 ms at b64 (monotone 4->6->10 dose-response, both canon models)
+  // and ties at b2-b8 — the extra GEMM reservation never bites where the
+  // phase is comm-bound. Rule-4 DEFAULT tag: FLUX_A2AV_RS_CTA_1086_TAG.
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_PACK_BLOCKS", 10);
   return v;
 }
 int
 get_a2av_reduce_blocks() {
-  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_REDUCE_BLOCKS", 3);
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_REDUCE_BLOCKS", 8);
   return v;
 }
 int
 get_a2av_prered_blocks() {
-  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_PRERED_BLOCKS", 2);
+  (void)bytedance::flux::get_int_from_env("FLUX_A2AV_RS_CTA_1086_TAG", 0);
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_PRERED_BLOCKS", 6);
   return v;
 }
 // Debug watchdog for the combine's device spin loops: 0 (default) =
@@ -758,9 +765,10 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   // ladder's blocking puts for (sid, tn) cells are pairwise independent
   // (distinct wire-panel segments, destinations, and per-dest recv_sig
   // copies) yet serialize on one stream; parity-split them over a second
-  // internode stream. Opt-in ablation; needs CUDA_DEVICE_MAX_CONNECTIONS
-  // > 1 (at conn=1 the shared front-end channel serializes regardless and
-  // any non-executable enqueue order deadlocks). Default 1 = shipped.
+  // internode stream. DEFAULT 2 since the WinCast canonicalization
+  // (2026-08-23); =1 is the single-stream ablation. At conn=1 the split
+  // preserves the ladder's enqueue order exactly (still an executable
+  // schedule), it just buys nothing.
   int rs_wire_streams_ = 1;
   std::vector<c10::cuda::CUDAStream> internode_streams2_;   // 0 or 1
   cudaEvent_t a2av_inter2_done_ = nullptr;
@@ -1078,7 +1086,14 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       }
       CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_intra_done_, cudaEventDisableTiming));
       CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_inter_done_, cudaEventDisableTiming));
-      this->rs_wire_streams_ = get_int_from_env("FLUX_A2AV_RS_WIRE_STREAMS", 1);
+      // WinCast canonicalization (2026-08-23, M4 verdict capsules): the
+      // split wire ladder is the DEFAULT (l1 win sign-stable 16/16 fwd+rev
+      // x both canon models x b2-b64; wire rule intact — every inter-node
+      // put stays blocking putmem_signal). =1 is the single-stream
+      // ablation. Rule-4 DEFAULT tag below (string literal probed by the
+      // sweep runner's capability check).
+      (void)get_int_from_env("FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT2_TAG", 0);
+      this->rs_wire_streams_ = get_int_from_env("FLUX_A2AV_RS_WIRE_STREAMS", 2);
       if (this->rs_wire_streams_ < 1) {
         this->rs_wire_streams_ = 1;
       }

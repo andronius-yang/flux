@@ -1004,3 +1004,30 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
     data-source side. When unsure whether a data-source axis is in
     scope, ASK instead of expanding it — assume defaults for the
     fastest profile.**
+
+11. **WinCast canonicalization (2026-08-23, M4 dispatch audit — handoff 14
+    is the evidence authority).** "WinCast" is the canonical short name
+    for the dispatch leg of the LLC trio (PLACE-lambda placement, LocCap
+    routing, WinCast dispatch): `a2av_hier_compress` + `FLUX_A2AV_LB_UNION`
+    Tier-B windowed union broadcast + `FUSED_STAGE2` + `EARLY_LAUNCH` +
+    the M4 winners, which are now BINARY DEFAULTS:
+    - `FLUX_A2AV_RS_WIRE_STREAMS` default **2** (the l1 compress wire
+      ladder's independent (split, target-node) blocking puts parity-split
+      over two internode streams; l1 win sign-stable 16/16 fwd+rev x both
+      canon models x b2-b64; =1 is the single-stream ablation);
+    - `FLUX_A2AV_RS_PACK/REDUCE/PRERED_BLOCKS` defaults **10/8/6**
+      (replacing code 3/3/2, spec-pinned 6/6/4 — the ladders were
+      CTA-starved at high budgets: l1 −1.9..−2.1 ms at b64, monotone
+      dose-response; ties at b2–b8).
+    Binary tags `FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT2_TAG` and
+    `FLUX_A2AV_RS_CTA_1086_TAG` gate the canonical variants (pre-flip
+    binaries go `skipped_capability`). Variant keys `wincast` /
+    `l01_wincast` alias the historical names; **cells.csv labels keep the
+    historical `comm_pattern` strings** so capsule history stays
+    comparable. NEVER byte-compare `env_json` across the flip. Pre-flip
+    capsules remain valid through their recorded env (they measured
+    explicit 6/6/4 pins, i.e. the old canon); post-flip epic-runner /
+    hcc-combine capsules are never-mix against pre-flip ones — the RS CTA
+    defaults reach `TopkReduceScatterOp` there too (the smoke8 LLC/EPIC
+    l01 table predates the flip). The wire rule (rule 5/7) is untouched:
+    every inter-node put remains a blocking `putmem_signal`.
