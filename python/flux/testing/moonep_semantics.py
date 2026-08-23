@@ -28,6 +28,7 @@ The planner is pure CPU integer math: identical inputs give identical plans
 on every rank, with no floating-point or device nondeterminism.
 """
 
+import os
 from dataclasses import dataclass, replace as _dc_replace
 
 import torch
@@ -523,6 +524,209 @@ def derive_moonep_layout_gpu(cfg, rank: int, dst_all: torch.Tensor,
                              cu_seqlens: torch.Tensor,
                              experts_to_copy: torch.Tensor
                              ) -> MoonepIterPlan:
+    """Dispatch: the sync-free fast spelling (default; 8.23 fairness pass,
+    same accounting class as the epic/eplb fast tails — bit-identical
+    plans, FLUX_PLL_FAST_TAIL=0 restores the legacy spelling)."""
+    if int(os.getenv("FLUX_PLL_FAST_TAIL", "1")):
+        return _derive_moonep_layout_fast(cfg, rank, dst_all,
+                                          zero_fill_ranges, cu_seqlens,
+                                          experts_to_copy)
+    return _derive_moonep_layout_legacy(cfg, rank, dst_all,
+                                        zero_fill_ranges, cu_seqlens,
+                                        experts_to_copy)
+
+
+_PIN_CACHE: dict = {}
+
+
+def _pin_blob(n: int) -> torch.Tensor:
+    """Reused pinned host buffer for the phase's single batched D2H
+    (per-call cudaHostAlloc would cost ~0.1 ms; contents are consumed
+    into python lists before the next derive reuses it)."""
+    buf = _PIN_CACHE.get(n)
+    if buf is None:
+        buf = torch.empty(n, dtype=torch.int64,
+                          pin_memory=torch.cuda.is_available())
+        _PIN_CACHE[n] = buf
+    return buf
+
+
+def _counts_index_add_m(ids: torch.Tensor, size: int) -> torch.Tensor:
+    """bincount(ids, minlength=size) twin with NO device sync (bincount
+    sizes its output from input.max(), a hidden D2H). ids must be < size."""
+    out = torch.zeros(size, dtype=torch.int64, device=ids.device)
+    return out.index_add_(0, ids.reshape(-1),
+                          torch.ones_like(ids.reshape(-1)))
+
+
+def _derive_moonep_layout_fast(cfg, rank: int, dst_all: torch.Tensor,
+                               zero_fill_ranges: torch.Tensor,
+                               cu_seqlens: torch.Tensor,
+                               experts_to_copy: torch.Tensor
+                               ) -> MoonepIterPlan:
+    """Sync-free twin of the legacy derive: identical plan bits, zero
+    hidden host syncs before the single pinned blob D2H. Removed taxes
+    (all port scaffolding — upstream builds this metadata inside its
+    planning/dispatch kernels): bincount output-sizing D2Hs, nonzero()/
+    ragged boolean gathers (now fixed-shape stable sorts sliced after the
+    blob lands), the int(reps.sum()) mid-phase scalar, and the
+    data-dependent repeat_interleave (now a searchsorted over the static
+    NvS capacity)."""
+    R, K, E, B, NvS, S = cfg.R, cfg.K, cfg.E, cfg.B, cfg.NvS, cfg.S
+    N = cfg.N
+    RN = R * N
+    dev = dst_all.device
+    enc = dst_all.long()
+    raw = torch.where(enc < 0, -enc - 1, enc)
+    dest = torch.div(raw, NvS, rounding_mode="floor")
+    loff = raw % NvS
+    rep = enc >= 0
+
+    # send side (my row): reps sorted by (dest, pos) — the fixed-shape
+    # spelling parks non-reps behind sentinel dest R, so the stable sort's
+    # first n_send entries equal legacy's rep_idx[order] bitwise.
+    my_dest = dest[rank]
+    my_rep = rep[rank]
+    skey = torch.where(my_rep, my_dest,
+                       torch.full((1,), R, dtype=torch.int64, device=dev))
+    sorder = torch.argsort(skey, stable=True)
+    send_row_index_pad = torch.div(sorder, K, rounding_mode="floor")
+    send_counts_d = _counts_index_add_m(skey, R + 1)[:R]
+    worder = torch.argsort(my_dest, stable=True)
+    send_entry_row = torch.div(worder, K, rounding_mode="floor")
+    send_entry_k = worder % K
+    send_entry_counts_d = _counts_index_add_m(my_dest, R)
+
+    # recv side: each row-major masked gather becomes cumsum + scatter
+    # (arrival index of a masked entry = its exclusive mask-cumsum; the
+    # cub cumsum kernel is ~0.015 ms where a full argsort is ~0.25 ms)
+    m = (dest == rank) & rep
+    wm = dest == rank
+    md = wm & ~rep
+    mf, wmf, mdf = m.reshape(-1), wm.reshape(-1), md.reshape(-1)
+    lofff = loff.reshape(-1)
+    sent = torch.full((1,), RN, dtype=torch.int64, device=dev)
+
+    def masked_gather_pad(maskf, values):
+        idx = torch.where(maskf, maskf.long().cumsum(0) - 1, sent)
+        out = torch.empty(RN + 1, dtype=torch.int64, device=dev)
+        out.scatter_(0, idx, values)
+        return out
+
+    place_loffs_pad = masked_gather_pad(mf, lofff)
+    recv_counts_d = m.sum(dim=1)
+    weight_loffs_pad = masked_gather_pad(wmf, lofff)
+    recv_entry_counts_d = wm.sum(dim=1)
+
+    # zero rows: searchsorted over the static NvS capacity replaces the
+    # data-dependent repeat_interleave + int() scalar
+    zf = zero_fill_ranges[rank].long()
+    reps = zf[:, 1].clamp(min=0)
+    csum = reps.cumsum(0)
+    excl = csum - reps
+    zidx = torch.arange(NvS, device=dev, dtype=torch.int64)
+    zseg = torch.searchsorted(csum, zidx, right=True).clamp(
+        max=reps.numel() - 1)
+    zero_rows_pad = zf[:, 0][zseg] + (zidx - excl[zseg])
+    total_zero_dev = csum[-1].reshape(1)
+
+    # dedup pairs: prim table with a sentinel dumping slot (collision-free
+    # on real slots — one rep per (token, dest) by planner contract)
+    tok_g = (torch.arange(R, device=dev, dtype=torch.int64).unsqueeze(1) * S
+             + torch.arange(N, device=dev,
+                            dtype=torch.int64).unsqueeze(0) // K)
+    tok_gf = tok_g.reshape(-1)
+    prim = torch.full((R * S + 1,), -1, dtype=torch.int64, device=dev)
+    prim.scatter_(0, torch.where(mf, tok_gf, torch.full(
+        (1,), R * S, dtype=torch.int64, device=dev)),
+        torch.where(mf, lofff, torch.full(
+            (1,), -1, dtype=torch.int64, device=dev)))
+    dup_target_pad = masked_gather_pad(mdf, lofff)
+    dup_primary_pad = masked_gather_pad(mdf, prim[tok_gf])
+    n_dup_dev = mdf.sum().reshape(1)
+
+    src_ids = torch.arange(R, device=dev, dtype=torch.int64).unsqueeze(1)
+    pair_ids = (src_ids * R + dest).reshape(-1)
+    rep_pair = torch.where(rep.reshape(-1), pair_ids,
+                           torch.full((1,), R * R, dtype=torch.int64,
+                                      device=dev))
+    rows_max = _counts_index_add_m(rep_pair, R * R + 1)[:R * R].max()
+    ents_max = _counts_index_add_m(pair_ids, R * R).max()
+
+    # the ONE batched (pinned) D2H of the phase
+    nblob = 4 * R + (E + B) + R * B + 4
+    blob = _pin_blob(nblob)
+    blob.copy_(torch.cat([
+        send_counts_d, recv_counts_d, send_entry_counts_d,
+        recv_entry_counts_d, cu_seqlens[rank].long(),
+        experts_to_copy.reshape(-1).long(),
+        rows_max.reshape(1), ents_max.reshape(1),
+        n_dup_dev, total_zero_dev,
+    ]))
+    off = 0
+
+    def take(n):
+        nonlocal off
+        out = blob[off:off + n]
+        off += n
+        return out
+
+    send_counts = take(R).tolist()
+    recv_counts = take(R).tolist()
+    send_entry_counts = take(R).tolist()
+    recv_entry_counts = take(R).tolist()
+    cu = take(E + B).tolist()
+    etc_cpu = take(R * B).int().view(R, B).clone()
+    max_pair_rows = int(take(1))
+    max_pair_ents = int(take(1))
+    n_dup = int(take(1))
+    total_zero = int(take(1))
+    n_send = sum(send_counts)
+    n_recv = sum(recv_counts)
+    n_ent_recv = sum(recv_entry_counts)
+
+    e2c = etc_cpu[rank].tolist()
+    segments = []
+    prev = 0
+    for g in range(E + B):
+        end = cu[g]
+        if end > prev:
+            expert_id = g if g < E else e2c[g - E]
+            segments.append((g, prev, end, expert_id))
+        prev = end
+
+    return MoonepIterPlan(
+        send_row_index=send_row_index_pad[:n_send],
+        send_entry_row=send_entry_row,
+        send_entry_k=send_entry_k,
+        place_loffs=place_loffs_pad[:n_recv],
+        weight_loffs=weight_loffs_pad[:n_ent_recv],
+        zero_rows=zero_rows_pad[:total_zero],
+        dup_primary=dup_primary_pad[:n_dup],
+        dup_target=dup_target_pad[:n_dup],
+        in_splits_h=send_counts_d.to(torch.int32),
+        out_splits_h=recv_counts_d.to(torch.int32),
+        in_splits_w=send_entry_counts_d.to(torch.int32),
+        out_splits_w=recv_entry_counts_d.to(torch.int32),
+        send_counts=send_counts,
+        recv_counts=recv_counts,
+        send_entry_counts=send_entry_counts,
+        recv_entry_counts=recv_entry_counts,
+        gemm_segments=segments,
+        etc_cpu=etc_cpu,
+        n_recv=n_recv,
+        n_ent_recv=n_ent_recv,
+        total_rows=cu[-1],
+        max_pair_rows=max_pair_rows,
+        max_pair_ents=max_pair_ents,
+    )
+
+
+def _derive_moonep_layout_legacy(cfg, rank: int, dst_all: torch.Tensor,
+                                 zero_fill_ranges: torch.Tensor,
+                                 cu_seqlens: torch.Tensor,
+                                 experts_to_copy: torch.Tensor
+                                 ) -> MoonepIterPlan:
     """Device-agnostic per-iteration port of build_comm_layout, consuming
     the replicated planner outputs (dst_all [R,N], zero_fill_ranges
     [R,E+B,2], cu_seqlens [R,E+B], experts_to_copy [R,B]) directly on

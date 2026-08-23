@@ -108,9 +108,15 @@ def plan_iteration(runner, plan_ws, topk_gather_buf):
     topk_flat = topk_gather_buf.view(R, N)
     src_base = torch.arange(R, device=topk_flat.device,
                             dtype=torch.int64).unsqueeze(1) * E
-    tpe_all = torch.bincount(
-        (src_base + topk_flat.long()).reshape(-1), minlength=R * E
-    ).view(R, E).to(torch.int32)
+    ids = (src_base + topk_flat.long()).reshape(-1)
+    if int(os.environ.get("FLUX_PLL_FAST_TAIL", "1")):
+        # sync-free histogram twin (bincount hides an output-sizing D2H)
+        tpe_all = torch.zeros(R * E, dtype=torch.int64, device=ids.device)
+        tpe_all.index_add_(0, ids, torch.ones_like(ids))
+        tpe_all = tpe_all.view(R, E).to(torch.int32)
+    else:
+        tpe_all = torch.bincount(
+            ids, minlength=R * E).view(R, E).to(torch.int32)
     dst_all, cu_all, etc_all, zfr_all, _stats = plan_ws.launch(
         topk_flat.contiguous(), tpe_all.contiguous())
     ip = derive_moonep_layout_gpu(cfg, runner.rank, dst_all, zfr_all,

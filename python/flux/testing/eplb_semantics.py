@@ -36,6 +36,7 @@ Hard constraints inherited from the shared machinery:
     plan tensors.
 """
 
+import os
 import time
 from dataclasses import dataclass, replace as _dc_replace
 
@@ -45,10 +46,12 @@ from .ep_gpu_plan import (
     comb_dst_slot_from_topk,
     d6_rank_quota_prefix,
     direct_layout_entries,
+    direct_layout_entries_fast,
     largest_remainder_split,
     local_spread_rank_quota_prefix,
     rank_quota_prefix_nonlocal,
     reroute_expand_all_gpu,
+    reroute_expand_all_gpu_fast,
 )
 
 # Replica-selection rules (2026-08-20 campaign-2 decision): sender-local
@@ -310,14 +313,122 @@ class EplbIterPlanner:
         self._p2l_host = plan.p2l.long()
         # gating metadata (the rule-5 exempt input): replicated routing
         self.topk_all = topk_all.long().to(device)
+        # fast-tail blob buffer (the phase's ONE D2H; size is cfg-static:
+        # seg_rows + seg_start + in/out splits + pair_max + n_recv + ilv_ok)
+        self._blob_pin = torch.empty(
+            2 * cfg.nlp + 2 * cfg.R + 3, dtype=torch.int64,
+            pin_memory=torch.cuda.is_available())
 
     def local_loads(self) -> torch.Tensor:
         """[G] int32 this-rank load histogram — the plan_comm payload,
-        derived from routing per iteration (timed)."""
-        return torch.bincount(self.topk_all[self.rank].reshape(-1),
-                              minlength=self.cfg.G).to(torch.int32)
+        derived from routing per iteration (timed). Sync-free under the
+        fast tail (torch.bincount hides an output-sizing D2H)."""
+        ids = self.topk_all[self.rank].reshape(-1)
+        if int(os.getenv("FLUX_PLL_FAST_TAIL", "1")):
+            out = torch.zeros(self.cfg.G, dtype=torch.int64,
+                              device=ids.device)
+            out.index_add_(0, ids, torch.ones_like(ids))
+            return out.to(torch.int32)
+        return torch.bincount(ids, minlength=self.cfg.G).to(torch.int32)
 
     def derive(self, loads_gather_buf: torch.Tensor) -> EplbIterPlan:
+        """Dispatch: the sync-free fast tail (default; 8.23 fairness pass,
+        same accounting class as the epic fast tail — bit-identical plans,
+        FLUX_PLL_FAST_TAIL=0 restores the legacy spelling)."""
+        if int(os.getenv("FLUX_PLL_FAST_TAIL", "1")):
+            return self._derive_fast(loads_gather_buf)
+        return self._derive_legacy(loads_gather_buf)
+
+    def _rqp_for(self, tpe_all: torch.Tensor) -> torch.Tensor:
+        """The replica-rule branch (REPLICA_SELECT_MODES) — the AUTHENTIC
+        planning math, shared verbatim by both derive spellings. All three
+        rules are already sync-free batched torch."""
+        cfg = self.cfg
+        if self.replica_select == "quota":
+            quota, _ = largest_remainder_split(
+                tpe_all.long().sum(0), self.lcnts, cfg.max_replicas_dim)
+            return rank_quota_prefix_nonlocal(tpe_all, quota, self.lcnts)
+        if self.replica_select == "local_spread":
+            return local_spread_rank_quota_prefix(
+                tpe_all, self.lcnts, cfg.max_replicas_dim)
+        return d6_rank_quota_prefix(
+            tpe_all, self.lcnts, cfg.max_replicas_dim)
+
+    def _derive_fast(self, loads_gather_buf: torch.Tensor) -> EplbIterPlan:
+        """Sync-free derive twin: identical plan bits, zero hidden host
+        syncs before the single pinned blob D2H. Removed taxes (all port
+        overhead, never rule semantics): bincount output-sizing D2Hs, the
+        host-looped coprime-interleave window scan, and the ragged boolean
+        gather for receiver rows (now a fixed-shape sort, sliced [:n_recv]
+        after the blob lands)."""
+        cfg = self.cfg
+        R, G, S, K, nlp = cfg.R, cfg.G, cfg.S, cfg.K, cfg.nlp
+        tpe_all = loads_gather_buf.view(R, G)
+        rqp = self._rqp_for(tpe_all)
+        tok_all, phys_all, ilv_ok = reroute_expand_all_gpu_fast(
+            rqp, self.l2p, self.lcnts, self.topk_all, cfg.interleave)
+
+        # canonical (phys, token) order per source == dest-major for free
+        order = torch.argsort(phys_all * (S + 1) + tok_all, dim=1,
+                              stable=True)
+        ent_tok = torch.gather(tok_all, 1, order)
+        ent_phys = torch.gather(phys_all, 1, order)
+
+        lay = direct_layout_entries_fast(ent_tok, ent_phys, self.rank,
+                                         nlp, R)
+        my_tok = lay["my_tok"]
+        send_entry_logical = self.p2l[lay["my_phys"]]
+        in_splits, out_splits = lay["in_splits"], lay["out_splits"]
+        comb_dst = (
+            comb_dst_slot_from_topk(self.topk_all[self.rank], my_tok,
+                                    send_entry_logical, G)
+            if self.want_comb else None
+        )
+
+        # the ONE batched (pinned) D2H of the phase
+        blob = self._blob_pin
+        blob.copy_(torch.cat([
+            lay["seg_rows"], lay["seg_start"], in_splits.long(),
+            out_splits.long(), lay["pair_max"].reshape(1),
+            lay["n_recv_dev"].long(), ilv_ok.long(),
+        ]))
+        assert int(blob[-1]) == 1, "interleave 320-candidate window miss"
+        seg_rows_h = blob[:nlp].tolist()
+        seg_start_h = blob[nlp:2 * nlp].tolist()
+        send_counts = blob[2 * nlp:2 * nlp + R].tolist()
+        recv_counts = blob[2 * nlp + R:2 * nlp + 2 * R].tolist()
+        max_pair_rows = int(blob[-3])
+        n_recv = int(blob[-2])
+        place_slots = lay["place_slots_pad"][:n_recv]
+
+        segments = []
+        base = self.rank * nlp
+        for p in range(nlp):
+            rows = seg_rows_h[p]
+            if rows == 0:
+                continue
+            logical = int(self._p2l_host[base + p])
+            assert logical >= 0, f"rank {self.rank}: rows in unused slot {p}"
+            start = seg_start_h[p]
+            segments.append((p, start, start + rows, logical))
+
+        return EplbIterPlan(
+            send_row_index=my_tok,
+            send_entry_logical=send_entry_logical,
+            place_slots=place_slots,
+            in_splits=in_splits,
+            out_splits=out_splits,
+            comb_dst_slot=comb_dst,
+            send_counts=send_counts,
+            recv_counts=recv_counts,
+            seg_rows=seg_rows_h,
+            seg_start=seg_start_h,
+            gemm_segments=segments,
+            n_recv=n_recv,
+            max_pair_rows=max_pair_rows,
+        )
+
+    def _derive_legacy(self, loads_gather_buf: torch.Tensor) -> EplbIterPlan:
         cfg = self.cfg
         R, G, S, K, nlp = cfg.R, cfg.G, cfg.S, cfg.K, cfg.nlp
         tpe_all = loads_gather_buf.view(R, G)

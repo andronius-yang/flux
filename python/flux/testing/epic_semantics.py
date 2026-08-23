@@ -1529,7 +1529,10 @@ class EpicIterPlanner:
         Static-routing arms only (d6 loads are per-cell constants):
         capacity = the first-derive exact size. Returns a LIST of
         per-group EpicIterPlan (length m; m==1 callers take [0])."""
-        from .ep_gpu_plan import _run_ordinal, comb_dst_slot_from_topk
+        # 8.23: _run_ordinal_fast — bit-identical on sorted keys, replaces
+        # the torch.cummax spelling (~60x slower than the cub-scan class)
+        from .ep_gpu_plan import comb_dst_slot_from_topk
+        from .ep_gpu_plan import _run_ordinal_fast as _run_ordinal
 
         cfg = self.cfg
         R, G, S, K, nlp = cfg.R, cfg.G, cfg.S, cfg.K, cfg.nlp
@@ -1748,7 +1751,10 @@ class EpicIterPlanner:
         rank = self.rank
         assert S <= (1 << 13) and R * nlp <= (1 << 13) and R <= (1 << 7), (
             "fast-tail sort key packing bounds exceeded")
-        from .ep_gpu_plan import _run_ordinal, comb_dst_slot_from_topk
+        # 8.23: _run_ordinal_fast — bit-identical on sorted keys, replaces
+        # the torch.cummax spelling (~60x slower than the cub-scan class)
+        from .ep_gpu_plan import comb_dst_slot_from_topk
+        from .ep_gpu_plan import _run_ordinal_fast as _run_ordinal
 
         # ---- own row: send-side canonical (phys, tok) order -------------
         tok_l = (torch.arange(S, device=dev, dtype=torch.int64)

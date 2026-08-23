@@ -32,6 +32,9 @@ __all__ = [
     "reroute_expand_all_gpu",
     "place_slots_from_locals",
     "comb_dst_slot_from_topk",
+    "interleave_params_batched_fast",
+    "reroute_expand_all_gpu_fast",
+    "direct_layout_entries_fast",
 ]
 
 
@@ -375,3 +378,176 @@ def comb_dst_slot_from_topk(topk_src: torch.Tensor, ent_tok: torch.Tensor,
     )
     j = pos[ent_tok, ent_logical]
     return ent_tok * K + j
+
+
+# ---------------------------------------------------------------------------
+# Sync-free fast twins (8.23 fairness pass — the same accounting class as the
+# epic fast tail): bit-identical outputs, zero hidden host syncs before the
+# caller's single batched D2H. The taxes they remove are pure port overhead —
+# torch.bincount's internal max-sizing D2H, ragged boolean gathers, and the
+# host-looped coprime-interleave window scan — never algorithm semantics.
+# ---------------------------------------------------------------------------
+
+
+def _counts_index_add(ids: torch.Tensor, size: int) -> torch.Tensor:
+    """bincount(ids, minlength=size) twin with NO device sync (bincount
+    sizes its output from input.max(), a hidden D2H). ids must be < size."""
+    out = torch.zeros(size, dtype=torch.int64, device=ids.device)
+    return out.index_add_(0, ids.reshape(-1),
+                          torch.ones_like(ids.reshape(-1)))
+
+
+def _run_ordinal_fast(sorted_keys: torch.Tensor) -> torch.Tensor:
+    """_run_ordinal twin for the fast paths: on sorted keys the run start
+    of every element is its value's leftmost index, so one self-
+    searchsorted replaces torch.cummax — whose CUDA kernel is ~60x
+    slower than the cub-scan class (0.9 ms vs 0.015 ms at 131k int64).
+    Bit-identical by definition on sorted input."""
+    n = sorted_keys.numel()
+    positions = torch.arange(n, device=sorted_keys.device,
+                             dtype=torch.int64)
+    if n == 0:
+        return positions
+    return positions - torch.searchsorted(sorted_keys, sorted_keys,
+                                          right=False)
+
+
+def interleave_params_batched_fast(totals: torch.Tensor,
+                                   expert_ids: torch.Tensor):
+    """interleave_params_batched twin, sync-free: the legacy widening
+    window scan (64, then x4 — each round a bool(found.all()) D2H) is
+    replaced by ONE fixed 64-candidate window (== the legacy scan's
+    first round, identical candidate order), so a hit inside the window
+    is bit-identical to legacy. A miss below 64 cannot happen in this
+    domain — the largest gap between consecutive coprimes to n
+    (Jacobsthal g(n)) stays under 64 until n has ~12 distinct prime
+    factors (n >> 2^31 > any per-(src, expert) token count) — and the
+    impossible case still fails LOUDLY, never silently: returns (stride,
+    offset, found_all [1] bool device) and the caller defers the assert
+    into its batched D2H instead of syncing here. Candidate math runs in
+    int32 (totals < 2^31) to halve the window's memory traffic."""
+    totals = totals.long()
+    dev = totals.device
+    offset = torch.remainder(expert_ids.long(), totals)
+    t = torch.clamp(totals, min=2)
+    s0 = torch.div(t, 2, rounding_mode="floor") + 1
+    s0 = torch.where(s0 >= t, t - 1, s0)
+    s0 = torch.clamp(s0, min=1)
+    tm1 = torch.clamp(t - 1, min=1)
+    t32 = t.to(torch.int32).unsqueeze(1)
+    s032 = s0.to(torch.int32).unsqueeze(1)
+    tm132 = tm1.to(torch.int32).unsqueeze(1)
+    i = torch.arange(64, device=dev, dtype=torch.int32).unsqueeze(0)
+    cand = torch.remainder(s032 - 1 + i, tm132) + 1
+    ok = torch.gcd(cand, t32) == 1
+    first = torch.where(ok, i.expand_as(ok),
+                        torch.full_like(cand, 64)).min(dim=1).values.long()
+    res = torch.remainder(s0 - 1 + first, tm1) + 1
+    multi = totals > 1
+    stride = torch.where(multi, res, torch.ones_like(totals))
+    found_all = ((first < 64) | ~multi).all().reshape(1)
+    return stride, offset, found_all
+
+
+def reroute_expand_all_gpu_fast(rqp_all: torch.Tensor, l2p: torch.Tensor,
+                                lcnts: torch.Tensor,
+                                topk_all: torch.Tensor,
+                                interleave: bool):
+    """reroute_expand_all_gpu twin, sync-free and cummax-hoisted. Returns
+    (tok [R, N], phys [R, N], ilv_ok [1] bool device) — ilv_ok goes into
+    the caller's batched D2H (always True when interleave=False).
+
+    The two spellings that matter (bit-identical, measured at qwen-4n):
+      * the monotone prefix pad runs cummax on the [R*G, Cmax] TABLE and
+        gathers rows after — cummax is row-wise so it commutes with the
+        row gather; the legacy per-entry [R*N, Cmax] cummax was the
+        engine's single biggest cost (3.9 ms -> 0.06 ms);
+      * run ordinals come from _run_ordinal_fast (searchsorted, not
+        cummax: 0.94 ms -> 0.03 ms)."""
+    R, S, K = topk_all.shape
+    G = lcnts.numel()
+    N = S * K
+    dev = topk_all.device
+    e = topk_all.reshape(R, N).long()
+    s = torch.arange(S, device=dev,
+                     dtype=torch.int64).repeat_interleave(K).expand(R, N)
+    r = torch.arange(R, device=dev, dtype=torch.int64).unsqueeze(1)
+    key = (r * G + e) * S + s
+    order = torch.argsort(key.reshape(-1))
+    ef = e.reshape(-1)[order]
+    sf = s.reshape(-1)[order]
+    rf = (r.expand(R, N).reshape(-1))[order]
+    re = rf * G + ef
+    counts = _counts_index_add(re, R * G)
+    if interleave:
+        stride, offset, ilv_ok = interleave_params_batched_fast(
+            torch.clamp(counts, min=1),
+            torch.arange(G, device=dev, dtype=torch.int64).repeat(R))
+    else:
+        ilv_ok = torch.ones(1, dtype=torch.bool, device=dev)
+    prm = rqp_all.long().reshape(R * G, -1).cummax(dim=1).values[re]
+    ordinal = _run_ordinal_fast(re)
+    totals = counts[re]
+    if interleave:
+        qr = torch.where(
+            totals > 1,
+            torch.remainder(ordinal * stride[re] + offset[re],
+                            torch.clamp(totals, min=1)),
+            ordinal)
+    else:
+        qr = ordinal
+    replica = torch.searchsorted(prm, qr.unsqueeze(1),
+                                 right=True).squeeze(1)
+    Ce = lcnts.long()[ef]
+    replica = torch.minimum(replica, torch.clamp(Ce - 1, min=0))
+    phys = l2p.long()[ef, replica]
+    return sf.reshape(R, N), phys.reshape(R, N), ilv_ok
+
+
+def direct_layout_entries_fast(ent_tok: torch.Tensor,
+                               ent_phys: torch.Tensor,
+                               rank: int, nlp: int, R: int):
+    """direct_layout_entries twin, sync-free: the ragged boolean gather
+    for the receiver rows disappears behind an identity — in the stable
+    slot-major sort of the arrival sequence, an arrival's sorted
+    position j IS seg_start[slot] + its within-slot arrival ordinal, so
+    the receiver placement is ONE stable argsort + one cumsum + one
+    scatter (no cummax, no run-ordinal, no second sort). place_slots
+    comes back PADDED and aligned to arrival order; the caller slices
+    [:n_recv] AFTER its batched D2H (bitwise equal to the legacy ragged
+    result). Returns device tensors only (n_recv/pair_max ride the
+    blob)."""
+    dev = ent_tok.device
+    N = ent_tok.shape[1]
+    RN = R * N
+    my_tok = ent_tok[rank]
+    my_phys = ent_phys[rank]
+    in_splits = _counts_index_add(
+        torch.div(my_phys, nlp, rounding_mode="floor"), R).to(torch.int32)
+    dest_all = torch.div(ent_phys, nlp, rounding_mode="floor")
+    mine = dest_all == rank
+    out_splits = mine.sum(dim=1).to(torch.int32)
+    minef = mine.reshape(-1)
+    loc_key = torch.where(
+        minef, ent_phys.reshape(-1) - rank * nlp,
+        torch.full((1,), nlp, dtype=torch.int64, device=dev))
+    seg_full = _counts_index_add(loc_key, nlp + 1)
+    seg_rows = seg_full[:nlp]
+    seg_start = torch.zeros(nlp, dtype=torch.int64, device=dev)
+    seg_start[1:] = torch.cumsum(seg_rows, dim=0)[:-1]
+    sorder = torch.argsort(loc_key, stable=True)
+    arr_idx = minef.long().cumsum(0) - 1
+    idx = torch.where(minef[sorder], arr_idx[sorder],
+                      torch.full((1,), RN, dtype=torch.int64, device=dev))
+    place_pad = torch.empty(RN + 1, dtype=torch.int64, device=dev)
+    place_pad.scatter_(0, idx,
+                       torch.arange(RN, device=dev, dtype=torch.int64))
+    src_ids = torch.arange(R, device=dev, dtype=torch.int64).unsqueeze(1)
+    pair_rows = _counts_index_add((src_ids * R + dest_all).reshape(-1),
+                                  R * R)
+    return dict(
+        my_tok=my_tok, my_phys=my_phys, in_splits=in_splits,
+        out_splits=out_splits, place_slots_pad=place_pad,
+        seg_rows=seg_rows, seg_start=seg_start,
+        n_recv_dev=minef.sum().reshape(1), pair_max=pair_rows.max(),
+    )
