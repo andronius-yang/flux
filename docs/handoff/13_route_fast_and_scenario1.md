@@ -164,3 +164,13 @@ program is shelved).
 - Remaining plumbing (unchanged from the queue above): dslots+layer
   extraction params in gen_trace_routing, oracle-routing sidecar,
   oracle-basis eplb_load, `shape: k2` preset.
+
+### Canon TIGHTENED into SCHEMA protocol rule 10 (final user pass)
+
+SCHEMA.md rule 10 is now the single normative source; deltas vs the
+section above: NO control topic in default runs (philosophy = explicit
+ablations only), `s1layer=p5` is the DEFAULT (m5 profiled only when
+named), gap **g=0 is the DEFAULT** (ladder {0,16,32} for drift studies
+only). Standing user instruction (also in memory): a prompt saying
+"sweep" without explicitly naming s1layer/gap means DEFAULTS — never
+expand data-source axes unprompted; ask when unsure.
