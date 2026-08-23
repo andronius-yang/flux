@@ -174,3 +174,42 @@ named), gap **g=0 is the DEFAULT** (ladder {0,16,32} for drift studies
 only). Standing user instruction (also in memory): a prompt saying
 "sweep" without explicitly naming s1layer/gap means DEFAULTS — never
 expand data-source axes unprompted; ask when unsure.
+
+## AUTHENTIC LLC E2E — LANDED (f080c90, job 57448022)
+
+The full LLC stack (placement-fast from the previous-window oracle +
+loccap_sl ext kernel + fast tail + graph + combine CAPACITY mode) runs
+l01 end-to-end on BOTH canon lanes, correctness-gated with randomized
+payloads. Structural items closed this pass:
+1. **Combine capacity mode** (`enable_hc_combine(m_capacity=recv_cap)`,
+   pack slices per iteration) — the combine metadata was ALREADY
+   per-iteration in-window (derive_routed_meta + derive_combine_meta);
+   only the buffers were exact-size.
+2. **Grouped-GEMM splits lockstep — ROOT-CAUSE FIX with a disclosure**:
+   enable_grouped_gemm held a REFERENCE to the setup splits while
+   bind_iter_plan rebound `_group_splits_cpu` → the grouped GEMM
+   segmented every iteration with SETUP sizes. Static-routing arms
+   (d6/loccap_gpu) unaffected (stale==fresh). Relaxed kernel-arm cells:
+   prior LATENCY numbers stand (same rows/FLOPs), but relaxed-iteration
+   OUTPUTS were silently mis-segmented and were never numerically
+   checked (only the final deterministic iteration is). Any future
+   claim about relaxed-iteration outputs requires binaries/trees at or
+   after this fix — never-mix note.
+3. k2 shape preset; tail-graph outputs persist-copied post-replay
+   (pool-across-streams insurance).
+
+Numbers (canon data per SCHEMA rule 10, 4n b8, g=0, p5, one tree):
+| lane | LLC l01 | EPIC l01 | delta | LLC l0 | plan lane |
+| qwen | **12.28 ms** | 18.34 | −33% | 6.25 | 1.18 |
+| K2   | **13.63 ms** | 17.50 | −22% | 7.50 | 1.14 |
+(pllf+d6 controls: 19.33 / 18.80.) Realized oracle drift 135k / 206k
+ppm — the placement tolerates it (scenario-1 authentic). Timing honesty:
+placement untimed ONLY because oracle-based (pre-gating); ALL
+post-gating computation (loads allgather, kernel route, phys exchange,
+fast tail, combine metadata) is in the timed window; sizing constants
+(bounds/f_cap) derive from the setup reference — capacity-only, no
+in-window work hidden; the noted refinement is deriving them from the
+oracle side + slack.
+
+Next: capsule-grade sweep of this exact stack (the sweep-runner pllf/sl
+arms + dslots durable plumbing), 8n `-q regular`, flavor ladder.
