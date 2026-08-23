@@ -1193,7 +1193,8 @@ class EpicIterPlanner:
                  replica_select: str = "local_static",
                  inwindow_meta: bool = False,
                  router: str = "d6", eps: float = None,
-                 route_group=None, exchange_fn=None, f_cap: int = -1):
+                 route_group=None, exchange_fn=None, f_cap: int = -1,
+                 groups_meta=None):
         # local_static == the paper's own D6 rule (src mod lcnts) and
         # stays EPIC's default; local_spread is the SGLang-dynamic-analog
         # ablation (campaign-2 knob). No quota mode for epic.
@@ -1232,6 +1233,24 @@ class EpicIterPlanner:
         self._home_of_token = (
             torch.arange(ntokens, device=device, dtype=torch.int64) // cfg.S)
         self._pad_vslot = self._home_of_token * self.gpe + cfg.nlp
+        # multi-group rule-5 (8.22: EPIC m>1 fairness — the d6 fast tail):
+        # groups_meta = [{slot_lo, slot_hi, gpe, kg}] per PEO group; the
+        # slot->group lookup drives the group-major canonical orders and
+        # every per-group slice. None/len==1 = the m=1 path.
+        self.groups_meta = groups_meta
+        self.m_groups = len(groups_meta) if groups_meta else 1
+        if groups_meta:
+            grp_of = torch.zeros(cfg.nlp, dtype=torch.int64, device=device)
+            for gi, gm in enumerate(groups_meta):
+                # per-group virtual space keeps the GLOBAL gpe (= nlp+1):
+                # slots outside [slot_lo, slot_hi) are empty in that
+                # group's routing; the pad slot stays gpe-1 == nlp
+                assert gm["gpe"] == self.gpe, (gm, self.gpe)
+                grp_of[gm["slot_lo"]:gm["slot_hi"]] = gi
+            self._grp_of_slot = grp_of
+            self._pad_vslot_g = [
+                self._home_of_token * gm["gpe"] + (gm["gpe"] - 1)
+                for gm in groups_meta]
         if router == "loccap_sl":
             # relaxed kernel arm: sender-local row + communicated agreement.
             # l01 combine IS supported since 8.22.route, but only through
@@ -1345,6 +1364,16 @@ class EpicIterPlanner:
             tok_all, phys_all = reroute_expand_all_gpu(
                 rqp, self.l2p, self.lcnts, self.topk_all, cfg.interleave)
         self._last_phys_all = phys_all
+        if (self.router == "d6"
+                and self.replica_select == "local_static"
+                and int(os.getenv("FLUX_PLL_FAST_TAIL", "1"))
+                and (not self.hc or self.inwindow_meta)
+                and not self.hcc):
+            # rule-5 D6 arms (m in {1,2,4}) on the general fast tail —
+            # fairness pass 8.22: same schedule class as the loccap tail,
+            # D6 routing untouched
+            ips = self._fast_tail_g(tok_all, phys_all)
+            return ips[0] if self.m_groups == 1 else ips
         if (self.router in ("loccap_sl", "loccap_gpu")
                 and int(os.getenv("FLUX_PLL_FAST_TAIL", "1"))
                 and (not self.hc or self.inwindow_meta)
@@ -1465,6 +1494,203 @@ class EpicIterPlanner:
         torch.cuda.synchronize()
         return self._fast_tail_host(outs, self._g_blob_pin,
                                     has_kstats=kstats is not None)
+
+    def _fast_tail_g(self, tok_all, phys_all):
+        """General fast tail for the D6 arms, m in {1, 2, 4} (8.22: EPIC
+        rule-5 fairness — same sort-free/zero-D2H schedule class as the
+        loccap tail, D6 routing untouched). Differences from the loccap
+        tail: entry rows come from the reroute expansion in (expert,
+        token) order (NOT topk order), so the per-group vce uses a
+        token-occurrence scatter (one extra fixed-shape argsort); all
+        canonical orders are GROUP-major ((grp, phys, tok) send wire,
+        (grp, src, phys, tok) arrivals — group ranges are contiguous slot
+        ranges, so every per-group quantity is a contiguous slice).
+        Static-routing arms only (d6 loads are per-cell constants):
+        capacity = the first-derive exact size. Returns a LIST of
+        per-group EpicIterPlan (length m; m==1 callers take [0])."""
+        from .ep_gpu_plan import _run_ordinal, comb_dst_slot_from_topk
+
+        cfg = self.cfg
+        R, G, S, K, nlp = cfg.R, cfg.G, cfg.S, cfg.K, cfg.nlp
+        dev = self.device
+        rank = self.rank
+        m = self.m_groups
+        metas = (self.groups_meta if self.groups_meta
+                 else [dict(slot_lo=0, slot_hi=nlp, gpe=self.gpe,
+                            kg=self.kg_frozen or K)])
+        E = R * S * K
+        assert S <= (1 << 13) and R * nlp <= (1 << 13) and R <= (1 << 7)
+        grp_of = (self._grp_of_slot if self.groups_meta
+                  else torch.zeros(nlp, dtype=torch.int64, device=dev))
+        pads_g = (self._pad_vslot_g if self.groups_meta
+                  else [self._pad_vslot])
+
+        p_all = phys_all % nlp                              # [R, N] local slot
+        g_all = grp_of[p_all]                               # entry group
+
+        # ---- own row: (grp, phys, tok) send order ------------------------
+        my_phys0 = phys_all[rank]
+        my_tok0 = tok_all[rank]
+        my_key = ((g_all[rank] << 26) | (my_phys0 << 13) | my_tok0)
+        order_my = torch.argsort(my_key, stable=True)
+        my_tok = my_tok0[order_my]
+        my_phys = my_phys0[order_my]
+        my_grp = g_all[rank][order_my]
+        send_entry_logical = self.p2l[my_phys]
+        comb_dst = (comb_dst_slot_from_topk(
+            self.topk_all[rank], my_tok, send_entry_logical, G)
+            if self.l01 else None)
+        send_cnt_g = torch.zeros(m, dtype=torch.int64, device=dev)
+        send_cnt_g.index_add_(0, my_grp, torch.ones_like(my_grp))
+        in_gd = torch.zeros(m * R, dtype=torch.int64, device=dev)
+        in_gd.index_add_(0, my_grp * R + my_phys // nlp,
+                         torch.ones_like(my_grp))
+
+        # ---- counts ------------------------------------------------------
+        dest_all = phys_all // nlp
+        mine = dest_all == rank
+        src_ids = torch.arange(R, device=dev,
+                               dtype=torch.int64).unsqueeze(1)
+        out_gs = torch.zeros(m * R, dtype=torch.int64, device=dev)
+        out_gs.index_add_(0, (g_all * R + src_ids)[mine].long()
+                          if False else
+                          torch.where(mine, g_all * R + src_ids,
+                                      torch.zeros_like(g_all)).reshape(-1),
+                          mine.reshape(-1).long())
+        pair_flat = (src_ids * R + dest_all).reshape(-1)
+        pair_rows = torch.zeros(R * R, dtype=torch.int64, device=dev)
+        pair_rows.index_add_(0, pair_flat, torch.ones_like(pair_flat))
+        slot_loads = torch.zeros(cfg.P, dtype=torch.int64, device=dev)
+        slot_loads.index_add_(0, phys_all.reshape(-1),
+                              torch.ones_like(pair_flat))
+        # per-(grp, src) source entry counts (pad accounting)
+        srccnt_gs = torch.zeros(m * R, dtype=torch.int64, device=dev)
+        srccnt_gs.index_add_(0, (g_all * R + src_ids).reshape(-1),
+                             torch.ones_like(pair_flat))
+
+        # ---- arrivals: (grp, src, phys, tok) fixed-shape selection -------
+        if getattr(self, "_recv_exact_g", None) is None:
+            self._recv_exact_g = int(mine.sum())            # setup sync
+        recv_cap = self._recv_exact_g
+        key = (((~mine).long() << 36) | (g_all << 33)
+               | (src_ids << 26) | (phys_all << 13)
+               | tok_all).reshape(-1)
+        arr = torch.argsort(key, stable=True)[:recv_cap]
+        valid = mine.reshape(-1)[arr]
+        slot_p = torch.where(valid, p_all.reshape(-1)[arr],
+                             torch.full_like(arr, nlp))
+        n_recv_g = torch.zeros(m, dtype=torch.int64, device=dev)
+        n_recv_g.index_add_(0,
+                            torch.where(valid, g_all.reshape(-1)[arr],
+                                        torch.zeros_like(arr)),
+                            valid.long())
+        seg_ext = torch.zeros(nlp + 1, dtype=torch.int64, device=dev)
+        seg_ext.index_add_(0, slot_p, torch.ones_like(slot_p))
+        seg_rows = seg_ext[:nlp]
+        seg_start = torch.zeros(nlp, dtype=torch.int64, device=dev)
+        seg_start[1:] = torch.cumsum(seg_rows, dim=0)[:-1]
+        o2 = torch.argsort(slot_p, stable=True)
+        occ2 = _run_ordinal(slot_p[o2])
+        seg_start_ext = torch.cat([seg_start, seg_start.new_zeros(1)])
+        place_pad = torch.empty(recv_cap, dtype=torch.int64, device=dev)
+        place_pad[o2] = seg_start_ext[slot_p[o2]] + occ2
+
+        # ---- per-group vce: token-occurrence scatter ---------------------
+        ntokens = R * S
+        gtok = (src_ids * S + tok_all).reshape(-1)          # [E]
+        key2 = (g_all.reshape(-1) << 38) | (gtok << 21) | \
+            torch.arange(E, device=dev, dtype=torch.int64)
+        o3 = torch.argsort(key2, stable=True)
+        runk = (g_all.reshape(-1)[o3] * ntokens + gtok[o3])
+        occ3 = torch.empty(E, dtype=torch.int64, device=dev)
+        occ3[o3] = _run_ordinal(runk)
+        vces = []
+        overflow_t = torch.zeros((), dtype=torch.int64, device=dev)
+        for gi, gm in enumerate(metas):
+            kg = gm["kg"]
+            gpe_g = gm["gpe"]
+            in_g = g_all.reshape(-1) == gi
+            ok = in_g & (occ3 < kg)
+            overflow_t = overflow_t + (in_g & (occ3 >= kg)).long().sum()
+            vslot = dest_all.reshape(-1) * gpe_g + p_all.reshape(-1)
+            vflat = torch.empty(ntokens * kg + 1, dtype=torch.int64,
+                                device=dev)
+            vflat[:ntokens * kg] = pads_g[gi].repeat_interleave(kg) \
+                if False else pads_g[gi].unsqueeze(1).expand(
+                    ntokens, kg).reshape(-1)
+            idx = torch.where(ok, gtok * kg + occ3,
+                              torch.full_like(gtok, ntokens * kg))
+            vflat.scatter_(0, idx, torch.where(ok, vslot,
+                                               torch.zeros_like(vslot)))
+            vces.append(vflat[:ntokens * kg].view(ntokens, kg)
+                        .to(torch.int32).contiguous())
+
+        # ---- ONE batched D2H --------------------------------------------
+        d2h = [seg_rows, seg_start, in_gd, out_gs,
+               pair_rows.max().reshape(1), n_recv_g, send_cnt_g,
+               srccnt_gs, overflow_t.reshape(1)]
+        blob = torch.cat([t.reshape(-1) for t in d2h]).cpu()
+        off = 0
+
+        def take(n):
+            nonlocal off
+            out = blob[off:off + n]
+            off += n
+            return out
+
+        seg_rows_h = take(nlp).tolist()
+        seg_start_h = take(nlp).tolist()
+        in_gd_h = take(m * R).tolist()
+        out_gs_h = take(m * R).tolist()
+        max_pair_rows = int(take(1))
+        n_recv_h = take(m).tolist()
+        send_cnt_h = take(m).tolist()
+        srccnt_h = take(m * R).tolist()
+        assert int(take(1)) == 0, (
+            "d6 fast tail: per-token group entries exceed the frozen K_g "
+            "— bundle sizing drift (never noise)")
+
+        ips = []
+        s_off = 0
+        r_off = 0
+        for gi, gm in enumerate(metas):
+            lo, hi, kg = gm["slot_lo"], gm["slot_hi"], gm["kg"]
+            segments = []
+            for p in range(lo, hi):
+                rows = seg_rows_h[p]
+                if rows == 0:
+                    continue
+                logical = int(self._p2l_host[rank * nlp + p])
+                assert logical >= 0
+                start = seg_start_h[p]
+                segments.append((p, start, start + rows, logical))
+            n_s = send_cnt_h[gi]
+            n_r = n_recv_h[gi]
+            pad_mine = kg * S - srccnt_h[gi * R + rank]
+            ips.append(EpicIterPlan(
+                send_row_index=my_tok[s_off:s_off + n_s],
+                send_entry_logical=send_entry_logical[s_off:s_off + n_s],
+                place_slots=place_pad[r_off:r_off + n_r],
+                comb_dst_slot=(comb_dst[s_off:s_off + n_s]
+                               if comb_dst is not None else None),
+                in_splits=in_gd[gi * R:(gi + 1) * R].to(torch.int32),
+                out_splits=out_gs[gi * R:(gi + 1) * R].to(torch.int32),
+                send_counts=in_gd_h[gi * R:(gi + 1) * R],
+                recv_counts=out_gs_h[gi * R:(gi + 1) * R],
+                seg_rows=seg_rows_h[lo:hi],
+                seg_start=seg_start_h[lo:hi],
+                gemm_segments=segments,
+                n_recv=n_r,
+                max_pair_rows=max_pair_rows,
+                slot_loads=slot_loads,
+                hc_splits=None, hc_scatter=None, hc_sps_cpu=None,
+                hc_uc_cpu=None, hc_pad_mine=pad_mine, hc_kg_iter=kg,
+                hc_m_this=0,
+                hc_vce=(vces[gi] if self.hc else None),
+            ))
+            s_off += n_s
+            r_off += n_r
+        return ips
 
     def _derive_from_phys_fast(self, phys_all, kstats=None) -> EpicIterPlan:
         """Sort-free, sync-free plan tail for the loccap routers
@@ -1856,8 +2082,16 @@ class EpicIterPlanner:
             **hc_kw,
         )
 
-    def check_against(self, ip: EpicIterPlan, runner) -> None:
-        """Loud setup-time drift guard vs the CPU reference state (m=1)."""
+    def check_against(self, ip, runner, g: int = 0) -> None:
+        """Loud setup-time drift guard vs the CPU reference state. Accepts
+        the m=1 single plan or the multi-group list (per-group compare
+        against the SETUP python layouts — routing is static, so equality
+        is exact; vce compares as per-token multiset under the fast
+        tail)."""
+        if isinstance(ip, (list, tuple)):
+            for gi, ipg in enumerate(ip):
+                self._check_group_against(ipg, runner, gi)
+            return
         grp = runner.elay.groups[0]
         assert torch.equal(ip.send_row_index.cpu(), grp.send_row_index)
         assert torch.equal(ip.send_entry_logical.cpu(),
@@ -1885,9 +2119,8 @@ class EpicIterPlanner:
             assert torch.equal(ip.comb_dst_slot.cpu(), grp.comb_dst_slot)
         if self.hc and self.inwindow_meta:
             b = runner._hc_bundles[0]
-            if (self.router in ("loccap_sl", "loccap_gpu")
-                    and int(os.getenv("FLUX_PLL_FAST_TAIL", "1"))):
-                # fast tail ships vce in topk column order; within a
+            if int(os.getenv("FLUX_PLL_FAST_TAIL", "1")):
+                # fast tail (all rule-5 routers incl. d6) ships vce in a
                 # virtual slot the wire order depends only on
                 # (vslot, token), so the guard compares the per-token
                 # MULTISET (column-order-free routing identity)
@@ -1917,6 +2150,30 @@ class EpicIterPlanner:
                 for got, ref in zip(ip.hcc_wire + ip.hcc_redcsr,
                                     e["wire"] + e["redcsr"]):
                     assert torch.equal(got.cpu(), ref.cpu())
+
+    def _check_group_against(self, ip: EpicIterPlan, runner, g: int):
+        """Per-group setup drift guard for the multi-group rule-5 path."""
+        grp = runner.elay.groups[g]
+        assert torch.equal(ip.send_row_index.cpu(), grp.send_row_index), g
+        assert torch.equal(ip.send_entry_logical.cpu(),
+                           grp.send_entry_logical), g
+        assert torch.equal(ip.place_slots.cpu(), grp.place_slots), g
+        assert ip.send_counts == grp.send_counts, (g, "send splits drift")
+        assert ip.recv_counts == grp.recv_counts, (g, "recv splits drift")
+        assert ip.seg_rows == grp.seg_rows, (g, "seg_rows drift")
+        lo, hi = grp.slot_lo, grp.slot_hi
+        assert ip.seg_start == runner.elay.seg_start[lo:hi], g
+        segs_ref = [s for s in runner.elay.gemm_segments
+                    if lo <= s[0] < hi]
+        assert ip.gemm_segments == segs_ref, (g, "gemm segments drift")
+        if self.l01:
+            assert torch.equal(ip.comb_dst_slot.cpu(), grp.comb_dst_slot), g
+        if self.hc and self.inwindow_meta and ip.hc_vce is not None:
+            b = runner._hc_bundles[g]
+            a = ip.hc_vce.long().cpu().sort(dim=1).values
+            bb = b.virtual_choosed.long().cpu().sort(dim=1).values
+            assert torch.equal(a, bb), (
+                g, "in-window vce drift vs the setup bundle (multiset)")
 
     def check_relaxed(self, ip: EpicIterPlan, bounds,
                       ref_incidence: int = None,
@@ -2189,6 +2446,51 @@ class EpicLayer0Runner(EPLBLayer0Runner):
 
     # -- per-iteration plan binding (SCHEMA rule 5, m=1 scope) --------------
 
+    def _bind_iter_plan_multi(self, ips):
+        """Multi-group bind (rule-5 EPIC m>1, 8.22): per-group plan fields
+        into the per-group runner state; global elay assembled from the
+        contiguous per-group slices. Static-routing arms — total recv must
+        equal the setup sizing."""
+        m = len(ips)
+        assert m == self.m == len(self.elay.groups), (m, self.m)
+        total_recv = sum(ip.n_recv for ip in ips)
+        assert total_recv == self.n_recv, (total_recv, self.n_recv)
+        new_groups = []
+        recv_off = [0]
+        seg_rows_all, seg_start_all, segments_all = [], [], []
+        for g, ip in enumerate(ips):
+            grp = self.elay.groups[g]
+            self.g_send_row_index[g] = ip.send_row_index
+            self.g_send_entry_logical[g] = ip.send_entry_logical
+            self.g_place_slots[g] = ip.place_slots
+            if self.layers == "l01":
+                self.g_comb_dst[g] = ip.comb_dst_slot
+                # comb_pack = group-relative positions (base = the
+                # group's global segment offset; 0 at m=1)
+                self.g_comb_pack[g] = ip.place_slots - ip.seg_start[0]
+            new_groups.append(_dc_replace(
+                grp, send_counts=ip.send_counts,
+                recv_counts=ip.recv_counts, seg_rows=ip.seg_rows))
+            recv_off.append(recv_off[-1] + ip.n_recv)
+            seg_rows_all += ip.seg_rows
+            seg_start_all += ip.seg_start
+            segments_all += ip.gemm_segments
+            self._group_splits_cpu[g] = torch.tensor(ip.seg_rows,
+                                                     dtype=torch.int64)
+            if getattr(self, "_grouped_splits", None):
+                self._grouped_splits[g] = self._group_splits_cpu[g]
+            if self.transport == "nvshmem":
+                assert ip.max_pair_rows <= self._epic_max_split
+                self._g_in_splits[g] = ip.in_splits
+                self._g_out_splits[g] = ip.out_splits
+        self.elay = _dc_replace(
+            self.elay, groups=new_groups, seg_start=seg_start_all,
+            seg_rows=seg_rows_all, gemm_segments=segments_all,
+            recv_off=recv_off, n_recv=total_recv)
+        if self.hc_enabled and ips[0].hc_vce is not None:
+            self._iter_vce_g = [ip.hc_vce for ip in ips]
+            self._iter_pad_g = [ip.hc_pad_mine for ip in ips]
+
     def bind_iter_plan(self, ip):
         """Swap the routing-derived index state for this iteration's
         EpicIterPlan (m=1). Called inside the timed `plan` bracket every
@@ -2202,6 +2504,8 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         and GEMM/scatter touch only [0, n_recv) (segment lists come from
         ip). Without capacity mode the historical exact-match assert
         stands (d6 / loccap_gpu arms — no behavior change)."""
+        if isinstance(ip, (list, tuple)):
+            return self._bind_iter_plan_multi(ip)
         assert self.m == 1, "per-iteration planning is scoped to m=1 arms"
         if getattr(self, "_recv_capacity", None) is not None:
             assert ip.n_recv <= self._recv_capacity, (
@@ -2439,14 +2743,17 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         # routing (derive_routed_meta — kernels + one pinned D2H, all
         # inside this dispatch bracket); the derived tensors also refresh
         # the canon tail's splits and the combine entry's routing.
-        ivce = getattr(self, "_iter_vce", None)
+        ivce_g = getattr(self, "_iter_vce_g", None)
+        ivce = (ivce_g[g] if ivce_g is not None
+                else getattr(self, "_iter_vce", None))
         if ivce is not None:
             sd, scd, sps_cpu, uc_cpu = (
                 self._hc_ops[g].derive_routed_meta(ivce))
             self._hc_splits_gpu[g] = sd
             self._hc_scatter_gpu[g] = scd
-            self._iter_hc = dict(sps=sps_cpu, uc=uc_cpu,
-                                 pad_mine=self._iter_pad_mine)
+            _padm = (self._iter_pad_g[g] if ivce_g is not None
+                     else self._iter_pad_mine)
+            self._iter_hc = dict(sps=sps_cpu, uc=uc_cpu, pad_mine=_padm)
             if getattr(self, "hcc_enabled", False):
                 # The combine plan in-window (rule 5). Default since
                 # 2026-08-22 (plan eager-juggling-glacier 2b): ONE C++ call

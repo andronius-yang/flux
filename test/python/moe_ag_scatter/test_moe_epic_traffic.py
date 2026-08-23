@@ -1415,13 +1415,27 @@ if __name__ == "__main__":
     # D6 arms — the sweep's quotable configurations. m>1 and the loccap
     # router stay on the legacy setup-time path and are marked
     # legacy_untimed_plan in cells.csv (visible, never silently mixed).
-    per_iter = (args.groups == 1
-                and args.router in ("d6", "loccap_gpu", "loccap_sl"))
+    _ft_on = int(os.environ.get("FLUX_PLL_FAST_TAIL", "1"))
+    per_iter = ((args.groups == 1
+                 and args.router in ("d6", "loccap_gpu", "loccap_sl"))
+                or (args.groups in (2, 4) and args.router == "d6"
+                    and args.replica_select == "local_static"
+                    and args.migration == "off" and bool(_ft_on)))
     iter_planner = None
     if per_iter:
+        _groups_meta = None
+        if args.groups > 1:
+            _groups_meta = [
+                dict(slot_lo=grp.slot_lo, slot_hi=grp.slot_hi,
+                     gpe=(runner._hc_bundles[i].gpe if runner.hc_enabled
+                          else grp.slot_hi - grp.slot_lo + 1),
+                     kg=(runner._hc_kg[i] if runner.hc_enabled
+                         else args.topk))
+                for i, grp in enumerate(runner.elay.groups)]
         iter_planner = EpicIterPlanner(
             plan, rank, torch.device(torch.cuda.current_device()), topk_all,
             DIST_ENV.LOCAL_WORLD_SIZE,
+            groups_meta=_groups_meta,
             l01=(args.layers == "l01"),
             hc=runner.hc_enabled,
             hcc=getattr(runner, "hcc_enabled", False),
@@ -1460,7 +1474,26 @@ if __name__ == "__main__":
         else:
             ip0 = iter_planner.derive(loads_gather_buf)
             iter_planner.check_against(ip0, runner)
-        if iter_planner.inwindow_meta:
+        if iter_planner.inwindow_meta and isinstance(ip0, (list, tuple)):
+            # multi-group v2b guard: op-vs-python ON THE SAME per-group
+            # vce (fast tail column order is contract-free)
+            from flux.testing.epic_semantics import python_meta_from_vce
+            for _g, _ipg in enumerate(ip0):
+                if _ipg.hc_vce is None:
+                    continue
+                sdg, scdg, spsg, ucg = (
+                    runner._hc_ops[_g].derive_routed_meta(_ipg.hc_vce))
+                gm = _groups_meta[_g]
+                r_sd, r_scd, r_sps, r_uc = python_meta_from_vce(
+                    _ipg.hc_vce, W, S, gm["gpe"], iter_planner.nn,
+                    DIST_ENV.LOCAL_WORLD_SIZE)
+                assert torch.equal(sdg.long().cpu(), r_sd.long().cpu()), _g
+                assert torch.equal(scdg.long().cpu(),
+                                   r_scd.long().cpu()), _g
+                assert torch.equal(spsg.long().cpu(),
+                                   r_sps.long().cpu()), _g
+                assert torch.equal(ucg.long().cpu(), r_uc.long().cpu()), _g
+        elif iter_planner.inwindow_meta:
             # v2b guard: the op's in-window derivation must be bitwise-
             # equal to the python reference bundle (stable scatter index
             # determinism is the load-bearing property). For loccap_sl the
@@ -1471,7 +1504,7 @@ if __name__ == "__main__":
             b0 = runner._hc_bundles[0]
             sd, scd, sps_c, uc_c = runner._hc_ops[0].derive_routed_meta(
                 vce_chk)
-            if (args.router in ("loccap_sl", "loccap_gpu")
+            if (args.router in ("loccap_sl", "loccap_gpu", "d6")
                     and int(os.environ.get("FLUX_PLL_FAST_TAIL", "1"))):
                 # fast tail: vce is topk-column-ordered, so the setup
                 # bundle's canonical-order meta is not bitwise-comparable.
