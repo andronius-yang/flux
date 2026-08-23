@@ -267,3 +267,23 @@ rule-5 planner; flag on every quote). vs EPLB: −46/−42%; vs MoonEP:
 Fix required by this pass (committed): hcc combine pad-tail semantics —
 bundle m_this includes the zero pad tail; the old exact-equality assert
 made padded m>1 l01 un-runnable. LATENT before: zero-pad cells only.
+
+## EPIC RULE-5 FAIRNESS PASS (job 57451349) — accounting now symmetric
+
+EPIC m=1 AND m=2 run per-iteration TIMED planning on the general d6
+fast tail (_fast_tail_g; D6 quota/expansion untouched — authentic
+routing, only the shared tail class optimized). m=1 fast==legacy
+bitwise; m=2 correctness-gated both models. Same-job l01 table (canon
+data, oracle-window loads):
+
+| arm | qwen | K2 | plan (timed) |
+| EPIC m=1 d6 | 18.31 | 16.97 | 6.44 / 4.74 (≈5 ms = D6 expansion itself) |
+| EPIC m=2 d6 (PEO) | 23.90 | 22.68 | 6.71 / 5.01 |
+| LLC | 12.95 | 13.71 | 1.22 / 1.24 |
+
+With planning timed, **PEO m=2 loses to m=1 at 4n** (l0 doubles: two
+half-size dispatch+GEMM passes cost more than the pipeline hides —
+re-confirms the 8.17 "PEO m-split loses at our scale" verdict under
+symmetric accounting). LLC −29% vs the best EPIC (now m=1). NEVER-MIX:
+pre-commit m=2 cells excluded planning. d6 tail graphing
+(FLUX_PLL_TAIL_GRAPH) not enabled for d6 arms — available follow-up.
