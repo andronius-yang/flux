@@ -142,3 +142,11 @@ DEFERRED: C2 split (16n+), C7′ wire sub-chunking (designed), K2×FAST hang
 l01; needs W=32 probe), PACK_OVERLAP×LB_UNION unblock (e2e-mode-only win,
 2–4 days), epoch-close barrier-chain lightening (3 global barriers per l01
 iter; needs epoch-safety design — credit-based fence).
+
+## H. Naming (final)
+
+The canonical dispatch arm is named **Slipstream** (user decision
+2026-08-23; the first canonicalization commit and one flip-validation
+capsule briefly used "WinCast" — same config, see SCHEMA rule 11). Trio:
+PLACE-lambda places, LocCap routes, Slipstream dispatches. Spec alias
+keys: `slipstream`, `l01_slipstream`, `l01_slipstream_bare`.

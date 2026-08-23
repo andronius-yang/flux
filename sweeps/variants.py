@@ -1467,7 +1467,7 @@ VARIANTS = {
     # here. Keep the stories straight: STANDALONE l1 verdicts differ (hier
     # wins iso at small budgets — handoff 07 §3.1/§4.1); never quote this
     # combined win as a standalone-l1 recommendation.
-    # WinCast canonicalization (2026-08-23, M4): the RS split wire
+    # Slipstream canonicalization (2026-08-23, M4): the RS split wire
     # (RS_WIRE_STREAMS=2) and CTA 10/8/6 are BINARY DEFAULTS now; the env
     # pins below are explicit pins of those defaults (spec self-
     # documentation, same pattern as the F+E pins). The DEFAULT-tag
@@ -1742,11 +1742,15 @@ VARIANTS = {
     ),
 }
 
-# WinCast (2026-08-23): the concise canonical name for the dispatch leg of
-# the LLC trio — PLACE-lambda (placement), LocCap (routing), WinCast
-# (dispatch) — i.e. hier_compress + LB_UNION Tier-B windowed union
-# broadcast + FUSED_STAGE2 + EARLY_LAUNCH + split RS wire + rebalanced
-# combine CTAs, all binary defaults. Alias KEYS only: cells.csv labels stay
-# the historical comm_pattern strings so capsules remain comparable.
-VARIANTS["wincast"] = VARIANTS["hier_compress_lb_union"]
-VARIANTS["l01_wincast"] = VARIANTS["l01_lbunion_compress"]
+# Slipstream (2026-08-23, user-named; briefly "WinCast" in the first
+# canonicalization commit): the concise canonical name for the dispatch
+# leg of the LLC trio — PLACE-lambda (placement), LocCap (routing),
+# Slipstream (dispatch) — i.e. hier_compress + LB_UNION Tier-B windowed
+# union broadcast + FUSED_STAGE2 + EARLY_LAUNCH + split RS wire +
+# rebalanced combine CTAs, all binary defaults. Alias KEYS only:
+# cells.csv labels stay the historical comm_pattern strings so capsules
+# remain comparable (incl. the one l01_wincast_bare flip-validation
+# capsule, 20260823-1144*).
+VARIANTS["slipstream"] = VARIANTS["hier_compress_lb_union"]
+VARIANTS["l01_slipstream"] = VARIANTS["l01_lbunion_compress"]
+VARIANTS["l01_slipstream_bare"] = VARIANTS["l01_wincast_bare"]
