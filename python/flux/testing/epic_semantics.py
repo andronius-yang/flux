@@ -1358,22 +1358,43 @@ class EpicIterPlanner:
             rqp = local_spread_rank_quota_prefix(
                 tpe_all, self.lcnts, cfg.max_replicas_dim)
         else:  # local_static == D6, the paper rule
+            _d6_fast = (self.router == "d6"
+                        and int(os.getenv("FLUX_PLL_FAST_TAIL", "1"))
+                        and (not self.hc or self.inwindow_meta)
+                        and not self.hcc)
+            if _d6_fast:
+                # local_static SHORTCUT (8.22 profiling): the general
+                # replica-selection engine (full-E sort + run-ordinal +
+                # [E, Cmax] cummax/searchsorted + bincount sync + the
+                # host-looped coprime-interleave search) provably reduces
+                # to ONE elementwise gather for this rule — the step
+                # quota prefix sends EVERY ordinal of (src, expert) to
+                # j* = src mod lcnts, interleave permutations included.
+                # Bit-identical physical assignment, ~5 ms -> ~0.05 ms;
+                # entry order differs (token-major vs expert-major) but
+                # the fast tail re-sorts canonically, so every layout is
+                # bitwise-equal (check_against-verified). This is a PORT
+                # overhead removal, not a routing change — the same
+                # fairness category as the tail itself.
+                N = S * K
+                topkf = self.topk_all.view(R, N)
+                srcs = torch.arange(R, device=dev,
+                                    dtype=torch.int64).unsqueeze(1)
+                Ce = self.lcnts.long()[topkf]
+                phys_all = self.l2p.long()[
+                    topkf, torch.remainder(srcs, Ce)]
+                tok_all = (torch.arange(S, device=dev, dtype=torch.int64)
+                           .repeat_interleave(K).unsqueeze(0)
+                           .expand(R, N))
+                self._last_phys_all = phys_all
+                ips = self._fast_tail_g(tok_all, phys_all)
+                return ips[0] if self.m_groups == 1 else ips
             rqp = d6_rank_quota_prefix(tpe_all, self.lcnts,
                                        cfg.max_replicas_dim)
         if rqp is not None:
             tok_all, phys_all = reroute_expand_all_gpu(
                 rqp, self.l2p, self.lcnts, self.topk_all, cfg.interleave)
         self._last_phys_all = phys_all
-        if (self.router == "d6"
-                and self.replica_select == "local_static"
-                and int(os.getenv("FLUX_PLL_FAST_TAIL", "1"))
-                and (not self.hc or self.inwindow_meta)
-                and not self.hcc):
-            # rule-5 D6 arms (m in {1,2,4}) on the general fast tail —
-            # fairness pass 8.22: same schedule class as the loccap tail,
-            # D6 routing untouched
-            ips = self._fast_tail_g(tok_all, phys_all)
-            return ips[0] if self.m_groups == 1 else ips
         if (self.router in ("loccap_sl", "loccap_gpu")
                 and int(os.getenv("FLUX_PLL_FAST_TAIL", "1"))
                 and (not self.hc or self.inwindow_meta)
