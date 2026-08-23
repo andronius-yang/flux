@@ -2953,12 +2953,19 @@ class EpicLayer0Runner(EPLBLayer0Runner):
                     e["inbuf"][:1].zero_()
                     e["scale"][:1].zero_()
             else:
-                assert e["inbuf"].size(0) == n_rows, (
-                    f"group {g}: hcc inbuf rows {e['inbuf'].size(0)} != "
-                    f"layout rows {n_rows} (per-iteration routing variance "
-                    "needs combine capacity mode — enable_hc_combine("
-                    "m_capacity=...))")
-                e["m_use"] = max(n_rows, 1)
+                # bundle m_this INCLUDES the zero pad tail (pad vslot =
+                # last slot per rank block => pads sit AFTER the real
+                # rows in expert-major order); the layout's n_rows counts
+                # REAL rows only. Equality only holds at zero pads (all
+                # prior l01 runs) — with pads (m>1 / K_g>K) the op must
+                # pack the FULL m_this block, real rows + zero tail (the
+                # buffer is zero-initialized and the real region is
+                # layout-static here, so the tail stays zero).
+                assert e["inbuf"].size(0) >= n_rows, (
+                    f"group {g}: hcc inbuf rows {e['inbuf'].size(0)} < "
+                    f"layout rows {n_rows} — bundle/layout drift (derive "
+                    "must follow any rebuild)")
+                e["m_use"] = max(e["inbuf"].size(0), 1)
             e["inbuf"][:n_rows].copy_(self.group1_outputs[g])
             e["scale"][:n_rows].copy_(
                 self.weights_buf[base:base + n_rows])
