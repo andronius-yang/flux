@@ -972,3 +972,35 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
    Discriminator: `FLUX_A2AV_FUSED_STAGE2=0` (ATen build, lane-monotone by key) passed
    16/16 on both arms before the fix. Fused-forward capsules from binaries without the
    tag are correctness-suspect (1 row/rank class) and never-mix for fused-arm claims.
+10. **Scenario-1 data canon + DEFAULTS (2026-08-22, user decision — the
+    single source for every future data-based baseline sweep).** Two
+    canonical model lanes ONLY: **Kimi-K2-Thinking** (G=384, k=8,
+    chunk 14336) and **Qwen3-235B** (G=128, k=8, chunk 8192). K3 is
+    RETIRED — `Kimi-K3-synth` capsules are historical, never-mix.
+    Canonical data source, all sweeps:
+    - topic: `livecodebench/execution`, **sem=homog** (single-topic hot-
+      expert concentration is the point; no control topic in default
+      runs — `mmlu/philosophy` exists on disk for explicit ablations
+      only).
+    - layer: `s1layer=p5` (traced layer 5) is the DEFAULT; `m5`
+      (fifth-from-last: K2 56, Qwen 89) is kept as an explicit knob —
+      measured structure orderings flip by model, so m5 is profiled
+      only when named.
+    - evaluated batch: decode slots **[64, 96)** (w=32), REAL rows
+      duplicated as needed (sampling-with-replacement of intact top-k
+      sets; multiplicity M recorded as a cell fact). NEVER
+      marginal-sampled tokens, NEVER cross-topic pooling.
+    - placement oracle: the PREVIOUS window with gap g; **g=0 is the
+      DEFAULT** (oracle = slots [32, 64)). The gap ladder g ∈ {0, 16,
+      32} exists for drift studies only.
+    - information basis: EVERY expert-placement arm (EPLB / EPIC /
+      MoonEP / pllf) plans from the SAME oracle window — loads for the
+      load-only baselines, routing rows for ours. Self-oracle
+      (plan-on-the-evaluated-batch) is a labeled ceiling ablation, not
+      a default arm.
+    **DEFAULT SEMANTICS (standing user instruction): when a prompt says
+    "sweep" without explicitly asking to sweep/adjust `s1layer` or the
+    gap ladder, use the defaults above and do NOT vary anything on the
+    data-source side. When unsure whether a data-source axis is in
+    scope, ASK instead of expanding it — assume defaults for the
+    fastest profile.**
