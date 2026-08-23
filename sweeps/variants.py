@@ -1499,6 +1499,127 @@ VARIANTS = {
     # CLOSED — LOSER (2026-08-16): the eager pairing lost the composition
     # A/B (14.4 vs 9.95 ms at b8) — retained as the l01 eager ablation only,
     # per the layer1 CLOSED note above.
+    # ---- Mission-4 dispatch-audit candidates (2026-08-23) ------------------
+    # A/B ablations of l01_lbunion_compress, one knob each, paired in-capsule
+    # against the control on ONE binary (rule 4). Mechanisms:
+    #   pull2s : FLUX_A2AV_RELAY_PULL_STREAM — relay phase-1 pulls on their
+    #            own stream; round-dn wire put waits ONLY round dn's pull
+    #            event (the shipped single-stream order serialized round 1's
+    #            blocking put behind round NN-1's staging, zero data dep).
+    #   rswire2: FLUX_A2AV_RS_WIRE_STREAMS=2 — l1 compress wire ladder's
+    #            independent (sid, tn) blocking puts parity-split over two
+    #            internode streams (conn>1 only).
+    #   fanout : FLUX_A2AV_FANOUT re-test under TODAY'S regime (blocking
+    #            wire + real traces; the NR-06-era loss predates both, and
+    #            blocking relay sends make cross-round arrival inversion at
+    #            gateways MORE likely). Ablation-only per the 8.17 closure —
+    #            a canonicalization flip is a user decision.
+    "l01_lbunion_compress_pull2s": dict(
+        comm_pattern="l01_lbunion_compress_pull2s",
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "a2av_hier_compress",
+            "--l1_comm_pattern", "a2av_hier_compress",
+        ],
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1",
+            "FLUX_A2AV_RELAY_PULL_STREAM": "1",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "6", "FLUX_A2AV_RS_REDUCE_BLOCKS": "6", "FLUX_A2AV_RS_PRERED_BLOCKS": "4"},
+        requires=[
+            "FLUX_A2AV_LB_UNION",
+            "FLUX_A2AV_FUSED_STAGE2",
+            "FLUX_A2AV_EARLY_LAUNCH",
+            "FLUX_A2AV_RELAY_PULL_STREAM",
+            "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS",
+            "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+        ],
+        l1_pattern="a2av_hier_compress",
+    ),
+    "l01_lbunion_compress_rswire2": dict(
+        comm_pattern="l01_lbunion_compress_rswire2",
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "a2av_hier_compress",
+            "--l1_comm_pattern", "a2av_hier_compress",
+        ],
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1",
+            "FLUX_A2AV_RS_WIRE_STREAMS": "2",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "6", "FLUX_A2AV_RS_REDUCE_BLOCKS": "6", "FLUX_A2AV_RS_PRERED_BLOCKS": "4"},
+        requires=[
+            "FLUX_A2AV_LB_UNION",
+            "FLUX_A2AV_FUSED_STAGE2",
+            "FLUX_A2AV_EARLY_LAUNCH",
+            "FLUX_A2AV_RS_WIRE_STREAMS",
+            "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS",
+            "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+        ],
+        l1_pattern="a2av_hier_compress",
+    ),
+    "l01_lbunion_compress_fanout": dict(
+        comm_pattern="l01_lbunion_compress_fanout",
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "a2av_hier_compress",
+            "--l1_comm_pattern", "a2av_hier_compress",
+        ],
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1",
+            "FLUX_A2AV_FANOUT": "1",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "6", "FLUX_A2AV_RS_REDUCE_BLOCKS": "6", "FLUX_A2AV_RS_PRERED_BLOCKS": "4"},
+        requires=[
+            "FLUX_A2AV_LB_UNION",
+            "FLUX_A2AV_FUSED_STAGE2",
+            "FLUX_A2AV_EARLY_LAUNCH",
+            "FLUX_A2AV_FANOUT",
+            "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS",
+            "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+        ],
+        l1_pattern="a2av_hier_compress",
+    ),
+    "l01_lbunion_compress_m4stack": dict(
+        comm_pattern="l01_lbunion_compress_m4stack",
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "a2av_hier_compress",
+            "--l1_comm_pattern", "a2av_hier_compress",
+        ],
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1",
+            "FLUX_A2AV_RELAY_PULL_STREAM": "1",
+            "FLUX_A2AV_RS_WIRE_STREAMS": "2",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "6", "FLUX_A2AV_RS_REDUCE_BLOCKS": "6", "FLUX_A2AV_RS_PRERED_BLOCKS": "4"},
+        requires=[
+            "FLUX_A2AV_LB_UNION",
+            "FLUX_A2AV_FUSED_STAGE2",
+            "FLUX_A2AV_EARLY_LAUNCH",
+            "FLUX_A2AV_RELAY_PULL_STREAM",
+            "FLUX_A2AV_RS_WIRE_STREAMS",
+            "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS",
+            "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+        ],
+        l1_pattern="a2av_hier_compress",
+    ),
     "l01_lbunion_hier_eager": dict(
         comm_pattern="l01_lbunion_hier_eager",  # cells.csv label only
         driver="l01",

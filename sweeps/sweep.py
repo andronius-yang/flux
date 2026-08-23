@@ -100,6 +100,10 @@ SHAPE_PRESETS = {
         "H": 7168,
         "ffn_hidden": 2048,
         "chunk_bytes": 14336,
+        # l01 combine split: 7168/7 = 1024 = the qwen n_per operating
+        # point (the driver requires N/n_split % 512 == 0; the default 4
+        # gives 1792 and asserts — 2026-08-23 first-light fix)
+        "n_split_l1": 7,
         "trace_model": "Kimi-K2",
     },
 }

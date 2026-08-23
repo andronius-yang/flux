@@ -1,0 +1,22 @@
+# Mission-4: FAST arm (e2e-only by design; b8 keeps correctness, larger
+# budgets skip — its correctness reference OOMs beside the FAST heap).
+platform: perlmutter
+nodes: 4
+shape: qwen3
+variants:
+  - l01_fast
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog"
+budgets_mib: [1, 2, 4, 16, 32, 64]
+dtype: bfloat16
+modes: [e2e]
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+matrix_instance: "001"
+retries: 1
+timeout_s: 2400
+idle_timeout_s: 900
+skip_correctness: true
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"

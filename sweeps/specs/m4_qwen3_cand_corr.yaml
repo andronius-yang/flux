@@ -1,0 +1,25 @@
+# Mission-4 candidate correctness gates (b8, random payload via runner).
+platform: perlmutter
+nodes: 4
+shape: qwen3
+variants:
+  - l01_lbunion_compress
+  - l01_lbunion_compress_pull2s
+  - l01_lbunion_compress_rswire2
+  - l01_lbunion_compress_fanout
+  - l01_lbunion_compress_m4stack
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog"
+budgets_mib: [8]
+dtype: bfloat16
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+matrix_instance: "001"
+retries: 1
+timeout_s: 2400
+idle_timeout_s: 900
+skip_correctness: false
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"

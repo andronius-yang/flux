@@ -754,6 +754,16 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   cutlass::DeviceAllocation<int> group_flags;     // [nnodes * n_split]
   cutlass::DeviceAllocation<int> group_counters;  // [nnodes * n_split]
   c10::cuda::CUDAStream internode_stream;
+  // FLUX_A2AV_RS_WIRE_STREAMS=2 (2026-08-23 M4-C10): the compress wire
+  // ladder's blocking puts for (sid, tn) cells are pairwise independent
+  // (distinct wire-panel segments, destinations, and per-dest recv_sig
+  // copies) yet serialize on one stream; parity-split them over a second
+  // internode stream. Opt-in ablation; needs CUDA_DEVICE_MAX_CONNECTIONS
+  // > 1 (at conn=1 the shared front-end channel serializes regardless and
+  // any non-executable enqueue order deadlocks). Default 1 = shipped.
+  int rs_wire_streams_ = 1;
+  std::vector<c10::cuda::CUDAStream> internode_streams2_;   // 0 or 1
+  cudaEvent_t a2av_inter2_done_ = nullptr;
   cudaEvent_t staging_reset_event;
   uint64_t run_id_ = 0;
 
@@ -1068,6 +1078,15 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       }
       CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_intra_done_, cudaEventDisableTiming));
       CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_inter_done_, cudaEventDisableTiming));
+      this->rs_wire_streams_ = get_int_from_env("FLUX_A2AV_RS_WIRE_STREAMS", 1);
+      if (this->rs_wire_streams_ < 1) {
+        this->rs_wire_streams_ = 1;
+      }
+      if (this->rs_wire_streams_ > 1) {
+        this->internode_streams2_.push_back(create_internode_stream());
+        CUDA_CHECK(
+            cudaEventCreateWithFlags(&this->a2av_inter2_done_, cudaEventDisableTiming));
+      }
       CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_gateway_done_, cudaEventDisableTiming));
       CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_reduce_done_, cudaEventDisableTiming));
     }
@@ -1100,6 +1119,12 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       if (s.has_value()) {
         CUDA_CHECK(cudaStreamDestroy(s.value()));
       }
+    }
+    for (auto &s2 : this->internode_streams2_) {
+      CUDA_CHECK(cudaStreamDestroy(s2));
+    }
+    if (this->a2av_inter2_done_ != nullptr) {
+      CUDA_CHECK(cudaEventDestroy(this->a2av_inter2_done_));
     }
     for (auto e : {this->a2av_intra_done_, this->a2av_inter_done_, this->a2av_gateway_done_,
                    this->a2av_reduce_done_, this->a2av_conv_done_, this->a2av_prered_done_}) {
@@ -1363,6 +1388,9 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
     CUDA_CHECK(cudaStreamWaitEvent(intra_stream, this->staging_reset_event));
     if (NN > 1) {
       CUDA_CHECK(cudaStreamWaitEvent(this->internode_stream, this->staging_reset_event));
+      for (auto &s2 : this->internode_streams2_) {
+        CUDA_CHECK(cudaStreamWaitEvent(s2, this->staging_reset_event));
+      }
     }
     if (this->a2av_compress_) {
       CUDA_CHECK(
@@ -1584,8 +1612,12 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         for (int gi = 0; gi < NN - 1; gi++) {
           int tn = (my_node + 1 + gi) % NN;
           int d = tn * L + my_lr;
+          cudaStream_t wstream =
+              (this->rs_wire_streams_ > 1 && (gi & 1))
+                  ? (cudaStream_t)this->internode_streams2_[0]
+                  : (cudaStream_t)this->internode_stream;
           CU_CHECK(CUStreamWaitValue(
-              this->internode_stream,
+              wstream,
               (CUdeviceptr)(this->wire_flags_.get() + tn * this->n_split + sid),
               1,
               CU_STREAM_WAIT_VALUE_GEQ));
@@ -1599,14 +1631,14 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
                 this->run_id_,
                 NVSHMEM_SIGNAL_SET,
                 d,
-                this->internode_stream, this->local_world_size, this->node_idx);
+                wstream, this->local_world_size, this->node_idx);
           } else {
             nvshmemx_signal_op_on_stream(
                 recv_sig + this->rank * this->n_split + sid,
                 this->run_id_,
                 NVSHMEM_SIGNAL_SET,
                 d,
-                this->internode_stream);
+                wstream);
           }
         }
       } else if (NN > 1) {
@@ -1791,6 +1823,10 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
     if (NN > 1) {
       CUDA_CHECK(cudaEventRecord(this->a2av_inter_done_, this->internode_stream));
       CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_inter_done_));
+      for (auto &s2 : this->internode_streams2_) {
+        CUDA_CHECK(cudaEventRecord(this->a2av_inter2_done_, s2));
+        CUDA_CHECK(cudaStreamWaitEvent(stream_raw, this->a2av_inter2_done_));
+      }
     }
     if (gw_path) {
       CUDA_CHECK(cudaEventRecord(this->a2av_gateway_done_, gateway_stream));

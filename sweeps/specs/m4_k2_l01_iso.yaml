@@ -1,0 +1,24 @@
+# Mission-4 comm-only baseline ladder (8.23): iso arms, full budget ladder
+# minus the b8 correctness anchor (m4_k2_l01_b8corr). Canon rule 10 data.
+platform: perlmutter
+nodes: 4
+shape: k2
+variants:
+  - l01_torch
+  - l01_allgather_dense
+  - l01_lbunion_compress
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog"
+budgets_mib: [1, 2, 4, 16, 32, 64]
+dtype: bfloat16
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+matrix_instance: "001"
+retries: 1
+timeout_s: 2400
+idle_timeout_s: 900
+skip_correctness: true
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "8"
