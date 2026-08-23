@@ -120,3 +120,47 @@ arms in a capsule). Prototype scripts in session scratch
 5. d6 arms still run the legacy tail (their reroute-expansion needs the
    general path) — inflates baseline plan_ms; note when quoting plan
    premiums (comm/e2e comparisons unaffected).
+
+## DATA CANON — SETTLED (user decisions 2026-08-22, end of session)
+
+All future data-based sweeps use TWO canonical lanes; **K3 is retired**
+(synthesized pools stay as historical never-mix capsules; the upscale
+program is shelved).
+
+- **Models**: Kimi-K2-Thinking (G=384, k=8, 61 layers) + Qwen3-235B
+  (G=128, k=8, 94 layers). Same-prompt bonus: the dataset traced the
+  same benchmark items through both (lcb 480/479 req, philosophy
+  311/312).
+- **Canonical topic**: `livecodebench/execution` (both models). Chosen
+  on measurement: best volume + full slot coverage + M≈1.07 at the
+  b8 rungs, strongest concentration on K2 (headroom 25.9/27.3% at
+  8n/16n vs psychology 22.3/25.9). NOTE the model-dependent flip: on
+  Qwen, philosophy carries MORE headroom (37–55%) than lcb (30–47%) —
+  uniformity across models wins over per-lane maximization; philosophy
+  is the second rung where the flip itself is the finding.
+- **Control topic**: `mmlu/philosophy` (both models; K2's pulled
+  2026-08-22, pool_sha 5d7333eb6a28; Qwen lcb pool_sha 17cdb0b644c7).
+  K2 psychology (546 req) stays as the low-imbalance discriminator.
+- **Layer knob** `s1layer ∈ {p5, m5}`: p5 = traced layer 5 (both);
+  m5 = fifth-from-last (K2: 56, Qwen: 89). BOTH are canonical arms —
+  measured orderings flip by model (K2: p5 more structured; Qwen: m5
+  much more structured, e.g. philosophy m5 headroom 44.9/54.7% at
+  4n/8n) — profile both, never collapse the knob.
+- **Windows**: evaluated = decode slots [64, 96) (w=32, fully covered
+  in lcb both models); oracle = previous window, gap ladder g ∈
+  {0, 16, 32} → [32,64) / [16,48) / [0,32); wrong-topic control =
+  the other topic's eval window. Measured drift (ppm, eval-vs-oracle):
+  K2 lcb p5 104k/…/265k across the ladder, Qwen lcb p5 115k/…/264k;
+  wrong-topic 394–626k (3.4–5.5× margins hold everywhere).
+- **Eval batch composition**: REAL rows only, duplicated as needed
+  (sampling-with-replacement of intact top-k sets), multiplicity M
+  recorded as a cell fact. NO marginal sampling, NO cross-topic
+  pooling, NO time-widening beyond the window. Worst corner: 32n×b64 →
+  M≈39 (K2) — accepted; documented relief = w=48 at the cost of the
+  g=32 rung.
+- **Information basis**: every arm (EPLB/EPIC/ours) plans from the SAME
+  oracle window — loads for the load-only baselines, rows for ours;
+  self-oracle survives only as the labeled ceiling ablation.
+- Remaining plumbing (unchanged from the queue above): dslots+layer
+  extraction params in gen_trace_routing, oracle-routing sidecar,
+  oracle-basis eplb_load, `shape: k2` preset.
