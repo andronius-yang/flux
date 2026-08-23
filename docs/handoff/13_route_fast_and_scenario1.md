@@ -320,3 +320,88 @@ tail EAGER (d6 tail not graphed — available follow-up, ~0.5-1 ms).
   family (bincount + ragged gathers, ~21 sync-pattern sites) but total
   plan is only 2.3 ms and MoonEP's wall is its un-deduped combine
   (11-14 ms) — low-value target.
+
+## SYNC-FREE PLAN LANES: EPLB PORT + MOONEP AUDIT (8.23, job 57457910)
+
+The predicted fast-tail ports landed for both remaining planners
+(commit "sync-free plan lanes for EPLB + MoonEP"); the whole table was
+re-run in ONE job so every arm shares build + canon + accounting.
+
+**EPLB diagnosis (the real wall was not the syncs).** Stage attribution
+of the legacy 6.0/4.7 ms derive on login GPU (qwen/K2):
+rule 0.5/0.6 | reroute 3.9/2.8 | canon-sort 0.19/0.18 | layout 0.7/0.7.
+Inside reroute, ONE op dominated: the per-entry [R*N, Cmax] cummax
+(3.9/1.3 ms — torch's CUDA cummax kernel is ~60x slower than the
+cub-scan class; measured 0.9 vs 0.015 ms flat at 131k). Fixes, all
+bit-identical & validated on all 16 ranks x both models x every plan
+field (scratchpad validate_baseline_fast.py):
+  * cummax HOISTED to the [R*G, Cmax] table before the row gather
+    (row-wise op commutes with row gathering): 3.9 -> 0.06 ms;
+  * _run_ordinal_fast: self-searchsorted run starts replace the flat
+    cummax (0.94 -> 0.03 ms);
+  * interleave: one fixed 64-candidate window == legacy round 1
+    (Jacobsthal gaps make a sub-64 miss impossible below ~12 distinct
+    prime factors; the impossible case still fails LOUDLY via a flag in
+    the batched D2H, never silently);
+  * bincount -> index_add (hidden output-sizing D2H), receiver
+    placement via the sorted-position identity (sorted position j ==
+    seg_start[slot] + within-slot arrival ordinal: ONE stable sort +
+    cumsum + scatter), single pinned blob D2H.
+The quota RULE (largest_remainder_split + rank_quota_prefix_nonlocal)
+is untouched — authentic EPLB planning math, and never the cost.
+Login derive: 6.8 -> 2.3 (qwen), 5.1 -> 2.7 ms (K2).
+
+**MoonEP source-by-source audit (upstream checkout == 7745ffa exactly).**
+Subagent audit, phase-by-phase vs MoonshotAI/MoonEP moonep/planning.py:
+the ported planning kernel is VERBATIM in every computing phase (vblock
+histogram/scan, single-warp balance loop, quota-alloc greedy, top-B
+selection incl. >=/max-idx tie-breaks, segment/padding math, C2 binary
+search, dedup bitset); zero divergence outside the 7 declared
+deviations (all cross-node-sync/broadcast/sm90 mechanics replaced by
+replication). The 2.3 ms plan bracket = histogram + kernel + eager
+layout derive + bind; the derive (~1.9 ms of it) is TRANSPORT
+SCAFFOLDING: upstream builds ALL dispatch metadata in-kernel (src_info
+provenance + dedup builder warps in dispatch, zero-fill warp, one-sided
+NVLink stores straight off dst — no send lists, no splits, no host
+work, ZERO host syncs in its plan lane). So optimizing the derive is
+fair port-overhead removal. Two accounting caveats, recorded: dup-pair
+construction and zero-fill ARE authentic upstream per-iteration work —
+upstream charges them to the DISPATCH kernel, not plan; and upstream's
+plan lane being sync-free means any flux plan number containing derive
+D2H measures scaffolding, not MoonEP. Fast derive (same treatment class;
+dup pairs stay BITWISE, not just set-equal): 1.9 -> 1.3-1.5 ms login.
+
+**Shared-tail discovery applied everywhere:** the epic/LLC fast tails
+carried the same _run_ordinal cummax at their occ sites — swapped to
+the searchsorted spelling (validate_d6_fast ALL OK post-swap). This
+touches EPIC m1/m2 and LLC plan lanes, hence the full-table rerun.
+
+**Correctness gates (random payload):** eplb qwen+K2 (dispatch content
+bitwise + full journey allclose, 16/16), moonep qwen+K2 (l01 vs
+two-layer reference, 16/16), epic m2 qwen (bitwise, 16/16), llc qwen
+(bitwise, 16/16).
+
+**Final table (job 57457910, ONE job/build, canon data, oracle-window
+basis, l01 totals, planning timed per-iteration everywhere):**
+
+| arm | qwen | K2 | plan (timed) qwen/K2 |
+| MoonEP staged authentic | 23.33 | 28.37 | 1.59 / 1.67 (was 2.33/2.30) |
+| EPLB quota authentic    | 20.79 | 21.93 | 2.85 / 2.81 (was 6.05/4.78) |
+| EPIC m=1 d6             | 14.19 | 14.42 | 2.30 / 2.19 (was 2.62/2.50) |
+| EPIC m=2 d6 (PEO)       | 20.09 | 21.14 | 2.61 / 2.76 (was 2.74/2.86) |
+| LLC (ours)              | **12.12** | **13.70** | 1.11 / 1.10 |
+
+LLC over best-EPIC (m=1): **-14.6% qwen / -5.0% K2**. Over EPLB:
+-41.7/-37.5%. Over MoonEP: -48.1/-51.7%. EPLB's remaining plan ~2.8 ms
+is the authentic quota engine + ~45-kernel eager launch floor (graphing
+would cut ~1 ms more — NOT enabled, same as the d6 tail, so the
+ungraphed-tail class stays symmetric across baselines; LLC's loccap
+tail remains the only graphed one, as before). MoonEP totals stay
+combine-dominated (comb 11.2/14.4 ms) — its plan lane is now ~50% of
+what a per-iteration replicated planner costs at 4n; at higher node
+counts the removed sorts/syncs scale with R while the remaining floor
+is launch-bound, so the gap vs legacy widens. NEVER-MIX: all plan-lane
+numbers from jobs 57451349/57452535/smoke5 (pre-sync-free-lanes) are
+superseded by this table; totals differ mainly by plan_ms, comm within
+run-to-run band (K2 epic-m2 total +0.4 vs prior job = comm noise, its
+plan went DOWN).
