@@ -152,7 +152,7 @@ get_rs_threadblock_count() {
 // reduce must find free SMs while the GEMM still spins on later splits).
 int
 get_a2av_pack_blocks() {
-  // WinCast canonicalization (2026-08-23): 10/8/6 replaces 3/3/2 (specs had
+  // Slipstream canonicalization (2026-08-23): 10/8/6 replaces 3/3/2 (specs had
   // pinned 6/6/4). The ladders do payload-proportional work behind fixed
   // grids and were CTA-starved at high budgets: 10/8/6 cuts l1 by
   // 1.9-2.1 ms at b64 (monotone 4->6->10 dose-response, both canon models)
@@ -765,7 +765,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   // ladder's blocking puts for (sid, tn) cells are pairwise independent
   // (distinct wire-panel segments, destinations, and per-dest recv_sig
   // copies) yet serialize on one stream; parity-split them over a second
-  // internode stream. DEFAULT 2 since the WinCast canonicalization
+  // internode stream. DEFAULT 2 since the Slipstream canonicalization
   // (2026-08-23); =1 is the single-stream ablation. At conn=1 the split
   // preserves the ladder's enqueue order exactly (still an executable
   // schedule), it just buys nothing.
@@ -1086,7 +1086,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       }
       CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_intra_done_, cudaEventDisableTiming));
       CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_inter_done_, cudaEventDisableTiming));
-      // WinCast canonicalization (2026-08-23, M4 verdict capsules): the
+      // Slipstream canonicalization (2026-08-23, M4 verdict capsules): the
       // split wire ladder is the DEFAULT (l1 win sign-stable 16/16 fwd+rev
       // x both canon models x b2-b64; wire rule intact — every inter-node
       // put stays blocking putmem_signal). =1 is the single-stream
