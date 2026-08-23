@@ -25,6 +25,15 @@ if ! grep -q flash_comm_instance_count "$FAST_NVIDIA_DIR/alltoall_nvshmem.cpp"; 
     git -C "$SCRIPT_DIR/../3rdparty/FAST" apply "$SCRIPT_DIR/fast_two_instance.patch"
 fi
 
+# blocking-wire patch (2026-08-23): nbi putmem_signal -> blocking at every
+# wire site — the CXI signal-before-data fix (SCHEMA rule 6), reproduced in
+# this baseline at K2 shape. Idempotent via the marker comment.
+if ! grep -q flash_blocking_wire_patch \
+        "$FAST_NVIDIA_DIR/src/fast_alltoall/flash_alltoall_nvshmem.cu"; then
+    echo "applying scripts/fast_blocking_wire.patch to 3rdparty/FAST"
+    git -C "$SCRIPT_DIR/../3rdparty/FAST" apply "$SCRIPT_DIR/fast_blocking_wire.patch"
+fi
+
 if [ -z "${NVSHMEM_HOME:-}" ]; then
     echo "ERROR: NVSHMEM_HOME is unset; run 'source ./module.sh' (Perlmutter)" \
          "or 'source ./env_aws.sh' (AWS) first" >&2

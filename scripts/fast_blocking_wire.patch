@@ -1,0 +1,75 @@
+diff --git a/nvidia/src/fast_alltoall/flash_alltoall_nvshmem.cu b/nvidia/src/fast_alltoall/flash_alltoall_nvshmem.cu
+index 814ff00..c6d3e3c 100644
+--- a/nvidia/src/fast_alltoall/flash_alltoall_nvshmem.cu
++++ b/nvidia/src/fast_alltoall/flash_alltoall_nvshmem.cu
+@@ -1,4 +1,16 @@
+ #include "fast_alltoall/flash_alltoall_nvshmem.h"
++// flash_blocking_wire_patch (flux 2026-08-23): every putmem_signal here was
++// the _nbi_ variant. On Slingshot/CXI (libfabric) the nbi put_signal's
++// signal travels as a separate fi_send to the target proxy, UNORDERED vs
++// the RDMA data — receivers gating on sync_signal can read rows that have
++// not landed (one-epoch-stale/garbage tails; intermittent, rank-roaming,
++// invisible under static payloads). Proven on the flux a2av wire
++// (sweeps/SCHEMA.md protocol rule 6, docs/handoff/11_nvshmem_put_signal_
++// evidence) and reproduced in this baseline at K2 shape (l01_fast b8:
++// attempt 1 rank 3 final-allclose miss, attempt 2 rank 9 dispatch bitwise
++// miss, under per-iteration random payloads). Fix = the BLOCKING
++// putmem_signal_warp, the same shipping class as FLUX_A2AV_BLOCKING_WIRE.
++// Intra-node P2P is unaffected (both variants complete inline).
+ #include "fast_alltoall/fast_nvtx.h"
+ #include <cmath>
+ #include <cstdio>
+@@ -735,7 +747,7 @@ __global__ void spreadout_alltoallv_internode_kernel(
+                 const uint64_t send_offset = __ldg(&inter_sender_send_disp[send_rank_id]);
+                 const uint64_t recv_offset = __ldg(&inter_sender_recv_disp[send_rank_id]);
+                 const int64_t send_sz = __ldg(&inter_sender_transfer_sz[send_rank_id]);
+-                nvshmemx_putmem_signal_nbi_warp(
++                nvshmemx_putmem_signal_warp(
+                     recv_buffer + recv_offset,
+                     send_buffer + send_offset,
+                     send_sz,
+@@ -926,7 +938,7 @@ __global__ void p2p_kernel(
+         // }
+ 
+         if (warp_id == 0){
+-            nvshmemx_putmem_signal_nbi_warp(
++            nvshmemx_putmem_signal_warp(
+                 recv_buffer,
+                 send_buffer,
+                 send_sz_to_rank,
+@@ -943,7 +955,7 @@ __global__ void p2p_kernel(
+         // const uint32_t warp_offset = warp_id * times_per_warp;
+         // const uint32_t actual_times_this_warp = MIN(times_per_warp, rounds - warp_offset);
+         // for (uint i = 0; i < actual_times_this_warp; i++){
+-        //     nvshmemx_putmem_signal_nbi_warp(
++        //     nvshmemx_putmem_signal_warp(
+         //         recv_buffer + recv_offset + warp_offset + i * min_tx_sz_at_a_time,
+         //         send_buffer + send_offset + warp_offset + i * min_tx_sz_at_a_time,
+         //         min_tx_sz_at_a_time,
+@@ -1282,7 +1294,7 @@ __global__ void fanout_alltoallv_kernel(
+                 // The first warp initiates sending
+                 if (warp_id == 0) {
+                     uint8_t * recv_buf = recv_buffer + (sender_recv_disp[r * block_n + block_id]) + tx_offset;
+-                    nvshmemx_putmem_signal_nbi_warp(
++                    nvshmemx_putmem_signal_warp(
+                         recv_buf,
+                         send_buf,
+                         actual_send_sz_this_rank,
+@@ -1859,7 +1871,7 @@ __global__ void flash_internode_p2p(
+         if (warp_id == 0){
+             // use warp 0 in block 0 to do inter-node transfer
+             // gpu i only talks to gpu i at another server
+-            nvshmemx_putmem_signal_nbi_warp(
++            nvshmemx_putmem_signal_warp(
+                 recv_buffer + param -> dst_disp * data_size,
+                 send_buffer + param -> src_disp * data_size,
+                 param -> send_sz * data_size,
+@@ -2899,7 +2911,7 @@ __global__ void flash_internode_p2p_chunk(
+         
+         if (warp_id == 0) {
+             for (uint chunkid = 0; chunkid < c -> chunk_n; chunkid++){
+-                nvshmemx_putmem_signal_nbi_warp(
++                nvshmemx_putmem_signal_warp(
+                     recv_buffer + p->dst_disp + c->chunk_disp[chunkid],
+                     send_buffer + p->src_disp + c->chunk_disp[chunkid],
+                     c->chunk_sz[chunkid],
