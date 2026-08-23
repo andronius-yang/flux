@@ -1620,6 +1620,62 @@ VARIANTS = {
         ],
         l1_pattern="a2av_hier_compress",
     ),
+    # M4 l1 CTA-budget probe (2026-08-23): the pack kernel's fixed 6 CTAs
+    # move ALL M*N bytes and the pre-reduce's 4 CTAs merge the whole conv
+    # panel — payload-proportional work behind fixed budgets (audit 4e).
+    # Probe wider budgets on top of the rswire2 winner at high b.
+    "l01_lbunion_compress_rsw2_cta10": dict(
+        comm_pattern="l01_lbunion_compress_rsw2_cta10",
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "a2av_hier_compress",
+            "--l1_comm_pattern", "a2av_hier_compress",
+        ],
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1",
+            "FLUX_A2AV_RS_WIRE_STREAMS": "2",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10", "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_RS_PRERED_BLOCKS": "6"},
+        requires=[
+            "FLUX_A2AV_LB_UNION",
+            "FLUX_A2AV_FUSED_STAGE2",
+            "FLUX_A2AV_EARLY_LAUNCH",
+            "FLUX_A2AV_RS_WIRE_STREAMS",
+            "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS",
+            "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+        ],
+        l1_pattern="a2av_hier_compress",
+    ),
+    "l01_lbunion_compress_rsw2_cta4": dict(
+        comm_pattern="l01_lbunion_compress_rsw2_cta4",
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "a2av_hier_compress",
+            "--l1_comm_pattern", "a2av_hier_compress",
+        ],
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1",
+            "FLUX_A2AV_RS_WIRE_STREAMS": "2",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "4", "FLUX_A2AV_RS_REDUCE_BLOCKS": "4", "FLUX_A2AV_RS_PRERED_BLOCKS": "3"},
+        requires=[
+            "FLUX_A2AV_LB_UNION",
+            "FLUX_A2AV_FUSED_STAGE2",
+            "FLUX_A2AV_EARLY_LAUNCH",
+            "FLUX_A2AV_RS_WIRE_STREAMS",
+            "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS",
+            "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+        ],
+        l1_pattern="a2av_hier_compress",
+    ),
     "l01_lbunion_hier_eager": dict(
         comm_pattern="l01_lbunion_hier_eager",  # cells.csv label only
         driver="l01",
