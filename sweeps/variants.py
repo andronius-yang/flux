@@ -910,6 +910,68 @@ VARIANTS = {
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
     ),
+    # ----- pllf_* — PLACE-lambda FAST (8.22.placefast, OURS) ---------
+    # Batched bounded-pass zero-D2H placement solver
+    # (flux.testing.placelambda_fast): affinity seed + balance repair +
+    # batched FM + batched replication; Stage C (rank assignment) off the
+    # per-iteration path. NEW arm — placements never compared bitwise
+    # against placelambda_gpu cells (same never-mix rule as loccap_gpu vs
+    # exact loccap). _dyn = per-iteration warm-seeded solve + tensor
+    # decision, CUDA-graph-captured (FLUX_PLACE_FAST_GRAPH=1), verdicts
+    # ring-buffered (zero D2H in-window).
+    "pllf_hc_lcg0625": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "placelambda_fast", "--groups", "1", "--router",
+                   "loccap_gpu", "--eps", "0.0625"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "pllf_hc_lcg0625_dyn": dict(
+        comm_pattern="epic_hc_a2av", driver="epic",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "placelambda_fast", "--groups", "1", "--router",
+                   "loccap_gpu", "--eps", "0.0625",
+                   "--place_dynamic", "dynamic"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "pllf_l01_hc_lcg0625": dict(
+        comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "placelambda_fast", "--groups", "1", "--layers", "l01",
+                   "--router", "loccap_gpu", "--eps", "0.0625"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "pllf_l01_hc_lcg0625_dyn": dict(
+        comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "placelambda_fast", "--groups", "1", "--layers", "l01",
+                   "--router", "loccap_gpu", "--eps", "0.0625",
+                   "--place_dynamic", "dynamic"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    # l01 twins of the EXACT pll arms (same-capsule anchors for the fast
+    # solver: static quality parity + the dynamic place_ms gap)
+    "pll_l01_hc_lcg0625": dict(
+        comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "placelambda_gpu", "--groups", "1", "--layers", "l01",
+                   "--router", "loccap_gpu", "--eps", "0.0625"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    "pll_l01_hc_lcg0625_dyn": dict(
+        comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "placelambda_gpu", "--groups", "1", "--layers", "l01",
+                   "--router", "loccap_gpu", "--eps", "0.0625",
+                   "--place_dynamic", "dynamic"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
     "epic_hc_m1_na_lbu": dict(
         comm_pattern="epic_hc_a2av", driver="epic",
         test_args=["--transport", "hier_compress", "--placement",

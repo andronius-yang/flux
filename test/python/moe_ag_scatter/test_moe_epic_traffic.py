@@ -102,6 +102,7 @@ from flux.testing.placelambda_gpu import (
     place_decision,
     placement_hash,
 )
+from flux.testing import placelambda_fast as plfast
 from flux.testing.loccap_semantics import (
     d6_route,
     evensplit_route,
@@ -876,7 +877,7 @@ def parse_args():
                         " combine -> terminal Sum (EPIC Fig 10(b))")
     parser.add_argument("--placement", default="epic",
                         choices=["none", "epic", "nodeaware",
-                                 "placelambda_gpu"],
+                                 "placelambda_gpu", "placelambda_fast"],
                         help="epic = §4.2 (redundancy + GPU greedy + NIC "
                         "stage) from the pool load; none = fixed contiguous "
                         "homing, empty redundant slots; nodeaware = "
@@ -1142,12 +1143,43 @@ if __name__ == "__main__":
                 "solve — cross-device determinism bug, never noise")
             pblob["predicted"] = sblob.get("predicted", [])
         plan = build_nodeaware_plan(cfg, tpe, pblob)
+    elif args.placement == "placelambda_fast":
+        # PLACE-lambda FAST (session 8.22.placefast): batched bounded-pass
+        # zero-D2H solver (flux.testing.placelambda_fast). Cold solve at
+        # setup = the resident placement; rank-level finalize (Stage C)
+        # runs here, OFF the per-iteration path. New arm — never compare
+        # its placements bitwise against placelambda_gpu cells.
+        assert args.routing_file, (
+            "--placement placelambda_fast is defined for trace cells only")
+        tk_dev = topk_all.long().cuda()
+        pf_cfg = dict(
+            passes_a=int(os.environ.get("FLUX_PLACE_FAST_PA", "4")),
+            passes_b=int(os.environ.get("FLUX_PLACE_FAST_PB", "3")),
+            repair_passes=int(os.environ.get("FLUX_PLACE_FAST_REPAIR",
+                                             "2")),
+            seed=os.environ.get("FLUX_PLACE_FAST_SEED", "affinity"),
+        )
+        torch.cuda.synchronize()
+        t_ps = time.perf_counter()
+        pf_solve = plfast.build_placement_fast(
+            tk_dev, DIST_ENV.LOCAL_WORLD_SIZE, cfg.nlp, args.G, **pf_cfg)
+        hosts_pll = plfast.finalize_hosts(
+            pf_solve, W, DIST_ENV.LOCAL_WORLD_SIZE, cfg.nlp,
+            method=os.environ.get("FLUX_PLACE_FAST_FINALIZE", "snake"))
+        torch.cuda.synchronize()
+        place_solver_ms = (time.perf_counter() - t_ps) * 1e3
+        pblob = {"version": 2, "G": args.G, "W": W, "nlp": cfg.nlp,
+                 "hosts": hosts_pll,
+                 "planner": plfast.stats_host(pf_solve)}
+        plan = build_nodeaware_plan(cfg, tpe, pblob)
     else:
         plan = build_fixed_plan(cfg, tpe)
     plan_host_ms = (time.perf_counter() - t0) * 1e3
-    if args.placement != "placelambda_gpu":
+    if args.placement not in ("placelambda_gpu", "placelambda_fast"):
         place_solver_ms = 0.0
         hosts_pll = None
+    if args.placement != "placelambda_fast":
+        pf_solve = None
 
     # Replica selection. D6 (the rule-5 arms) is re-derived per iteration
     # on device by EpicIterPlanner; this setup pass builds the CPU
@@ -1414,7 +1446,85 @@ if __name__ == "__main__":
     # this arm times the full decision apparatus.
     place_fn = None
     place_dec_log = []
-    if args.place_dynamic == "dynamic":
+    pf_dec_ring = None
+    if args.place_dynamic == "dynamic" and pf_solve is not None:
+        # FAST dynamic lane (session 8.22.placefast): warm-seeded
+        # bounded-pass solve + tensorized decision, ZERO D2H in-loop —
+        # verdicts land in a device ring buffer read once at teardown.
+        # FLUX_PLACE_FAST_GRAPH=1 (default) CUDA-graph-captures the whole
+        # solve+decision at setup and replays it per iteration.
+        assert per_iter, (
+            "dynamic placement is a rule-5 arm (m=1, router d6/loccap_gpu)")
+        _tk_place = topk_all.long().cuda()
+        if int(os.environ.get("FLUX_PLACE_FAST_STALE_RESIDENT", "0")):
+            # trigger probe: resident = the CONTIG (fixed-style) layout
+            # instead of the fresh cold solve — the decision must fire
+            # loudly here and stay ~0 on the normal arm (resident==fresh)
+            _res_primary = plfast.seed_contig(
+                args.G, W, DIST_ENV.LOCAL_WORLD_SIZE,
+                pf_solve["primary"].device)
+            _res_ion = torch.zeros_like(pf_solve["inst_nodes"])
+            _res_ion[torch.arange(args.G, device=_res_ion.device),
+                     _res_primary] = True
+        else:
+            _res_primary = pf_solve["primary"].clone()
+            _res_ion = pf_solve["inst_nodes"].clone()
+        warm_cfg = dict(
+            seed="warm", seed_primary=_res_primary,
+            seed_inst_nodes=_res_ion,
+            keep_bonus=int(os.environ.get("FLUX_PLACE_FAST_KEEP_BONUS",
+                                          "90090")),  # LCM16//8
+            move_margin=int(os.environ.get("FLUX_PLACE_FAST_MOVE_MARGIN",
+                                           "0")),
+            passes_a=int(os.environ.get("FLUX_PLACE_FAST_WARM_PA", "2")),
+            passes_b=int(os.environ.get("FLUX_PLACE_FAST_WARM_PB", "1")),
+            repair_passes=int(os.environ.get(
+                "FLUX_PLACE_FAST_WARM_REPAIR", "1")))
+        _n_iters_tot = args.warmup_iters + args.iters
+        pf_dec_ring = torch.zeros(_n_iters_tot, 5, dtype=torch.int64,
+                                  device="cuda")
+
+        _pf_trigger = os.environ.get("FLUX_PLACE_FAST_TRIGGER", "cover")
+
+        def _pf_hot():
+            fresh = plfast.build_placement_fast(
+                _tk_place, DIST_ENV.LOCAL_WORLD_SIZE, cfg.nlp, args.G,
+                **warm_cfg)
+            return plfast.place_decision_fast(
+                _tk_place, _res_ion, fresh, DIST_ENV.LOCAL_WORLD_SIZE,
+                to_host=False, mode=_pf_trigger,
+                primary_cur=_res_primary)
+
+        _pf_graph = None
+        if bool(int(os.environ.get("FLUX_PLACE_FAST_GRAPH", "1"))):
+            try:
+                for _ in range(2):
+                    _pf_hot()
+                torch.cuda.synchronize()
+                _pf_graph = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(_pf_graph):
+                    _pf_packed = _pf_hot()
+                _pf_graph.replay()
+                torch.cuda.synchronize()
+            except Exception as _e:  # noqa: BLE001 — fall back eager
+                if rank == 0:
+                    print(f"place-fast graph capture failed "
+                          f"({type(_e).__name__}: {_e}); running eager",
+                          flush=True)
+                _pf_graph = None
+        if _pf_graph is not None:
+            def place_fn(_i):
+                _pf_graph.replay()
+                pf_dec_ring[_i].copy_(_pf_packed)   # D2D, async
+        else:
+            def place_fn(_i):
+                pf_dec_ring[_i].copy_(_pf_hot())    # D2D, async
+        if rank == 0:
+            print(f"place-fast dynamic lane: warm_cfg="
+                  f"{ {k: v for k, v in warm_cfg.items() if not torch.is_tensor(v)} } "
+                  f"graph={'on' if _pf_graph is not None else 'off'}",
+                  flush=True)
+    elif args.place_dynamic == "dynamic":
         assert per_iter, (
             "dynamic placement is a rule-5 arm (m=1, router d6/loccap_gpu)")
         _tk_place = topk_all.long().cuda()
@@ -1556,6 +1666,17 @@ if __name__ == "__main__":
             place_fn=place_fn,
         )
 
+    if pf_dec_ring is not None:
+        # ONE teardown sync converts the device ring into the reference
+        # dict form (zero-D2H contract held during the loop)
+        ring_h = pf_dec_ring.cpu().tolist()
+        for row in ring_h:
+            lb_c, lb_n, gp, n_add, n_rem = (int(x) for x in row)
+            place_dec_log.append({
+                "lb_cur": lb_c, "lb_new": lb_n, "gain_ppm": gp,
+                "moves_add": n_add, "moves_remove": n_rem,
+                "trigger": int(gp >= args.place_gain_threshold_ppm),
+            })
     if place_dec_log:
         # static per-cell routing => every iteration's decision is
         # identical by construction; record the constant + a sanity check
