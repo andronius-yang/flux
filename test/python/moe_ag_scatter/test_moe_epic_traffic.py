@@ -1376,8 +1376,15 @@ if __name__ == "__main__":
             inkernel_swap=(args.migration == "inkernel"),
             wire=args.hc_wire, **hc_kwargs)
         if args.layers == "l01":
-            # Mode-2 combine: per-group TopkReduceScatterOp (S3)
-            runner.enable_hc_combine(n_split=args.l1_n_split)
+            # Mode-2 combine: per-group TopkReduceScatterOp (S3).
+            # Combine CAPACITY mode for the relaxed kernel router: per-
+            # iteration routing variance needs capacity-sized inbuf/scale
+            # (the provable recv bound — same bound as the dispatch side)
+            _hcc_cap = (pll_bounds["recv_cap"]
+                        if (args.router == "loccap_sl"
+                            and pll_bounds is not None) else None)
+            runner.enable_hc_combine(n_split=args.l1_n_split,
+                                     m_capacity=_hcc_cap)
 
     place_bytes, place_ms = runner.place_weights(TP_GROUP)
     # AFTER place_weights: the grouped backend snapshots compacted weight

@@ -91,6 +91,17 @@ SHAPE_PRESETS = {
         "chunk_bytes": 8192,
         "trace_model": "Qwen3-235B",
     },
+    # Kimi-K2 native (SCHEMA rule 10 data canon, 2026-08-22): real
+    # temporal traces, the canonical scenario-1/2 lane. H 7168, moe ffn
+    # 2048, 384 routed experts topk 8; l01 split: 7168/4 = 1792 (%8==0).
+    "k2": {
+        "G": 384,
+        "topk": 8,
+        "H": 7168,
+        "ffn_hidden": 2048,
+        "chunk_bytes": 14336,
+        "trace_model": "Kimi-K2",
+    },
 }
 
 # defaults for the fully-resolved spec; anything not overridden by --spec or

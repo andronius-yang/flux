@@ -1233,11 +1233,17 @@ class EpicIterPlanner:
             torch.arange(ntokens, device=device, dtype=torch.int64) // cfg.S)
         self._pad_vslot = self._home_of_token * self.gpe + cfg.nlp
         if router == "loccap_sl":
-            # relaxed kernel arm: sender-local row + communicated agreement
+            # relaxed kernel arm: sender-local row + communicated agreement.
+            # l01 combine IS supported since 8.22.route, but only through
+            # the INWINDOW path (derive_routed_meta + derive_combine_meta
+            # refresh the combine metadata per iteration; enable_hc_combine
+            # m_capacity sizes the inbuf to the provable recv bound). The
+            # LEGACY python hcc planner path stays excluded — the fast tail
+            # ships vce only.
             assert not self.hcc, (
-                "loccap_sl v1 excludes the l01 hier-compress combine (its "
-                "inbuf is frozen exact-size; per-iteration m_per_rank "
-                "varies under the relaxed router)")
+                "loccap_sl needs the inwindow meta path for l01 (legacy "
+                "python hcc planning is not built from the fast tail); "
+                "run with --hc_meta inwindow + combine capacity mode")
             self._topk_own_i32 = (topk_all[rank].int().contiguous()
                                   .to(device))
             self._phys_gather = torch.empty(
@@ -1438,10 +1444,26 @@ class EpicIterPlanner:
             if kstats is not None:
                 self._g_kstats_in.copy_(kstats.reshape(-1).long())
         self._tail_graph.replay()
+        # graph outputs live in the capture pool; downstream kernels read
+        # the plan tensors on OTHER streams (comm / hcc side streams), so
+        # handing pool memory across the boundary risks reuse races (seen
+        # as CUTLASS internal errors / illegal access on the grouped
+        # GEMM, data-timing dependent). Copy every consumed output into
+        # persistent buffers on the current stream — a few ~us D2D
+        # copies — and build the plan from those.
+        if getattr(self, "_g_tail_persist", None) is None:
+            self._g_tail_persist = {
+                k: torch.empty_like(v)
+                for k, v in self._g_tail_out.items()
+                if torch.is_tensor(v)}
+        for k, dst in self._g_tail_persist.items():
+            dst.copy_(self._g_tail_out[k])
+        outs = dict(self._g_tail_out)
+        outs.update(self._g_tail_persist)
         self._g_blob_pin.copy_(self._g_tail_out["blob_dev"],
                                non_blocking=True)
         torch.cuda.synchronize()
-        return self._fast_tail_host(self._g_tail_out, self._g_blob_pin,
+        return self._fast_tail_host(outs, self._g_blob_pin,
                                     has_kstats=kstats is not None)
 
     def _derive_from_phys_fast(self, phys_all, kstats=None) -> EpicIterPlan:
@@ -2217,6 +2239,15 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         )
         self._group_splits_cpu[0] = torch.tensor(ip.seg_rows,
                                                  dtype=torch.int64)
+        # 8.22 root-cause fix: enable_grouped_gemm captured a REFERENCE to
+        # the setup splits tensor; rebinding _group_splits_cpu alone left
+        # the grouped GEMM segmenting every iteration with SETUP sizes —
+        # silently wrong under per-iteration routing variance (relaxed
+        # loccap_sl), and an illegal access / CUTLASS internal error once
+        # the deviation crosses the input slice (observed: qwen canon
+        # oracle cells, rank 5). Keep the GEMM's splits in lockstep.
+        if getattr(self, "_grouped_splits", None):
+            self._grouped_splits[0] = self._group_splits_cpu[0]
         if self.transport == "nvshmem":
             assert ip.max_pair_rows <= self._epic_max_split, (
                 f"pair rows {ip.max_pair_rows} exceed All2AllSingle "
@@ -2509,7 +2540,8 @@ class EpicLayer0Runner(EPLBLayer0Runner):
             self._num_comm_sm,
         )
 
-    def enable_hc_combine(self, n_split: int = 4, pack_blocks: int = 3):
+    def enable_hc_combine(self, n_split: int = 4, pack_blocks: int = 3,
+                          m_capacity: int = None):
         """EPIC Mode-2 combine (S3): one flux.TopkReduceScatterOp per group
         over the group's virtual copy space (topk = K_g; pad rows carry
         zero data + zero vec_scale). Each group's run() returns the PARTIAL
@@ -2543,6 +2575,15 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         nn = W // L
         self._hcc_nsplit = n_split
         self._hcc_pack_blocks = pack_blocks
+        # combine CAPACITY mode (8.22.route: l01 x relaxed loccap_sl —
+        # per-iteration routing variance): inbuf/scale allocated at the
+        # PROVABLE recv bound (loccap_sl_bounds.recv_cap, the same bound
+        # the dispatch-side reserve_recv_capacity uses); each iteration
+        # the pack slices [0, n_rows). None = legacy exact-size (static-
+        # routing arms unchanged). The combine METADATA is already
+        # per-iteration in-window (derive_routed_meta +
+        # derive_combine_meta); the op ctor m_full is already worst-case.
+        self._hcc_m_capacity = m_capacity
         self._hcc_stream = torch.cuda.Stream(priority=-1)
         import os as _os
         self._hcc_stream_edges = _os.environ.get(
@@ -2684,12 +2725,14 @@ class EpicLayer0Runner(EPLBLayer0Runner):
             wp, wc, rp, rr = build_a2av_compress_indices(
                 routing_cpu, splits_cpu, uc, self.rank, W, nn, b.K_g)
             entry.update(uc=uc, wire=[wp, wc], redcsr=[rp, rr])
+        cap_rows = getattr(self, "_hcc_m_capacity", None)
+        rows = max(entry["m_this"], 1) if cap_rows is None else \
+            max(cap_rows, entry["m_this"], 1)
         entry["inbuf"] = torch.zeros(
-            max(entry["m_this"], 1), self.cfg.H, dtype=self.dtype,
-            device=self.device)
+            rows, self.cfg.H, dtype=self.dtype, device=self.device)
         entry["scale"] = torch.zeros(
-            max(entry["m_this"], 1), dtype=torch.float32,
-            device=self.device)
+            rows, dtype=torch.float32, device=self.device)
+        entry["m_use"] = max(entry["m_this"], 1)
 
     def _rebuild_hc_combine(self):
         """Post-migration combine refresh: the ops are frozen (m_full, K_g,
@@ -2896,12 +2939,26 @@ class EpicLayer0Runner(EPLBLayer0Runner):
                 return
             e = self._hcc[g]
             base = self.elay.seg_start[grp.slot_lo]
-            # the op packs M_this_ep = inbuf.size(0) rows: a per-iteration
-            # row count below that would leave stale tail rows in the pack
-            assert e["inbuf"].size(0) == n_rows, (
-                f"group {g}: hcc inbuf rows {e['inbuf'].size(0)} != "
-                f"layout rows {n_rows} (per-iteration routing variance is "
-                "not supported by the frozen hcc inbuf yet)")
+            # the op packs M_this_ep = inbuf-ARG.size(0) rows; combine_group
+            # passes the [0, m_use) slice, so under capacity mode a varying
+            # per-iteration row count is legal (stale tail rows sit beyond
+            # the slice and are never packed)
+            if getattr(self, "_hcc_m_capacity", None) is not None:
+                assert n_rows <= e["inbuf"].size(0), (
+                    f"group {g}: iteration combine rows {n_rows} exceed "
+                    f"the reserved capacity {e['inbuf'].size(0)} — "
+                    "provable-bound breach (sizing bug, never noise)")
+                e["m_use"] = max(n_rows, 1)
+                if n_rows == 0:
+                    e["inbuf"][:1].zero_()
+                    e["scale"][:1].zero_()
+            else:
+                assert e["inbuf"].size(0) == n_rows, (
+                    f"group {g}: hcc inbuf rows {e['inbuf'].size(0)} != "
+                    f"layout rows {n_rows} (per-iteration routing variance "
+                    "needs combine capacity mode — enable_hc_combine("
+                    "m_capacity=...))")
+                e["m_use"] = max(n_rows, 1)
             e["inbuf"][:n_rows].copy_(self.group1_outputs[g])
             e["scale"][:n_rows].copy_(
                 self.weights_buf[base:base + n_rows])
@@ -2940,11 +2997,12 @@ class EpicLayer0Runner(EPLBLayer0Runner):
                 self._hcc_stream.wait_stream(stream)
             e["barriers"][self.rank % self._hc_L].fill_(1)
             self._hcc_group_barrier.barrier_all(stream.cuda_stream)
+            m_use = e.get("m_use", e["inbuf"].size(0))
             e["op"].run(
-                [e["inbuf"]], e["partial"],
+                [e["inbuf"][:m_use]], e["partial"],
                 self.rank * b.gpe, b.gpe,
                 self._hc_splits_gpu[g], e["routing"],
-                [e["scale"]],
+                [e["scale"][:m_use]],
                 self._hcc_pack_blocks,
                 self._hcc_stream.cuda_stream,
                 # inwindow mode refreshes sps per iteration (migration can
