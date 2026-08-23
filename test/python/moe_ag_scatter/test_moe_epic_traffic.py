@@ -855,6 +855,13 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--traffic_matrix", type=str, required=True)
     parser.add_argument("--routing_file", type=str, default=None)
+    parser.add_argument("--oracle_routing_file", type=str, default=None,
+                        help="scenario-1 placement oracle: solve the "
+                        "static placement on THIS routing (the sampled "
+                        "previous batch) instead of the evaluated batch "
+                        "(placement placelambda_fast only; the dynamic "
+                        "lane still observes the evaluated batch — its "
+                        "trigger then measures oracle->realized drift)")
     parser.add_argument("--chunk_bytes", type=int, default=8192)
     parser.add_argument("--H", type=int, default=4096)
     parser.add_argument("--ffn_hidden_size", type=int, default=4096)
@@ -1152,6 +1159,15 @@ if __name__ == "__main__":
         assert args.routing_file, (
             "--placement placelambda_fast is defined for trace cells only")
         tk_dev = topk_all.long().cuda()
+        tk_solve = tk_dev
+        if args.oracle_routing_file:
+            # scenario-1 (canonical): the placement observes the SAMPLED
+            # PREVIOUS batch (window-w earlier decode slots, same layer),
+            # never the evaluated batch — no self-oracle.
+            _oc = load_routing_file(args.oracle_routing_file, args.G,
+                                    args.topk)
+            assert _oc.shape[0] % W == 0, "oracle rows not divisible by W"
+            tk_solve = _oc.view(W, -1, args.topk).long().cuda()
         pf_cfg = dict(
             passes_a=int(os.environ.get("FLUX_PLACE_FAST_PA", "4")),
             passes_b=int(os.environ.get("FLUX_PLACE_FAST_PB", "3")),
@@ -1162,7 +1178,7 @@ if __name__ == "__main__":
         torch.cuda.synchronize()
         t_ps = time.perf_counter()
         pf_solve = plfast.build_placement_fast(
-            tk_dev, DIST_ENV.LOCAL_WORLD_SIZE, cfg.nlp, args.G, **pf_cfg)
+            tk_solve, DIST_ENV.LOCAL_WORLD_SIZE, cfg.nlp, args.G, **pf_cfg)
         hosts_pll = plfast.finalize_hosts(
             pf_solve, W, DIST_ENV.LOCAL_WORLD_SIZE, cfg.nlp,
             method=os.environ.get("FLUX_PLACE_FAST_FINALIZE", "snake"))
@@ -1172,6 +1188,22 @@ if __name__ == "__main__":
                  "hosts": hosts_pll,
                  "planner": plfast.stats_host(pf_solve)}
         plan = build_nodeaware_plan(cfg, tpe, pblob)
+        _h_eval = plfast.demand_hist(tk_dev, DIST_ENV.LOCAL_WORLD_SIZE,
+                                     args.G)
+        _h_sol = plfast.demand_hist(tk_solve, DIST_ENV.LOCAL_WORLD_SIZE,
+                                    args.G)
+        _drift = plfast.drift_ppm(_h_eval, _h_sol)
+        RECORDER.emit_info(
+            epic_pll_oracle_file=args.oracle_routing_file or "",
+            epic_pll_oracle_basis=("prev_batch"
+                                   if args.oracle_routing_file
+                                   else "self"),
+            epic_pll_oracle_drift_ppm=_drift,
+        )
+        if rank == 0:
+            print(f"placement basis: "
+                  f"{'ORACLE ' + args.oracle_routing_file if args.oracle_routing_file else 'self (batch)'}"
+                  f"; oracle->batch drift {_drift} ppm", flush=True)
     else:
         plan = build_fixed_plan(cfg, tpe)
     plan_host_ms = (time.perf_counter() - t0) * 1e3
@@ -1210,7 +1242,9 @@ if __name__ == "__main__":
         # check_against asserts bitwise equality against this routing
         phys_all_route, _pll_rstats = loccap_route_gpu(
             topk_all.long().cpu(), plan.p2l, plan.l2p, plan.lcnts,
-            cfg.nlp, DIST_ENV.LOCAL_WORLD_SIZE, args.eps)
+            cfg.nlp, DIST_ENV.LOCAL_WORLD_SIZE, args.eps,
+            remote_cap_only=bool(int(os.environ.get(
+                "FLUX_LOCCAP_REMOTE_CAP_ONLY", "0"))))
         plan.phys_override = phys_all_route
     elif args.router == "loccap_sl":
         # KERNEL arm (relaxed): the setup reference is the deterministic
@@ -1221,7 +1255,9 @@ if __name__ == "__main__":
         phys_all_route, pll_aux = loccap_route_sl(
             topk_all.long().cpu(), plan.p2l, plan.l2p, plan.lcnts,
             cfg.nlp, DIST_ENV.LOCAL_WORLD_SIZE, args.eps,
-            return_tables=True)
+            return_tables=True,
+            remote_cap_only=bool(int(os.environ.get(
+                "FLUX_LOCCAP_REMOTE_CAP_ONLY", "0"))))
         plan.phys_override = phys_all_route
         pll_bounds = loccap_sl_bounds(pll_aux, W, args.pll_f_cap)
         args.pll_f_cap = pll_bounds["f_cap"]  # resolve auto for planner/facts
@@ -1428,11 +1464,29 @@ if __name__ == "__main__":
             b0 = runner._hc_bundles[0]
             sd, scd, sps_c, uc_c = runner._hc_ops[0].derive_routed_meta(
                 vce_chk)
-            assert torch.equal(sd.cpu(), b0.meta.splits), "iw splits drift"
-            assert torch.equal(scd.cpu(), b0.meta.scatter_index), (
-                "in-window stable scatter index != python reference")
-            assert torch.equal(sps_c, b0.meta.splits_per_source)
-            assert torch.equal(uc_c, b0.meta.a2av_unique_counts)
+            if (args.router in ("loccap_sl", "loccap_gpu")
+                    and int(os.environ.get("FLUX_PLL_FAST_TAIL", "1"))):
+                # fast tail: vce is topk-column-ordered, so the setup
+                # bundle's canonical-order meta is not bitwise-comparable.
+                # The guard's meaning is op == python ON THE SAME vce —
+                # recompute the python reference from vce_chk directly.
+                from flux.testing.epic_semantics import python_meta_from_vce
+                r_sd, r_scd, r_sps, r_uc = python_meta_from_vce(
+                    vce_chk, W, S, iter_planner.gpe, iter_planner.nn,
+                    DIST_ENV.LOCAL_WORLD_SIZE)
+                assert torch.equal(sd.long().cpu(), r_sd.long().cpu()), (
+                    "iw splits drift (fast tail)")
+                assert torch.equal(scd.long().cpu(), r_scd.long().cpu()), (
+                    "in-window stable scatter index != python-on-same-vce")
+                assert torch.equal(sps_c.long().cpu(), r_sps.long().cpu())
+                assert torch.equal(uc_c.long().cpu(), r_uc.long().cpu())
+            else:
+                assert torch.equal(sd.cpu(), b0.meta.splits), (
+                    "iw splits drift")
+                assert torch.equal(scd.cpu(), b0.meta.scatter_index), (
+                    "in-window stable scatter index != python reference")
+                assert torch.equal(sps_c, b0.meta.splits_per_source)
+                assert torch.equal(uc_c, b0.meta.a2av_unique_counts)
         runner.bind_iter_plan(ip0)
     elif rank == 0:
         print("timing_accounting=legacy_untimed_plan (m>1 or a python "

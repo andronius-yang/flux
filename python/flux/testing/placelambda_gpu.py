@@ -131,7 +131,7 @@ def instance_tables_gpu(l2p, lcnts, nlp, ranks_per_node, R=None):
 # --------------------------------------------------------------------------
 
 def loccap_route_gpu(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
-                     repair_rounds=2):
+                     repair_rounds=2, remote_cap_only=False):
     """[R, S, K] logical expert ids -> ([R, S, K] int32 physical slots,
     stats dict). Bounded-round vectorized LocCap:
 
@@ -168,6 +168,13 @@ def loccap_route_gpu(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
     total_rows = R * S * K
     cap = total_rows if math.isinf(eps) else int(math.ceil((1.0 + eps) * S * K))
     cap_vec = torch.full((R,), cap, dtype=torch.int64, device=dev)
+    # remote_cap_only: see loccap_route_sl — the eps cap budgets only the
+    # cross-node residue; intra-node tiers run uncapped, and the repair
+    # pass is skipped (it would evict wire-free local rows).
+    cap12 = (torch.full((R,), total_rows, dtype=torch.int64, device=dev)
+             if remote_cap_only else cap_vec)
+    if remote_cap_only:
+        repair_rounds = 0
 
     flat = topk.reshape(R, S * K)
     assert bool(((flat >= 0) & (flat < G)).all()), "expert ids out of range"
@@ -176,7 +183,7 @@ def loccap_route_gpu(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
          + flat).reshape(-1), minlength=R * G).view(R, G)
 
     # ---- tier 1: own-rank quota -----------------------------------------
-    q1 = _largest_remainder_rows(d * hosted_rg.long(), cap_vec)
+    q1 = _largest_remainder_rows(d * hosted_rg.long(), cap12)
     load = q1.sum(1)
 
     # ---- tier 2: home-node proportional fill ----------------------------
@@ -185,7 +192,7 @@ def loccap_route_gpu(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
     t2_want = rd * nh.long()
     t2_nlg = t2_want.view(NN, L, G)
     D = t2_nlg.sum(1)                                       # [NN, G]
-    resid = (cap_vec - load).clamp(min=0)
+    resid = (cap12 - load).clamp(min=0)
     resid_node = resid.view(NN, L)
     hosts_nl = hosted_rg.view(NN, L, G).permute(0, 2, 1)    # [NN, G, L]
     w2 = (resid_node.clamp(max=_W_CLAMP).unsqueeze(1)
@@ -263,6 +270,9 @@ def loccap_route_gpu(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
     cover_rounds = min(K, NN) + 2
     rounds_used = 0
     hp_r, hp_g = hosted_rg.nonzero(as_tuple=True)           # (rank, expert)
+    if remote_cap_only:
+        # fresh remote ledger: tier-3/forced arrivals alone consume eps
+        load = torch.zeros_like(load)
     resid = (cap_vec - load).clamp(min=0)
     tok_of_entry = (ent_src * S
                     + (torch.arange(R * S * K, device=dev,
@@ -419,7 +429,8 @@ def loccap_route_gpu(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
 # --------------------------------------------------------------------------
 
 def loccap_route_sl(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
-                    rounds=3, f_cap=None, return_tables=False):
+                    rounds=3, f_cap=None, return_tables=False,
+                    remote_cap_only=False):
     """Sender-LOCAL LocCap — the algorithm the fused CUDA kernel implements
     (user relaxation ruling 2026-08-21). [R, S, K] -> ([R, S, K] int32,
     stats).
@@ -460,6 +471,13 @@ def loccap_route_sl(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
     total_rows = R * S * K
     cap = total_rows if math.isinf(eps) else int(math.ceil((1.0 + eps) * S * K))
     cap_vec = torch.full((R,), cap, dtype=torch.int64, device=dev)
+    # remote_cap_only (the local-uncapped flavor, 8.22.route): tiers 1+2
+    # move zero wire bytes (intra-node by construction), so the eps cap
+    # budgets ONLY the tier-3/forced (cross-node residue) arrivals —
+    # trading GEMM-side imbalance for wire locality (the imbalance
+    # narrative applied to routing).
+    cap12 = (torch.full((R,), total_rows, dtype=torch.int64, device=dev)
+             if remote_cap_only else cap_vec)
 
     flat = topk.reshape(R, S * K)
     assert bool(((flat >= 0) & (flat < G)).all()), "expert ids out of range"
@@ -468,14 +486,14 @@ def loccap_route_sl(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
          + flat).reshape(-1), minlength=R * G).view(R, G)
 
     # ---- tiers 1+2: identical shared-table math to loccap_route_gpu -----
-    q1 = _largest_remainder_rows(d * hosted_rg.long(), cap_vec)
+    q1 = _largest_remainder_rows(d * hosted_rg.long(), cap12)
     load = q1.sum(1)
     rd = d - q1
     nh = ion.t()[node_of_rank]
     t2_want = rd * nh.long()
     t2_nlg = t2_want.view(NN, L, G)
     D = t2_nlg.sum(1)
-    resid = (cap_vec - load).clamp(min=0)
+    resid = (cap12 - load).clamp(min=0)
     hosts_nl = hosted_rg.view(NN, L, G).permute(0, 2, 1)
     w2 = (resid.view(NN, L).clamp(max=_W_CLAMP).unsqueeze(1)
           * hosts_nl.long())
@@ -540,7 +558,8 @@ def loccap_route_sl(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
     load_t2 = load.clone()
 
     # ---- tier-3 SHARE tables (pure functions of d) ----------------------
-    resid3 = (cap_vec - load).clamp(min=0)                  # [R]
+    resid3 = (cap_vec.clone() if remote_cap_only
+              else (cap_vec - load).clamp(min=0))           # [R]
     leftover = (d - granted2).clamp(min=0)                  # [R, G]
     # source weight toward destination r = its leftover demand for experts
     # hosted on r (clamped; only proportions matter)

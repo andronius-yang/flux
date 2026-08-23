@@ -1,84 +1,25 @@
-//===- moe_utils.cu ---------------------------------------------- C++ ---===//
-//
-// Copyright 2025 ByteDance Ltd. and/or its affiliates. All rights reserved.
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//    http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//
-//===----------------------------------------------------------------------===//
-
-#include <algorithm>
+// Standalone JIT build of the PLACE-lambda sender-local router
+// (8.22.route): the PATCHED kernel — templated register-mask tier-3
+// cover + FLUX_LOCCAP_REMOTE_CAP_ONLY flavor — compiled independently of
+// libflux_cuda.so so the kernel A/B needs no full flux rebuild. Source
+// of truth: src/cuda/moe_utils.cu (this file is extracted from it by
+// tooling; edit there).
+#include <torch/extension.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <cuda_runtime.h>
 #include <climits>
+#include <cmath>
 #include <cstdlib>
+#include <tuple>
 
-#include "flux/cuda/reduce_utils.cuh"
-#include "flux/cuda/cuda_common.h"
-#include "flux/cuda/moe_utils.h"
-namespace bytedance::flux {
+#define CUDA_CHECK(expr)                                        \
+  do {                                                          \
+    cudaError_t _e = (expr);                                    \
+    TORCH_CHECK(_e == cudaSuccess, "CUDA error: ",              \
+                cudaGetErrorString(_e));                        \
+  } while (0)
 
-__global__ void
-calc_scatter_index_kernel(
-    const int *rank, const int *count, int *scatter_index, const int total_num) {
-  constexpr unsigned FULL_MASK = 0xffffffff;
-  __shared__ int s_offset[1024];
-  const int expert_rank = blockIdx.x;
-  const int expert_num = expert_rank + 1;
-  if (threadIdx.x < 32) {
-    int cur_offset = 0;
-    int expert_num_pad = ((expert_num + 31) >> 5) << 5;
-    for (int i = threadIdx.x; i < expert_num_pad; i += 32) {
-      int len = i < expert_num ? count[i] : 0;
-      int temp_offset = warp_prefix_sum(threadIdx.x, len);
-      if (i < expert_num)
-        s_offset[i] = cur_offset + temp_offset - len;
-      cur_offset += __shfl_sync(FULL_MASK, temp_offset, 31);
-    }
-  }
-  __syncthreads();
-
-  const int warp_tid = threadIdx.x & 0x1F;
-  const unsigned int t_mask = (1 << warp_tid) - 1;
-
-  int *s_expert_offset = s_offset + blockIdx.x;
-  int total_num_pad = ((total_num + blockDim.x - 1) / blockDim.x) * blockDim.x;
-  for (int tid = threadIdx.x; tid < total_num_pad; tid += blockDim.x) {
-    int rank_id = tid < total_num ? __ldg(&rank[tid]) : -1;
-    const bool match = (rank_id == expert_rank);
-    int active_mask = __ballot_sync(FULL_MASK, match);
-
-    int warp_expert_offset = 0;
-    if (warp_tid == 0)
-      warp_expert_offset = atomicAdd(s_expert_offset, __popc(active_mask));
-    warp_expert_offset = __shfl_sync(FULL_MASK, warp_expert_offset, 0);
-
-    int warp_offset = __popc(active_mask & t_mask);
-    if (match)
-      scatter_index[tid] = warp_expert_offset + warp_offset;
-  }
-}
-
-void
-calc_scatter_index(
-    const int *choosed_experts,  // of total_num
-    const int *count,            // of expert_num
-    int *scatter_index,          // of total_num
-    const int total_num,         // topk * ntokens
-    int expert_num,
-    cudaStream_t stream) {
-  calc_scatter_index_kernel<<<expert_num, 1024, 0, stream>>>(
-      choosed_experts, count, scatter_index, total_num);
-  CUDA_CHECK(cudaGetLastError());
-}
-
-//===--------------------------------------------------------------------===//
+namespace pll_ext {
 // PLACE-lambda sender-local LocCap router (placelambda_route_sl).
 //
 // Fused per-iteration replica-selection for the pll_* arms: each rank
@@ -731,4 +672,46 @@ placelambda_route_sl_workspace_bytes(int G, int R, int ranks_per_node) {
   return b;
 }
 
-}  // namespace bytedance::flux
+}  // namespace pll_ext
+
+#define CHECK_INPUT(t, tp)                                              \
+  TORCH_CHECK(t.is_cuda() && t.is_contiguous() &&                       \
+              t.scalar_type() == tp, #t " check failed")
+
+std::tuple<torch::Tensor, torch::Tensor>
+route_sl(const torch::Tensor topk_own, const torch::Tensor d,
+         const torch::Tensor l2p, const torch::Tensor lcnts,
+         int64_t my_rank, int64_t nlp, int64_t ranks_per_node,
+         double eps, int64_t f_cap) {
+  CHECK_INPUT(topk_own, at::ScalarType::Int);
+  CHECK_INPUT(d, at::ScalarType::Int);
+  CHECK_INPUT(l2p, at::ScalarType::Int);
+  CHECK_INPUT(lcnts, at::ScalarType::Int);
+  int S = topk_own.size(0), K = topk_own.size(1);
+  int R = d.size(0), G = d.size(1);
+  int Cmax = l2p.size(1);
+  TORCH_CHECK(lcnts.size(0) == G && l2p.size(0) == G);
+  TORCH_CHECK(G <= 4096 && R <= 1024, "route_sl size guard");
+  long long cap64 = std::isinf(eps)
+                        ? (long long)S * K * R
+                        : (long long)std::ceil((1.0 + eps) * S * K);
+  torch::Tensor phys = at::empty_like(topk_own);
+  torch::Tensor stats =
+      at::zeros({4}, topk_own.options().dtype(at::ScalarType::Long));
+  torch::Tensor ws = at::empty(
+      {(int64_t)pll_ext::placelambda_route_sl_workspace_bytes(
+          G, R, ranks_per_node)},
+      topk_own.options().dtype(at::ScalarType::Byte));
+  auto stream = at::cuda::getCurrentCUDAStream();
+  pll_ext::placelambda_route_sl(
+      topk_own.data_ptr<int>(), d.data_ptr<int>(), l2p.data_ptr<int>(),
+      lcnts.data_ptr<int>(), phys.data_ptr<int>(),
+      (long long *)stats.data_ptr<int64_t>(), ws.data_ptr(),
+      S, K, G, R, Cmax, (int)nlp, (int)ranks_per_node, (int)my_rank,
+      cap64, (int)f_cap, stream);
+  return {phys, stats};
+}
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  m.def("route_sl", &route_sl, "patched placelambda_route_sl");
+}

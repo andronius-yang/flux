@@ -1141,6 +1141,37 @@ class EpicIterPlan:
     hcc_redcsr: list = None           # [red_ptr, red_row] device
 
 
+def python_meta_from_vce(vce, R, S, gpe, nn, L):
+    """Reference (splits, scatter_index, splits_per_source, unique_counts)
+    from a GIVEN virtual routing vce [ntokens, kg] — the python side of the
+    v2b in-window guard, decoupled from any particular entry-column order
+    (the fast tail ships vce in topk column order; within a virtual slot
+    the wire order depends only on (vslot, token), so any deterministic
+    column order is contract-valid). Mirrors the legacy non-inwindow
+    branch formulas verbatim."""
+    dev = vce.device
+    ntokens = R * S
+    kg = vce.shape[1]
+    E_virt = R * gpe
+    vce_flat = vce.long().reshape(-1)
+    scatter_index = (vce_flat.argsort(stable=True).argsort()
+                     .int().view(ntokens, kg))
+    splits = torch.bincount(vce_flat, minlength=E_virt).int()
+    home = (torch.arange(ntokens, device=dev, dtype=torch.int64)
+            // S)
+    src_of_copy = home.repeat_interleave(kg)
+    sps = torch.bincount(src_of_copy * E_virt + vce_flat,
+                         minlength=R * E_virt).view(R, E_virt)
+    owner = vce.long() // gpe
+    flags = torch.zeros(ntokens, R, dtype=torch.bool, device=dev)
+    flags.scatter_(1, owner, True)
+    u_mat = flags.view(R, S, R).sum(1)
+    U_mat = (flags.view(ntokens, nn, L).any(dim=2)
+             .view(R, S, nn).sum(1))
+    uc = torch.cat([u_mat, U_mat], dim=1)
+    return splits, scatter_index, sps.int(), uc.int()
+
+
 class EpicIterPlanner:
     """Per-iteration device planner for the EPIC m=1 arms (SCHEMA rule 5):
     quotas (D6), the reroute expansion, wire/scatter/segment indices, the
@@ -1268,10 +1299,20 @@ class EpicIterPlanner:
             # allgather, all inside the timed plan bracket. The kernel's
             # shared tables derive from the same tpe allgather the epic
             # path already pays.
-            import flux
-            phys_own, kstats = flux.placelambda_route_sl(
-                self._topk_own_i32, tpe_all, self.l2p, self.lcnts,
-                self.rank, nlp, self.L, self.eps, f_cap=self.f_cap)
+            if int(os.getenv("FLUX_PLL_SL_EXT", "0")):
+                # patched-kernel A/B (templated register-mask tier-3 +
+                # remote-cap flavor) via the standalone JIT extension —
+                # no flux rebuild, main .so stays the binary elsewhere
+                from .pll_sl_ext import load_ext
+                phys_own, kstats = load_ext().route_sl(
+                    self._topk_own_i32, tpe_all.int().contiguous(),
+                    self.l2p.int(), self.lcnts.int(), self.rank, nlp,
+                    self.L, self.eps, self.f_cap)
+            else:
+                import flux
+                phys_own, kstats = flux.placelambda_route_sl(
+                    self._topk_own_i32, tpe_all, self.l2p, self.lcnts,
+                    self.rank, nlp, self.L, self.eps, f_cap=self.f_cap)
             phys_all = self._exchange(phys_own).long().view(R, S * K)
             tok_all = self._tok_all()
             rqp = None
@@ -1281,7 +1322,9 @@ class EpicIterPlanner:
             from .placelambda_gpu import loccap_route_gpu
             phys3, _ = loccap_route_gpu(
                 self.topk_all.view(R, S, K), self.p2l.int(), self.l2p,
-                self.lcnts, nlp, self.L, self.eps)
+                self.lcnts, nlp, self.L, self.eps,
+                remote_cap_only=bool(int(os.getenv(
+                    "FLUX_LOCCAP_REMOTE_CAP_ONLY", "0"))))
             phys_all = phys3.long().reshape(R, S * K)
             tok_all = self._tok_all()
             rqp = None
@@ -1296,7 +1339,16 @@ class EpicIterPlanner:
             tok_all, phys_all = reroute_expand_all_gpu(
                 rqp, self.l2p, self.lcnts, self.topk_all, cfg.interleave)
         self._last_phys_all = phys_all
-        ip = self._derive_from_phys(tok_all, phys_all, rqp, kstats)
+        if (self.router in ("loccap_sl", "loccap_gpu")
+                and int(os.getenv("FLUX_PLL_FAST_TAIL", "1"))
+                and (not self.hc or self.inwindow_meta)
+                and not self.hcc):
+            if int(os.getenv("FLUX_PLL_TAIL_GRAPH", "0")):
+                ip = self._derive_fast_graphed(phys_all, kstats)
+            else:
+                ip = self._derive_from_phys_fast(phys_all, kstats)
+        else:
+            ip = self._derive_from_phys(tok_all, phys_all, rqp, kstats)
         if (self.router == "loccap_sl"
                 and getattr(self, "_check_iters", False)):
             # validation runs (FLUX_PLL_CHECK_ITERS=1): audit EVERY
@@ -1316,7 +1368,270 @@ class EpicIterPlanner:
         cfg = self.cfg
         phys_all = ov.long().to(self.device).view(cfg.R, cfg.S * cfg.K)
         self._last_phys_all = phys_all
+        if (self.router in ("loccap_sl", "loccap_gpu")
+                and int(os.getenv("FLUX_PLL_FAST_TAIL", "1"))
+                and (not self.hc or self.inwindow_meta)
+                and not self.hcc):
+            return self._derive_from_phys_fast(phys_all, None)
         return self._derive_from_phys(self._tok_all(), phys_all, None, None)
+
+    def _recv_pad_capacity(self):
+        """Fixed receive padding for the sync-free layout: the provable
+        recv bound (loccap_sl capacity mode) or, for the deterministic
+        loccap_gpu arm (static routing per cell), the exact setup count
+        (computed once — a setup-time sync, not an iteration cost)."""
+        b = getattr(self, "relaxed_bounds", None)
+        if b is not None:
+            return int(b["recv_cap"])
+        if getattr(self, "_recv_exact", None) is None:
+            ov = self.plan.phys_override
+            assert ov is not None, (
+                "fast tail needs relaxed_bounds (loccap_sl) or "
+                "plan.phys_override (loccap_gpu)")
+            serve = ov.reshape(-1).to(self.device) // self.cfg.nlp
+            self._recv_exact = int((serve == self.rank).sum())
+        return self._recv_exact
+
+    def _derive_fast_graphed(self, phys_all, kstats=None) -> EpicIterPlan:
+        """CUDA-graph wrapper around the fast tail: the device program is
+        captured once (shapes are static by construction) and replayed;
+        inputs are copied into static buffers, the blob D2H goes through
+        a pinned staging copy after replay (the one host sync). Falls
+        back to the eager fast tail if capture fails.
+        FLUX_PLL_TAIL_GRAPH=1 enables."""
+        if getattr(self, "_tail_graph_broken", False):
+            return self._derive_from_phys_fast(phys_all, kstats)
+        if getattr(self, "_tail_graph", None) is None:
+            try:
+                E = self.cfg.R * self.cfg.S * self.cfg.K
+                self._g_phys_in = torch.empty(
+                    self.cfg.R, self.cfg.S * self.cfg.K, dtype=torch.int64,
+                    device=self.device)
+                self._g_kstats_in = (torch.zeros(4, dtype=torch.int64,
+                                                 device=self.device)
+                                     if kstats is not None else None)
+                self._g_phys_in.copy_(phys_all)
+                if kstats is not None:
+                    self._g_kstats_in.copy_(kstats.reshape(-1).long())
+                for _ in range(2):  # warmup on the static buffers
+                    self._fast_tail_device(self._g_phys_in,
+                                           self._g_kstats_in)
+                torch.cuda.synchronize()
+                g = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(g):
+                    self._g_tail_out = self._fast_tail_device(
+                        self._g_phys_in, self._g_kstats_in)
+                torch.cuda.synchronize()
+                self._tail_graph = g
+                self._g_blob_pin = torch.empty_like(
+                    self._g_tail_out["blob_dev"], device="cpu",
+                    pin_memory=True)
+            except Exception as e:  # noqa: BLE001 — eager fallback
+                if self.rank == 0:
+                    print(f"pll tail graph capture failed "
+                          f"({type(e).__name__}: {e}); running eager",
+                          flush=True)
+                self._tail_graph_broken = True
+                return self._derive_from_phys_fast(phys_all, kstats)
+        else:
+            self._g_phys_in.copy_(phys_all)
+            if kstats is not None:
+                self._g_kstats_in.copy_(kstats.reshape(-1).long())
+        self._tail_graph.replay()
+        self._g_blob_pin.copy_(self._g_tail_out["blob_dev"],
+                               non_blocking=True)
+        torch.cuda.synchronize()
+        return self._fast_tail_host(self._g_tail_out, self._g_blob_pin,
+                                    has_kstats=kstats is not None)
+
+    def _derive_from_phys_fast(self, phys_all, kstats=None) -> EpicIterPlan:
+        """Sort-free, sync-free plan tail for the loccap routers
+        (per-token entry count == K, m == 1). Replaces _derive_from_phys's
+        full [R, S*K] canonical sort + ragged boolean gather (a mid-phase
+        D2H sync) with:
+          - one [S*K] sort of OWN row (the send-side wire order),
+          - one [E] radix argsort keyed (not-mine, src, phys, tok) whose
+            first recv_cap positions are my arrivals in canonical order
+            (fixed-shape capacity padding instead of compaction),
+          - vce built DIRECTLY from phys_all in topk column order — each
+            token has exactly K entries, and within a virtual slot the
+            wire/scatter order depends only on (vslot, global token), so
+            the column order is contract-free: no gts sort, no occ,
+            kg_iter == K,
+          - counts via O(E) index_adds.
+        The ONLY host readback is the single batched blob at the end
+        (n_recv rides it); the boundary to the dispatch op stays device-
+        resident (vce int32 + splits + place_slots). Env kill-switch:
+        FLUX_PLL_FAST_TAIL=0 restores the legacy tail;
+        FLUX_PLL_TAIL_GRAPH=1 CUDA-graphs the device half."""
+        kd = kstats.reshape(-1).long() if kstats is not None else None
+        outs = self._fast_tail_device(phys_all, kd)
+        blob = outs["blob_dev"].cpu()
+        return self._fast_tail_host(outs, blob,
+                                    has_kstats=kstats is not None)
+
+    def _fast_tail_device(self, phys_all, kstats_dev=None):
+        """The shape-static device program of the fast tail (graph-
+        capturable; no host syncs, no data-dependent shapes)."""
+        cfg = self.cfg
+        R, G, S, K, nlp = cfg.R, cfg.G, cfg.S, cfg.K, cfg.nlp
+        dev = self.device
+        rank = self.rank
+        assert S <= (1 << 13) and R * nlp <= (1 << 13) and R <= (1 << 7), (
+            "fast-tail sort key packing bounds exceeded")
+        from .ep_gpu_plan import _run_ordinal, comb_dst_slot_from_topk
+
+        # ---- own row: send-side canonical (phys, tok) order -------------
+        tok_l = (torch.arange(S, device=dev, dtype=torch.int64)
+                 .repeat_interleave(K))
+        my_row = phys_all[rank]
+        order_my = torch.argsort(my_row * (S + 1) + tok_l, stable=True)
+        my_tok = tok_l[order_my]
+        my_phys = my_row[order_my]
+        send_entry_logical = self.p2l[my_phys]
+        comb_dst = (comb_dst_slot_from_topk(
+            self.topk_all[rank], my_tok, send_entry_logical, G)
+            if self.l01 else None)
+        # index_add instead of bincount throughout: torch.bincount can
+        # issue a device sync to size its output — hidden latency eager,
+        # capture-illegal under CUDA graphs
+        in_splits = torch.zeros(R, dtype=torch.int64, device=dev)
+        in_splits.index_add_(0, my_phys // nlp,
+                             torch.ones_like(my_phys))
+        in_splits = in_splits.to(torch.int32)
+
+        # ---- counts (O(E), no sort) --------------------------------------
+        dest_all = phys_all // nlp                          # [R, S*K]
+        mine = dest_all == rank
+        out_splits = mine.sum(dim=1).to(torch.int32)
+        src_ids = torch.arange(R, device=dev,
+                               dtype=torch.int64).unsqueeze(1)
+        pair_flat = (src_ids * R + dest_all).reshape(-1)
+        pair_rows = torch.zeros(R * R, dtype=torch.int64, device=dev)
+        pair_rows.index_add_(0, pair_flat, torch.ones_like(pair_flat))
+        n_recv_dev = mine.sum()
+        slot_loads = torch.zeros(cfg.P, dtype=torch.int64, device=dev)
+        slot_loads.index_add_(0, phys_all.reshape(-1),
+                              torch.ones_like(pair_flat))
+
+        # ---- arrivals: fixed-shape canonical selection -------------------
+        recv_cap = self._recv_pad_capacity()
+        key = (((~mine).long() << 34)
+               | (src_ids.expand_as(phys_all) << 26)
+               | (phys_all << 13)
+               | tok_l.unsqueeze(0)).reshape(-1)
+        arr = torch.argsort(key, stable=True)[:recv_cap]    # fixed slice
+        valid = mine.reshape(-1)[arr]
+        slot_p = torch.where(valid, phys_all.reshape(-1)[arr] - rank * nlp,
+                             torch.full_like(arr, nlp))    # dummy bin nlp
+        seg_ext = torch.zeros(nlp + 1, dtype=torch.int64, device=dev)
+        seg_ext.index_add_(0, slot_p, torch.ones_like(slot_p))
+        seg_rows = seg_ext[:nlp]
+        seg_start = torch.zeros(nlp, dtype=torch.int64, device=dev)
+        seg_start[1:] = torch.cumsum(seg_rows, dim=0)[:-1]
+        o2 = torch.argsort(slot_p, stable=True)
+        occ2 = _run_ordinal(slot_p[o2])
+        seg_start_ext = torch.cat([seg_start, seg_start.new_zeros(1)])
+        place_pad = torch.empty(recv_cap, dtype=torch.int64, device=dev)
+        place_pad[o2] = seg_start_ext[slot_p[o2]] + occ2
+
+        # ---- vce: topk column order, zero sorts --------------------------
+        vce_i32 = None
+        pad_mine = 0
+        if self.hc:
+            gpe = self.gpe
+            kg = self.kg_frozen
+            assert K <= kg, (K, kg)
+            ntokens = R * S
+            vce = ((dest_all * gpe) + (phys_all % nlp)).view(ntokens, K)
+            if kg > K:
+                pad_cols = (self._pad_vslot.unsqueeze(1)
+                            .expand(ntokens, kg - K))
+                vce = torch.cat([vce, pad_cols], dim=1)
+            pad_mine = (kg - K) * S
+            vce_i32 = vce.to(torch.int32).contiguous()
+
+        # ---- the ONE batched D2H payload ---------------------------------
+        d2h = [seg_rows, seg_start, in_splits.long(), out_splits.long(),
+               pair_rows.max().reshape(1), n_recv_dev.reshape(1)]
+        if kstats_dev is not None:
+            d2h.append(kstats_dev)
+        blob_dev = torch.cat([t.reshape(-1) for t in d2h])
+        return dict(my_tok=my_tok, send_entry_logical=send_entry_logical,
+                    comb_dst=comb_dst, in_splits=in_splits,
+                    out_splits=out_splits, place_pad=place_pad,
+                    slot_loads=slot_loads, vce=vce_i32,
+                    pad_mine=pad_mine, blob_dev=blob_dev)
+
+    def _fast_tail_host(self, outs, blob, has_kstats):
+        """Host half: unpack the blob, build the segment list, construct
+        the EpicIterPlan (tensor fields reference the device outputs)."""
+        cfg = self.cfg
+        R, K, nlp = cfg.R, cfg.K, cfg.nlp
+        rank = self.rank
+        off = 0
+
+        def take(n):
+            nonlocal off
+            out = blob[off:off + n]
+            off += n
+            return out
+
+        seg_rows_h = take(nlp).tolist()
+        seg_start_h = take(nlp).tolist()
+        send_counts = take(R).tolist()
+        recv_counts = take(R).tolist()
+        max_pair_rows = int(take(1))
+        n_recv_h = int(take(1))
+        if has_kstats:
+            kstats_h = take(4).tolist()
+            assert kstats_h[2] == 0, (
+                f"loccap_sl forced budget exhausted ({kstats_h[2]} entries "
+                "over the per-(src,dst) f_cap) — sizing-contract breach; "
+                "raise --pll_f_cap")
+            self.last_kernel_stats = kstats_h
+        assert n_recv_h <= outs["place_pad"].numel(), (
+            n_recv_h, outs["place_pad"].numel())
+
+        segments = []
+        base = rank * nlp
+        for p in range(nlp):
+            rows = seg_rows_h[p]
+            if rows == 0:
+                continue
+            logical = int(self._p2l_host[base + p])
+            assert logical >= 0, f"rank {rank}: rows in unused slot {p}"
+            start = seg_start_h[p]
+            segments.append((p, start, start + rows, logical))
+
+        hc_kw = dict(hc_splits=None, hc_scatter=None, hc_sps_cpu=None,
+                     hc_uc_cpu=None, hc_pad_mine=0, hc_kg_iter=0,
+                     hc_m_this=0, hc_vce=None)
+        if self.hc:
+            hc_kw = dict(hc_splits=None, hc_scatter=None, hc_sps_cpu=None,
+                         hc_uc_cpu=None, hc_pad_mine=outs["pad_mine"],
+                         hc_kg_iter=cfg.K, hc_m_this=0,
+                         hc_vce=outs["vce"])
+
+        return EpicIterPlan(
+            send_row_index=outs["my_tok"],
+            send_entry_logical=outs["send_entry_logical"],
+            place_slots=outs["place_pad"][:n_recv_h],
+            comb_dst_slot=outs["comb_dst"],
+            in_splits=outs["in_splits"],
+            out_splits=outs["out_splits"],
+            send_counts=send_counts,
+            recv_counts=recv_counts,
+            seg_rows=seg_rows_h,
+            seg_start=seg_start_h,
+            gemm_segments=segments,
+            n_recv=n_recv_h,
+            max_pair_rows=max_pair_rows,
+            slot_loads=outs["slot_loads"],
+            hcc_routing=None, hcc_pack=None, hcc_red=None,
+            hcc_uc=None, hcc_wire=None, hcc_redcsr=None,
+            **hc_kw,
+        )
 
     def _derive_from_phys(self, tok_all, phys_all, rqp,
                           kstats=None) -> EpicIterPlan:
@@ -1548,8 +1863,19 @@ class EpicIterPlanner:
             assert torch.equal(ip.comb_dst_slot.cpu(), grp.comb_dst_slot)
         if self.hc and self.inwindow_meta:
             b = runner._hc_bundles[0]
-            assert torch.equal(ip.hc_vce.cpu(), b.virtual_choosed), (
-                "in-window vce drift vs the setup bundle")
+            if (self.router in ("loccap_sl", "loccap_gpu")
+                    and int(os.getenv("FLUX_PLL_FAST_TAIL", "1"))):
+                # fast tail ships vce in topk column order; within a
+                # virtual slot the wire order depends only on
+                # (vslot, token), so the guard compares the per-token
+                # MULTISET (column-order-free routing identity)
+                a = ip.hc_vce.long().cpu().sort(dim=1).values
+                bb = b.virtual_choosed.long().cpu().sort(dim=1).values
+                assert torch.equal(a, bb), (
+                    "in-window vce drift vs the setup bundle (multiset)")
+            else:
+                assert torch.equal(ip.hc_vce.cpu(), b.virtual_choosed), (
+                    "in-window vce drift vs the setup bundle")
             return
         if self.hc:
             b = runner._hc_bundles[0]
