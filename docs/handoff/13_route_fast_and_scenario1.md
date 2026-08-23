@@ -287,3 +287,36 @@ re-confirms the 8.17 "PEO m-split loses at our scale" verdict under
 symmetric accounting). LLC −29% vs the best EPIC (now m=1). NEVER-MIX:
 pre-commit m=2 cells excluded planning. d6 tail graphing
 (FLUX_PLL_TAIL_GRAPH) not enabled for d6 arms — available follow-up.
+
+### D6 shortcut + planner-disease assessment (job 57452535)
+
+Profiling attributed EPIC's plan lane: the D6 RULE costs 0.17 ms; the
+general replica-selection ENGINE around it cost 2.9-5.6 ms (full-E sort,
+[E,Cmax] cummax/searchsorted, bincount hidden sync, host-looped coprime
+interleave search) — and for local_static provably computes a constant
+(every ordinal -> j* = src mod lcnts, interleave included). Shortcut
+landed (fast-tail d6 path; bit-identical routing, out_sha unchanged).
+Final symmetric-accounting table (canon data, oracle loads, l01):
+
+| arm | qwen | K2 | plan (timed) |
+| EPIC m=1 d6 | **14.50** | **14.63** | 2.62 / 2.50 |
+| EPIC m=2 d6 (PEO) | 20.21 | 20.72 | 2.74 / 2.86 |
+| LLC | 12.95 | 13.71 | 1.22 / 1.24 |
+
+LLC over best-EPIC: −10.7% qwen / −6.3% K2 (was −29/−19 pre-shortcut —
+the earlier gap was part port-tax). Residual EPIC plan = the general
+tail EAGER (d6 tail not graphed — available follow-up, ~0.5-1 ms).
+
+**Disease assessment, other planners:**
+- EPLB (EplbIterPlanner, replica "quota"): the ordinal-dependent quota
+  rule GENUINELY needs the engine (sort/ordinals are authentic there) —
+  but it pays the LEGACY tail verbatim (docstring admits the ragged
+  boolean-gather sync) + the bincount/interleave taxes. Est. ~2-3 of
+  its 6.0/4.7 ms plan is removable via a fast-tail port (moderate
+  effort — different ip type, same field semantics). local_static
+  eplb ablations would also inherit the shortcut.
+- MoonEP (plan_ws kernel + derive_moonep_layout_gpu): planner kernel is
+  the authentic port (not disease); layout derive carries the same
+  family (bincount + ragged gathers, ~21 sync-pattern sites) but total
+  plan is only 2.3 ms and MoonEP's wall is its un-deduped combine
+  (11-14 ms) — low-value target.
