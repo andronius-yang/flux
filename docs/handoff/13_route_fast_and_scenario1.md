@@ -213,3 +213,57 @@ oracle side + slack.
 
 Next: capsule-grade sweep of this exact stack (the sweep-runner pllf/sl
 arms + dslots durable plumbing), 8n `-q regular`, flavor ladder.
+
+## BASELINE VERIFICATION PASS (job 57448901, canon data, l01, one tree)
+
+All four expert-placement baselines, canon scenario-1 basis (EPLB/EPIC
+consume ORACLE-WINDOW loads via s1c_*_oracle_load.json {version:1, G,
+load}; MoonEP plans per-round natively — its authentic identity; LLC
+consumes oracle-window rows). l0/l1 separable inside every l01 run
+(per-phase CUDA events in all four drivers — no re-running needed).
+
+| arm (authentic) | qwen l01 | K2 l01 | qwen l0/l1 | K2 l0/l1 | plan |
+|---|---|---|---|---|---|
+| MoonEP staged getmem | 23.77 | 28.82 | ~10.4/13.4 | ~10.8/17.7 | 2.3 timed |
+| EPLB direct-a2av     | 23.16 | 23.30 | 8.45/8.26 | 8.78/9.24 | 6.0/4.7 timed |
+| EPIC m=2 PEO hc      | 15.30 | 15.83 | 9.45/5.62 | 10.48/5.06 | ~0 UNTIMED (legacy m>1) |
+| **LLC (ours)**       | **12.56** | **13.60** | 5.60/5.19 | 6.42/5.71 | 1.27/1.16 timed |
+
+LLC vs best baseline (EPIC m=2): −18% qwen / −14% K2 — WITH LLC's
+planning timed and EPIC's excluded (legacy accounting, m>1 has no
+rule-5 planner; flag on every quote). vs EPLB: −46/−42%; vs MoonEP:
+−47/−53% (MoonEP's un-deduped direct combine is its wall: 11.3/14.5 ms).
+
+**Comm primitives from source (dispatch / combine / overlap):**
+- MoonEP (test_moe_moonep_traffic.py, nvshmem+getmem, overlap OFF):
+  dispatch = flux All2AllSingle one-sided NVSHMEM direct a2av (hidden +
+  probs pair, single stage, no dedup); weights = per-round redundant-
+  expert getmem pull (both projections, one join, serialized before
+  GEMM); combine = route-weight scale → expert-side reverse-dedup →
+  direct a2av transpose on the same pair → index_add at token home.
+  Overlap: NONE (strictly serial; --overlap_prefetch is our ablation,
+  off in the authentic arm).
+- EPLB (test_moe_eplb_traffic.py, nvshmem): placement = DeepSeek EPLB
+  global policy on the load vector; dispatch = pack → All2AllSingle
+  direct a2av (no dedup — DeepEP-LL/decode transport class) → place;
+  combine = combine_pack → reverse a2av same pair swapped splits →
+  comb_dst home reduce. Overlap: NONE (single stream, sequential;
+  driver :225-251). Per-iteration EplbIterPlanner (rule-5 timed).
+- EPIC m=2 (test_moe_epic_traffic.py, hier_compress, groups 2):
+  placement = §4.2 greedy replication on oracle loads; dispatch = Mode-2
+  hier_compress a2av (PXN relay-identity: NVLink intra-node stage +
+  inter-node node-dedup, GemmGroupedV2AGScatterOp.dispatch_only over
+  virtual slots); combine = per-group TopkReduceScatterOp (hier +
+  compress at nn>1). Overlap: **PEO phase pipelining IS present by
+  design** (§5.2, perf_epic :342-375: all group dispatches on the comm
+  stream, per-group compute gates on its own dispatch event → dispatch
+  g1 ∥ GEMM g0, combine g0 ∥ gemm chain g1). NO tile-level fusion. The
+  "expected none" holds for MoonEP/EPLB/LLC only.
+- LLC m=1 (ours): same Mode-2 staged dispatch + capacity-mode
+  TopkReduceScatterOp combine; single group ⇒ strictly staged, zero
+  overlap (dispatch event fully precedes compute; combine gated on
+  gemm1). Fused lb_union tile overlap deliberately NOT enabled here.
+
+Fix required by this pass (committed): hcc combine pad-tail semantics —
+bundle m_this includes the zero pad tail; the old exact-equality assert
+made padded m>1 l01 un-runnable. LATENT before: zero-pad cells only.
