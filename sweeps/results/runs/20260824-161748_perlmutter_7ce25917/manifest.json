@@ -1,0 +1,633 @@
+{
+  "artifacts": [
+    {
+      "bytes": 9015,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated/records/rank_000.jsonl",
+      "sha256": "b9a713be3d35e280dd3464510f842a48467785e1838c65cb3df4fa2c239e235b"
+    },
+    {
+      "bytes": 5475,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated/records/rank_001.jsonl",
+      "sha256": "3522aad1ed71da371d54e1417a3a41c0bdecaf88f78cebe5c677a8c748a1d345"
+    },
+    {
+      "bytes": 5485,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated/records/rank_002.jsonl",
+      "sha256": "371f710250975dc8c018200350dcfd651f3639aaaf703a09c158859ceebdb232"
+    },
+    {
+      "bytes": 5473,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated/records/rank_003.jsonl",
+      "sha256": "9a9858e4d33764f41a416a5d97fcec7a61c89502047276f645430881cb6f65c8"
+    },
+    {
+      "bytes": 5481,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated/records/rank_004.jsonl",
+      "sha256": "7f3d0d1d81a26dff205e86576a99915a59347f6e69a88bbe0d9be790b992472d"
+    },
+    {
+      "bytes": 5483,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated/records/rank_005.jsonl",
+      "sha256": "2c9da6fdb43bfa698329bb5df27161915b9b25a4d3e566f7d8a81ed60ab73ea0"
+    },
+    {
+      "bytes": 5481,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated/records/rank_006.jsonl",
+      "sha256": "e5be2beb282302ed1ae2916507e269a8c91e977d4057dae02d918d83a9b3cb62"
+    },
+    {
+      "bytes": 5476,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated/records/rank_007.jsonl",
+      "sha256": "258066e42205bdd687b49e4dd34ccc655009d6792d6983c4faa5e547e4d5308d"
+    },
+    {
+      "bytes": 5467,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated/records/rank_008.jsonl",
+      "sha256": "7c5959809e9cf94e9bf1e505826559c3f1df72842d591da4f3d64e86c2ac20b6"
+    },
+    {
+      "bytes": 5476,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated/records/rank_009.jsonl",
+      "sha256": "6995404310c8da75c5bbff551158cc85b50b0b593b89f5eca2b9589c466336d3"
+    },
+    {
+      "bytes": 5480,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated/records/rank_010.jsonl",
+      "sha256": "61d31b3e760626a4851fdd82c99a6d264ebc855e66d1a2cf10e7d7568d008da3"
+    },
+    {
+      "bytes": 5466,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated/records/rank_011.jsonl",
+      "sha256": "d3cd2102d2dd9bbfe6d1c163debd141073f5a84e0c9e5a7393ef5b9bb64ac223"
+    },
+    {
+      "bytes": 5493,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated/records/rank_012.jsonl",
+      "sha256": "33f53d3685579375f4c52666838ac41d26a55d58f47551f33a4378a5b375dd8d"
+    },
+    {
+      "bytes": 5476,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated/records/rank_013.jsonl",
+      "sha256": "a3390915495afc23719293a21c706cdd80ffd161a2422df8b30ce14fc82356b3"
+    },
+    {
+      "bytes": 5482,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated/records/rank_014.jsonl",
+      "sha256": "13c7000fc84a0dcaa5c76a89e03d28ae35aa9fa5450fef028809604dda53bd61"
+    },
+    {
+      "bytes": 5477,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated/records/rank_015.jsonl",
+      "sha256": "28d7fbf252c522c6283167b91a872e8fad07a78c6c975557681de9794c3dfeca"
+    },
+    {
+      "bytes": 9061,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated/records/rank_000.jsonl",
+      "sha256": "eaf87f5b100308fbef8a9a43a216c781fd5af053e9d7b52d2568deb432c23169"
+    },
+    {
+      "bytes": 5472,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated/records/rank_001.jsonl",
+      "sha256": "7e90663a73918b60c011bc142e2ed81eefc4965d6ecf547293fe4922e569230d"
+    },
+    {
+      "bytes": 5482,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated/records/rank_002.jsonl",
+      "sha256": "3c1488727b010f323d1b383c926e2efca515c3aadce68f337bcc94d139e494ea"
+    },
+    {
+      "bytes": 5465,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated/records/rank_003.jsonl",
+      "sha256": "be14474c6d0e917820f237fbad9555c4f6c5d0ad5508aef5d4bf28260be30db9"
+    },
+    {
+      "bytes": 5471,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated/records/rank_004.jsonl",
+      "sha256": "36e3672e43eabcc7d3d2627e49ab1d523b5ccc1e34ce51fbf7e75aa46ac8526d"
+    },
+    {
+      "bytes": 5466,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated/records/rank_005.jsonl",
+      "sha256": "6adc1c6f95c781eb47d84a0f4453c7bf8ec8a5c63d560c8f2040e61bd7926c45"
+    },
+    {
+      "bytes": 5474,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated/records/rank_006.jsonl",
+      "sha256": "246d8b2b4bfb0ce039d4b5b2dd37ff7334d7729c53c9b6f43444de7d61a7604e"
+    },
+    {
+      "bytes": 5471,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated/records/rank_007.jsonl",
+      "sha256": "ca78bcee4cf26e187dbc75800a66a9ec6fc687d61b5aa4be20191110de1ef48a"
+    },
+    {
+      "bytes": 5477,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated/records/rank_008.jsonl",
+      "sha256": "333089351799da162d7f8d8cfb35dba4063ea7ec82dce456c980594448b5458a"
+    },
+    {
+      "bytes": 5480,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated/records/rank_009.jsonl",
+      "sha256": "c3f9718405a7bee09d0cb3beb4aade40e5d41ced9f677f68a19d18bb39374bad"
+    },
+    {
+      "bytes": 5477,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated/records/rank_010.jsonl",
+      "sha256": "b145d8d8d0233123b3e15b7ab0bdc5bd775c9b70cfac8c8bf43ba7e628ff4473"
+    },
+    {
+      "bytes": 5469,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated/records/rank_011.jsonl",
+      "sha256": "d65d7f8f9806c1c14db13d89b898460a2e00ea25643caeaa87d4c8309dbe1d56"
+    },
+    {
+      "bytes": 5465,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated/records/rank_012.jsonl",
+      "sha256": "d8dc63cb15c75f9235361e01be7da4b6ad6b8de76af96b0ece61f2a0cb37adb1"
+    },
+    {
+      "bytes": 5470,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated/records/rank_013.jsonl",
+      "sha256": "60d22a71b7e264ec632bda352bfba11e12a86225dc3eee44254a221dd406178d"
+    },
+    {
+      "bytes": 5474,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated/records/rank_014.jsonl",
+      "sha256": "7712c04cbd31bfc4f7c5457c6f015bae3ba2d66bb5290fc90542b9d1bc06386b"
+    },
+    {
+      "bytes": 5469,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated/records/rank_015.jsonl",
+      "sha256": "f842aa4d815802151248b42712d12bc67532da1553d102adac43a8bdc3d7f0e4"
+    },
+    {
+      "bytes": 9262,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated/records/rank_000.jsonl",
+      "sha256": "298dc226857850bb829d98d9dbcf895ea33122f44a523050136a9dd4cae32867"
+    },
+    {
+      "bytes": 5466,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated/records/rank_001.jsonl",
+      "sha256": "7c56509dd99708d86ce9f110034c07498bb1c74364bb29babbf180c720bb1d47"
+    },
+    {
+      "bytes": 5463,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated/records/rank_002.jsonl",
+      "sha256": "0185c0a795b248154344ec3ee6234bcb2857271955de253704fdafb2249e5843"
+    },
+    {
+      "bytes": 5464,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated/records/rank_003.jsonl",
+      "sha256": "aee6819595886ae36cf6ee78053ebe00222f5605ced9ceea14472182227e7b8c"
+    },
+    {
+      "bytes": 5466,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated/records/rank_004.jsonl",
+      "sha256": "62d2364e9749bb92951637bb8e90c29bce13dd9e6b7de368d3559eefee390ce7"
+    },
+    {
+      "bytes": 5466,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated/records/rank_005.jsonl",
+      "sha256": "cba6e118770b3447836197f8010e030a4fe6a02c7b7409e2b102839dbd7e04de"
+    },
+    {
+      "bytes": 5469,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated/records/rank_006.jsonl",
+      "sha256": "c2c498bd7fc8de483859718cebf839e4b565eccc1ae3dfd354da82c1c4e4ae27"
+    },
+    {
+      "bytes": 5474,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated/records/rank_007.jsonl",
+      "sha256": "9f97fb08a3cd6e32531a8308ffc4b0bc98056962c72187b11d8c79fe66f3a605"
+    },
+    {
+      "bytes": 5471,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated/records/rank_008.jsonl",
+      "sha256": "2fbb58b18c34b7c20d6528b5ac01e15aedae01a4d272da5cd3221de4bcf339cb"
+    },
+    {
+      "bytes": 5457,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated/records/rank_009.jsonl",
+      "sha256": "47789e13313070532369e5e56bb8dd2c08ca1e3595d4cb3215c4f59c4f5808e0"
+    },
+    {
+      "bytes": 5465,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated/records/rank_010.jsonl",
+      "sha256": "04b1fe8297bece33c5ab4f483c395560f60857587ceda0d6f3c130a06e4e926d"
+    },
+    {
+      "bytes": 5464,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated/records/rank_011.jsonl",
+      "sha256": "9c6ce60acf434aff41abb3bcb4644519a8141ddcded1f33d93413eab257aae02"
+    },
+    {
+      "bytes": 5463,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated/records/rank_012.jsonl",
+      "sha256": "2578620f8b553427858f305ec0d32e9cd68678071bd159c4073474cc6009385f"
+    },
+    {
+      "bytes": 5465,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated/records/rank_013.jsonl",
+      "sha256": "c4cd047d3f6166e30e18ac52fdbac71ec27a59c4d1e42d94f90a72fc1d6633d8"
+    },
+    {
+      "bytes": 5468,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated/records/rank_014.jsonl",
+      "sha256": "0e536a027cef6da6859dcb58396f47149c0ad42070ae96ea1af9e98016868ef4"
+    },
+    {
+      "bytes": 5466,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated/records/rank_015.jsonl",
+      "sha256": "ec87791efe9ec74f16b0ea6cf0a19b4375183b1c5089e8c890e40e182ddd7b82"
+    },
+    {
+      "bytes": 9238,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated/records/rank_000.jsonl",
+      "sha256": "b24e0368741cf1088df15b7394b3b860e3dff2d39cbe46abf5f2c1cf511c787d"
+    },
+    {
+      "bytes": 5422,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated/records/rank_001.jsonl",
+      "sha256": "53b6765d8e605aaee3071526e2363b0be294c446382b956c8945427d00e2ec33"
+    },
+    {
+      "bytes": 5431,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated/records/rank_002.jsonl",
+      "sha256": "54a4943f436a7ce9a2495b068b0ccf3c0edd2d5834342e6d6ff4e00c95ffe552"
+    },
+    {
+      "bytes": 5430,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated/records/rank_003.jsonl",
+      "sha256": "eca02f2468564c6bfa8ebe2ccbeb1c7bfb30213361885b0a7f748dcb26cddd0f"
+    },
+    {
+      "bytes": 5432,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated/records/rank_004.jsonl",
+      "sha256": "3c4bb9580d4a0b8ad560058c17a5b664525696f1cd3db7d81ee2cadc78e11001"
+    },
+    {
+      "bytes": 5436,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated/records/rank_005.jsonl",
+      "sha256": "cf7986c7e0a1e128465183673f61515bc10136895e34decfbe3d0f21cca1eb76"
+    },
+    {
+      "bytes": 5430,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated/records/rank_006.jsonl",
+      "sha256": "d0773223c7607f11a99c1a006f29395d23737976c327c084a825a5146da81d28"
+    },
+    {
+      "bytes": 5431,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated/records/rank_007.jsonl",
+      "sha256": "6fa2e948684a95be244c57e57b833a838348468202c59149977ea984c609669d"
+    },
+    {
+      "bytes": 5435,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated/records/rank_008.jsonl",
+      "sha256": "acfc9f90a32370f092b9657dd15a3d72a5819c45494c2e08b9f0497694869bc9"
+    },
+    {
+      "bytes": 5438,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated/records/rank_009.jsonl",
+      "sha256": "15bd6b95ce6124e013f13aaa42da2e1a0d2a5b608800d23a7cdc98d13ced026c"
+    },
+    {
+      "bytes": 5434,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated/records/rank_010.jsonl",
+      "sha256": "5149be237badc402aa652afe1d6654beda2f07cebf095dc089a31dd9f2252214"
+    },
+    {
+      "bytes": 5437,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated/records/rank_011.jsonl",
+      "sha256": "1dc097e5b7ba1d5a237b1d5440fd1e3282569584b539fdd792bac920348aa982"
+    },
+    {
+      "bytes": 5433,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated/records/rank_012.jsonl",
+      "sha256": "3b9c4dc3995bf6ea3609eb328869243c443a31c8b301ad7c62f2a865919d57ce"
+    },
+    {
+      "bytes": 5425,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated/records/rank_013.jsonl",
+      "sha256": "6b1515aaa7401dc18c3a4bd7c7b641cdd6aa4894833155ae64cce87e1f7b5068"
+    },
+    {
+      "bytes": 5439,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated/records/rank_014.jsonl",
+      "sha256": "42e4c0b81d9c477b605a05c71136899c6f86bdfcf89375f376fae97ae1617f81"
+    },
+    {
+      "bytes": 5410,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated/records/rank_015.jsonl",
+      "sha256": "36fc13a494ce7383e18a73ebc04ef5167d80600ced454040e7df6b78af4ffabb"
+    },
+    {
+      "bytes": 9241,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated/records/rank_000.jsonl",
+      "sha256": "f000ff9a0a870e456a12d39987716e4d0566e43421f19eb16ed55a2b4dce7f94"
+    },
+    {
+      "bytes": 5406,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated/records/rank_001.jsonl",
+      "sha256": "673f4b1aa83be581b6ccd06e44878e281bcf5b60182b3a7128d5caf8566932ba"
+    },
+    {
+      "bytes": 5422,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated/records/rank_002.jsonl",
+      "sha256": "1ce71d93a0fd3a7257610b5c24876ba8552318e670ab1466780edc97fc0519e2"
+    },
+    {
+      "bytes": 5410,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated/records/rank_003.jsonl",
+      "sha256": "cf790a26a7ae8ac7ca278b2d33dd297f460a4ba77bd736e97cb505fbaa74a23f"
+    },
+    {
+      "bytes": 5413,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated/records/rank_004.jsonl",
+      "sha256": "611a69a647910bca9458893b2f92dd357688dab31683a88b9d4a7bef75ea8a8e"
+    },
+    {
+      "bytes": 5423,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated/records/rank_005.jsonl",
+      "sha256": "5c399815e73c594572b72ed21a80c76e0702d26440ad559cc6b44d24ec4b0ef7"
+    },
+    {
+      "bytes": 5430,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated/records/rank_006.jsonl",
+      "sha256": "858efa544d26cbda5f00945e1a72f27b1b4827529ff0d9f3e8ec50360588b865"
+    },
+    {
+      "bytes": 5425,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated/records/rank_007.jsonl",
+      "sha256": "e6f9f3285c51b7eef564772e5fb9d9854008582663f6d8a9bbb156e3a7fa7f0f"
+    },
+    {
+      "bytes": 5416,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated/records/rank_008.jsonl",
+      "sha256": "9f71c1b59433f08476b7dd757cf479cd8e9ed0a1eb18434cfa2678c5940740da"
+    },
+    {
+      "bytes": 5417,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated/records/rank_009.jsonl",
+      "sha256": "d6e3715707e67113b8b3543d1ce1b3f95d42d5b2c4e5d8ba000a62e97293b6ec"
+    },
+    {
+      "bytes": 5428,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated/records/rank_010.jsonl",
+      "sha256": "85e3774564b7f7f75d08068623cacd63a6ed18385189bc8c005d35e0d397765f"
+    },
+    {
+      "bytes": 5419,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated/records/rank_011.jsonl",
+      "sha256": "a92d57cd031ff55cd41afb37f719e3c0b8ff6d5e238e44c8c52f4e6c847b6944"
+    },
+    {
+      "bytes": 5425,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated/records/rank_012.jsonl",
+      "sha256": "7f45b5ce51fa4d1df8c5b8f7ab6e01863aa55cc1cf032cfdcb43a9885aa130ea"
+    },
+    {
+      "bytes": 5425,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated/records/rank_013.jsonl",
+      "sha256": "f55076d15a51508262200afa0fbeabea5d35cea9f3a384461eaea81444ac691e"
+    },
+    {
+      "bytes": 5409,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated/records/rank_014.jsonl",
+      "sha256": "c90ff3f28a7f5950587b5df58e5efdcdbd65339d5c0a32989b5270201b30bb75"
+    },
+    {
+      "bytes": 5427,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated/records/rank_015.jsonl",
+      "sha256": "a9c00ae1157840c3dcd0a0ec9562a2037843f912d7617e3a9f1050b162f79462"
+    },
+    {
+      "bytes": 9494,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated/records/rank_000.jsonl",
+      "sha256": "006cf1f1b88a04d406abc153bf5608d0f14c20c26d89923db6200357925dfdc3"
+    },
+    {
+      "bytes": 5399,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated/records/rank_001.jsonl",
+      "sha256": "2667f1ddc9689fa7aafc764b9d7c349aa9c5036a5641d226377e9366d58e5cfe"
+    },
+    {
+      "bytes": 5397,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated/records/rank_002.jsonl",
+      "sha256": "aeb2761e8f932bad2572d9185f3b8195d90f2c4376cb62db955d31466929b7bb"
+    },
+    {
+      "bytes": 5403,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated/records/rank_003.jsonl",
+      "sha256": "15afa618e85960eaa3704a38383428334a32f75fa1a196d2cb8123e3f470a0ef"
+    },
+    {
+      "bytes": 5398,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated/records/rank_004.jsonl",
+      "sha256": "15f52530045629cc5b53cdf45055cf3df2a2f2160130002bfec6b2c811395084"
+    },
+    {
+      "bytes": 5404,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated/records/rank_005.jsonl",
+      "sha256": "0e7c2fcf7c5bb080ed03e8b41cb86634e889ff980c617f964aadf5e77df4543c"
+    },
+    {
+      "bytes": 5400,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated/records/rank_006.jsonl",
+      "sha256": "7e53a58c997ae37a5807b8323b0450d094904bb9fb1de6945ff3c283309fda63"
+    },
+    {
+      "bytes": 5412,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated/records/rank_007.jsonl",
+      "sha256": "336b48024ee2a879d65490f8249975f0fdedf436eb6f05932b54ec2cf48715ba"
+    },
+    {
+      "bytes": 5407,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated/records/rank_008.jsonl",
+      "sha256": "abfbc763539028b3ad3dcd6e46d45a902aef01568c8576f4761d3802cf570524"
+    },
+    {
+      "bytes": 5401,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated/records/rank_009.jsonl",
+      "sha256": "f8697c86afd92251e54cc02baa3e2717fe031772d57a3cd9fb1f2fc3f9537be3"
+    },
+    {
+      "bytes": 5401,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated/records/rank_010.jsonl",
+      "sha256": "fdc7499904886fb59778378950d80e9b9c204a282bcdfaa18d4fc2fd60052506"
+    },
+    {
+      "bytes": 5403,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated/records/rank_011.jsonl",
+      "sha256": "a72be352cc45528154e1e2d6b098a2b3122d50bf9d8726ff1b5d2b5e6f709464"
+    },
+    {
+      "bytes": 5418,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated/records/rank_012.jsonl",
+      "sha256": "5ef7264636bc1c7e12be55366dddcdf6f8007f43bc44f8d556542764487364cc"
+    },
+    {
+      "bytes": 5404,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated/records/rank_013.jsonl",
+      "sha256": "415855b8f0f464cf4fc29fdbdef1c1d264632d5e60421d2b196c0c5c82d0d3d8"
+    },
+    {
+      "bytes": 5393,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated/records/rank_014.jsonl",
+      "sha256": "243c89e7de00716d1e6b49de9bbd85aed657ef9b588ceb12480d3841879b289a"
+    },
+    {
+      "bytes": 5393,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated/records/rank_015.jsonl",
+      "sha256": "a40cb20eed0927563e479b34d48e1235d20092067d156c2bc44ed1aec89ca139"
+    },
+    {
+      "bytes": 9465,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated/records/rank_000.jsonl",
+      "sha256": "a78d7899016f068b5e2dd468174f4fb2791194d23bb688aaed0a1ea4aab7f00e"
+    },
+    {
+      "bytes": 5378,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated/records/rank_001.jsonl",
+      "sha256": "3c02a33eb7489874b529bccfc4e6ff4968db254ded42b959b84253ea1820b049"
+    },
+    {
+      "bytes": 5366,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated/records/rank_002.jsonl",
+      "sha256": "78cb01f3bf6b94bc2c56e35795d822735896b5485ef4a50cee96f1be44744c5a"
+    },
+    {
+      "bytes": 5370,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated/records/rank_003.jsonl",
+      "sha256": "0c099141c30f24c7e8233d751a4d82f5827bd2532649b05e36ccd7900616d29b"
+    },
+    {
+      "bytes": 5378,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated/records/rank_004.jsonl",
+      "sha256": "75fa3c4212bd785b225cdf70f2056b4ea8667ed27652fe24c499fd663c0f8ed8"
+    },
+    {
+      "bytes": 5371,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated/records/rank_005.jsonl",
+      "sha256": "e0b22eda0c1767d2e8313bb90f23664860d6317431e636227e26b7e151f05b16"
+    },
+    {
+      "bytes": 5380,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated/records/rank_006.jsonl",
+      "sha256": "6a46a364b3946c974551f97331923d9e3e9cbd78ee70b250cce18e35d61e3758"
+    },
+    {
+      "bytes": 5387,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated/records/rank_007.jsonl",
+      "sha256": "4141bf278012d113dd01d2e47eec99785780c502f05b4f647a8dcdd34f0a5cb5"
+    },
+    {
+      "bytes": 5372,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated/records/rank_008.jsonl",
+      "sha256": "05908a2cd4715a1c1da4976c32c2dda6ea9e5ffc9d45c20e21cae6f677032afe"
+    },
+    {
+      "bytes": 5383,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated/records/rank_009.jsonl",
+      "sha256": "b621b8f8d667c9cd9982ae65b150937e2f16d5fa5e5d18032d4828883c93af6b"
+    },
+    {
+      "bytes": 5384,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated/records/rank_010.jsonl",
+      "sha256": "69891963d9c14c743264047e446f30182fa90bc2239adcebc181f4f70885631f"
+    },
+    {
+      "bytes": 5394,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated/records/rank_011.jsonl",
+      "sha256": "c33ce551517b2384101da8d9c35e51bc61115b6a914eaf9712a7c81ddbf275f2"
+    },
+    {
+      "bytes": 5383,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated/records/rank_012.jsonl",
+      "sha256": "2abf0151368d831b5850849f72ee04dbf714c79fb489a6b113af9a9fe1a70c7d"
+    },
+    {
+      "bytes": 5382,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated/records/rank_013.jsonl",
+      "sha256": "4e3fd5b0fcb0026513b4dae2eb9e8a7d9a6710100cdcc83ea19fe899ffbc1597"
+    },
+    {
+      "bytes": 5373,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated/records/rank_014.jsonl",
+      "sha256": "2e5a258bd4dec9a4f343b0dd3ba7b8e09739fd1480c13bc03698b70d474cd2fc"
+    },
+    {
+      "bytes": 5368,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated/records/rank_015.jsonl",
+      "sha256": "e948c393dea5c489241980212256eca88c61d5636bbdd19281aa1aa175ac6a73"
+    }
+  ],
+  "capabilities": {},
+  "cells": [
+    {
+      "cell_id": "moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated",
+      "status": "ok"
+    },
+    {
+      "cell_id": "moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated",
+      "status": "ok"
+    },
+    {
+      "cell_id": "moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated",
+      "status": "ok"
+    },
+    {
+      "cell_id": "moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b8_k8_isolated",
+      "status": "ok"
+    },
+    {
+      "cell_id": "moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated",
+      "status": "ok"
+    },
+    {
+      "cell_id": "moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b32_k8_isolated",
+      "status": "ok"
+    },
+    {
+      "cell_id": "moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917/cells/moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated",
+      "status": "ok"
+    }
+  ],
+  "created": "2026-08-24T16:21:17Z",
+  "flux_libs": [
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib/libflux_cuda.so",
+      "sha256": "3649668ad31e4f246b0a9e2b7e2f76ac2acc97d7485a9bb6859d49d0de68e102"
+    },
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib/libflux_cuda_ths_op.so",
+      "sha256": "ee784118c5b6d6fbaeb5a902238ec3eb7d126589e48c8390934abf3c8bec1445"
+    },
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib64/libflux_cuda.so",
+      "sha256": "7d9c00b0c54b0bc9dc020c16d978522a311916d95ee6a6691591115c0b873d94"
+    },
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib64/libflux_cuda_ths_op.so",
+      "sha256": "03f45ad9333a10276e043668937302ab7873bf43fe5a0e7d0decaa97667d8076"
+    }
+  ],
+  "git": {
+    "dirty": true,
+    "sha": "fc8e470702acab7e3d5f14829cc045fdef6e053d"
+  },
+  "host": "login01",
+  "platform": {
+    "fabric": "cxi",
+    "name": "perlmutter",
+    "ranks_per_node": 4
+  },
+  "run_id": "20260824-161748_perlmutter_7ce25917",
+  "staging_root": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260824-161748_perlmutter_7ce25917"
+}
