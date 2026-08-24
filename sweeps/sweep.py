@@ -1104,6 +1104,18 @@ def build_cell_env(spec, plat, cell, staging, matrix):
         sym_max = plat.get("sym_size_max_g")
         if sym_max and int(env["NVSHMEM_SYMMETRIC_SIZE"][:-1]) > int(sym_max):
             env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_max}G"
+    # 2026-08-24 capacity-visibility hardening (datacamp b64 heap deaths):
+    # loose-bound sizers (fast/moonep*/ultraep/eplb/epic) clamp to the
+    # platform cap SILENTLY, so a cell whose true demand exceeds the heap
+    # runs anyway and dies at nvshmem_malloc mid-allocation. Auto-skipping
+    # on the loose bound would wrongly kill feasible cells (the bounds are
+    # row-sum priors, often 4x the realized demand), so instead: record
+    # the at-cap fact loudly for run_cell/dry-run to surface.
+    _sym_max = plat.get("sym_size_max_g")
+    if (_sym_max and "_A2AV_SYM_G_REQUIRED" not in env
+            and env.get("NVSHMEM_SYMMETRIC_SIZE", "").rstrip("G").isdigit()
+            and int(env["NVSHMEM_SYMMETRIC_SIZE"].rstrip("G")) >= int(_sym_max)):
+        env["_A2AV_SYM_G_AT_CAP"] = "1"
     env.update(v["env"])
     if cell["mode"] == "phases":
         env["FLUX_A2AV_TIMING"] = "1"
@@ -1495,6 +1507,14 @@ def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
         oracle_routing_path=matrix.get("oracle_routing"),
     )
     env_delta = build_cell_env(spec, plat, cell, staging, matrix)
+    if env_delta.pop("_A2AV_SYM_G_AT_CAP", None):
+        print(
+            f"WARNING: {cell['cell_id']}: loose-bound symmetric-heap sizing"
+            f" clamped AT the platform cap"
+            f" ({plat.get('sym_size_max_g')}G) — true demand may exceed the"
+            f" heap; if this cell dies at NVSHMEM_MALLOC, pre-skip it"
+            f" (known class: llc/PLL 16n b64, handoff 17)"
+        )
     sym_g_required = env_delta.pop("_A2AV_SYM_G_REQUIRED", None)
     sym_max = plat.get("sym_size_max_g")
     if sym_g_required is not None and sym_max and int(sym_g_required) > int(sym_max):

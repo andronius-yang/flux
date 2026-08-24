@@ -573,6 +573,15 @@ def loccap_route_sl(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
         resid3,
     ).t().contiguous()                                      # [Rsrc, Rdst]
     myshare0 = myshare.clone()                              # sizing table
+    # 2026-08-24 recv-bound fix (16n qwen datacamp): freeze the post-tier-2
+    # load as the forced-fallback key — the CUDA kernel's fallback table
+    # (pll_shares_kernel) is computed ONCE from the post-tier-2 load, while
+    # this reference previously keyed forced rows on the LIVE tier-3-updated
+    # load. The two argmins diverge systematically at forced-heavy
+    # geometries (qwen W=64: nlp=4 -> ~7% forced), concentrating kernel
+    # forced ingress on a destination whose fp-based recv_ub slack never
+    # budgeted it (the 'recv bound violated' setup-audit failure).
+    load_fb = load.clone()
 
     # ---- tier 3: per-source greedy cover on own shares ------------------
     forced_overflow = 0
@@ -648,7 +657,7 @@ def loccap_route_sl(topk_all, p2l, l2p, lcnts, nlp, ranks_per_node, eps,
     forced_budget_overflow = 0
     rem = (phys_flat == UNASSIGNED).nonzero(as_tuple=True)[0]
     if rem.numel():
-        keyf = (load.unsqueeze(0) * R
+        keyf = (load_fb.unsqueeze(0) * R
                 + torch.arange(R, device=dev,
                                dtype=torch.int64).unsqueeze(0)).expand(G, R)
         found, best = _min_by_key(keyf, ipr >= 0)
