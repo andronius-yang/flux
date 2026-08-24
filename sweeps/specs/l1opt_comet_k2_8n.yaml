@@ -1,0 +1,22 @@
+# 2026-08-23 l1opt8n verdict spec: COMET dense-RS arm (l01_allgather_dense)
+# with the dense wire-ladder recommendation (gen-3 binary b2bf765a+,
+# FLUX_RS_WIRE_NSTREAMS_TAG): FLUX_RS_WIRE_STREAMS spreads the dense sender's
+# n_split x (NN-1) blocking puts over S lanes (default 1 = shipped schedule).
+# S value = the 8n dense-ladder winner (batch7). Basis identical to
+# datacamp_k2_8n.yaml.
+platform: perlmutter
+nodes: 8
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 8, 16, 32, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+extra_env:
+  FLUX_RS_WIRE_STREAMS: "14"
+notes: "l1opt 8.23: K2 8n b1-b64 isolated, COMET dense winner cfg RS_WIRE_STREAMS ladder, s1 canon basis"

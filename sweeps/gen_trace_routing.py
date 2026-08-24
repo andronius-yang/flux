@@ -30,9 +30,29 @@ Params (family string, e.g.
             mixed  : >= 2 pools, every rank samples the concatenation
     pool  — decode | prefill | all: which trace tokens form the pool.
     model — short model name from fetch_traces.MODEL_PREFIXES.
+    dslots — OPTIONAL scenario-1 decode-slot window "start:width" (SCHEMA rule
+            10; canon "64:32" = evaluated decode slots [64, 96)). Restricts
+            the sampling pool to rows whose output-token index ti lies in
+            [start, start+width) (ti=0 is prefill, so start >= 1 is decode-
+            only); requires pool=decode. Folds into matrix identity. The
+            evaluated batch stays sampling-with-replacement of intact top-k
+            rows from that window (multiplicity in meta), per the canon.
+    ogap  — OPTIONAL oracle gap g (int, default 0; rule-10 drift ladder
+            {0,16,32}): the placement-oracle window is the PREVIOUS window
+            with gap g, [start-g-width, start-g). Only meaningful with
+            dslots; consumed by ensure_oracle_sidecars. Folds into identity.
     poolsha — INJECTED (never spec-authored): first 12 hex of the combined
             content fingerprint of the referenced pools, so matrix identity is
             a pure function of the actual trace bytes.
+
+Scenario-1 oracle sidecars (dslots cells only; ensure_oracle_sidecars):
+    <mid>.oracle_routing.txt — the RAW oracle-window rows (placement INPUT,
+            never routing; un-duplicated, pool order, tail-trimmed to a
+            multiple of W for the driver's (W,-1,topk) reshape).
+    <mid>.oracle_load.json   — {version, G, basis, source, load}: the topk-
+            entry histogram over those same trimmed rows — the SAME oracle
+            window every expert-placement arm plans from (loads for the
+            load-only baselines, rows for ours; rule-10 information basis).
 
 Budget semantics are unchanged: tokens_per_rank T = budget_mib*2^20/chunk_bytes
 pre-topk tokens per source rank, sampled with replacement from the pool (the
@@ -68,10 +88,14 @@ def load_manifest(sdir):
         return json.load(f)
 
 
-def _extract_rows(trace, layer, pool):
+def _extract_rows(trace, layer, pool, slots=None):
     """Yield expert-id rows for one query's trace (list of per-output-token
     dicts keyed by layer id; token 0 = prefill [n_input][topk], tokens 1+ =
-    decode [1][topk])."""
+    decode [1][topk]). slots=(start, end) keeps only DECODE tokens whose
+    0-based decode ordinal (ti - 1: the first decode token is slot 0) lies
+    in [start, end) — the scenario-1 slot convention, verified against the
+    s1c prototype inputs (their [32,64) window == ti [33,65)); requests
+    shorter than the window contribute the rows they have."""
     key = str(layer)
     for ti, tok in enumerate(trace):
         if key not in tok:
@@ -82,8 +106,45 @@ def _extract_rows(trace, layer, pool):
         is_prefill = ti == 0
         if (pool == "decode" and is_prefill) or (pool == "prefill" and not is_prefill):
             continue
+        if slots is not None and (is_prefill or not (slots[0] <= ti - 1 < slots[1])):
+            continue
         for row in sel:
             yield row
+
+
+def parse_dslots(params):
+    """'64:32' -> (start, width); None when the dslots param is absent."""
+    if "dslots" not in params:
+        return None
+    raw = str(params["dslots"])
+    start_s, sep, w_s = raw.partition(":")
+    try:
+        start, w = int(start_s), int(w_s)
+    except ValueError:
+        start = w = -1
+    if not sep or start < 1 or w < 1:
+        raise SystemExit(
+            f"dslots must be 'start:width' with start >= 1 (decode slots),"
+            f" width >= 1; got {raw!r}"
+        )
+    return start, w
+
+
+def oracle_slots(params):
+    """The placement-oracle window for a dslots cell: the previous window
+    with gap g (rule 10; g=0 default) — eval [s, s+w) -> oracle [s-g-w, s-g)."""
+    slots = parse_dslots(params)
+    if slots is None:
+        raise SystemExit("oracle sidecars are defined for dslots cells only")
+    start, w = slots
+    gap = int(params.get("ogap", 0))
+    ostart = start - gap - w
+    if ostart < 1:
+        raise SystemExit(
+            f"oracle window [{ostart}, {start - gap}) leaves the decode range"
+            f" (dslots={params['dslots']}, ogap={gap})"
+        )
+    return ostart, start - gap
 
 
 def _cache_path_and_header(sdir, manifest, layer, pool):
@@ -153,15 +214,21 @@ def _cache_valid(cache, header):
         return f.readline().rstrip("\n") == header
 
 
-def load_layer_pool(sdir, layer, pool="decode"):
+def load_layer_pool(sdir, layer, pool="decode", slots=None):
     """Return the [nrows][topk] expert-id pool for one (subject, layer), read
     through a small text cache (parsing 100 x ~2 MB JSONs takes ~10 s; the
-    cache is ~500 KB and keyed by the manifest's pool_sha)."""
+    cache is ~500 KB and keyed by the manifest's pool_sha). slots=(start, end)
+    restricts to that decode-slot window (separate cache file per window; row
+    order is deterministic: manifest file order, then ti ascending)."""
     assert pool in POOLS, f"pool must be one of {POOLS}, got {pool}"
     manifest = load_manifest(sdir)
     cache_dir = os.path.join(sdir, "pool_cache")
-    cache = os.path.join(cache_dir, f"layer{layer}_{pool}.txt")
-    header = f"# v{POOL_CACHE_VERSION} pool_sha {manifest['pool_sha']} layer {layer} pool {pool}"
+    wtag = f"_d{slots[0]}_{slots[1]}" if slots is not None else ""
+    cache = os.path.join(cache_dir, f"layer{layer}_{pool}{wtag}.txt")
+    header = (
+        f"# v{POOL_CACHE_VERSION} pool_sha {manifest['pool_sha']} layer {layer} pool {pool}"
+        + (f" slots {slots[0]}:{slots[1]} ord0" if slots is not None else "")
+    )
     if os.path.exists(cache):
         with open(cache) as f:
             first = f.readline().rstrip("\n")
@@ -177,7 +244,7 @@ def load_layer_pool(sdir, layer, pool="decode"):
         with open(fpath) as f:
             trace = json.load(f)
         try:
-            for row in _extract_rows(trace, layer, pool):
+            for row in _extract_rows(trace, layer, pool, slots=slots):
                 topk = len(row)
                 if len(set(row)) != topk:
                     raise ValueError(f"duplicate expert within a token's topk: {row}")
@@ -187,7 +254,10 @@ def load_layer_pool(sdir, layer, pool="decode"):
         except ValueError as e:
             raise SystemExit(f"malformed trace {fpath}: {e}") from e
     if not rows:
-        raise SystemExit(f"empty pool: {sdir} layer {layer} pool {pool}")
+        raise SystemExit(
+            f"empty pool: {sdir} layer {layer} pool {pool}"
+            + (f" slots {slots[0]}:{slots[1]}" if slots is not None else "")
+        )
     widths = {len(r) for r in rows}
     if len(widths) != 1:
         raise SystemExit(f"inconsistent topk widths {sorted(widths)} in {sdir} layer {layer}")
@@ -213,9 +283,10 @@ def parse_pool_specs(pools_param):
     return specs
 
 
-def resolve_pools(traces_root, model, pools_param, layer, pool):
+def resolve_pools(traces_root, model, pools_param, layer, pool, slots=None):
     """Return (specs, pools_rows, poolsha12). poolsha is order-independent
-    (content identity); pool ORDER is carried by the pools param itself."""
+    (content identity); pool ORDER is carried by the pools param itself.
+    slots restricts every pool to that decode-slot window."""
     if not traces_root or "$" in str(traces_root):
         raise SystemExit(f"trace family needs a resolved traces_root, got: {traces_root!r}")
     if model not in MODEL_PREFIXES:
@@ -225,7 +296,7 @@ def resolve_pools(traces_root, model, pools_param, layer, pool):
     for bench, subject in specs:
         sdir = os.path.join(traces_root, MODEL_PREFIXES[model], bench, subject)
         manifest = load_manifest(sdir)
-        pools_rows.append(load_layer_pool(sdir, layer, pool))
+        pools_rows.append(load_layer_pool(sdir, layer, pool, slots=slots))
         shas.append((f"{bench}/{subject}", manifest["pool_sha"]))
     combined = hashlib.sha256(
         "\n".join(f"{spec} {sha}" for spec, sha in sorted(shas)).encode()
@@ -341,8 +412,18 @@ def prepare_trace(params, W, L, topk, matrix_instance, traces_root, nexperts, bu
     layer = int(params["layer"])
     if sem not in SEMS:
         raise SystemExit(f"trace sem must be one of {SEMS}, got {sem!r}")
+    slots = parse_dslots(params)
+    if slots is not None and pool != "decode":
+        raise SystemExit(
+            f"dslots windows are decode-slot indexed; use pool=decode (got {pool!r})"
+        )
+    if slots is not None and "ogap" in params:
+        int(params["ogap"])  # validate early; folds into identity via params
+    window = (slots[0], slots[0] + slots[1]) if slots is not None else None
 
-    specs, pools_rows, poolsha = resolve_pools(traces_root, model, params["pools"], layer, pool)
+    specs, pools_rows, poolsha = resolve_pools(
+        traces_root, model, params["pools"], layer, pool, slots=window
+    )
     if sem == "mixed":
         # order is not semantic for mixed: canonicalize so identity is stable
         params["pools"] = "+".join(f"{b}/{s}" for b, s in sorted(specs))
@@ -558,6 +639,101 @@ def ensure_eplb_load(
         f.write(body)
     os.rename(tmp, path)
     return path, hashlib.sha256(body.encode()).hexdigest()
+
+
+ORACLE_LOAD_VERSION = 1
+
+
+def ensure_oracle_sidecars(
+    params,
+    W,
+    L,
+    budget_mib,
+    topk,
+    chunk_bytes,
+    matrix_instance,
+    out_root,
+    traces_root=None,
+    nexperts=None,
+):
+    """Scenario-1 oracle sidecars for a dslots trace cell (SCHEMA rule 10):
+    writes <mid>.oracle_routing.txt (the RAW previous-window rows, pool order,
+    un-duplicated, tail-trimmed to a multiple of W for the driver's
+    (W,-1,topk) reshape — placement INPUT, never routing) and
+    <mid>.oracle_load.json (the topk-entry histogram over those SAME trimmed
+    rows: {version, G, basis, source, load} — the schema the eplb/epic
+    drivers' --*_load_file asserts on). Both derive from ONE window so every
+    expert-placement arm plans from the same information basis. ogap rides in
+    params (matrix identity), so gap-ladder sidecars never collide.
+    Idempotent + content-guarded. Returns (orpath, orsha, olpath, olsha)."""
+    mid, params, specs, _pools_rows, _T = prepare_trace(
+        params, W, L, topk, matrix_instance, traces_root, nexperts, budget_mib, chunk_bytes
+    )
+    if params["sem"] != "homog":
+        raise SystemExit(
+            "oracle sidecars are defined for sem=homog cells (rule-10 canon);"
+            f" got sem={params['sem']!r}"
+        )
+    ostart, oend = oracle_slots(params)
+    bench, subject = specs[0]
+    sdir = os.path.join(traces_root, MODEL_PREFIXES[params["model"]], bench, subject)
+    orows = load_layer_pool(sdir, int(params["layer"]), params["pool"], slots=(ostart, oend))
+    trimmed = len(orows) % W
+    if trimmed:
+        orows = orows[: len(orows) - trimmed]
+    if not orows:
+        raise SystemExit(
+            f"oracle window [{ostart}, {oend}) has < W rows for {bench}/{subject}"
+        )
+
+    orpath = os.path.join(out_root, f"{mid}.oracle_routing.txt")
+    orlines = [f"{len(orows)} {topk} {nexperts}"]
+    for row in orows:
+        orlines.append(" ".join(str(e) for e in row))
+    orbody = "\n".join(orlines) + "\n"
+
+    load = pool_histogram(orows, nexperts)
+    olblob = {
+        "version": ORACLE_LOAD_VERSION,
+        "G": nexperts,
+        "basis": f"scenario1_oracle_window_slots_{ostart}_{oend}",
+        "source": os.path.basename(orpath),
+        "matrix_id": mid,
+        "model": params["model"],
+        "layer": int(params["layer"]),
+        "pools": [f"{b}/{s}" for b, s in specs],
+        "poolsha": params["poolsha"],
+        "eval_dslots": str(params["dslots"]),
+        "ogap": int(params.get("ogap", 0)),
+        "rows": len(orows),
+        "rows_trimmed_for_W": trimmed,
+        "load": load,
+    }
+    olbody = json.dumps(olblob, indent=1, sort_keys=True) + "\n"
+    olpath = os.path.join(out_root, f"{mid}.oracle_load.json")
+
+    os.makedirs(out_root, exist_ok=True)
+    for path, body in ((orpath, orbody), (olpath, olbody)):
+        if os.path.exists(path):
+            with open(path) as f:
+                existing = f.read()
+            if existing != body:
+                raise RuntimeError(
+                    f"oracle sidecar {path} does not match a regeneration from"
+                    " the current pools — refusing to overwrite; delete it to"
+                    " regenerate"
+                )
+            continue
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            f.write(body)
+        os.rename(tmp, path)
+    return (
+        orpath,
+        hashlib.sha256(orbody.encode()).hexdigest(),
+        olpath,
+        hashlib.sha256(olbody.encode()).hexdigest(),
+    )
 
 
 def print_stats(routing, chunks, W, L, T, G, topk):

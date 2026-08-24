@@ -1,0 +1,24 @@
+# 2026-08-23 l1opt8n verdict spec (layer1 combine campaign): identical basis to
+# datacamp_k2_8n.yaml (s1 canon, dslots 64:32, oracle g=0) + the 8n W=32 wire
+# recommendation from the streams x conn ladder: FLUX_A2AV_RS_WIRE_STREAMS=14
+# (XSPREAD knee; S=2 canonical loses 2.4-2.9 ms l1 at b1-b8, b64 flat).
+# Requires the FLUX_A2AV_RS_WIRE_NSTREAMS_TAG + XSPREAD binary. Reference arms
+# for the verdict rerun from the UNMODIFIED datacamp specs on the same binary
+# + allocation (rule-4: per-arm capsules, one binary, one batch — campaign
+# convention, handoff 15 section 2).
+platform: perlmutter
+nodes: 8
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 8, 16, 32, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+extra_env:
+  FLUX_A2AV_RS_WIRE_STREAMS: "14"
+notes: "l1opt 8.23: K2 8n b1-b64 isolated, slipstream winner cfg RS_WIRE_STREAMS=14 (knee), s1 canon basis"

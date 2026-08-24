@@ -770,7 +770,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   // preserves the ladder's enqueue order exactly (still an executable
   // schedule), it just buys nothing.
   int rs_wire_streams_ = 1;
-  std::vector<c10::cuda::CUDAStream> internode_streams2_;   // 0 or 1
+  std::vector<c10::cuda::CUDAStream> internode_streams2_;   // rs_wire_streams_ - 1 extras
   cudaEvent_t a2av_inter2_done_ = nullptr;
   cudaEvent_t staging_reset_event;
   uint64_t run_id_ = 0;
@@ -1093,17 +1093,63 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       // ablation. Rule-4 DEFAULT tag below (string literal probed by the
       // sweep runner's capability check).
       (void)get_int_from_env("FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT2_TAG", 0);
-      this->rs_wire_streams_ = get_int_from_env("FLUX_A2AV_RS_WIRE_STREAMS", 2);
+      // 2026-08-24 canonicalization (user decision): DEFAULT 16 wire lanes
+      // (~= node count at 16n; knee is ~14-15 total lanes and flat past it
+      // at both measured scales, so 16 sits on the plateau; trivially
+      // adjustable for 32n). Rule-4 DEFAULT tag below.
+      (void)get_int_from_env("FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG", 0);
+      // 2026-08-23 (l1 combine 16n campaign): the knob is now a true ladder —
+      // S streams round-robin the (sid, tn) cells (gi % S), so at large NN
+      // the per-target blocking puts overlap instead of ~ (NN-1)/2 of them
+      // serializing per stream. S=2 reproduces the canonical parity split
+      // bit-identically ((gi % 2) == (gi & 1)); capped at 16. Binaries with
+      // the general ladder carry FLUX_A2AV_RS_WIRE_NSTREAMS_TAG.
+      (void)get_int_from_env("FLUX_A2AV_RS_WIRE_NSTREAMS_TAG", 0);
+      (void)get_int_from_env("FLUX_A2AV_RS_WIRE_XSPREAD_TAG", 0);
+      this->rs_wire_streams_ = get_int_from_env("FLUX_A2AV_RS_WIRE_STREAMS", 16);
       if (this->rs_wire_streams_ < 1) {
         this->rs_wire_streams_ = 1;
       }
-      if (this->rs_wire_streams_ > 1) {
+      if (this->rs_wire_streams_ > 32) {
+        this->rs_wire_streams_ = 32;
+      }
+      for (int i = 1; i < this->rs_wire_streams_; i++) {
         this->internode_streams2_.push_back(create_internode_stream());
+      }
+      if (this->rs_wire_streams_ > 1) {
         CUDA_CHECK(
             cudaEventCreateWithFlags(&this->a2av_inter2_done_, cudaEventDisableTiming));
       }
       CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_gateway_done_, cudaEventDisableTiming));
       CUDA_CHECK(cudaEventCreateWithFlags(&this->a2av_reduce_done_, cudaEventDisableTiming));
+    }
+    if (!this->a2av_hier && nnodes > 1) {
+      // 2026-08-23 (l1 combine 16n campaign, 8n-agent diagnosis): the DENSE
+      // multi-node sender serialized n_split*(NN-1) blocking putmem_signal on
+      // ONE internode stream (~pure ladder-overhead-bound at low budgets:
+      // K2 b1 8n l1 ~= 49 puts x ~0.24 ms proxy RTT with near-zero payload).
+      // FLUX_RS_WIRE_STREAMS (default 1 = shipped schedule, opt-in ladder,
+      // clamp 32) spreads the (sid, gi) cells over S lanes exactly like the
+      // a2av XSPREAD mapping. Every put stays a BLOCKING putmem_signal.
+      // Binaries with the dense ladder carry FLUX_RS_WIRE_NSTREAMS_TAG.
+      (void)get_int_from_env("FLUX_RS_WIRE_NSTREAMS_TAG", 0);
+      // 2026-08-24 canonicalization (user decision): dense default 16 lanes,
+      // same rationale as the a2av knob. Rule-4 DEFAULT tag below.
+      (void)get_int_from_env("FLUX_RS_WIRE_STREAMS_DEFAULT16_TAG", 0);
+      this->rs_wire_streams_ = get_int_from_env("FLUX_RS_WIRE_STREAMS", 16);
+      if (this->rs_wire_streams_ < 1) {
+        this->rs_wire_streams_ = 1;
+      }
+      if (this->rs_wire_streams_ > 32) {
+        this->rs_wire_streams_ = 32;
+      }
+      for (int i = 1; i < this->rs_wire_streams_; i++) {
+        this->internode_streams2_.push_back(create_internode_stream());
+      }
+      if (this->rs_wire_streams_ > 1) {
+        CUDA_CHECK(
+            cudaEventCreateWithFlags(&this->a2av_inter2_done_, cudaEventDisableTiming));
+      }
     }
     this->init_buffer_once(output_dtype);
     if (!this->a2av_hier) {
@@ -1627,10 +1673,23 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         for (int gi = 0; gi < NN - 1; gi++) {
           int tn = (my_node + 1 + gi) % NN;
           int d = tn * L + my_lr;
+          // S <= NN-1: per-split round-robin (gi % S) — bit-identical to the
+          // canonical parity split at S=2 and to the first nstreams ladder.
+          // S > NN-1: the split loop only has NN-1 puts, so extra lanes are
+          // dead under gi % S; spread by GLOBAL cell index (sid*(NN-1)+gi)
+          // instead, so puts from different splits round-robin over all S
+          // lanes (knee-finding past NN-1; 2026-08-23 l1 16n campaign,
+          // binaries carry FLUX_A2AV_RS_WIRE_XSPREAD_TAG).
+          int wire_lane = 0;
+          if (this->rs_wire_streams_ > 1) {
+            wire_lane =
+                (this->rs_wire_streams_ <= NN - 1)
+                    ? (gi % this->rs_wire_streams_)
+                    : (int)(((int64_t)sid * (NN - 1) + gi) % this->rs_wire_streams_);
+          }
           cudaStream_t wstream =
-              (this->rs_wire_streams_ > 1 && (gi & 1))
-                  ? (cudaStream_t)this->internode_streams2_[0]
-                  : (cudaStream_t)this->internode_stream;
+              (wire_lane > 0) ? (cudaStream_t)this->internode_streams2_[wire_lane - 1]
+                              : (cudaStream_t)this->internode_stream;
           CU_CHECK(CUStreamWaitValue(
               wstream,
               (CUdeviceptr)(this->wire_flags_.get() + tn * this->n_split + sid),
@@ -2078,6 +2137,9 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       CUDA_CHECK(cudaMemsetAsync(this->group_counters.get(), 0, flag_bytes, stream_raw));
       CUDA_CHECK(cudaEventRecord(this->staging_reset_event, stream_raw));
       CUDA_CHECK(cudaStreamWaitEvent(this->internode_stream, this->staging_reset_event));
+      for (auto &s2 : this->internode_streams2_) {
+        CUDA_CHECK(cudaStreamWaitEvent(s2, this->staging_reset_event));
+      }
     }
     auto output_dtype = from_torch_dtype(dtype);
     if (this->ep_world_size == 1) {
@@ -2100,8 +2162,19 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         for (int gi = 0; gi < this->nnodes - 1; gi++) {
           int g = (this->node_idx + 1 + gi) % this->nnodes;
           int idx = g * this->n_split + sid;
+          // FLUX_RS_WIRE_STREAMS lane spread (global (sid, gi) cell index,
+          // same mapping as the a2av XSPREAD ladder); lane 0 = the original
+          // internode stream, S=1 = the shipped single-stream schedule
+          int wire_lane = 0;
+          if (this->rs_wire_streams_ > 1) {
+            wire_lane =
+                (int)(((int64_t)sid * (this->nnodes - 1) + gi) % this->rs_wire_streams_);
+          }
+          cudaStream_t wstream =
+              (wire_lane > 0) ? (cudaStream_t)this->internode_streams2_[wire_lane - 1]
+                              : (cudaStream_t)this->internode_stream;
           CU_CHECK(CUStreamWaitValue(
-              this->internode_stream,
+              wstream,
               (CUdeviceptr)(this->group_flags.get() + idx),
               1,
               CU_STREAM_WAIT_VALUE_GEQ));
@@ -2113,8 +2186,14 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
               this->run_id_,
               NVSHMEM_SIGNAL_SET,
               /*pe=*/g * this->local_world_size + this->local_rank,
-              this->internode_stream, this->local_world_size, this->node_idx);
+              wstream, this->local_world_size, this->node_idx);
         }
+      }
+      // join the extra lanes into the original internode stream so no lane
+      // is ever less-ordered than the shipped single-stream schedule
+      for (auto &s2 : this->internode_streams2_) {
+        CUDA_CHECK(cudaEventRecord(this->a2av_inter2_done_, s2));
+        CUDA_CHECK(cudaStreamWaitEvent(this->internode_stream, this->a2av_inter2_done_));
       }
       // receiver side: wait for every remote node's partial of my token shard, then
       // accumulate it into the output (own-node contribution was written by the kernel)
@@ -2334,15 +2413,32 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     if (n_per % kTileSizeN == 0) {
       return n_split;  // legacy accept
     }
-    if (n_dim % kTileSizeN == 0) {
-      return n_dim / kTileSizeN;  // legacy demotion
-    }
     if (a2av) {
-      // the a2av combine path only needs the 8-elem pack alignment
+      // 2026-08-24 (l1 combine campaign, FLUX_A2AV_NSPLIT_HONOR_TAG): the
+      // a2av combine only needs 8-elem pack alignment, so HONOR the
+      // requested n_split instead of falling into the legacy demotion below
+      // — previously K2 (n=7168) a2av n_split in {2..6} silently demoted to
+      // 7 (n_per not 1024-aligned but n 1024-aligned), which poisoned every
+      // labeled-ns2 K2 a2av cell. Behavior change is a2av-only and its own
+      // never-mix boundary (1024-aligned n_per configs are byte-unchanged
+      // via the legacy accept above).
+      (void)bytedance::flux::get_int_from_env("FLUX_A2AV_NSPLIT_HONOR_TAG", 0);
       FLUX_CHECK(n_dim % n_split == 0 && (n_dim / n_split) % 8 == 0)
           << "a2av: n (" << n_dim << ") / n_split (" << n_split
           << ") must be a multiple of 8";
       return n_split;
+    }
+    if (n_dim % n_split == 0 && n_per % kTileSizeNMin == 0) {
+      // 2026-08-24 canonicalization (FLUX_RS_NSPLIT_512_TAG): the 512-tile
+      // dense lane accepts this split, so HONOR it instead of the legacy
+      // demotion below — previously K2 dense n_split in {2..6} silently
+      // demoted to 7 exactly like the a2av case (own never-mix boundary;
+      // 1024-aligned n_per configs unchanged via the legacy accept above).
+      (void)bytedance::flux::get_int_from_env("FLUX_RS_NSPLIT_512_TAG", 0);
+      return n_split;
+    }
+    if (n_dim % kTileSizeN == 0) {
+      return n_dim / kTileSizeN;  // legacy demotion (dense lanes only)
     }
     // 512-tile dense lane (K3 H=3584 = 7*512)
     if (n_dim % n_split == 0 && n_per % kTileSizeNMin == 0) {

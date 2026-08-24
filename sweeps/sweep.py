@@ -1157,7 +1157,7 @@ def cell_launcher(cell, plat, staging):
 
 
 def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=None,
-                   eplb_load_path=None, placement_path=None):
+                   eplb_load_path=None, placement_path=None, oracle_routing_path=None):
     v = VARIANTS[cell["variant"]]
     profiling = cell["mode"] in ("torchprof", "nsys")
     iters = spec["profile_iters"] if profiling else spec["iters"]
@@ -1403,13 +1403,28 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
             # PLACE-lambda sidecar (predict_placement.py): placement input
             # only — matrix identity unchanged, sha recorded as a cell fact
             test_args += ["--placement_file", placement_path]
+        if (
+            v["driver"] == "epic"
+            and oracle_routing_path
+            and any(
+                a in ("placelambda_fast", "placelambda_gpu")
+                for a in (v.get("test_args") or [])
+            )
+        ):
+            # scenario-1 (rule 10): the placelambda arms solve placement on
+            # the PREVIOUS window's rows, never the evaluated batch; the
+            # driver records file/basis/drift_ppm as cell facts
+            test_args += ["--oracle_routing_file", oracle_routing_path]
         if v["driver"] in ("epic", "moonep_fused") and v.get("layer") == "l01":
             # 2026-08-22 (plan eager-juggling-glacier Stage 3): the l01
             # split-N combine depth follows the shape preset (K3 -> 7 ->
             # n_per 512; Qwen3 -> 4 -> 1024). Previously hardcoded 4 in the
             # drivers -> n_per 896 at K3. eplb / staged moonep l01 use a
             # plain a2a combine (no split-N) and take no such flag.
-            test_args += ["--l1_n_split", str(spec["n_split_l1"])]
+            if "--l1_n_split" not in (v.get("test_args") or []):
+                # 2026-08-24: canonical arms may pin their own l1 split
+                # (epic/llc ns1); the spec value is the fallback only
+                test_args += ["--l1_n_split", str(spec["n_split_l1"])]
     else:
         test_args = [
             TEST,
@@ -1477,6 +1492,7 @@ def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
         routing_path=matrix.get("routing") if cell.get("routing_mode") == "real" else None,
         eplb_load_path=matrix.get("eplb_load"),
         placement_path=matrix.get("placement"),
+        oracle_routing_path=matrix.get("oracle_routing"),
     )
     env_delta = build_cell_env(spec, plat, cell, staging, matrix)
     sym_g_required = env_delta.pop("_A2AV_SYM_G_REQUIRED", None)
@@ -1943,11 +1959,42 @@ def cmd_run(spec, jobid_arg, dry):
                     {"routing": rpath, "routing_sha": mmeta["routing_sha256"]}
                 )
             if VARIANTS[cell["variant"]].get("driver") in ("eplb", "epic"):
-                # predicted-load sidecar: the cell's exact full pools (the
-                # oracle-ceiling prediction). Placement input only — matrix
+                # predicted-load sidecar. Placement input only — matrix
                 # identity is unchanged; the driver records the sha as a
-                # cell fact.
-                if cell["family"] == "trace":
+                # cell fact. Two bases (never mixed inside a capsule —
+                # dslots is a family param, shared by every cell):
+                #   dslots cells — scenario-1 PREVIOUS-WINDOW basis (rule
+                #   10): oracle-window load histogram for the load-only
+                #   baselines + oracle-window ROWS for the placelambda
+                #   arms (--oracle_routing_file), one shared window;
+                #   plain trace cells — the legacy full-pool histogram
+                #   (the oracle-ceiling prediction).
+                if cell["family"] == "trace" and "dslots" in dict(
+                    gen_matrix.FAMILY_DEFAULT_PARAMS["trace"], **mparams
+                ):
+                    orpath, orsha, olpath, olsha = (
+                        gen_trace_routing.ensure_oracle_sidecars(
+                            dict(gen_matrix.FAMILY_DEFAULT_PARAMS["trace"], **mparams),
+                            cell["world_size"],
+                            plat["ranks_per_node"],
+                            cell["budget_mib"],
+                            spec["topk"],
+                            spec["chunk_bytes"],
+                            spec["matrix_instance"],
+                            plat["matrices_root"],
+                            traces_root=plat.get("traces_root"),
+                            nexperts=spec["G"],
+                        )
+                    )
+                    matrices[cell["cell_id"]].update(
+                        {
+                            "eplb_load": olpath,
+                            "eplb_load_sha": olsha,
+                            "oracle_routing": orpath,
+                            "oracle_routing_sha": orsha,
+                        }
+                    )
+                elif cell["family"] == "trace":
                     lpath, lsha = gen_trace_routing.ensure_eplb_load(
                         dict(gen_matrix.FAMILY_DEFAULT_PARAMS["trace"], **mparams),
                         cell["world_size"],

@@ -1,0 +1,24 @@
+# 2026-08-23 authentic data-point campaign (user-directed): scenario-1 canon
+# basis (SCHEMA rule 10) via the durable dslots/oracle plumbing. One variant
+# per invocation (--variants on the CLI overrides this placeholder) so each
+# baseline's job chain is independent; all baselines consume the SAME
+# content-addressed eval matrix + routing and (placement arms) the SAME
+# previous-window oracle sidecars. Mode isolated ONLY (quotable per-layer
+# latency; e2e span = the l01 op's dispatch->combine bracket). Correctness
+# skipped (perf campaign; arms correctness-validated in the flip/settled-table
+# capsules). NOTE the combine legs of the non-Slipstream arms remain
+# wire-order UNAUDITED (rule 5d) — quoted with that annotation, rerun later.
+platform: perlmutter
+nodes: 4
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 8, 16, 32, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+notes: "datacamp 8.23: Qwen3-235B 4n b1-b64 isolated, s1 canon (dslots 64:32, oracle g=0)"

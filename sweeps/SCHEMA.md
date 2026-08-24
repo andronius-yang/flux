@@ -1033,3 +1033,27 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
     defaults reach `TopkReduceScatterOp` there too (the smoke8 LLC/EPIC
     l01 table predates the flip). The wire rule (rule 5/7) is untouched:
     every inter-node put remains a blocking `putmem_signal`.
+
+12. **L1 combine canonicalization (2026-08-24, user decision — handoff 16 is
+    the evidence authority).** Binary defaults: `FLUX_A2AV_RS_WIRE_STREAMS`
+    **16** (was 2) and dense `FLUX_RS_WIRE_STREAMS` **16** (was 1) — the
+    proxy-concurrency knee is ~14–15 total lanes and flat past it, so 16
+    (= node count at 16n) sits on the plateau; tags
+    `FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG` /
+    `FLUX_RS_WIRE_STREAMS_DEFAULT16_TAG` (the DEFAULT2 string remains for
+    old probes). n_split canon is PER-ARM in variants.py, overriding the
+    spec's `n_split_l1` (argparse last-wins; sweep.py defers when a variant
+    pins `--l1_n_split`): Slipstream `--n_split 2`, COMET dense
+    `--n_split 2`, EPIC m1 / PLL-LLC `--l1_n_split 1`. The split canon
+    encodes ARCHITECTURAL IDENTITY (user decision): COMET ns2 is the
+    authentic reading of the paper's column-split-overlap algorithm (ns1
+    would strip its mechanism); overlapped arms keep splits, strictly
+    staged arms (zero comm/GEMM overlap) take ns1 and forfeit nothing. Constructibility
+    fixes shipped with this flip: `FLUX_A2AV_NSPLIT_HONOR_TAG` (a2av honors
+    requested n_split; pre-fix K2 a2av ns2..6 silently ran ns7) and
+    `FLUX_RS_NSPLIT_512_TAG` (dense honors 512-tile-acceptable splits; same
+    K2 demotion class). NEVER-MIX: capsules from pre-flip binaries/variant
+    defs (incl. every l1opt/datacamp record capsule) measured the old
+    schedules — compare through their recorded env/args, never by variant
+    name alone. The torch arm's `--n_split` still follows the spec presets
+    (K2 7 / qwen 4): the NCCL baseline is deliberately untouched.

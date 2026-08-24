@@ -1,0 +1,26 @@
+# 2026-08-23 l1opt8n verdict spec (layer1 combine campaign): identical basis to
+# datacamp_qwen_8n.yaml + the 8n W=32 qwen winner config from the streams/conn/
+# n_split ladders: FLUX_A2AV_RS_WIRE_STREAMS=14 (XSPREAD knee) AND
+# n_split_l1=2 (qwen H=4096 allows {1,2,4}; ns4->ns2 cut l1 7.89->7.16 at b8
+# and 4.72->2.77 at b1 at S=7, b64 flat — fewer, bigger, less latency-bound
+# puts + halved conv/prered cell count). NOTE the qwen3 shape preset does not
+# pin n_split_l1, so this explicit field composes with shape: qwen3 (K2's
+# preset pins 7 — no ns override there, and K2 measured ns-flat anyway).
+# Requires the XSPREAD + NSTREAMS binary generation (gen-3 b2bf765a or later).
+platform: perlmutter
+nodes: 8
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 8, 16, 32, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+n_split_l1: 2
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+extra_env:
+  FLUX_A2AV_RS_WIRE_STREAMS: "14"
+notes: "l1opt 8.23: Qwen3 8n b1-b64 isolated, slipstream winner cfg RS_WIRE_STREAMS=14 + n_split_l1=2, s1 canon basis"

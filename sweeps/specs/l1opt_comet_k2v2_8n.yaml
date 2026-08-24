@@ -1,0 +1,30 @@
+# 2026-08-23 l1opt8n COMET winner spec v2: n_split_l1=1 + FLUX_RS_WIRE_STREAMS=7.
+# NO `shape:` key ON PURPOSE (the k2 preset pins n_split_l1=7; fields below are
+# VERBATIM SHAPE_PRESETS["k2"]). WHY ns1 on the DENSE path: the dense floor is
+# the ep_topk_gather_rs production kernel's per-(node,split) tile-barrier waves
+# (8n nsys: 8.1 ms/iter at b1, 12.5 at b8) plus n_split proxy rounds; ns1 cuts
+# waves nnodes*n_split -> nnodes AND puts n_split*(NN-1) -> NN-1 (16n sibling:
+# dense l1 47.0 -> 18.35, -61%). S=7 drains the single round over NN-1 lanes.
+# Gate: batch10 comet-ns1 random-payload gates.
+platform: perlmutter
+nodes: 8
+G: 384
+topk: 8
+H: 7168
+chunk_bytes: 14336
+ffn_hidden: 2048
+n_split_l1: 1
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 8, 16, 32, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+extra_env:
+  FLUX_RS_BLOCKS: "20"
+  FLUX_RS_WIRE_STREAMS: "7"
+notes: "l1opt 8.23: K2 8n b1-b64 isolated, COMET winner v2 = n_split_l1=1 + RS_WIRE_STREAMS=7 + RS_BLOCKS=20 (production-wave + round aggregation), s1 canon basis (explicit k2 fields)"

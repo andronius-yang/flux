@@ -1,0 +1,33 @@
+# 2026-08-23 l1opt8n K2 winner spec v2: n_split_l1=1 + RS_WIRE_STREAMS=7.
+# NO `shape:` key ON PURPOSE: the k2 preset pins n_split_l1=7 and apply_shape
+# hard-errors on contradiction; every shape field below is copied VERBATIM from
+# SHAPE_PRESETS["k2"] (G 384, topk 8, H 7168, ffn 2048, chunk 14336) and the
+# family pins model=Kimi-K2, so the basis is identical to datacamp_k2_8n.yaml.
+# WHY ns1: the combine wire drains in n_split end-synchronized proxy ROUNDS of
+# NN-1 blocking puts (~0.73 ms/round at 8n + payload term); ns1 = ONE round =
+# the full put-aggregation experiment in env. Measured (gen-3, batch9): K2 b1
+# l1 10.11->2.33, b8 12.37->7.87; ns2..6 are silently DEMOTED to 7 by the op
+# ctor's legacy branch (gather_rs.cc:2405-16) — only ns1 is real for K2 until
+# the gen-4 tag-guarded fix. S=7: with ns1 there are only NN-1=7 puts, one per
+# lane; S>7 is inert. Gate: batch9 gate_k2_b8_ns1 random-payload.
+platform: perlmutter
+nodes: 8
+G: 384
+topk: 8
+H: 7168
+chunk_bytes: 14336
+ffn_hidden: 2048
+n_split_l1: 1
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 8, 16, 32, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+extra_env:
+  FLUX_A2AV_RS_WIRE_STREAMS: "7"
+notes: "l1opt 8.23: K2 8n b1-b64 isolated, slipstream winner v2 = n_split_l1=1 + RS_WIRE_STREAMS=7 (round-aggregation), s1 canon basis (explicit k2 fields, no shape key). BUDGET-SPLIT RECORD: ns1 wins b1 (l1 2.33 vs 7.29) and b8 (7.87 vs 9.66) but REGRESSES b64 (51.7 vs 42.7, pipelining loss) — recommended K2 config is ns1+S7 below the b16/b32 crossover (probed in batch9b driver-direct cells), ns7+S14 above; compare per-budget against the x14/ns7 twin capsule l1opt_slipstream_k2_8n.yaml"

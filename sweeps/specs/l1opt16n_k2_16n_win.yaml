@@ -1,0 +1,38 @@
+# l1opt16n record spec (2026-08-23, layer1-combine-at-scale campaign): the
+# 16n WINNER config for the flux combine arms — n_split_l1=1 (one wire put
+# per remote node: 105 -> 15 blocking puts) + 15-lane wire ladders
+# (FLUX_A2AV_RS_WIRE_STREAMS for the Slipstream/hcc compress wire,
+# FLUX_RS_WIRE_STREAMS for the COMET dense wire; knee = 15 at nn=16,
+# past-knee flat). Evidence: driver-direct grid on allocation 57494434,
+# binary ths_op sha b2bf765a (gen-3, tags NSTREAMS+XSPREAD+RS_WIRE_NSTREAMS).
+# NOTE: `shape: k2` is intentionally ABSENT — apply_shape hard-errors on
+# n_split_l1 contradicting the preset's 7; every other k2 preset field is
+# inlined verbatim below (G/topk/H/ffn_hidden/chunk_bytes and the same
+# Kimi-K2 trace family as datacamp_k2_16n.yaml -> identical content-addressed
+# matrices). cells.csv `shape` column is therefore empty for these capsules.
+# K2 b64 is a TIE vs the ns7 canon within the run-to-run band (l1 76.0 vs
+# 73.4-75.2, e2e nominally best) — single-config record, tie noted.
+# Reference arms (l01_torch, eplb_l01) are rerun from the ORIGINAL
+# datacamp_k2_16n.yaml (canonical arm configs), same binary.
+platform: perlmutter
+nodes: 16
+G: 384
+topk: 8
+H: 7168
+ffn_hidden: 2048
+chunk_bytes: 14336
+n_split_l1: 1
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 8, 16, 32, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+extra_env:
+  FLUX_A2AV_RS_WIRE_STREAMS: "15"
+  FLUX_RS_WIRE_STREAMS: "15"
+notes: "l1opt16n winner: ns1 + 15-lane wire (both combine wires); K2 16n b1-b64 isolated, s1 canon (dslots 64:32); b64 = tie vs ns7 canon within band"

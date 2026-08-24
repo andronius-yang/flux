@@ -712,8 +712,10 @@ VARIANTS = {
     ),
     "epic_l01_hc_m1": dict(
         comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
+        # 2026-08-24 canonicalization (user decision): staged l1 (zero
+        # comm/GEMM overlap) forfeits nothing at ns1 -> one round of puts
         test_args=["--transport", "hier_compress", "--placement", "epic",
-                   "--groups", "1", "--layers", "l01"],
+                   "--groups", "1", "--layers", "l01", "--l1_n_split", "1"],
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
     ),
@@ -971,6 +973,31 @@ VARIANTS = {
                    "--place_dynamic", "dynamic"],
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["FLUX_A2AV_DISPATCH_ONLY_TAG"],
+    ),
+    # CANONICAL LLC l01 arm (2026-08-23, user-directed; the quotable
+    # "PLL/LLC (ours)" baseline for scenario-1 data campaigns — supersedes
+    # pllf_l01_hc_lcg0625's loccap_gpu router, which stays for capsule
+    # history): the settled-table stack of handoff 13 — PLACE-lambda FAST
+    # placement solved STATICALLY on the previous-window oracle rows
+    # (sweep.py passes --oracle_routing_file on dslots trace cells),
+    # LocCap sender-local fused-kernel router (loccap_sl, eps 0.0625)
+    # with the fast tail (FLUX_PLL_FAST_TAIL default 1) and the GRAPHED
+    # tail (FLUX_PLL_TAIL_GRAPH=1 — the loccap tail is the only graphed
+    # plan lane, as in the settled tables), Slipstream dispatch +
+    # capacity-mode hcc combine (binary defaults post rule-11 flip,
+    # probe-gated by the DEFAULT tags).
+    "llc_l01_s1": dict(
+        comm_pattern="epic_hc_a2av", driver="epic", layer="l01",
+        test_args=["--transport", "hier_compress", "--placement",
+                   "placelambda_fast", "--groups", "1", "--layers", "l01",
+                   "--router", "loccap_sl", "--eps", "0.0625",
+                   # 2026-08-24 canonicalization: staged l1 -> ns1
+                   "--l1_n_split", "1"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8",
+             "FLUX_PLL_TAIL_GRAPH": "1"},
+        requires=["FLUX_A2AV_DISPATCH_ONLY_TAG",
+                  "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG",
+                  "FLUX_A2AV_RS_CTA_1086_TAG"],
     ),
     "epic_hc_m1_na_lbu": dict(
         comm_pattern="epic_hc_a2av", driver="epic",
@@ -1411,6 +1438,9 @@ VARIANTS = {
             "--impl", "flux",
             "--l0_comm_pattern", "allgather",
             "--l1_comm_pattern", "dense",
+            # 2026-08-24 canonicalization (user decision): dense l1 ns2 —
+            # NEEDS FLUX_RS_NSPLIT_512_TAG (K2 dense ns2 demoted to 7 before)
+            "--n_split", "2",
         ],
         # FLUX_RS_BLOCKS canonicalized 3 -> 20 (2026-08-21): the dense combine
         # was CTA-starved at topk-16 (K3 b32 e2e 104 -> 60 ms over the {3..24}
@@ -1482,18 +1512,23 @@ VARIANTS = {
             "--impl", "flux",
             "--l0_comm_pattern", "a2av_hier_compress",
             "--l1_comm_pattern", "a2av_hier_compress",
+            # 2026-08-24 canonicalization (user decision): l1 combine ns2
+            # (bridges the split ladder interior; overrides the spec's
+            # n_split_l1 by argparse last-wins) + 16 wire lanes
+            "--n_split", "2",
         ],
         env={
             "FLUX_A2AV_LB_UNION": "1",
             "FLUX_A2AV_FUSED_STAGE2": "1",
             "FLUX_A2AV_EARLY_LAUNCH": "1",
-            "FLUX_A2AV_RS_WIRE_STREAMS": "2",
+            "FLUX_A2AV_RS_WIRE_STREAMS": "16",
             "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10", "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_RS_PRERED_BLOCKS": "6"},
         requires=[
             "FLUX_A2AV_LB_UNION",
             "FLUX_A2AV_FUSED_STAGE2",
             "FLUX_A2AV_EARLY_LAUNCH",
-            "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT2_TAG",
+            "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG",
+            "FLUX_A2AV_NSPLIT_HONOR_TAG",
             "FLUX_A2AV_RS_CTA_1086_TAG",
             "FLUX_A2AV_RS_MAX_SEND_ROWS",
             "FLUX_A2AV_RS_MAX_CONV_ROWS",
@@ -1522,7 +1557,8 @@ VARIANTS = {
             "FLUX_A2AV_LB_UNION",
             "FLUX_A2AV_FUSED_STAGE2",
             "FLUX_A2AV_EARLY_LAUNCH",
-            "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT2_TAG",
+            "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG",
+            "FLUX_A2AV_NSPLIT_HONOR_TAG",
             "FLUX_A2AV_RS_CTA_1086_TAG",
             "FLUX_A2AV_RS_MAX_SEND_ROWS",
             "FLUX_A2AV_RS_MAX_CONV_ROWS",
@@ -1587,12 +1623,16 @@ VARIANTS = {
             "--impl", "flux",
             "--l0_comm_pattern", "a2av_hier_compress",
             "--l1_comm_pattern", "a2av_hier_compress",
+            # 2026-08-24 canonicalization (user decision): l1 combine ns2
+            # (bridges the split ladder interior; overrides the spec's
+            # n_split_l1 by argparse last-wins) + 16 wire lanes
+            "--n_split", "2",
         ],
         env={
             "FLUX_A2AV_LB_UNION": "1",
             "FLUX_A2AV_FUSED_STAGE2": "1",
             "FLUX_A2AV_EARLY_LAUNCH": "1",
-            "FLUX_A2AV_RS_WIRE_STREAMS": "2",
+            "FLUX_A2AV_RS_WIRE_STREAMS": "16",
             "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "6", "FLUX_A2AV_RS_REDUCE_BLOCKS": "6", "FLUX_A2AV_RS_PRERED_BLOCKS": "4"},
         requires=[
             "FLUX_A2AV_LB_UNION",
@@ -1671,12 +1711,16 @@ VARIANTS = {
             "--impl", "flux",
             "--l0_comm_pattern", "a2av_hier_compress",
             "--l1_comm_pattern", "a2av_hier_compress",
+            # 2026-08-24 canonicalization (user decision): l1 combine ns2
+            # (bridges the split ladder interior; overrides the spec's
+            # n_split_l1 by argparse last-wins) + 16 wire lanes
+            "--n_split", "2",
         ],
         env={
             "FLUX_A2AV_LB_UNION": "1",
             "FLUX_A2AV_FUSED_STAGE2": "1",
             "FLUX_A2AV_EARLY_LAUNCH": "1",
-            "FLUX_A2AV_RS_WIRE_STREAMS": "2",
+            "FLUX_A2AV_RS_WIRE_STREAMS": "16",
             "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10", "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_RS_PRERED_BLOCKS": "6"},
         requires=[
             "FLUX_A2AV_LB_UNION",
@@ -1697,12 +1741,16 @@ VARIANTS = {
             "--impl", "flux",
             "--l0_comm_pattern", "a2av_hier_compress",
             "--l1_comm_pattern", "a2av_hier_compress",
+            # 2026-08-24 canonicalization (user decision): l1 combine ns2
+            # (bridges the split ladder interior; overrides the spec's
+            # n_split_l1 by argparse last-wins) + 16 wire lanes
+            "--n_split", "2",
         ],
         env={
             "FLUX_A2AV_LB_UNION": "1",
             "FLUX_A2AV_FUSED_STAGE2": "1",
             "FLUX_A2AV_EARLY_LAUNCH": "1",
-            "FLUX_A2AV_RS_WIRE_STREAMS": "2",
+            "FLUX_A2AV_RS_WIRE_STREAMS": "16",
             "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "4", "FLUX_A2AV_RS_REDUCE_BLOCKS": "4", "FLUX_A2AV_RS_PRERED_BLOCKS": "3"},
         requires=[
             "FLUX_A2AV_LB_UNION",
