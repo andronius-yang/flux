@@ -1536,6 +1536,350 @@ VARIANTS = {
         ],
         l1_pattern="a2av_hier_compress",
     ),
+    # Slipstream v2 (2026-08-24): M-split destination-wave combine. The l1
+    # GEMM is decomposed into (ring wave of dest nodes, expert) ROW
+    # sub-problems (n_split MUST be 1 — waves replace column splits) whose
+    # cascade flags release the per-node pack->conv->prered->wire ladder
+    # DURING the GEMM: put count stays at the ns1 minimum (NN-1 blocking
+    # puts/rank) WITH M-axis pipelining — the structural resolution of
+    # handoff 16's "n_split multiplies the proxy-bound put count" tension.
+    # Eager arrival-order receiver reduce defaults ON under msplit. Layer0
+    # dispatch identical to l01_slipstream. FLUX_A2AV_RS_WAVE_NODES (default
+    # 1 = per-node waves) is the tile-quantization dial. Own never-mix
+    # boundary: FLUX_A2AV_RS_MSPLIT_TAG (default-off knob — one binary
+    # serves v1 and v2 arms).
+    "l01_slipstream_v2": dict(
+        comm_pattern="l01_slipstream_v2",  # cells.csv label only
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "a2av_hier_compress",
+            "--l1_comm_pattern", "a2av_hier_compress",
+            "--n_split", "1",  # msplit requires ns1 (argparse last-wins over spec)
+        ],
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1",
+            "FLUX_A2AV_RS_MSPLIT": "1",
+            "FLUX_A2AV_RS_WIRE_STREAMS": "16",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10", "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_RS_EAGER": "1", "FLUX_A2AV_RS_FUSED_PACK": "0", "FLUX_A2AV_WAVE_PACK": "0", "FLUX_A2AV_RS_BUCKET": "0", "FLUX_A2AV_RS_PRERED_BLOCKS": "6"},
+        requires=[
+            "FLUX_A2AV_LB_UNION",
+            "FLUX_A2AV_FUSED_STAGE2",
+            "FLUX_A2AV_EARLY_LAUNCH",
+            "FLUX_A2AV_RS_MSPLIT_TAG",
+            "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG",
+            "FLUX_A2AV_NSPLIT_HONOR_TAG",
+            "FLUX_A2AV_RS_CTA_1086_TAG",
+            "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS",
+            "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+        ],
+        l1_pattern="a2av_hier_compress",
+    ),
+    # v2 twin with the eager arrival-order receiver reduce DISABLED (legacy
+    # wait-all + CSR reduce). 4n b8 discriminators (capsules 20260824-100751 /
+    # -100931): the eager kernel costs ~1.0 ms of l1 at W=16 AND inflates l0
+    # by ~0.4-0.5 ms (mechanism open); eager0 makes v2 TIE v1 on qwen at 4n.
+    # Scale twins decide the eager policy (receive-side overlap should matter
+    # more at 8n/16n where arrivals spread over a longer wire).
+    "l01_slipstream_v2_noeager": dict(
+        comm_pattern="l01_slipstream_v2_noeager",  # cells.csv label only
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "a2av_hier_compress",
+            "--l1_comm_pattern", "a2av_hier_compress",
+            "--n_split", "1",
+        ],
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1",
+            "FLUX_A2AV_RS_MSPLIT": "1",
+            "FLUX_A2AV_RS_EAGER": "0",
+            "FLUX_A2AV_RS_WIRE_STREAMS": "16",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10", "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_RS_FUSED_PACK": "0", "FLUX_A2AV_WAVE_PACK": "0", "FLUX_A2AV_RS_BUCKET": "0", "FLUX_A2AV_RS_PRERED_BLOCKS": "6"},
+        requires=[
+            "FLUX_A2AV_LB_UNION",
+            "FLUX_A2AV_FUSED_STAGE2",
+            "FLUX_A2AV_EARLY_LAUNCH",
+            "FLUX_A2AV_RS_MSPLIT_TAG",
+            "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG",
+            "FLUX_A2AV_NSPLIT_HONOR_TAG",
+            "FLUX_A2AV_RS_CTA_1086_TAG",
+            "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS",
+            "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+        ],
+        l1_pattern="a2av_hier_compress",
+    ),
+    # v2 + LANE-CHAIN receiver (Slipstream v2b, 2026-08-24): per-lane
+    # front-end waits in EXPECTED arrival order (descending ring, own node
+    # last) release per-lane scatter-adds into an fp32 accumulator + one
+    # finalize cast — O(W) waits replace the eager kernel's per-element
+    # system-scope polling AND recover the receive-side overlap wait-all
+    # forfeits. Requires the gen-7+ binary (FLUX_A2AV_RS_LANE_CHAIN_TAG).
+    "l01_slipstream_v2_lanechain": dict(
+        comm_pattern="l01_slipstream_v2_lanechain",  # cells.csv label only
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "a2av_hier_compress",
+            "--l1_comm_pattern", "a2av_hier_compress",
+            "--n_split", "1",
+        ],
+        env={
+            "FLUX_A2AV_LB_UNION": "1",
+            "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1",
+            "FLUX_A2AV_RS_MSPLIT": "1",
+            "FLUX_A2AV_RS_LANE_CHAIN": "1",
+            "FLUX_A2AV_RS_WIRE_STREAMS": "16",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10", "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_RS_EAGER": "0", "FLUX_A2AV_RS_FUSED_PACK": "0", "FLUX_A2AV_WAVE_PACK": "0", "FLUX_A2AV_RS_BUCKET": "0", "FLUX_A2AV_RS_PRERED_BLOCKS": "6"},
+        requires=[
+            "FLUX_A2AV_LB_UNION",
+            "FLUX_A2AV_FUSED_STAGE2",
+            "FLUX_A2AV_EARLY_LAUNCH",
+            "FLUX_A2AV_RS_MSPLIT_TAG",
+            "FLUX_A2AV_RS_LANE_CHAIN_TAG",
+            "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG",
+            "FLUX_A2AV_NSPLIT_HONOR_TAG",
+            "FLUX_A2AV_RS_CTA_1086_TAG",
+            "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS",
+            "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+        ],
+        l1_pattern="a2av_hier_compress",
+    ),
+    # gen-8a (user-approved 2026-08-24): size-ordered waves on the noeager
+    # base — remote waves sorted by descending segment size (globally
+    # derivable), own node last. Pre-registered falsifier: incast bunching at
+    # hot destinations. Requires the gen-8 binary.
+    "l01_slipstream_v2_sizeord": dict(
+        comm_pattern="l01_slipstream_v2_sizeord",
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "a2av_hier_compress",
+            "--l1_comm_pattern", "a2av_hier_compress",
+            "--n_split", "1",
+        ],
+        env={
+            "FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1", "FLUX_A2AV_RS_MSPLIT": "1",
+            "FLUX_A2AV_RS_EAGER": "0", "FLUX_A2AV_RS_WAVE_ORDER": "1",
+            "FLUX_A2AV_RS_WIRE_STREAMS": "16",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10", "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_RS_FUSED_PACK": "0", "FLUX_A2AV_WAVE_PACK": "0", "FLUX_A2AV_RS_BUCKET": "0", "FLUX_A2AV_RS_PRERED_BLOCKS": "6"},
+        requires=[
+            "FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2", "FLUX_A2AV_EARLY_LAUNCH",
+            "FLUX_A2AV_RS_MSPLIT_TAG", "FLUX_A2AV_RS_WAVE_ORDER_TAG",
+            "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG", "FLUX_A2AV_NSPLIT_HONOR_TAG",
+            "FLUX_A2AV_RS_CTA_1086_TAG", "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS", "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+        ],
+        l1_pattern="a2av_hier_compress",
+    ),
+    # gen-8c (user-approved 2026-08-24): epilogue-fused pack on the noeager
+    # base — the l1 GEMM scatters the dest-major send panel directly
+    # (ScatterD + K-side gate-coefficient pre-fold); the pack kernel runs as
+    # a flag relay. NOTE the gen-8 binary's ScatterD epilogue (identity iota)
+    # touches EVERY gather_rs arm's D-write microscopically — full rule-4
+    # boundary; all comparisons re-baselined within gen-8 capsules.
+    "l01_slipstream_v2_fusedpack": dict(
+        comm_pattern="l01_slipstream_v2_fusedpack",
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "a2av_hier_compress",
+            "--l1_comm_pattern", "a2av_hier_compress",
+            "--n_split", "1",
+        ],
+        env={
+            "FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1", "FLUX_A2AV_RS_MSPLIT": "1",
+            "FLUX_A2AV_RS_EAGER": "0", "FLUX_A2AV_RS_FUSED_PACK": "1",
+            "FLUX_A2AV_RS_WIRE_STREAMS": "16",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10", "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_WAVE_PACK": "0", "FLUX_A2AV_RS_BUCKET": "0", "FLUX_A2AV_RS_PRERED_BLOCKS": "6"},
+        requires=[
+            "FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2", "FLUX_A2AV_EARLY_LAUNCH",
+            "FLUX_A2AV_RS_MSPLIT_TAG", "FLUX_A2AV_RS_FUSED_PACK_TAG",
+            "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG", "FLUX_A2AV_NSPLIT_HONOR_TAG",
+            "FLUX_A2AV_RS_CTA_1086_TAG", "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS", "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+        ],
+        l1_pattern="a2av_hier_compress",
+    ),
+    # gen-8b (user-approved 2026-08-24): dispatch wave-pack on the noeager
+    # base — layer0's producer pack splits per send segment (own first, then
+    # remote in mirror wire order) so each wire round's put gates on ITS
+    # segment instead of the whole pack. Requires the gen-8 binary.
+    "l01_slipstream_v2_wavepack": dict(
+        comm_pattern="l01_slipstream_v2_wavepack",
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "a2av_hier_compress",
+            "--l1_comm_pattern", "a2av_hier_compress",
+            "--n_split", "1",
+        ],
+        env={
+            "FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1", "FLUX_A2AV_RS_MSPLIT": "1",
+            "FLUX_A2AV_RS_EAGER": "0", "FLUX_A2AV_WAVE_PACK": "1",
+            "FLUX_A2AV_RS_WIRE_STREAMS": "16",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10", "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_RS_FUSED_PACK": "0", "FLUX_A2AV_RS_BUCKET": "0", "FLUX_A2AV_RS_PRERED_BLOCKS": "6"},
+        requires=[
+            "FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2", "FLUX_A2AV_EARLY_LAUNCH",
+            "FLUX_A2AV_RS_MSPLIT_TAG", "FLUX_A2AV_WAVE_PACK_TAG",
+            "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG", "FLUX_A2AV_NSPLIT_HONOR_TAG",
+            "FLUX_A2AV_RS_CTA_1086_TAG", "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS", "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+        ],
+        l1_pattern="a2av_hier_compress",
+    ),
+    # gen-8 COMPOSED arm: fused pack (l1 GEMM scatters the send panel) +
+    # dispatch wave-pack (l0 per-segment pack) on the noeager base — the two
+    # gate-winning gen-8 mechanisms together; sizeord excluded (consistent
+    # loser at 4n gates + 16n gate).
+    "l01_slipstream_v2_fpwp": dict(
+        comm_pattern="l01_slipstream_v2_fpwp",
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "a2av_hier_compress",
+            "--l1_comm_pattern", "a2av_hier_compress",
+            "--n_split", "1",
+        ],
+        env={
+            "FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_FUSED_STAGE2": "1",
+            "FLUX_A2AV_EARLY_LAUNCH": "1", "FLUX_A2AV_RS_MSPLIT": "1",
+            "FLUX_A2AV_RS_EAGER": "0", "FLUX_A2AV_RS_FUSED_PACK": "1",
+            "FLUX_A2AV_WAVE_PACK": "1",
+            "FLUX_A2AV_RS_WIRE_STREAMS": "16",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10", "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_RS_BUCKET": "0", "FLUX_A2AV_RS_PRERED_BLOCKS": "6"},
+        requires=[
+            "FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2", "FLUX_A2AV_EARLY_LAUNCH",
+            "FLUX_A2AV_RS_MSPLIT_TAG", "FLUX_A2AV_RS_FUSED_PACK_TAG",
+            "FLUX_A2AV_WAVE_PACK_TAG",
+            "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG", "FLUX_A2AV_NSPLIT_HONOR_TAG",
+            "FLUX_A2AV_RS_CTA_1086_TAG", "FLUX_A2AV_RS_MAX_SEND_ROWS",
+            "FLUX_A2AV_RS_MAX_CONV_ROWS", "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+        ],
+        l1_pattern="a2av_hier_compress",
+    ),
+    # lanechain receiver diagnostics (2026-08-24, user-directed "why does
+    # reduce-throughout lose"): CTA ladder discriminating bandwidth-bound (H1,
+    # more CTAs don't help) vs fold-starvation (H2, they do). Clones of
+    # l01_slipstream_v2_lanechain with REDUCE_BLOCKS 16 / 24.
+    "l01_slipstream_v2_lanechain_rb16": dict(
+        comm_pattern="l01_slipstream_v2_lanechain_rb16",
+        driver="l01", layer="l01",
+        test_args=["--impl", "flux", "--l0_comm_pattern", "a2av_hier_compress",
+                   "--l1_comm_pattern", "a2av_hier_compress", "--n_split", "1"],
+        env={"FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_FUSED_STAGE2": "1",
+             "FLUX_A2AV_EARLY_LAUNCH": "1", "FLUX_A2AV_RS_MSPLIT": "1",
+             "FLUX_A2AV_RS_LANE_CHAIN": "1", "FLUX_A2AV_RS_WIRE_STREAMS": "16",
+             "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10",
+             "FLUX_A2AV_RS_REDUCE_BLOCKS": "16", "FLUX_A2AV_RS_EAGER": "0", "FLUX_A2AV_RS_FUSED_PACK": "0", "FLUX_A2AV_WAVE_PACK": "0", "FLUX_A2AV_RS_BUCKET": "0", "FLUX_A2AV_RS_PRERED_BLOCKS": "6"},
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2", "FLUX_A2AV_EARLY_LAUNCH",
+                  "FLUX_A2AV_RS_MSPLIT_TAG", "FLUX_A2AV_RS_LANE_CHAIN_TAG",
+                  "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG", "FLUX_A2AV_NSPLIT_HONOR_TAG",
+                  "FLUX_A2AV_RS_CTA_1086_TAG", "FLUX_A2AV_RS_MAX_SEND_ROWS",
+                  "FLUX_A2AV_RS_MAX_CONV_ROWS", "FLUX_A2AV_RS_MAX_WIRE_ROWS"],
+        l1_pattern="a2av_hier_compress",
+    ),
+    "l01_slipstream_v2_lanechain_rb24": dict(
+        comm_pattern="l01_slipstream_v2_lanechain_rb24",
+        driver="l01", layer="l01",
+        test_args=["--impl", "flux", "--l0_comm_pattern", "a2av_hier_compress",
+                   "--l1_comm_pattern", "a2av_hier_compress", "--n_split", "1"],
+        env={"FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_FUSED_STAGE2": "1",
+             "FLUX_A2AV_EARLY_LAUNCH": "1", "FLUX_A2AV_RS_MSPLIT": "1",
+             "FLUX_A2AV_RS_LANE_CHAIN": "1", "FLUX_A2AV_RS_WIRE_STREAMS": "16",
+             "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10",
+             "FLUX_A2AV_RS_REDUCE_BLOCKS": "24", "FLUX_A2AV_RS_EAGER": "0", "FLUX_A2AV_RS_FUSED_PACK": "0", "FLUX_A2AV_WAVE_PACK": "0", "FLUX_A2AV_RS_BUCKET": "0", "FLUX_A2AV_RS_PRERED_BLOCKS": "6"},
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2", "FLUX_A2AV_EARLY_LAUNCH",
+                  "FLUX_A2AV_RS_MSPLIT_TAG", "FLUX_A2AV_RS_LANE_CHAIN_TAG",
+                  "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG", "FLUX_A2AV_NSPLIT_HONOR_TAG",
+                  "FLUX_A2AV_RS_CTA_1086_TAG", "FLUX_A2AV_RS_MAX_SEND_ROWS",
+                  "FLUX_A2AV_RS_MAX_CONV_ROWS", "FLUX_A2AV_RS_MAX_WIRE_ROWS"],
+        l1_pattern="a2av_hier_compress",
+    ),
+    # completion-bucketed register receiver (Slipstream gen-10, 2026-08-24,
+    # user-directed): arrival-order folding at wait-all's 1x bytes -- tokens
+    # bucket by their last contribution's chain position; each lane wait folds
+    # exactly the tokens it completes. The receiver idea projected to win where
+    # lane-chain lost (no 4-5x scratch RMW amplification).
+    "l01_slipstream_v2_bucket": dict(
+        comm_pattern="l01_slipstream_v2_bucket",
+        driver="l01", layer="l01",
+        test_args=["--impl", "flux", "--l0_comm_pattern", "a2av_hier_compress",
+                   "--l1_comm_pattern", "a2av_hier_compress", "--n_split", "1"],
+        env={"FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_FUSED_STAGE2": "1",
+             "FLUX_A2AV_EARLY_LAUNCH": "1", "FLUX_A2AV_RS_MSPLIT": "1",
+             "FLUX_A2AV_RS_BUCKET": "1", "FLUX_A2AV_RS_WIRE_STREAMS": "16",
+             "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10",
+             "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_RS_EAGER": "0", "FLUX_A2AV_RS_FUSED_PACK": "0", "FLUX_A2AV_WAVE_PACK": "0", "FLUX_A2AV_RS_PRERED_BLOCKS": "6"},
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2", "FLUX_A2AV_EARLY_LAUNCH",
+                  "FLUX_A2AV_RS_MSPLIT_TAG", "FLUX_A2AV_RS_BUCKET_TAG",
+                  "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG", "FLUX_A2AV_NSPLIT_HONOR_TAG",
+                  "FLUX_A2AV_RS_CTA_1086_TAG", "FLUX_A2AV_RS_MAX_SEND_ROWS",
+                  "FLUX_A2AV_RS_MAX_CONV_ROWS", "FLUX_A2AV_RS_MAX_WIRE_ROWS"],
+        l1_pattern="a2av_hier_compress",
+    ),
+    "l01_slipstream_v2_fpwp_bucket": dict(
+        comm_pattern="l01_slipstream_v2_fpwp_bucket",
+        driver="l01", layer="l01",
+        test_args=["--impl", "flux", "--l0_comm_pattern", "a2av_hier_compress",
+                   "--l1_comm_pattern", "a2av_hier_compress", "--n_split", "1"],
+        env={"FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_FUSED_STAGE2": "1",
+             "FLUX_A2AV_EARLY_LAUNCH": "1", "FLUX_A2AV_RS_MSPLIT": "1",
+             "FLUX_A2AV_RS_EAGER": "0", "FLUX_A2AV_RS_FUSED_PACK": "1",
+             "FLUX_A2AV_WAVE_PACK": "1", "FLUX_A2AV_RS_BUCKET": "1",
+             "FLUX_A2AV_RS_WIRE_STREAMS": "16",
+             "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10",
+             "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_RS_PRERED_BLOCKS": "6"},
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2", "FLUX_A2AV_EARLY_LAUNCH",
+                  "FLUX_A2AV_RS_MSPLIT_TAG", "FLUX_A2AV_RS_FUSED_PACK_TAG",
+                  "FLUX_A2AV_WAVE_PACK_TAG", "FLUX_A2AV_RS_BUCKET_TAG",
+                  "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG", "FLUX_A2AV_NSPLIT_HONOR_TAG",
+                  "FLUX_A2AV_RS_CTA_1086_TAG", "FLUX_A2AV_RS_MAX_SEND_ROWS",
+                  "FLUX_A2AV_RS_MAX_CONV_ROWS", "FLUX_A2AV_RS_MAX_WIRE_ROWS"],
+        l1_pattern="a2av_hier_compress",
+    ),
+    # fpwp + lanechain-rb24 receiver composition (2026-08-24, CTA-ladder
+    # follow-up): the ladder showed lanechain's loss = fold starvation at
+    # REDUCE_BLOCKS=8 (rb24 beat noeager at b64). This arm asks whether the
+    # canon fpwp config wants the lanechain receiver at rb24.
+    "l01_slipstream_v2_fpwp_lcrb24": dict(
+        comm_pattern="l01_slipstream_v2_fpwp_lcrb24",
+        driver="l01", layer="l01",
+        test_args=["--impl", "flux", "--l0_comm_pattern", "a2av_hier_compress",
+                   "--l1_comm_pattern", "a2av_hier_compress", "--n_split", "1"],
+        env={"FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_FUSED_STAGE2": "1",
+             "FLUX_A2AV_EARLY_LAUNCH": "1", "FLUX_A2AV_RS_MSPLIT": "1",
+             "FLUX_A2AV_RS_EAGER": "0", "FLUX_A2AV_RS_FUSED_PACK": "1",
+             "FLUX_A2AV_WAVE_PACK": "1", "FLUX_A2AV_RS_LANE_CHAIN": "1",
+             "FLUX_A2AV_RS_WIRE_STREAMS": "16",
+             "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10",
+             "FLUX_A2AV_RS_REDUCE_BLOCKS": "24", "FLUX_A2AV_RS_BUCKET": "0", "FLUX_A2AV_RS_PRERED_BLOCKS": "6"},
+        requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2", "FLUX_A2AV_EARLY_LAUNCH",
+                  "FLUX_A2AV_RS_MSPLIT_TAG", "FLUX_A2AV_RS_FUSED_PACK_TAG",
+                  "FLUX_A2AV_WAVE_PACK_TAG", "FLUX_A2AV_RS_LANE_CHAIN_TAG",
+                  "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG", "FLUX_A2AV_NSPLIT_HONOR_TAG",
+                  "FLUX_A2AV_RS_CTA_1086_TAG", "FLUX_A2AV_RS_MAX_SEND_ROWS",
+                  "FLUX_A2AV_RS_MAX_CONV_ROWS", "FLUX_A2AV_RS_MAX_WIRE_ROWS"],
+        l1_pattern="a2av_hier_compress",
+    ),
     # bare-defaults twin: NO RS env at all — must equal the pinned arm
     # within noise (the default-flip validation cell; keep for future
     # binary-identity checks)
@@ -1800,5 +2144,60 @@ VARIANTS = {
 # remain comparable (incl. the one l01_wincast_bare flip-validation
 # capsule, 20260823-1144*).
 VARIANTS["slipstream"] = VARIANTS["hier_compress_lb_union"]
-VARIANTS["l01_slipstream"] = VARIANTS["l01_lbunion_compress"]
-VARIANTS["l01_slipstream_bare"] = VARIANTS["l01_wincast_bare"]
+# SCHEMA rule 13 (2026-08-24, user decision): l01_slipstream now names the
+# OFFICIAL Slipstream — the destination-driven token-centric combine (msplit
+# destination waves + epilogue-fused pack + dispatch wave-pack + the
+# completion-bucketed register receiver), all binary defaults gated by
+# FLUX_A2AV_SLIPSTREAM2_TAG. The pre-supersession column-split canon lives on
+# as l01_slipstream_v1 (alias of the historical l01_lbunion_compress, whose
+# cells.csv label it keeps). Pre-rule-13 capsules labeled l01_slipstream
+# measured the v1 config — never compare by variant name across the flip.
+def _v1_pinned(base):
+    # rule 13: the v1 arms must run the AUTHENTIC pre-supersession config on
+    # gen-11+ binaries, where the mechanism knobs default ON — pin all five
+    # to their old-canon values (all off; eager's old default was 0 too).
+    d = dict(base)
+    d["env"] = dict(base["env"])
+    for k in ("FLUX_A2AV_RS_MSPLIT", "FLUX_A2AV_RS_EAGER", "FLUX_A2AV_RS_FUSED_PACK",
+              "FLUX_A2AV_WAVE_PACK", "FLUX_A2AV_RS_BUCKET"):
+        d["env"].setdefault(k, "0")
+    return d
+VARIANTS["l01_slipstream_v1"] = _v1_pinned(VARIANTS["l01_lbunion_compress"])
+VARIANTS["l01_slipstream_v1_bare"] = _v1_pinned(VARIANTS["l01_wincast_bare"])
+VARIANTS["l01_slipstream"] = dict(
+    comm_pattern="l01_slipstream",
+    driver="l01", layer="l01",
+    test_args=["--impl", "flux", "--l0_comm_pattern", "a2av_hier_compress",
+               "--l1_comm_pattern", "a2av_hier_compress", "--n_split", "1"],
+    env={"FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_FUSED_STAGE2": "1",
+         "FLUX_A2AV_EARLY_LAUNCH": "1", "FLUX_A2AV_RS_MSPLIT": "1",
+         "FLUX_A2AV_RS_EAGER": "0", "FLUX_A2AV_RS_FUSED_PACK": "1",
+         "FLUX_A2AV_WAVE_PACK": "1", "FLUX_A2AV_RS_BUCKET": "1",
+         "FLUX_A2AV_RS_WIRE_STREAMS": "16",
+         "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10",
+         "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_RS_PRERED_BLOCKS": "6"},
+    requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2", "FLUX_A2AV_EARLY_LAUNCH",
+              "FLUX_A2AV_SLIPSTREAM2_TAG", "FLUX_A2AV_RS_MSPLIT_TAG",
+              "FLUX_A2AV_RS_FUSED_PACK_TAG", "FLUX_A2AV_WAVE_PACK_TAG",
+              "FLUX_A2AV_RS_BUCKET_TAG",
+              "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG", "FLUX_A2AV_NSPLIT_HONOR_TAG",
+              "FLUX_A2AV_RS_CTA_1086_TAG", "FLUX_A2AV_RS_MAX_SEND_ROWS",
+              "FLUX_A2AV_RS_MAX_CONV_ROWS", "FLUX_A2AV_RS_MAX_WIRE_ROWS"],
+    l1_pattern="a2av_hier_compress",
+)
+# bare-defaults twin of the NEW canon: no RS/mechanism env at all — the
+# binary defaults must reproduce the pinned arm within noise (flip gate).
+VARIANTS["l01_slipstream_bare"] = dict(
+    comm_pattern="l01_slipstream_bare",
+    driver="l01", layer="l01",
+    test_args=["--impl", "flux", "--l0_comm_pattern", "a2av_hier_compress",
+               "--l1_comm_pattern", "a2av_hier_compress", "--n_split", "1"],
+    env={"FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_FUSED_STAGE2": "1",
+         "FLUX_A2AV_EARLY_LAUNCH": "1", "CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+    requires=["FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2", "FLUX_A2AV_EARLY_LAUNCH",
+              "FLUX_A2AV_SLIPSTREAM2_TAG",
+              "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG", "FLUX_A2AV_NSPLIT_HONOR_TAG",
+              "FLUX_A2AV_RS_CTA_1086_TAG", "FLUX_A2AV_RS_MAX_SEND_ROWS",
+              "FLUX_A2AV_RS_MAX_CONV_ROWS", "FLUX_A2AV_RS_MAX_WIRE_ROWS"],
+    l1_pattern="a2av_hier_compress",
+)

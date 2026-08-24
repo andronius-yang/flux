@@ -175,6 +175,12 @@ public:
     int split_n = 1;
     int *barrier_ptr = nullptr;
     int *non_empty_problem_count = nullptr;
+    // M-split waves (Slipstream v2): per-group non-empty targets; nullptr =
+    // legacy uniform division
+    int const *non_empty_per_group = nullptr;
+    // gen-8c epilogue-fused pack: per-problem D scatter indices (identity
+    // iota in legacy mode — the ScatterD iterator always reads them)
+    int **scatter_D_ptr = nullptr;
 
     //
     // Methods
@@ -205,7 +211,9 @@ public:
       GemmCoord *host_problem_sizes=nullptr,
       int split_n = 1,
       int *barrier_ptr = nullptr,
-      int *non_problem_count = nullptr
+      int *non_problem_count = nullptr,
+      int const *non_empty_per_group_ = nullptr,
+      int **scatter_D_ptr_ = nullptr
     ):
       problem_sizes(problem_sizes),
       problem_count(problem_count),
@@ -226,7 +234,9 @@ public:
       host_problem_sizes(host_problem_sizes),
       split_n(split_n),
       barrier_ptr(barrier_ptr),
-      non_empty_problem_count(non_problem_count)
+      non_empty_problem_count(non_problem_count),
+      non_empty_per_group(non_empty_per_group_),
+      scatter_D_ptr(scatter_D_ptr_)
     {
 
     }
@@ -266,6 +276,8 @@ public:
     int n_split;
     int *non_empty_problem_count;
     int *barrier_ptr;
+    int const *non_empty_per_group{nullptr};  // M-split waves; nullptr = uniform
+    int **scatter_D_ptr{nullptr};             // per-problem D scatter indices
     //// added by flux to support barrier ptr /////
 
     //
@@ -295,7 +307,9 @@ public:
       ldr(args.ldr),
       n_split(args.split_n),
       non_empty_problem_count(args.non_empty_problem_count),
-      barrier_ptr(args.barrier_ptr)
+      barrier_ptr(args.barrier_ptr),
+      non_empty_per_group(args.non_empty_per_group),
+      scatter_D_ptr(args.scatter_D_ptr)
     {
 
     }
@@ -327,6 +341,8 @@ public:
       non_empty_problem_count = args.problem_count;
       barrier_ptr = args.barrier_ptr;
       non_empty_problem_count = args.non_empty_problem_count;
+      non_empty_per_group = args.non_empty_per_group;
+      scatter_D_ptr = args.scatter_D_ptr;
     }
   };
 
@@ -478,13 +494,16 @@ public:
       typename Epilogue::OutputTileIterator::Params params_C(layout_C);
       typename Epilogue::OutputTileIterator::Params params_D(layout_D);
 
-      // Tile iterator loading from source tensor.
+      // Tile iterator loading from source tensor (ScatterD build: indices are
+      // the shared identity iota in legacy mode, the pack inverse under the
+      // gen-8c fused pack — ptr_C is always nullptr so C is never read).
       typename Epilogue::OutputTileIterator iterator_C(
         params_C,
         ptr_C,
         problem_size.mn(),
         thread_idx,
-        threadblock_offset.mn()
+        threadblock_offset.mn(),
+        params.scatter_D_ptr[problem_idx]
       );
 
       // Tile iterator writing to destination tensor.
@@ -493,7 +512,8 @@ public:
         ptr_D,
         problem_size.mn(),
         thread_idx,
-        threadblock_offset.mn()
+        threadblock_offset.mn(),
+        params.scatter_D_ptr[problem_idx]
       );
 
       Epilogue epilogue(
@@ -515,7 +535,8 @@ public:
           ptr_Aux,
           problem_size.mn(),
           thread_idx,
-          threadblock_offset.mn());
+          threadblock_offset.mn(),
+          params.scatter_D_ptr[problem_idx]);
 
       // Move to appropriate location for this output tile
       if (ptr_Vector) {
@@ -570,8 +591,13 @@ public:
         // ranks leave experts empty), so some split flag never fired and
         // every layer1 arm hung on the cascade (root-caused 2026-08-16).
         int problems_per_split_full = params.problem_visitor.problem_count / params.n_split;
-        int problem_per_split = *params.non_empty_problem_count / params.n_split;
         int group_idx = problem_idx / problems_per_split_full;
+        // M-split waves (Slipstream v2): a wave can lack rows for an expert
+        // that is non-empty elsewhere, so the completion target must be
+        // per-group. nullptr keeps the legacy uniform division bit-exact.
+        int problem_per_split = params.non_empty_per_group != nullptr
+                                    ? params.non_empty_per_group[group_idx]
+                                    : (*params.non_empty_problem_count / params.n_split);
         int * problem_counter_ptr = params.barrier_ptr + cutlass::round_nearest(params.n_split, 128);
         int problem_counter = atomicAdd(problem_counter_ptr + group_idx, 1);
         // printf("tile: %d counter: %d/%d\n", group_idx, problem_counter, problem_per_split);

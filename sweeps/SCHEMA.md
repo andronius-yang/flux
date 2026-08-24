@@ -1057,3 +1057,33 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
     schedules — compare through their recorded env/args, never by variant
     name alone. The torch arm's `--n_split` still follows the spec presets
     (K2 7 / qwen 4): the NCCL baseline is deliberately untouched.
+
+13. **Slipstream supersession (2026-08-24, user decision — the gen-10
+    receiver study + gen-8 grids are the evidence authority; report artifact
+    "Slipstream v2").** `l01_slipstream` now names the OFFICIAL Slipstream:
+    the destination-driven token-centric combine — M-split destination waves
+    (`FLUX_A2AV_RS_MSPLIT`, layer1 `--n_split 1` BY ARCHITECTURAL IDENTITY:
+    overlap granularity is rows-per-destination, not columns, so ns1 is the
+    authentic reading, mirroring rule 12's COMET-ns2 logic), epilogue-fused
+    pack (`FLUX_A2AV_RS_FUSED_PACK`: GEMM ScatterD writes the send panel;
+    topk coefficients pre-folded K-side), dispatch wave-pack
+    (`FLUX_A2AV_WAVE_PACK`: per-segment l0 packs gate individual blocking
+    puts), and the completion-bucketed register receiver
+    (`FLUX_A2AV_RS_BUCKET`: per-token fold at its last lane's arrival, 1x
+    bytes, bitwise wait-all-identical). All four are BINARY DEFAULTS under
+    their existing activation guards (a2av_hier && nnodes>1; compress for
+    the receiver; wave-pack's default yields to an explicit PACK_OVERLAP=1);
+    eager's msplit-conditional default is demoted when bucket is on. Binary
+    tag `FLUX_A2AV_SLIPSTREAM2_TAG` gates the canonical variants (pre-flip
+    binaries go `skipped_capability`). The PRE-supersession Slipstream
+    (COMET-style column-split combine, rule-11/12 defaults) remains
+    available as `l01_slipstream_v1` (alias of the historical
+    `l01_lbunion_compress`, whose cells.csv label it keeps). NEVER-MIX:
+    capsules labeled `l01_slipstream` before this rule measured the v1
+    config — compare through recorded env/args, never by variant name; the
+    new config's cells carry comm_pattern `l01_slipstream` and the
+    SLIPSTREAM2 tag in env_json. Evidence: 8n K2 in-capsule fpwp_bucket
+    79.35 b64 vs v1-era wait-all 81.13 (capsules 133249/133838), 16n
+    fpwp 116.64 vs v1 127.17 (f7d6c7f2/85fcdfec); bucket-at-16n and
+    bucket-on-Qwen were extrapolated/gated at flip time (flip-gate capsule
+    IDs recorded in the capsule ledger when run).

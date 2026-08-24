@@ -473,6 +473,16 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // symmetric u64[L], slot = source local rank, SET to run_id_ right after
   // the pack — the only cross-rank dependency of a relay's gets
   torch::Tensor a2av_pack_ready_sig_;
+  // gen-8b dispatch wave-pack (FLUX_A2AV_WAVE_PACK, user-approved 2026-08-24):
+  // the producer pack splits per send segment — own-node segments FIRST (they
+  // feed round-0 intra, layer0's earliest-consumed windows), then remote
+  // segments in mirror-descending wire order — so each wire round's inputs are
+  // ready ~1/nseg into the pack instead of after all of it. Readiness:
+  // per-segment CUDA events for my own consumers + a symmetric per-(peer, tn)
+  // epoch signal for the relay pulls (replaces the whole-pack pack_ready).
+  bool wave_pack_ = false;
+  torch::Tensor a2av_pack_seg_sig_;          // symmetric u64 [L * NN], epoch
+  std::vector<cudaEvent_t> pack_seg_events_;  // [nseg] per-segment pack done
   // Tier B (lb_union): per-(expert, gating-lane) inclusive cumsum [E, W]
   // where the remote node's lanes are WINDOW boundaries (data-dependent under
   // dedup, hence device-computed) and local lanes keep source boundaries.
@@ -856,6 +866,26 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           }
           this->a2av_pack_ready_sig_ =
               nvshmem_create_tensor({L}, at::ScalarType::Long, /*init_zero=*/true);
+          (void)get_int_from_env("FLUX_A2AV_WAVE_PACK_TAG", 0);
+          // Slipstream supersession (2026-08-24, user decision; SCHEMA rule
+          // 13): wave-pack is a Slipstream default (FLUX_A2AV_SLIPSTREAM2_TAG).
+          // The default yields to an explicit PACK_OVERLAP=1 (exclusive
+          // mechanisms; the FLUX_CHECK below still guards an explicit clash).
+          (void)get_int_from_env("FLUX_A2AV_SLIPSTREAM2_TAG", 0);
+          this->wave_pack_ =
+              get_int_from_env(
+                  "FLUX_A2AV_WAVE_PACK",
+                  get_int_from_env("FLUX_A2AV_PACK_OVERLAP", 0) != 0 ? 0 : 1) != 0;
+          if (this->wave_pack_) {
+            this->a2av_pack_seg_sig_ = nvshmem_create_tensor(
+                {(int64_t)L * nnodes}, at::ScalarType::Long, /*init_zero=*/true);
+            const int nseg = L + nnodes - 1;
+            this->pack_seg_events_.resize(nseg);
+            for (int i = 0; i < nseg; i++) {
+              CUDA_CHECK(cudaEventCreateWithFlags(
+                  &this->pack_seg_events_[i], cudaEventDisableTiming));
+            }
+          }
         }
       }
       const int64_t n_copies_max = tokens_per_rank_max * (int64_t)topk * world_size;
@@ -1740,7 +1770,49 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
               .tokens = (int64_t)tokens_per_rank,
               .nseg = (int)nseg_c},
           pack_str);
-      if (total_send_rows > 0) {
+      if (total_send_rows > 0 && this->wave_pack_) {
+        // gen-8b dispatch wave-pack: per-segment index_selects — OWN segments
+        // first (feed round-0 intra, layer0's earliest windows), then remote
+        // segments in mirror-descending wire order (round-1's target first).
+        // Each segment records its event (my consumers) and, for remote
+        // segments, announces per-(me, tn) readiness to the local peers whose
+        // relay pulls read it (epoch signal; replaces the whole-pack gate).
+        FLUX_CHECK(!pack_ov) << "FLUX_A2AV_WAVE_PACK is incompatible with pack overlap";
+        auto full_view = this->a2av_send_buffer.narrow(
+            0, (int64_t)par * this->send_half_rows_, total_send_rows);
+        uint64_t *seg_sig =
+            reinterpret_cast<uint64_t *>(this->a2av_pack_seg_sig_.data_ptr());
+        auto pack_segment = [&](int seg, int announce_tn) {
+          const int64_t lo = seg_off_h[seg];
+          const int64_t hi = seg_off_h[seg + 1];
+          if (hi > lo) {
+            auto seg_view = full_view.narrow(0, lo, hi - lo);
+            at::index_select_out(
+                seg_view, inputs_shard, 0, this->a2av_pack_gather_.narrow(0, lo, hi - lo));
+          }
+          CUDA_CHECK(cudaEventRecord(this->pack_seg_events_[seg], pack_str));
+          if (announce_tn >= 0) {
+            for (int dl = 1; dl < dist_env.local_world_size; dl++) {
+              int d = dist_env.local_rank_to_global_rank(
+                  (dist_env.local_rank + dl) % dist_env.local_world_size, dist_env.node_idx);
+              nvshmemx_signal_op_on_stream(
+                  seg_sig + (int64_t)dist_env.local_rank * dist_env.nnodes + announce_tn,
+                  this->run_id_,
+                  NVSHMEM_SIGNAL_SET,
+                  d,
+                  pack_str);
+            }
+          }
+        };
+        for (int dl = 0; dl < dist_env.local_world_size; dl++) {
+          pack_segment(dist_env.node_idx + dl, /*announce_tn=*/-1);
+        }
+        for (int dn = 1; dn < dist_env.nnodes; dn++) {
+          const int tn = (dist_env.node_idx - dn + dist_env.nnodes) % dist_env.nnodes;
+          const int seg = tn < dist_env.node_idx ? tn : tn + dist_env.local_world_size - 1;
+          pack_segment(seg, /*announce_tn=*/tn);
+        }
+      } else if (total_send_rows > 0) {
         // pack overlap: the gather runs on pack_stream_ (stream guard) and
         // writes this iteration's parity half of the send buffer
         c10::optional<c10::cuda::CUDAStreamGuard> guard;
@@ -2358,8 +2430,17 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     auto u_at = [&](int s, int d) -> int64_t { return u_mat[(int64_t)s * W + d]; };
     auto U_at = [&](int s, int n) -> int64_t { return U_mat[(int64_t)s * dist_env.nnodes + n]; };
 
-    CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream, this->ready_event));
-    CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream_inter_node, this->ready_event));
+    if (this->wave_pack_) {
+      // gen-8b: own-node segments pack FIRST, so cp_stream (round-0 intra +
+      // self copy) gates on the last OWN segment's event instead of the whole
+      // pack; the inter stream's rounds gate per-segment at their put/pull
+      // sites below — no blanket wait.
+      CUDA_CHECK(cudaStreamWaitEvent(
+          this->cp_stream, this->pack_seg_events_[dist_env.node_idx + dist_env.local_world_size - 1]));
+    } else {
+      CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream, this->ready_event));
+      CUDA_CHECK(cudaStreamWaitEvent(this->cp_stream_inter_node, this->ready_event));
+    }
     if (pack_ov) {
       // with the pack off the main stream, ready_event no longer implies the
       // previous iteration's end-of-epoch barrier (recv/stage buffer reuse and
@@ -2834,8 +2915,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           const bool pull2s = this->relay_pull_stream_ && !this->pull_streams_.empty();
           cudaStream_t pull_stream = pull2s ? (cudaStream_t)this->pull_streams_[0]
                                             : (cudaStream_t)this->cp_stream_inter_node;
-          if (pull2s) {
+          if (pull2s && !this->wave_pack_) {
             // my pack must be visible before my announce and my self copy
+            // (wave-pack gates per segment instead)
             CUDA_CHECK(cudaStreamWaitEvent(pull_stream, this->ready_event, 0));
           }
           for (int dl = 1; dl < L; dl++) {
@@ -2895,6 +2977,11 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                   // single-source fast path (must mirror own_only below)
                   continue;
                 }
+                if (this->wave_pack_) {
+                  // my remote segment tn must be packed before this self copy
+                  const int seg = tn < my_node ? tn : tn + L - 1;
+                  CUDA_CHECK(cudaStreamWaitEvent(pull_stream, this->pack_seg_events_[seg]));
+                }
                 CUDA_CHECK(cudaMemcpyAsync(
                     relay_base + (relay_round_base(my_lr, dn) + (lo - a_me)) * row_bytes,
                     send_base + (my_seg_base(tn) + (lo - s0)) * row_bytes,
@@ -2904,7 +2991,18 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                 continue;
               }
               int prank = dist_env.local_rank_to_global_rank(sl, my_node);
-              if (!pr_waited[sl]) {
+              if (this->wave_pack_) {
+                // per-(peer, tn) readiness: pull as soon as THIS segment is
+                // packed at the peer (epoch GEQ; repeat waits are cheap
+                // front-end memops — writers are peer ranks, Class-B safe)
+                uint64_t *seg_sig =
+                    reinterpret_cast<uint64_t *>(this->a2av_pack_seg_sig_.data_ptr());
+                CU_CHECK(CUStreamWaitValue64(
+                    pull_stream,
+                    reinterpret_cast<CUdeviceptr>(seg_sig + (int64_t)sl * NN + tn),
+                    this->run_id_,
+                    this->a2av_wait_flags()));
+              } else if (!pr_waited[sl]) {
                 CU_CHECK(CUStreamWaitValue64(
                     pull_stream,
                     reinterpret_cast<CUdeviceptr>(pack_ready + sl),
@@ -2977,6 +3075,13 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             const int64_t sstart = canon_start(my_node, my_lr, tn);
             const int64_t send = sstart + U_at(rank, tn);
             const bool own_only = a_me >= sstart && b_me <= send;
+            if (own_only && this->wave_pack_) {
+              // this round's put reads my send segment directly — gate on the
+              // segment's pack event (per-round, replaces the blanket wait)
+              const int seg = tn < my_node ? tn : tn + L - 1;
+              CUDA_CHECK(cudaStreamWaitEvent(
+                  this->cp_stream_inter_node, this->pack_seg_events_[seg]));
+            }
             if (pull2s && !own_only) {
               // round-dn staging complete (CE order on the pull stream);
               // own_only rounds read send_base and need no edge

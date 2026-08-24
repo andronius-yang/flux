@@ -148,6 +148,14 @@ struct GemmGroupedV2GatherRSArguments {
   int32_t n_split;
   // following args are for expert parallel
   int sm_margin;
+  // M-split waves (Slipstream v2): device [n_waves] non-empty problem count per
+  // cascade group (a wave can lack rows for an expert that is non-empty
+  // elsewhere, so the uniform division is wrong there). nullptr = legacy
+  // uniform per-split division (bit-exact column-split behavior).
+  int const *non_empty_per_group = nullptr;
+  // gen-8c epilogue-fused pack: per-problem D scatter-index pointers (built by
+  // make_workspace; identity iota when fused pack is off)
+  int **scatter_D_ptr = nullptr;
 };
 
 struct TopKReduceGatherRSArguments {
@@ -238,7 +246,28 @@ struct A2AVCombinePackArguments {
   int nnodes;
   int node_idx;
   int threadblock_count;
+  // M-split waves (Slipstream v2, FLUX_A2AV_RS_MSPLIT): the GEMM completes in
+  // destination-wave order (ring waves of dest-node row segments, n_split==1),
+  // and the pack gates PER RING STEP on the wave's cascade flag instead of the
+  // single split flag — the whole per-node ladder then pipelines under the
+  // remaining GEMM. msplit == 0 keeps the legacy per-split gate bit-exact.
+  int msplit;                       // 0 = legacy
+  int wave_of_node[kA2AVMaxNodes];  // schedule step -> barrier wave-flag index
+  int node_order[kA2AVMaxNodes];    // schedule step -> dest node (ring or size-sorted)
+  // gen-8c epilogue-fused pack: the GEMM already wrote the send panel via
+  // ScatterD, so the pack degenerates to a pure FLAG RELAY — wait each wave
+  // flag and flip the per-node chunk flags, moving no data.
+  int relay_only;
 };
+
+// gen-8c: invert an int32 permutation-ish map (out[idx[p]] = p) — builds the
+// pack inverse (gemm row -> send-panel row) from pack_index at plan time.
+struct A2AVInvertIndexArguments {
+  int32_t const *idx;  // [n]
+  int32_t *out;        // [n]
+  int64_t n;
+};
+void a2av_invert_index(A2AVInvertIndexArguments const &args, cudaStream_t stream);
 
 // Per-split topk reduce at the destination: launched once per split after all W
 // per-source recv signals for that split have fired; sums each local token's topk
@@ -325,6 +354,7 @@ struct A2AVCombinePreReduceArguments {
   uint64_t run_id;
   int *wire_flags;               // [nnodes * n_split] kernel -> host wire-ready flags
   int *wire_counters;            // [nnodes * n_split] per-block completion counters
+  int node_order[kA2AVMaxNodes];  // schedule step -> remote target node (ring default)
   int64_t wire_seg_start[kA2AVMaxNodes + 1];  // wire-row start per segment (tn asc skip own)
   int64_t conv_rows;             // conv panel row capacity per split
   int64_t wire_rows;             // wire panel row capacity per split
@@ -383,5 +413,105 @@ struct A2AVCombineEagerReduceArguments {
   // launch sites use positional aggregate init.
   uint64_t spin_limit = 0;
 };
+
+// ---- lane-chain receiver (Slipstream v2b, FLUX_A2AV_RS_LANE_CHAIN) --------
+// Replaces per-element signal polling (eager) / host wait-all (legacy) with a
+// per-LANE chain in EXPECTED arrival order: one front-end wait per lane
+// releases a tiny scatter-add of just that lane's recv rows into an fp32
+// accumulator; a finalize cast runs after the last lane. Waiting machinery is
+// O(W) front-end waits instead of O(elements x polls); the reduce drips in
+// behind each arrival so the post-last-arrival tail is one lane + the cast.
+
+// Invert the per-token reduce CSR into a recv-row -> token map (plan-time
+// arithmetic on tensors the plan already holds; launched on the reduce stream
+// before the chain, ~tens of us).
+struct A2AVLaneTokenMapArguments {
+  int32_t const *red_ptr;  // [ntokens + 1]
+  int32_t const *red_row;  // [red_total] recv-panel rows per token
+  int64_t ntokens;
+  int32_t *token_of;       // [image_rows] out: recv row -> local token
+};
+
+struct A2AVLaneReduceArguments {
+  void const *recv_panel;      // [image_rows, n] (n_split == 1)
+  int32_t const *token_of;     // recv row -> local token
+  float *scratch;              // [ntokens, n] fp32 accumulator
+  int64_t row_lo;              // lane's first recv row
+  int64_t nrows;               // lane's row count
+  int n;
+  int threadblock_count;
+  // Lanes are chained serially on one stream, so races exist only WITHIN a
+  // lane. Remote C' lanes carry one merged row per token (collision-free ->
+  // plain adds); own-node lanes can carry several copies of a token
+  // (multiple local experts -> atomicAdd). 0 = plain, 1 = atomic.
+  int use_atomic;
+};
+
+struct A2AVFinalizeArguments {
+  float const *scratch;  // [ntokens, n]
+  void *output;          // [ntokens, n] of dtype
+  int64_t ntokens;
+  int n;
+  int threadblock_count;
+};
+
+void a2av_lane_token_map(A2AVLaneTokenMapArguments const &args, cudaStream_t stream);
+void a2av_combine_lane_reduce(
+    A2AVLaneReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream);
+void a2av_combine_finalize(
+    A2AVFinalizeArguments const &args, DataTypeEnum dtype, cudaStream_t stream);
+
+// ---- completion-bucketed register receiver (Slipstream gen-10,
+// FLUX_A2AV_RS_BUCKET) -------------------------------------------------------
+// Arrival-order folding at wait-all's 1x bytes: tokens bucket by the chain
+// position of their LAST-arriving contribution lane (plan-time, on-stream,
+// ~us); each front-end lane wait then releases a register-CSR fold of exactly
+// the tokens that lane completes. No fp32 scratch RMW (lane-chain's 4-5x byte
+// amplification), no atomics in the fold, no finalize: every token is read
+// once and written once, as early as legality allows. The post-last-arrival
+// tail is one bucket instead of the whole reduce.
+struct A2AVBucketMapArguments {
+  int32_t const *red_ptr;    // [ntokens + 1]
+  int32_t const *red_row;    // [red_total] recv-panel rows per token
+  int32_t const *lane_off;   // [world_size + 1] C' recv-row prefix by source rank
+  int32_t const *chain_pos;  // [world_size] source rank -> chain position
+  int world_size;
+  int n_chain;               // chain length S (= L + NN - 1 materializing lanes)
+  int64_t ntokens;
+  int32_t *comp;             // [ntokens] out: completion chain position
+  int32_t *bucket_cnt;       // [n_chain] out: bucket sizes (pre-zeroed)
+};
+struct A2AVBucketScanArguments {
+  int32_t const *bucket_cnt;  // [n_chain]
+  int n_chain;
+  int32_t *bucket_ptr;        // [n_chain + 1] out: exclusive prefix
+  int32_t *bucket_cur;        // [n_chain] out: zeroed scatter cursors
+};
+struct A2AVBucketScatterArguments {
+  int32_t const *comp;        // [ntokens]
+  int32_t const *bucket_ptr;  // [n_chain + 1]
+  int64_t ntokens;
+  int32_t *bucket_cur;        // [n_chain] scatter cursors
+  int32_t *bucket_tok;        // [ntokens] out: tokens grouped by completion bucket
+};
+struct A2AVBucketReduceArguments {
+  void const *recv_panel;     // [n_split, panel_rows, n_per] symmetric (C' image)
+  int32_t const *red_ptr;     // [ntokens_local + 1]
+  int32_t const *red_row;     // [red_total]
+  int32_t const *bucket_ptr;  // [n_chain + 1] (device; sizes unknown to host)
+  int32_t const *bucket_tok;  // [ntokens_local]
+  int bucket;                 // which completion bucket this launch folds
+  void *output;               // [ntokens_local, n]
+  int64_t panel_rows;
+  int n;
+  int n_per;
+  int sid;
+  int threadblock_count;
+};
+void a2av_bucket_map(A2AVBucketMapArguments const &args, cudaStream_t stream);
+void a2av_bucket_scan(A2AVBucketScanArguments const &args, cudaStream_t stream);
+void a2av_bucket_scatter(A2AVBucketScatterArguments const &args, cudaStream_t stream);
+void a2av_combine_bucket_reduce(
+    A2AVBucketReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream);
 
 }  // namespace bytedance::flux

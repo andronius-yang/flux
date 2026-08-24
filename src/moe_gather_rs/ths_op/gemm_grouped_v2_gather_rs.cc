@@ -92,6 +92,7 @@ get_args_workspace_size(int problem_count) {
       + pad_to(sizeof(void *) * problem_count, kAlignment) * 4   // ptr_A/ptr_B/ptr_C/ptr_D
       + pad_to(sizeof(int64_t) * problem_count, kAlignment) * 5  // lda/ldb/ldc/ldd/ldr
       + pad_to(sizeof(float *) * problem_count, kAlignment) * 2  // scale_A/scale_B
+      + pad_to(sizeof(int *) * problem_count, kAlignment) * 1    // scatter_D (gen-8c)
       + pad_to(sizeof(int) * 1, kAlignment) * 1;                 // non_empty_problem_count
   return bytes;
 }
@@ -170,6 +171,110 @@ int
 get_a2av_prered_blocks() {
   (void)bytedance::flux::get_int_from_env("FLUX_A2AV_RS_CTA_1086_TAG", 0);
   static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_PRERED_BLOCKS", 6);
+  return v;
+}
+// Slipstream v2 (2026-08-24): M-split destination-wave combine. The GEMM is
+// decomposed into (ring wave of dest nodes, expert) ROW sub-problems (full N;
+// requires n_split == 1) whose cascade flags release the pack -> conv ->
+// prered -> wire ladder PER TARGET NODE while the GEMM still runs: put count
+// stays at the ns1 minimum (NN-1 blocking puts/rank) with M-axis pipelining —
+// the resolution of the "n_split multiplies the proxy-bound put count"
+// tension (handoff 16 §1). Default OFF; own rule-4 never-mix boundary.
+int
+get_a2av_rs_msplit() {
+  (void)bytedance::flux::get_int_from_env("FLUX_A2AV_RS_MSPLIT_TAG", 0);
+  // Slipstream supersession (2026-08-24, user decision): msplit + fused pack
+  // + wave pack + bucket are the official Slipstream defaults (binary tag
+  // FLUX_A2AV_SLIPSTREAM2_TAG; SCHEMA rule 13). Explicit env still wins;
+  // activation stays guarded by a2av_hier && nnodes > 1 (&& compress for the
+  // receiver), so dense / single-node paths are untouched.
+  (void)bytedance::flux::get_int_from_env("FLUX_A2AV_SLIPSTREAM2_TAG", 0);
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_MSPLIT", 1);
+  return v;
+}
+// Ring-consecutive dest nodes per wave (tile-quantization dial; waves never
+// cross the ring wrap). 1 = per-node waves (finest pipelining; default — tile
+// waste hides under the wire in every wire-bound cell per the 8.24 model).
+int
+get_a2av_rs_wave_nodes() {
+  static int v =
+      std::max<int>(1, bytedance::flux::get_int_from_env("FLUX_A2AV_RS_WAVE_NODES", 1));
+  return v;
+}
+// Lane-chain receiver (Slipstream v2b, 2026-08-24): per-LANE front-end waits
+// chained in EXPECTED arrival order (descending ring, own node last) release
+// tiny per-lane scatter-adds into an fp32 accumulator + one finalize cast.
+// O(W) waits replace the eager kernel's O(elements x polls) system-scope
+// acquire polling and the legacy wait-all's zero receive-overlap. Requires
+// the compress C' image and n_split == 1. Own never-mix boundary.
+int
+get_a2av_rs_lane_chain() {
+  (void)bytedance::flux::get_int_from_env("FLUX_A2AV_RS_LANE_CHAIN_TAG", 0);
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_LANE_CHAIN", 0);
+  return v;
+}
+// Size-ordered waves (Slipstream gen-8a, user-directed 2026-08-24): 0 = ring
+// order (canonical), 1 = remote waves sorted by DESCENDING segment size (ties
+// by ring position; own node stays last). The largest put starts earliest and
+// the hot receiver's inflows begin first (NR-03). Requires WAVE_NODES == 1.
+// Pre-registered falsifier: size-order correlates senders toward hot
+// destinations — if inbound bunching (incast) at the hot node exceeds the
+// early-start win, ring stays canon. Every schedule consumer (pack, prered,
+// conv/wire ladders, GEMM wave order) follows ONE host-built order array, so
+// ring mode is bit-identical to the pre-knob binary.
+int
+get_a2av_rs_wave_order() {
+  (void)bytedance::flux::get_int_from_env("FLUX_A2AV_RS_WAVE_ORDER_TAG", 0);
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_WAVE_ORDER", 0);
+  return v;
+}
+// Epilogue-fused pack (gen-8c, user-directed 2026-08-24): the l1 GEMM writes
+// the dest-major send panel DIRECTLY through a ScatterD epilogue (pack inverse
+// indices) with the topk gate coefficients pre-folded into the intermediate on
+// the K side (3.5x cheaper than the pack's N-side pass; mathematically
+// identical). Removes the pack kernel's full M x N read+write round-trip and
+// one gating hop per wave (the pack degenerates to a 1-effective-CTA flag
+// relay). Requires msplit. Own never-mix boundary.
+int
+get_a2av_rs_fused_pack() {
+  (void)bytedance::flux::get_int_from_env("FLUX_A2AV_RS_FUSED_PACK_TAG", 0);
+  (void)bytedance::flux::get_int_from_env("FLUX_A2AV_SLIPSTREAM2_TAG", 0);
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_FUSED_PACK", 1);
+  return v;
+}
+// OWN_WAVE=first (gen-9 receiver study, 2026-08-24): compute the OWN-node
+// wave FIRST instead of last. Costs ~1/NN of the GEMM in wire-start delay;
+// buys the receiver early own-node contributions, so tokens complete at
+// their last REMOTE arrival (spread over the drain) instead of at the final
+// own-node fold — the structural precondition for any arrival-order
+// receiver (lanechain/ordered) to beat wait-all. 0 = own last (canon).
+int
+get_a2av_rs_own_wave_first() {
+  (void)bytedance::flux::get_int_from_env("FLUX_A2AV_RS_OWN_FIRST_TAG", 0);
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_OWN_FIRST", 0);
+  return v;
+}
+// Completion-bucketed register receiver (Slipstream gen-10, 2026-08-24):
+// arrival-order folding at wait-all's 1x bytes. Tokens bucket by the chain
+// position of their LAST contribution's lane (own-node lanes chained FIRST
+// for CONSUMPTION only -- the wire keeps the canon own-last production
+// order); each lane wait releases a register-CSR fold of exactly the tokens
+// it completes. No scratch RMW (lane-chain's 4-5x amplification), no
+// finalize; the exposed tail is one bucket. Requires compress C' and
+// n_split == 1; exclusive with LANE_CHAIN. Own never-mix boundary.
+// Supersession-default resolution helper (SCHEMA rule 13): a knob that is ON
+// by DEFAULT must silently demote in configs it cannot run in (the v1 ns2
+// ablation arm, the lane-chain diagnostics); an EXPLICIT env=1 keeps the loud
+// FLUX_CHECK contract.
+static bool
+a2av_env_explicit(const char *key) {
+  return std::getenv(key) != nullptr;
+}
+int
+get_a2av_rs_bucket() {
+  (void)bytedance::flux::get_int_from_env("FLUX_A2AV_RS_BUCKET_TAG", 0);
+  (void)bytedance::flux::get_int_from_env("FLUX_A2AV_SLIPSTREAM2_TAG", 0);
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_BUCKET", 1);
   return v;
 }
 // Debug watchdog for the combine's device spin loops: 0 (default) =
@@ -774,6 +879,11 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   cudaEvent_t a2av_inter2_done_ = nullptr;
   cudaEvent_t staging_reset_event;
   uint64_t run_id_ = 0;
+  // M-split waves (Slipstream v2): per-iteration pack-gate state, armed by
+  // set_msplit_waves() before each run(); 0 = legacy single-split gate
+  int msplit_n_waves_ = 0;
+  int msplit_wave_of_node_[kA2AVMaxNodes] = {};
+  int msplit_node_order_[kA2AVMaxNodes] = {};
 
   // a2av_hier combine state. Layouts mirror layer0's a2av dispatch exactly:
   // the send panel is (home_rank, expert, copy)-ordered (== layer0's recv
@@ -792,6 +902,16 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   // the destination's recv panel (C' image) -- no destination gateway hop.
   // False when nnodes == 1 (degrades to plain a2av_hier: zero wire savings).
   const bool a2av_compress_;
+  // FLUX_A2AV_RS_LANE_CHAIN: per-lane chained receiver in expected arrival
+  // order (supersedes eager/legacy receive paths when set; compress + ns1)
+  const bool a2av_lane_chain_;
+  // FLUX_A2AV_RS_BUCKET (gen-10): completion-bucketed register receiver --
+  // arrival-order folding at 1x bytes (exclusive with lane-chain)
+  const bool a2av_bucket_;
+  // FLUX_A2AV_RS_FUSED_PACK (gen-8c): the GEMM scatters the send panel
+  // directly; the pack kernel runs as a flag relay and applies NO vec_scale
+  // (pre-folded into the intermediate by the caller)
+  const bool a2av_fused_pack_;
   int64_t a2av_send_rows_ = 0;   // send panel row capacity per split (routing-dependent load)
   int64_t a2av_recv_rows_ = 0;   // recv panel rows per split: exactly max_m / world_size
   int64_t a2av_stage_rows_ = 0;  // gateway staging row capacity per split
@@ -809,6 +929,17 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   // the staging_reset_event discipline (same as group_flags)
   cutlass::DeviceAllocation<int> wire_flags_;     // [nnodes * n_split]
   cutlass::DeviceAllocation<int> wire_counters_;  // [nnodes * n_split]
+  // lane-chain receiver buffers (a2av_lane_chain_ only; plain device memory)
+  torch::Tensor a2av_scratch_fp32_;   // [max ntokens_local, n] fp32 accumulator
+  torch::Tensor a2av_token_of_row_;   // [a2av_recv_rows_] int32 recv row -> token
+  // bucket receiver buffers (a2av_bucket_ only): plain device memory for the
+  // per-iteration completion map, plus a run-parity double-buffered pinned ->
+  // device pair for the tiny lane tables (lane_off [W+1] | chain_pos [W])
+  torch::Tensor a2av_bucket_comp_;    // [ntok_max] int32 completion position
+  torch::Tensor a2av_bucket_tok_;     // [ntok_max] int32 tokens by bucket
+  torch::Tensor a2av_bucket_meta_;    // [3*kA2AVMaxWorld + 2] int32: cnt | cur | ptr
+  torch::Tensor a2av_bucket_lanes_h_; // pinned [2 * 2*(W+1)] int32 (parity halves)
+  torch::Tensor a2av_bucket_lanes_d_; // device twin
   std::optional<c10::cuda::CUDAStream> a2av_intra_stream_;    // intra-node put ladder (CEs)
   std::optional<c10::cuda::CUDAStream> a2av_gateway_stream_;  // gateway forward ladder
   std::optional<c10::cuda::CUDAStream> a2av_reduce_stream_;   // signal waits + per-split reduce
@@ -877,6 +1008,32 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
             cudaMemset(this->wire_flags_.get(), 0, sizeof(int) * this->nnodes * this->n_split));
         CUDA_CHECK(cudaMemset(
             this->wire_counters_.get(), 0, sizeof(int) * this->nnodes * this->n_split));
+        if (this->a2av_lane_chain_) {
+          // fp32 accumulator + recv-row->token map (plain device memory; the
+          // chain's scatter-adds and finalize are the only readers/writers)
+          const int64_t ntok_max = (int64_t)this->max_m / this->topk / this->world_size;
+          this->a2av_scratch_fp32_ = empty_with_uninitialized_data(
+              std::vector<int64_t>{ntok_max, (int64_t)this->n_dim},
+              at::TensorOptions(at::kCUDA).dtype(at::ScalarType::Float));
+          this->a2av_token_of_row_ = empty_with_uninitialized_data(
+              std::vector<int64_t>{this->a2av_recv_rows_},
+              at::TensorOptions(at::kCUDA).dtype(at::ScalarType::Int));
+        }
+        if (this->a2av_bucket_) {
+          const int64_t ntok_max = (int64_t)this->max_m / this->topk / this->world_size;
+          auto opt_i32 = at::TensorOptions(at::kCUDA).dtype(at::ScalarType::Int);
+          this->a2av_bucket_comp_ =
+              empty_with_uninitialized_data(std::vector<int64_t>{ntok_max}, opt_i32);
+          this->a2av_bucket_tok_ =
+              empty_with_uninitialized_data(std::vector<int64_t>{ntok_max}, opt_i32);
+          this->a2av_bucket_meta_ = empty_with_uninitialized_data(
+              std::vector<int64_t>{3 * kA2AVMaxWorld + 2}, opt_i32);
+          this->a2av_bucket_lanes_h_ = torch::empty(
+              {2 * 2 * ((int64_t)this->world_size + 1)},
+              at::TensorOptions(at::kCPU).dtype(at::ScalarType::Int).pinned_memory(true));
+          this->a2av_bucket_lanes_d_ = empty_with_uninitialized_data(
+              std::vector<int64_t>{2 * 2 * ((int64_t)this->world_size + 1)}, opt_i32);
+        }
       }
       // chunk-ready flags per (dest_node, sid) -- allocated for nnodes == 1 too:
       // the intra-node ladder gates on the own-node flag
@@ -1010,6 +1167,44 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   }
 
  public:
+  void *
+  send_panel_ptr() {
+    this->init_buffer_once(this->output_dtype);  // idempotent
+    return this->a2av_send_panel_.data_ptr();
+  }
+  int64_t
+  send_panel_rows() {
+    return this->a2av_send_rows_;
+  }
+  void
+  ensure_buffers(at::ScalarType dtype) {
+    this->init_buffer_once(dtype);
+  }
+
+  void
+  set_msplit_waves(
+      std::vector<int> const &wave_of_node, std::vector<int> const &node_order, int n_waves) {
+    if (n_waves <= 0) {
+      this->msplit_n_waves_ = 0;
+      return;
+    }
+    FLUX_CHECK(this->a2av_hier) << "msplit waves require the a2av_hier combine";
+    FLUX_CHECK_EQ(this->n_split, 1) << "msplit requires n_split == 1";
+    FLUX_CHECK_EQ((int)wave_of_node.size(), this->nnodes);
+    FLUX_CHECK_EQ((int)node_order.size(), this->nnodes);
+    FLUX_CHECK_LE(this->nnodes, kA2AVMaxNodes);
+    const int my_node2 = this->rank / this->local_world_size;
+    FLUX_CHECK(
+        node_order[this->nnodes - 1] == my_node2 || node_order[0] == my_node2)
+        << "own node must be the first or final schedule step";
+    this->msplit_n_waves_ = n_waves;
+    for (int i = 0; i < this->nnodes; i++) {
+      FLUX_CHECK_LT(wave_of_node[i], n_waves);
+      this->msplit_wave_of_node_[i] = wave_of_node[i];
+      this->msplit_node_order_[i] = node_order[i];
+    }
+  }
+
   TopkReduceScatterOpImpl(
       std::shared_ptr<Group> tp_group_,
       int max_m,
@@ -1043,9 +1238,34 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         n_split(n_split_),
         internode_stream(create_internode_stream()),
         a2av_hier(a2av_hier_),
-        a2av_eager_(a2av_hier_ && get_int_from_env("FLUX_A2AV_RS_EAGER", 0) != 0),
+        // eager (arrival-order) receiver reduce defaults ON under msplit —
+        // wave arrivals are spread across the GEMM span and the wait-all gate
+        // would forfeit the receive-side overlap; explicit env still wins
+        a2av_eager_(
+            a2av_hier_ &&
+            get_int_from_env(
+                "FLUX_A2AV_RS_EAGER",
+                (nnodes_ > 1 && get_a2av_rs_msplit() != 0 && get_a2av_rs_bucket() == 0)
+                    ? 1
+                    : 0) != 0),
         a2av_compress_(a2av_compress && nnodes_ > 1),
+        a2av_lane_chain_(
+            a2av_compress && nnodes_ > 1 && get_a2av_rs_lane_chain() != 0),
+        a2av_bucket_(
+            a2av_compress && nnodes_ > 1 && get_a2av_rs_bucket() != 0 &&
+            (a2av_env_explicit("FLUX_A2AV_RS_BUCKET") ||
+             (n_split_ == 1 && get_a2av_rs_lane_chain() == 0))),
+        a2av_fused_pack_(
+            a2av_hier_ && nnodes_ > 1 && get_a2av_rs_fused_pack() != 0),
         barriers(barriers) {
+    if (this->a2av_lane_chain_) {
+      FLUX_CHECK_EQ(n_split_, 1) << "FLUX_A2AV_RS_LANE_CHAIN requires n_split == 1";
+    }
+    if (this->a2av_bucket_) {
+      FLUX_CHECK_EQ(n_split_, 1) << "FLUX_A2AV_RS_BUCKET requires n_split == 1";
+      FLUX_CHECK(!this->a2av_lane_chain_)
+          << "FLUX_A2AV_RS_BUCKET and FLUX_A2AV_RS_LANE_CHAIN are exclusive receivers";
+    }
     FLUX_CHECK_GE(nnodes, 1);
     FLUX_CHECK_DIV(world_size, nnodes);
     if (nnodes > 1) {
@@ -1462,9 +1682,12 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
 
     // pack kernel FIRST -- every host wait below is enqueued after it, so the
     // shared front-end channel always has the flag producer ahead of its consumers
+    // fused pack (gen-8c): the GEMM already scattered the panel with the
+    // coefficients pre-folded — the pack is a flag relay, scale must be null
+    const bool fused_relay = this->a2av_fused_pack_ && this->msplit_n_waves_ > 0;
     A2AVCombinePackArguments pack_args{
         .gemm_out = gemm_out.data_ptr(),
-        .vec_scale = output_vec_scales.has_value()
+        .vec_scale = (!fused_relay && output_vec_scales.has_value())
                          ? (float const *)output_vec_scales->at(0).data_ptr()
                          : nullptr,
         .pack_index = pack_index.data_ptr<int32_t>(),
@@ -1484,6 +1707,34 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       pack_args.node_row_start[n] = send_off[n * L];
     }
     pack_args.node_row_start[NN] = M_this_ep;
+    // M-split waves: gate the pack per schedule step on the wave's cascade flag
+    pack_args.relay_only = fused_relay ? 1 : 0;
+    pack_args.msplit = this->msplit_n_waves_ > 0 ? 1 : 0;
+    if (pack_args.msplit) {
+      FLUX_CHECK_EQ(this->n_split, 1);
+      for (int gi = 0; gi < NN; gi++) {
+        pack_args.wave_of_node[gi] = this->msplit_wave_of_node_[gi];
+        pack_args.node_order[gi] = this->msplit_node_order_[gi];
+      }
+    }
+    // remote-node production schedule for the conv/prered/wire consumers:
+    // the msplit order when armed (own node filtered out — it may sit first
+    // under OWN_FIRST or last under the canon), ring otherwise — every
+    // consumer follows this ONE array
+    int sched_remote[kA2AVMaxNodes];
+    if (pack_args.msplit) {
+      int w = 0;
+      for (int gi = 0; gi < NN; gi++) {
+        if (this->msplit_node_order_[gi] != my_node) {
+          sched_remote[w++] = this->msplit_node_order_[gi];
+        }
+      }
+      FLUX_CHECK_EQ(w, NN - 1);
+    } else {
+      for (int gi = 0; gi < NN - 1; gi++) {
+        sched_remote[gi] = (my_node + 1 + gi) % NN;
+      }
+    }
     auto flux_dtype = from_torch_dtype(dtype);
     a2av_combine_pack(pack_args, flux_dtype, stream_raw);
 
@@ -1552,6 +1803,11 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         }
         prered_args.wire_seg_start[NN - 1] = total_wire;  // segment-array end
       }
+      // production schedule (ring by default, msplit order when armed) — must
+      // ALWAYS be filled: the kernel visits args.node_order unconditionally
+      for (int gi = 0; gi < NN - 1; gi++) {
+        prered_args.node_order[gi] = sched_remote[gi];
+      }
       a2av_combine_prereduce(prered_args, flux_dtype, this->a2av_prered_stream_.value());
     }
     auto conv_ptr = [&](int sid, int64_t row) -> char * {
@@ -1572,7 +1828,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         .sid = 0,
         .threadblock_count = get_a2av_reduce_blocks()};
 
-    if (this->a2av_eager_) {
+    if (this->a2av_eager_ && !this->a2av_lane_chain_ && !this->a2av_bucket_) {
       // eager arrival-order reduce: ONE persistent kernel for all splits,
       // enqueued while the front-end channel still holds no host wait (conn=1:
       // a blocked wait ahead of a kernel launch could park it forever). It
@@ -1625,7 +1881,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         // Every (peer, tn) pair signals every split, payload or not.
         cudaStream_t conv_stream = this->a2av_conv_stream_.value();
         for (int gi = 0; gi < NN - 1; gi++) {
-          int tn = (my_node + 1 + gi) % NN;
+          int tn = sched_remote[gi];  // production schedule (ring / size-sorted)
           CU_CHECK(CUStreamWaitValue(
               conv_stream,
               (CUdeviceptr)(this->group_flags.get() + tn * this->n_split + sid),
@@ -1671,7 +1927,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         // recv panel (C' image) -- no destination gateway hop. The (rank, sid)
         // slot at the destination keeps exactly one writer: me.
         for (int gi = 0; gi < NN - 1; gi++) {
-          int tn = (my_node + 1 + gi) % NN;
+          int tn = sched_remote[gi];  // production schedule (ring / size-sorted)
           int d = tn * L + my_lr;
           // S <= NN-1: per-split round-robin (gi % S) — bit-identical to the
           // canonical parity split at S=2 and to the first nstreams ladder.
@@ -1858,7 +2114,190 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       // each remote node) -- waiting a lane that never signals would hang.
       // With a2av_eager_ the persistent kernel launched above already consumes
       // the signals in arrival order.
-      if (!this->a2av_eager_) {
+      if (this->a2av_lane_chain_) {
+        // LANE-CHAIN receiver (Slipstream v2b): per-lane front-end waits in
+        // EXPECTED arrival order release per-lane scatter-adds into the fp32
+        // accumulator; finalize casts after the last lane. Waits' writers are
+        // remote ranks (NIC writes) or the intra ladder enqueued above --
+        // NR-02 Class-B safe. The reduce work drips in behind each arrival;
+        // the post-last-arrival tail is one lane's fold + the cast.
+        FLUX_CHECK(this->a2av_compress_);
+        FLUX_CHECK_EQ(this->n_split, 1);
+        const int64_t ntok_local = cpr / this->topk;
+        CUDA_CHECK(cudaStreamWaitEvent(reduce_stream, this->staging_reset_event));
+        CUDA_CHECK(cudaMemsetAsync(
+            this->a2av_scratch_fp32_.data_ptr(),
+            0,
+            (size_t)ntok_local * this->n_dim * sizeof(float),
+            reduce_stream));
+        a2av_lane_token_map(
+            A2AVLaneTokenMapArguments{
+                reduce_csr->at(0).data_ptr<int32_t>(),
+                reduce_csr->at(1).data_ptr<int32_t>(),
+                ntok_local,
+                this->a2av_token_of_row_.data_ptr<int32_t>()},
+            reduce_stream);
+        auto chain_lane = [&](int s) {
+          const int64_t rows = chunk_cp(s, this->rank);
+          if (rows <= 0) {
+            return;  // zero-row lanes still signal; nothing to read or wait for
+          }
+          CU_CHECK(CUStreamWaitValue64(
+              reduce_stream,
+              (CUdeviceptr)(recv_sig + s * this->n_split + sid),
+              this->run_id_,
+              CU_STREAM_WAIT_VALUE_GEQ));
+          a2av_combine_lane_reduce(
+              A2AVLaneReduceArguments{
+                  this->a2av_recv_panel_.data_ptr(),
+                  this->a2av_token_of_row_.data_ptr<int32_t>(),
+                  (float *)this->a2av_scratch_fp32_.data_ptr(),
+                  recv_off_cp(s, this->rank),
+                  rows,
+                  (int)this->n_dim,
+                  get_a2av_reduce_blocks(),
+                  /*use_atomic=*/(s / L == my_node) ? 1 : 0},
+              flux_dtype,
+              reduce_stream);
+        };
+        // expected arrival order: sender node n2 reaches me at ITS ring step
+        // (my_node - n2 - 1) mod NN, so the nearest ring predecessor lands
+        // first -> remote same-lr lanes in descending ring. Own-node lanes
+        // follow the wave policy: LAST under the canon (own wave at GEMM
+        // end), FIRST under FLUX_A2AV_RS_OWN_FIRST (own wave computed first,
+        // intra arrives early — the receiver-overlap precondition).
+        const bool own_first_chain = get_a2av_rs_own_wave_first() != 0;
+        auto chain_own = [&]() {
+          chain_lane(this->rank);
+          for (int dl = 1; dl < L; dl++) {
+            chain_lane(my_node * L + (my_lr - dl + L) % L);
+          }
+        };
+        if (own_first_chain) {
+          chain_own();
+        }
+        for (int gi = 1; gi < NN; gi++) {
+          const int n2 = (my_node - gi + NN) % NN;
+          chain_lane(n2 * L + my_lr);
+        }
+        if (!own_first_chain) {
+          chain_own();
+        }
+        a2av_combine_finalize(
+            A2AVFinalizeArguments{
+                (float const *)this->a2av_scratch_fp32_.data_ptr(),
+                output.data_ptr(),
+                ntok_local,
+                (int)this->n_dim,
+                get_a2av_reduce_blocks()},
+            flux_dtype,
+            reduce_stream);
+      } else if (this->a2av_bucket_) {
+        // COMPLETION-BUCKETED receiver (Slipstream gen-10): a ~us plan-time
+        // bucket sort of the reduce CSR by completion chain position (on the
+        // reduce stream, inside the timed bracket), then per-lane front-end
+        // waits each releasing a register-CSR fold of exactly the tokens
+        // that lane completes. Own-node lanes chain FIRST -- consumption
+        // order only, the wire keeps the canon own-last production: own rows
+        // are ready at GEMM end, which precedes the remote drain, so tokens
+        // complete at their last REMOTE arrival and the fold spreads over
+        // the window at wait-all's 1x byte budget. Sequential waits on one
+        // stream give the bucket-prefix guarantee; skipping zero-row lanes
+        // is safe (no CSR entry, so no token can complete there).
+        FLUX_CHECK(this->a2av_compress_);
+        FLUX_CHECK_EQ(this->n_split, 1);
+        const int64_t ntok_local = cpr / this->topk;
+        int chain_lane_of[kA2AVMaxWorld];
+        int S = 0;
+        chain_lane_of[S++] = this->rank;
+        for (int dl = 1; dl < L; dl++) {
+          chain_lane_of[S++] = my_node * L + (my_lr - dl + L) % L;
+        }
+        for (int gi = 1; gi < NN; gi++) {
+          const int n2 = (my_node - gi + NN) % NN;
+          chain_lane_of[S++] = n2 * L + my_lr;
+        }
+        FLUX_CHECK_LE(S, kA2AVMaxWorld);
+        // per-iteration lane tables, run-parity double-buffered against the
+        // pinned buffer being rewritten under a still-in-flight async copy
+        const int64_t lane_words = 2 * ((int64_t)W + 1);
+        const int64_t lane_base = (int64_t)(this->run_id_ & 1) * lane_words;
+        int32_t *lanes_h = this->a2av_bucket_lanes_h_.data_ptr<int32_t>() + lane_base;
+        int32_t *lanes_d = this->a2av_bucket_lanes_d_.data_ptr<int32_t>() + lane_base;
+        int32_t *lane_off_h = lanes_h;             // [W + 1]
+        int32_t *chain_pos_h = lanes_h + (W + 1);  // [W]
+        for (int s2 = 0; s2 <= W; s2++) {
+          lane_off_h[s2] = (int32_t)recv_off_cp(s2, this->rank);
+        }
+        for (int s2 = 0; s2 < W; s2++) {
+          chain_pos_h[s2] = 0;
+        }
+        for (int k = 0; k < S; k++) {
+          chain_pos_h[chain_lane_of[k]] = k;
+        }
+        CUDA_CHECK(cudaMemcpyAsync(
+            lanes_d,
+            lanes_h,
+            sizeof(int32_t) * (size_t)(2 * W + 1),
+            cudaMemcpyHostToDevice,
+            reduce_stream));
+        int32_t *bucket_meta = this->a2av_bucket_meta_.data_ptr<int32_t>();
+        int32_t *bucket_cnt = bucket_meta;
+        int32_t *bucket_cur = bucket_meta + kA2AVMaxWorld;
+        int32_t *bucket_ptr_d = bucket_meta + 2 * kA2AVMaxWorld;
+        CUDA_CHECK(
+            cudaMemsetAsync(bucket_cnt, 0, sizeof(int32_t) * (size_t)S, reduce_stream));
+        a2av_bucket_map(
+            A2AVBucketMapArguments{
+                reduce_csr->at(0).data_ptr<int32_t>(),
+                reduce_csr->at(1).data_ptr<int32_t>(),
+                lanes_d,
+                lanes_d + (W + 1),
+                W,
+                S,
+                ntok_local,
+                this->a2av_bucket_comp_.data_ptr<int32_t>(),
+                bucket_cnt},
+            reduce_stream);
+        a2av_bucket_scan(
+            A2AVBucketScanArguments{bucket_cnt, S, bucket_ptr_d, bucket_cur},
+            reduce_stream);
+        a2av_bucket_scatter(
+            A2AVBucketScatterArguments{
+                this->a2av_bucket_comp_.data_ptr<int32_t>(),
+                bucket_ptr_d,
+                ntok_local,
+                bucket_cur,
+                this->a2av_bucket_tok_.data_ptr<int32_t>()},
+            reduce_stream);
+        for (int k = 0; k < S; k++) {
+          const int s2 = chain_lane_of[k];
+          if (chunk_cp(s2, this->rank) <= 0) {
+            continue;  // zero-row lane: still signals, but its bucket is empty
+          }
+          CU_CHECK(CUStreamWaitValue64(
+              reduce_stream,
+              (CUdeviceptr)(recv_sig + s2 * this->n_split + sid),
+              this->run_id_,
+              CU_STREAM_WAIT_VALUE_GEQ));
+          a2av_combine_bucket_reduce(
+              A2AVBucketReduceArguments{
+                  this->a2av_recv_panel_.data_ptr(),
+                  reduce_csr->at(0).data_ptr<int32_t>(),
+                  reduce_csr->at(1).data_ptr<int32_t>(),
+                  bucket_ptr_d,
+                  this->a2av_bucket_tok_.data_ptr<int32_t>(),
+                  k,
+                  output.data_ptr(),
+                  this->a2av_recv_rows_,
+                  (int)this->n_dim,
+                  (int)n_per,
+                  sid,
+                  get_a2av_reduce_blocks()},
+              flux_dtype,
+              reduce_stream);
+        }
+      } else if (!this->a2av_eager_) {
         for (int s = 0; s < W; s++) {
           if (this->a2av_compress_ && s / L != my_node && s % L != my_lr) {
             continue;  // lane never materializes under C'
@@ -2265,6 +2704,18 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
   torch::Tensor barrier;
   std::vector<torch::Tensor> barriers;  // [local_world_size], indexed by local rank
   std::unique_ptr<TopkReduceScatterOp> topk_reduce_scatter_op = nullptr;
+  // M-split waves (Slipstream v2, FLUX_A2AV_RS_MSPLIT): per-iteration wave
+  // tables (pinned host arena -> device, one async H2D per forward)
+  bool msplit_ = false;
+  bool fused_pack_ = false;    // gen-8c: GEMM scatters the send panel directly
+  int msplit_wave_nodes_ = 1;
+  torch::Tensor msplit_host_;  // pinned int32 [2 * NN * E + NN]
+  torch::Tensor msplit_dev_;   // device int32, same capacity
+  torch::Tensor msplit_iota_;      // int32 [max_m] shared identity indices
+  torch::Tensor msplit_inv_pack_;  // int32 [max_m] gemm row -> panel row
+  cudaEvent_t msplit_h2d_event_ = nullptr;
+  std::vector<int> msplit_wave_of_node_;  // schedule position -> cascade flag
+  std::vector<int> msplit_node_order_;    // schedule position -> dest node
 
   torch::Tensor workspace;
   cudaEvent_t gemm_start_event;
@@ -2280,7 +2731,13 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
 
   void
   create_barriers() {
-    const int problem_count = this->n_split * this->ep_nexperts * this->max_input_groups;
+    // M-split waves need tile counters for up to nnodes * ep_nexperts problems.
+    // The wave-flag/problem-counter regions reuse the legacy 128-padded slots
+    // (n_waves <= nnodes <= 128, checked in the ctor), so the legacy layout is
+    // byte-identical for everything it addresses; this is a superset sizing.
+    const int problem_count = std::max<int>(
+        this->n_split * this->ep_nexperts * this->max_input_groups,
+        this->msplit_ ? this->nnodes * this->ep_nexperts * this->max_input_groups : 0);
     const int barrier_size = get_barrier_size(problem_count);
     if (this->barriers.empty()) {
       this->barriers = flux_create_tensor_list(
@@ -2511,6 +2968,36 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     this->gather_rs_stream = CreateReduceScatterStream();
     CUDA_CHECK(cudaEventCreateWithFlags(&this->gemm_start_event, cudaEventDisableTiming));
     CUDA_CHECK(cudaEventCreateWithFlags(&this->gather_rs_done_event, cudaEventDisableTiming));
+    // M-split waves (Slipstream v2): ctor-scoped mode resolution (allocation
+    // implications: barrier sizing below + the wave-table arena)
+    this->msplit_ = this->a2av_hier && this->nnodes > 1 && get_a2av_rs_msplit() != 0 &&
+                    (a2av_env_explicit("FLUX_A2AV_RS_MSPLIT") || this->n_split == 1);
+    if (this->msplit_) {
+      FLUX_CHECK_EQ(this->n_split, 1) << "FLUX_A2AV_RS_MSPLIT requires n_split == 1";
+      FLUX_CHECK_LE(this->nnodes, kA2AVMaxNodes);
+      FLUX_CHECK_LE(this->nnodes, 128)
+          << "msplit wave flags must fit the 128-padded barrier flag region";
+      this->msplit_wave_nodes_ = get_a2av_rs_wave_nodes();
+      const int64_t tbl = (int64_t)2 * this->nnodes * this->ep_nexperts + this->nnodes;
+      this->msplit_host_ = torch::empty(
+          {tbl},
+          at::TensorOptions(at::kCPU).dtype(at::ScalarType::Int).pinned_memory(true));
+      this->msplit_dev_ = empty_with_uninitialized_data(
+          std::vector<int64_t>{tbl}, at::TensorOptions(at::kCUDA).dtype(at::ScalarType::Int));
+      CUDA_CHECK(cudaEventCreateWithFlags(&this->msplit_h2d_event_, cudaEventDisableTiming));
+      this->msplit_wave_of_node_.assign(this->nnodes, 0);
+      this->msplit_node_order_.assign(this->nnodes, 0);
+      this->fused_pack_ = get_a2av_rs_fused_pack() != 0;
+      if (this->fused_pack_) {
+        this->msplit_inv_pack_ = empty_with_uninitialized_data(
+            std::vector<int64_t>{this->max_m},
+            at::TensorOptions(at::kCUDA).dtype(at::ScalarType::Int));
+      }
+    }
+    // shared identity indices: the ScatterD iterator always reads an index
+    // array, so every non-fused problem points at this relative iota
+    this->msplit_iota_ = torch::arange(
+        this->max_m, at::TensorOptions(at::kCUDA).dtype(at::ScalarType::Int));
     create_barriers();
     topk_reduce_scatter_op = std::make_unique<TopkReduceScatterOp>(
         tp_group_,
@@ -2731,6 +3218,131 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         std::vector<int64_t>{this->do_all_reduce ? ntokens : n_tokens_per_rank, N},
         at::TensorOptions(at::kCUDA).dtype(output_torch_type));
 
+    // ---- M-split waves (Slipstream v2): destination-wave GEMM sub-problems --
+    // Host-built per iteration from splits_per_source (rule 5: in the timed
+    // bracket, ~NN*E adds), staged through the pinned arena with ONE async H2D
+    // on the forward stream (NR-09: a pageable H2D here would hide a sync).
+    int msplit_n_waves = 0;
+    const int32_t *msplit_wave_M_dev = nullptr;
+    const int32_t *msplit_wave_off_dev = nullptr;
+    const int32_t *msplit_ne_wave_dev = nullptr;
+    if (this->msplit_) {
+      FLUX_CHECK(splits_per_source.has_value());
+      const int NN = this->nnodes;
+      const int E = this->ep_nexperts;
+      const int L = this->local_world_size;
+      const int my_node = this->rank / L;
+      const int NG = this->msplit_wave_nodes_;
+      const int32_t *cnt = splits_per_source->data_ptr<int32_t>();  // [W, total_experts]
+      // Ring order own-node-last; waves = NG ring-consecutive nodes, never
+      // crossing the my_node wrap (the intermediate's within-expert rows are
+      // home-node ASCENDING — the layer0 stable scatter order — so a wave must
+      // be one contiguous ascending node range).
+      std::vector<std::pair<int, int>> waves;  // ascending node range [a, b)
+      const bool size_order = get_a2av_rs_wave_order() != 0;
+      if (size_order) {
+        // gen-8a: remote per-node waves ordered by DESCENDING segment size
+        // (ties by ring position), own node last. Requires NG == 1: a wave
+        // must stay one contiguous ascending node range.
+        FLUX_CHECK_EQ(NG, 1)
+            << "FLUX_A2AV_RS_WAVE_ORDER=size requires FLUX_A2AV_RS_WAVE_NODES=1";
+        std::vector<std::pair<int64_t, int>> rem;  // (-rows, ring_pos) -> node
+        for (int gi = 0; gi < NN - 1; gi++) {
+          const int node = (my_node + 1 + gi) % NN;
+          int64_t rows = 0;
+          for (int lr2 = 0; lr2 < L; lr2++) {
+            for (int e = 0; e < E; e++) {
+              rows += cnt[(int64_t)(node * L + lr2) * this->total_num_experts +
+                          this->ep_start + e];
+            }
+          }
+          rem.emplace_back(-(rows << 8) + gi, node);  // size desc, ring tiebreak
+        }
+        std::sort(rem.begin(), rem.end());
+        for (auto &p : rem) {
+          waves.emplace_back(p.second, p.second + 1);
+        }
+        waves.emplace_back(my_node, my_node + 1);  // own node = final wave
+      } else {
+        const bool own_first = get_a2av_rs_own_wave_first() != 0;
+        if (own_first) {
+          waves.emplace_back(my_node, my_node + 1);  // own node = FIRST wave
+        }
+        const int r1 = NN - 1 - my_node;  // ring run 1: nodes my+1 .. NN-1
+        for (int s = 0; s < r1; s += NG) {
+          waves.emplace_back(my_node + 1 + s, std::min(my_node + 1 + s + NG, NN));
+        }
+        for (int s = 0; s < my_node; s += NG) {  // ring run 2: nodes 0 .. my-1
+          waves.emplace_back(s, std::min(s + NG, my_node));
+        }
+        if (!own_first) {
+          waves.emplace_back(my_node, my_node + 1);  // own node = final wave
+        }
+      }
+      msplit_n_waves = (int)waves.size();
+      // schedule arrays, ONE source of truth for every consumer:
+      // node_order[i] = i-th node in production order; wave_of_order[i] = its
+      // cascade flag (== position of its wave). Ring mode reproduces the
+      // legacy (my_node+1+gi)%NN sequence exactly.
+      {
+        int pos = 0;
+        for (int w = 0; w < msplit_n_waves; w++) {
+          for (int node = waves[w].first; node < waves[w].second; node++, pos++) {
+            this->msplit_node_order_[pos] = node;
+            this->msplit_wave_of_node_[pos] = w;
+          }
+        }
+        FLUX_CHECK_EQ(pos, NN);
+        const int own_pos = get_a2av_rs_own_wave_first() != 0 ? 0 : NN - 1;
+        FLUX_CHECK_EQ(this->msplit_node_order_[own_pos], my_node);
+      }
+      // guard the pinned arena against a still-in-flight previous H2D
+      CUDA_CHECK(cudaEventSynchronize(this->msplit_h2d_event_));
+      int32_t *hp = this->msplit_host_.data_ptr<int32_t>();
+      int32_t *h_wave_M = hp;
+      int32_t *h_wave_off = hp + (int64_t)msplit_n_waves * E;
+      int32_t *h_ne = hp + (int64_t)2 * msplit_n_waves * E;
+      for (int w = 0; w < msplit_n_waves; w++) {
+        h_ne[w] = 0;
+      }
+      for (int e = 0; e < E; e++) {
+        const int64_t ge = (int64_t)this->ep_start + e;  // global expert id
+        // plain-ascending home prefix — the same shape as the combine
+        // builders' home_base cumsum (their FLUX_CHECKs guard consistency)
+        int64_t acc = 0;
+        int64_t node_base[kA2AVMaxNodes + 1];
+        for (int n2 = 0; n2 < NN; n2++) {
+          node_base[n2] = acc;
+          for (int lr2 = 0; lr2 < L; lr2++) {
+            acc += cnt[(int64_t)(n2 * L + lr2) * this->total_num_experts + ge];
+          }
+        }
+        node_base[NN] = acc;
+        for (int w = 0; w < msplit_n_waves; w++) {
+          const int64_t off = node_base[waves[w].first];
+          const int64_t rows = node_base[waves[w].second] - off;
+          FLUX_CHECK_LE(rows, (int64_t)2147483647);
+          h_wave_M[(int64_t)w * E + e] = (int32_t)rows;
+          h_wave_off[(int64_t)w * E + e] = (int32_t)off;
+          if (rows > 0) {
+            h_ne[w] += 1;
+          }
+        }
+      }
+      const int64_t used = (int64_t)2 * msplit_n_waves * E + msplit_n_waves;
+      CUDA_CHECK(cudaMemcpyAsync(
+          this->msplit_dev_.data_ptr(),
+          hp,
+          used * sizeof(int32_t),
+          cudaMemcpyHostToDevice,
+          stream));
+      CUDA_CHECK(cudaEventRecord(this->msplit_h2d_event_, stream));
+      const int32_t *dp = this->msplit_dev_.data_ptr<int32_t>();
+      msplit_wave_M_dev = dp;
+      msplit_wave_off_dev = dp + (int64_t)msplit_n_waves * E;
+      msplit_ne_wave_dev = dp + (int64_t)2 * msplit_n_waves * E;
+    }
+
     MoeGatherRSWorkspaceArgs ws_args{
         .num_groups = num_groups,
         .N_split = this->n_split,
@@ -2749,7 +3361,39 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
           weight_scales.has_value() ? weight_scales->at(i).data_ptr<float>() : nullptr;
     }
 
-    int problem_count = ws_args.N_split * ws_args.num_groups * ws_args.ep_nexperts;
+    if (this->msplit_) {
+      ws_args.msplit = 1;
+      ws_args.n_waves = msplit_n_waves;
+      ws_args.wave_M = msplit_wave_M_dev;
+      ws_args.wave_off = msplit_wave_off_dev;
+      ws_args.non_empty_per_wave = msplit_ne_wave_dev;
+      ws_args.barrier = this->barrier.data_ptr<int>();
+    }
+    ws_args.iota = this->msplit_iota_.data_ptr<int32_t>();
+    if (this->msplit_ && this->fused_pack_) {
+      // gen-8c epilogue-fused pack: fold the gate coefficients into the
+      // intermediate on the K side (mathematically identical: sum_j w_j (A_j B)
+      // == sum_j (w_j A_j) B), build the pack inverse, and point D at the
+      // dest-major send panel
+      if (output_vec_scales.has_value()) {
+        inputs[0].mul_(output_vec_scales->at(0).unsqueeze(1));
+      }
+      a2av_invert_index(
+          A2AVInvertIndexArguments{
+              a2av_pack_idx_t.data_ptr<int32_t>(),
+              this->msplit_inv_pack_.data_ptr<int32_t>(),
+              (int64_t)M_this_ep},
+          stream);
+      FLUX_CHECK_LE(
+          (int64_t)M_this_ep, this->topk_reduce_scatter_op->send_panel_rows())
+          << "fused pack: send panel capacity (raise FLUX_A2AV_RS_MAX_SEND_ROWS)";
+      ws_args.fused_pack = 1;
+      ws_args.inv_pack = this->msplit_inv_pack_.data_ptr<int32_t>();
+      ws_args.send_panel = this->topk_reduce_scatter_op->send_panel_ptr();
+    }
+    int problem_count = this->msplit_
+                            ? msplit_n_waves * ws_args.ep_nexperts
+                            : ws_args.N_split * ws_args.num_groups * ws_args.ep_nexperts;
     torch::Tensor workspace_gpu = empty_with_uninitialized_data(
         std::vector<int64_t>{get_args_workspace_size(problem_count)},
         at::TensorOptions(at::kCUDA).dtype(at::ScalarType::Char));
@@ -2778,8 +3422,9 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     int offset_ldr = pad_to(offset_ldd + problem_count * sizeof(int64_t), kAlignment);
     int offset_scale_A = pad_to(offset_ldr + problem_count * sizeof(int64_t), kAlignment);
     int offset_scale_B = pad_to(offset_scale_A + problem_count * sizeof(float *), kAlignment);
+    int offset_scatter_D = pad_to(offset_scale_B + problem_count * sizeof(float *), kAlignment);
     int offset_non_empty_problem_count =
-        pad_to(offset_scale_B + problem_count * sizeof(float *), kAlignment);
+        pad_to(offset_scatter_D + problem_count * sizeof(int *), kAlignment);
     // the ptrs
     cutlass::gemm::GemmCoord *problem_sizes =
         (cutlass::gemm::GemmCoord *)((char *)workspace + offset_problem_sizes);
@@ -2794,6 +3439,7 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     int64_t *ldr = (int64_t *)((char *)workspace + offset_ldr);
     float **scale_A = (float **)((char *)workspace + offset_scale_A);
     float **scale_B = (float **)((char *)workspace + offset_scale_B);
+    int **scatter_D_ptr_ws = (int **)((char *)workspace + offset_scatter_D);
     int *non_empty_problem_count = (int *)((char *)workspace + offset_non_empty_problem_count);
 
     float alpha = 1.0, beta = 0.0;
@@ -2818,11 +3464,15 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         .topk = this->topk,
         .barrier = this->barrier.data_ptr<int>(),
         .routing_idx = routing_idx.data_ptr<int32_t>(),
-        .n_split = n_split,
+        // msplit: the cascade's group axis is the WAVE (n_split stays 1 for
+        // panels/columns — full-N sub-problems)
+        .n_split = this->msplit_ ? msplit_n_waves : n_split,
         .sm_margin = sm_margin + (this->a2av_hier
                                       ? get_a2av_pack_blocks() + get_a2av_reduce_blocks() +
                                             (this->a2av_compress ? get_a2av_prered_blocks() : 0)
-                                      : get_rs_threadblock_count())};
+                                      : get_rs_threadblock_count()),
+        .non_empty_per_group = this->msplit_ ? msplit_ne_wave_dev : nullptr,
+        .scatter_D_ptr = scatter_D_ptr_ws};
 
     int64_t workspace_size = gemm_op->get_workspace_size(args);
     this->create_workspace_or_expand(workspace_size);
@@ -2838,6 +3488,10 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     } else {
       this->barrier.fill_(1);
     }
+    topk_reduce_scatter_op->set_msplit_waves(
+        this->msplit_wave_of_node_,
+        this->msplit_node_order_,
+        this->msplit_ ? msplit_n_waves : 0);
     output = topk_reduce_scatter_op->run(
         gemm_outs,
         output,
@@ -3276,6 +3930,22 @@ TopkReduceScatterOp::TopkReduceScatterOp(
           a2av_hier,
           a2av_compress)) {}
 TopkReduceScatterOp::~TopkReduceScatterOp() { delete impl_; }
+void
+TopkReduceScatterOp::set_msplit_waves(
+    std::vector<int> const &wave_of_node, std::vector<int> const &node_order, int n_waves) {
+  FLUX_CHECK(impl_ != nullptr) << "TopkReduceScatterOp is not initialized";
+  impl_->set_msplit_waves(wave_of_node, node_order, n_waves);
+}
+void *
+TopkReduceScatterOp::send_panel_ptr() {
+  FLUX_CHECK(impl_ != nullptr) << "TopkReduceScatterOp is not initialized";
+  return impl_->send_panel_ptr();
+}
+int64_t
+TopkReduceScatterOp::send_panel_rows() {
+  FLUX_CHECK(impl_ != nullptr) << "TopkReduceScatterOp is not initialized";
+  return impl_->send_panel_rows();
+}
 void
 TopkReduceScatterOp::reset_buffer() {
   FLUX_CHECK(impl_ != nullptr) << "TopkReduceScatterOp not initialized";

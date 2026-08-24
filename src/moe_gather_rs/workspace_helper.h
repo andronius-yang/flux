@@ -34,6 +34,26 @@ struct MoeGatherRSWorkspaceArgs {
   void *output[kMaxNumGroups];
   float *input_scales[kMaxNumGroups];
   float *weight_scales[kMaxNumGroups];
+  // M-split waves (Slipstream v2, FLUX_A2AV_RS_MSPLIT): problems become
+  // (ring wave of dest nodes, expert) ROW segments (full N) instead of
+  // (split, expert) column windows. Tables are device int32, built by the host
+  // per iteration from splits_per_source (pinned-arena async H2D on the same
+  // stream). msplit == 0 leaves the legacy construction bit-exact.
+  int msplit = 0;
+  int n_waves = 0;
+  const int32_t *wave_M = nullptr;              // [n_waves * ep_nexperts] segment rows
+  const int32_t *wave_off = nullptr;            // [n_waves * ep_nexperts] rows into the expert block
+  const int32_t *non_empty_per_wave = nullptr;  // [n_waves]
+  int *barrier = nullptr;  // preset zero-target wave flags to 1 (no producer exists)
+  // gen-8c epilogue-fused pack: the ScatterD indices per problem. Legacy:
+  // scatter_D_ptr[i] = iota (relative identity, ptr_D keeps its M_acc base).
+  // Fused: scatter_D_ptr[i] = inv_pack + problem's global row base, and ptr_D
+  // becomes the send-panel base (absolute panel rows) — the GEMM writes the
+  // dest-major panel directly and the pack kernel degenerates to a flag relay.
+  int *iota = nullptr;             // [max rows] identity indices (shared)
+  int *inv_pack = nullptr;         // [M_this_ep] gemm row -> send-panel row
+  void *send_panel = nullptr;      // fused: D base override (row stride == N)
+  int fused_pack = 0;
 };
 
 /**

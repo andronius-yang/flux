@@ -1,0 +1,25 @@
+# gen-10 completion-bucketed receiver gate (2026-08-24): correctness ON
+# (runner exports random payload -- rule-6 wire probe), spin-limit armed.
+# Output is bitwise-identical to wait-all by construction (per-token CSR
+# fold order unchanged) -- the gate proves it on real wire arrivals.
+platform: perlmutter
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+matrix_instance: "001"
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+n_split_l1: 7
+timeout_s: 2400
+idle_timeout_s: 900
+extra_env:
+  FLUX_A2AV_RS_SPIN_LIMIT: "20000000"
+nodes: 8
+budgets_mib: [8]
+variants:
+  - l01_slipstream_v2_bucket
+  - l01_slipstream_v2_fpwp_bucket
+retries: 1
+notes: "gen-10 bucket receiver gate (random payload correctness)"

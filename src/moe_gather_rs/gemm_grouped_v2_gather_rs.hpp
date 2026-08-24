@@ -170,7 +170,9 @@ class GemmGroupedV2GatherRS_Device
         (cutlass::gemm::GemmCoord *)nullptr,  // host_problem_sizes
         args.n_split,
         args.barrier,
-        args.non_empty_problem_count};
+        args.non_empty_problem_count,
+        args.non_empty_per_group,
+        args.scatter_D_ptr};
     return gemm_args;
   }
 

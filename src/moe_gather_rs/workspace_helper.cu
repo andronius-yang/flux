@@ -40,9 +40,10 @@ make_workspace_kernel(
   int *ep_splits_acc = (int *)shared_storage;
   block_prefix_sum_and_sync(ep_splits, ep_splits_acc, args.ep_nexperts);
   int problem_per_split = args.num_groups * args.ep_nexperts;
-  int problem_count = problem_per_split * args.N_split;
+  int problem_count =
+      args.msplit ? args.n_waves * args.ep_nexperts : problem_per_split * args.N_split;
   int N = args.N, K = args.K;
-  const int new_N = args.N / args.N_split;
+  const int new_N = args.msplit ? args.N : args.N / args.N_split;
   constexpr int kAlignment = 128;
 
   // the offsets
@@ -59,8 +60,9 @@ make_workspace_kernel(
   int offset_ldr = pad_to(offset_ldd + problem_count * sizeof(int64_t), kAlignment);
   int offset_scale_A = pad_to(offset_ldr + problem_count * sizeof(int64_t), kAlignment);
   int offset_scale_B = pad_to(offset_scale_A + problem_count * sizeof(float *), kAlignment);
+  int offset_scatter_D = pad_to(offset_scale_B + problem_count * sizeof(float *), kAlignment);
   int offset_non_empty_problem_count =
-      pad_to(offset_scale_B + problem_count * sizeof(float *), kAlignment);
+      pad_to(offset_scatter_D + problem_count * sizeof(int *), kAlignment);
   // the ptrs
   cutlass::gemm::GemmCoord *problem_sizes =
       (cutlass::gemm::GemmCoord *)((char *)workspace + offset_problem_sizes);
@@ -75,16 +77,30 @@ make_workspace_kernel(
   int64_t *ldr = (int64_t *)((char *)workspace + offset_ldr);
   float **scale_A = (float **)((char *)workspace + offset_scale_A);
   float **scale_B = (float **)((char *)workspace + offset_scale_B);
+  int **scatter_D = (int **)((char *)workspace + offset_scatter_D);
   int *non_empty_problem_count = (int *)((char *)workspace + offset_non_empty_problem_count);
 
   for (int i = threadIdx.x; i < problem_count; i += blockDim.x) {
-    int sid = i / problem_per_split;
-    int sr = i % problem_per_split;
-    int gid = sr / args.ep_nexperts;
-    int eid = sr % args.ep_nexperts;
-
-    int Mi = ep_splits[eid];
-    int M_acc = ep_splits_acc[eid] - Mi;
+    int sid, gid, eid, Mi;
+    int64_t M_acc;
+    if (args.msplit) {
+      // (wave, expert) destination-row sub-problem: full-N, rows are the
+      // expert block's contiguous ascending home-node segment of this wave
+      // (the intermediate's within-expert rows are home-node ascending — the
+      // layer0 stable scatter order; waves never cross the ring wrap).
+      sid = 0;  // no column offset
+      gid = 0;  // a2av_hier enforces a single weight group
+      eid = i % args.ep_nexperts;
+      Mi = args.wave_M[i];
+      M_acc = (int64_t)(ep_splits_acc[eid] - ep_splits[eid]) + args.wave_off[i];
+    } else {
+      sid = i / problem_per_split;
+      int sr = i % problem_per_split;
+      gid = sr / args.ep_nexperts;
+      eid = sr % args.ep_nexperts;
+      Mi = ep_splits[eid];
+      M_acc = ep_splits_acc[eid] - Mi;
+    }
 
     problem_sizes[i] = cutlass::gemm::GemmCoord{Mi, new_N, K};
     // 64-bit byte offsets (2026-08-21): at many experts per rank the int32
@@ -96,8 +112,16 @@ make_workspace_kernel(
     ptr_B[i] = ptr_with_offset(
         args.weights[gid], ((int64_t)eid * N + (int64_t)sid * new_N) * K * input_elem_size);
     ptr_C[i] = nullptr;
-    ptr_D[i] = ptr_with_offset(
-        args.output[gid], ((int64_t)M_acc * N + (int64_t)sid * new_N) * output_elem_size);
+    if (args.fused_pack) {
+      // gen-8c: D goes straight to the dest-major send panel through the pack
+      // inverse (absolute panel rows; ldd stays N == panel row stride)
+      ptr_D[i] = args.send_panel;
+      scatter_D[i] = args.inv_pack + M_acc;
+    } else {
+      ptr_D[i] = ptr_with_offset(
+          args.output[gid], ((int64_t)M_acc * N + (int64_t)sid * new_N) * output_elem_size);
+      scatter_D[i] = args.iota;  // relative identity: D keeps its M_acc base
+    }
     lda[i] = LayoutA::packed({(int)Mi, (int)K}).stride(0);
     ldb[i] = LayoutB::packed({(int)K, (int)N}).stride(0);
     ldc[i] = LayoutC::packed({(int)Mi, (int)N}).stride(0);
@@ -108,6 +132,18 @@ make_workspace_kernel(
     scale_B[i] = args.weight_scales[gid] == nullptr ? nullptr : args.weight_scales[gid] + eid;
   }
   __syncthreads();
+  if (args.msplit) {
+    // Zero-target waves have no non-empty problem to fire the cascade: preset
+    // their ready flags so the pack kernel's wave gate never waits on them.
+    // (The GEMM's per-group targets come from non_empty_per_wave; the legacy
+    // *non_empty_problem_count is never read in msplit mode.)
+    for (int w = threadIdx.x; w < args.n_waves; w += blockDim.x) {
+      if (args.non_empty_per_wave[w] == 0) {
+        args.barrier[w] = 1;
+      }
+    }
+    return;
+  }
   int *non_empty_splits = (int *)shared_storage;
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     *non_empty_splits = 0;

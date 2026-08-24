@@ -1,0 +1,24 @@
+# rule-13 flip gate, b64 perf/hang probe: bare==pinned timing comparison at
+# b64 (correctness impossible there — harness reference OOM, see gate 2 note);
+# spin-limit armed, full iteration count = the hang probe.
+platform: perlmutter
+nodes: 8
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+matrix_instance: "001"
+modes: [isolated]
+budgets_mib: [64]
+variants:
+  - l01_slipstream
+  - l01_slipstream_bare
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 0
+extra_env:
+  FLUX_A2AV_RS_SPIN_LIMIT: "20000000"
+notes: "rule-13 flip gate: bare==pinned b64 perf + hang probe"

@@ -42,6 +42,18 @@ class TopkReduceScatterOp {
       bool a2av_compress = false);
   ~TopkReduceScatterOp();
   void reset_buffer();
+  // M-split waves (Slipstream v2, FLUX_A2AV_RS_MSPLIT): arm the combine's
+  // per-schedule-step wave gates and destination order for the NEXT run().
+  // node_order[i] = i-th dest node in production order (ring or size-sorted);
+  // wave_of_node[i] = its cascade flag. Per-iteration state; n_waves == 0
+  // disarms (legacy single-split gate + ring order).
+  void set_msplit_waves(
+      std::vector<int> const &wave_of_node,
+      std::vector<int> const &node_order,
+      int n_waves);
+  // gen-8c epilogue-fused pack: the send panel the GEMM scatters into
+  void *send_panel_ptr();
+  int64_t send_panel_rows();
   torch::Tensor run(
       std::vector<torch::Tensor> gemm_outs,  // of group_size
       c10::optional<torch::Tensor> output_,

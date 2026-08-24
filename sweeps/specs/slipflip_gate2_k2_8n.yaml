@@ -1,0 +1,24 @@
+# rule-13 flip gate, part 2 (2026-08-24): b16 correctness — the largest budget
+# whose torch reference (dense (M,N) buffer, 4 GiB at b16) fits beside the
+# flux footprint at 8n. b64 correctness is impossible in this harness (16 GiB
+# dense reference -> OOM, capsule fb7ae2ab); b64 runs as perf/hang probes.
+platform: perlmutter
+nodes: 8
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+matrix_instance: "001"
+modes: [isolated]
+budgets_mib: [16]
+variants:
+  - l01_slipstream
+  - l01_slipstream_bare
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+extra_env:
+  FLUX_A2AV_RS_SPIN_LIMIT: "20000000"
+notes: "rule-13 flip gate 2: bare==pinned b16 correctness (random payload)"

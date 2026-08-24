@@ -87,16 +87,30 @@ __launch_bounds__(1024, 1) a2av_combine_pack_kernel(A2AVCombinePackArguments arg
   const int64_t packs_per_row = n_per / kElemsPerPack;
   CUTLASS_PRAGMA_NO_UNROLL
   for (int sid = 0; sid < args.n_split; sid++) {
-    // the GEMM's tile->problem->split cascade releases this flag once every
-    // expert's rows of column window sid are complete -- the minimal gate, since
-    // any destination's rows interleave across all local experts
-    Barrier::wait_eq(args.barrier, threadIdx.x, sid, 1);
+    // Legacy: the GEMM's tile->problem->split cascade releases this flag once
+    // every expert's rows of column window sid are complete -- the minimal
+    // gate, since any destination's rows interleave across all local experts.
+    // M-split waves (msplit): gate PER RING STEP below instead — each wave's
+    // flag releases as soon as every expert's rows for that wave's dest nodes
+    // are complete, so early nodes pack (and their ladders fire) mid-GEMM.
+    if (!args.msplit) {
+      Barrier::wait_eq(args.barrier, threadIdx.x, sid, 1);
+    }
     for (int gi = 0; gi < args.nnodes; gi++) {
       // remote-node chunks first so the NIC-bound flags flip earliest; the host
-      // ladders consume flags in this same production order (no head-of-line)
-      int g = (args.node_idx + 1 + gi) % args.nnodes;
+      // ladders consume flags in this same production order (no head-of-line).
+      // msplit: the host-built schedule (ring, or size-sorted under
+      // FLUX_A2AV_RS_WAVE_ORDER=size) replaces the hardcoded ring.
+      int g = args.msplit ? args.node_order[gi] : (args.node_idx + 1 + gi) % args.nnodes;
+      if (args.msplit) {
+        // schedule steps map monotonically to waves; re-waiting a set flag is free
+        Barrier::wait_eq(args.barrier, threadIdx.x, args.wave_of_node[gi], 1);
+      }
       const int64_t row_lo = args.node_row_start[g];
-      const int64_t total = (args.node_row_start[g + 1] - row_lo) * packs_per_row;
+      // relay_only (gen-8c fused pack): the GEMM scattered the panel rows
+      // directly — skip the data loop, keep the wave-wait + flag flips
+      const int64_t total =
+          args.relay_only ? 0 : (args.node_row_start[g + 1] - row_lo) * packs_per_row;
       for (int64_t idx = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; idx < total;
            idx += (int64_t)gridDim.x * blockDim.x) {
         const int64_t p = row_lo + idx / packs_per_row;
@@ -252,7 +266,9 @@ __launch_bounds__(512, 1) a2av_combine_prereduce_kernel(A2AVCombinePreReduceArgu
     T const *conv = (T const *)args.conv_panel + (int64_t)sid * args.conv_rows * n_per;
     T *wire = (T *)args.wire_panel + (int64_t)sid * args.wire_rows * n_per;
     for (int gi = 0; gi < NN - 1; gi++) {
-      const int tn = (args.node_idx + 1 + gi) % NN;
+      // host-built schedule (ring by default; size-sorted under gen-8a) —
+      // panel/segment layout stays tn-ascending, only the visit order moves
+      const int tn = args.node_order[gi];
       const int seg = tn < args.node_idx ? tn : tn - 1;
       if (threadIdx.x == 0) {
         for (int ls = 0; ls < L; ls++) {
@@ -382,6 +398,161 @@ a2av_combine_reduce_kernel(A2AVCombineReduceArguments args) {
   }
 }
 
+// ---- lane-chain receiver kernels (Slipstream v2b) --------------------------
+
+__global__ void
+a2av_lane_token_map_kernel(A2AVLaneTokenMapArguments args) {
+  for (int64_t t = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; t < args.ntokens;
+       t += (int64_t)gridDim.x * blockDim.x) {
+    for (int32_t k = args.red_ptr[t]; k < args.red_ptr[t + 1]; k++) {
+      args.token_of[args.red_row[k]] = (int32_t)t;
+    }
+  }
+}
+
+// One lane's recv rows scatter-added into the fp32 accumulator. Lanes chain
+// serially on one stream, so races exist only within a lane: remote C' lanes
+// are collision-free (one merged row per token -> plain adds), own-node lanes
+// can carry several copies of a token (multiple local experts -> atomicAdd).
+template <typename T, bool kAtomic>
+__global__ void
+a2av_combine_lane_reduce_kernel(A2AVLaneReduceArguments args) {
+  constexpr int kElemsPerPack = PackU<T>::kElemsPerPack;
+  const int64_t packs_per_row = args.n / kElemsPerPack;
+  const int64_t total = args.nrows * packs_per_row;
+  T const *panel = (T const *)args.recv_panel;
+  for (int64_t idx = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; idx < total;
+       idx += (int64_t)gridDim.x * blockDim.x) {
+    const int64_t row = args.row_lo + idx / packs_per_row;
+    const int64_t col = (idx % packs_per_row) * kElemsPerPack;
+    const int64_t t = args.token_of[row];
+    PackU<T> pk;
+    pk.data = loadPack(panel + row * args.n + col);
+    float *dst = args.scratch + t * args.n + col;
+    CUTLASS_PRAGMA_UNROLL
+    for (int i = 0; i < kElemsPerPack; i++) {
+      if constexpr (kAtomic) {
+        atomicAdd(dst + i, elem_to_float<T>(pk.elems[i]));
+      } else {
+        dst[i] += elem_to_float<T>(pk.elems[i]);
+      }
+    }
+  }
+}
+
+template <typename T>
+__global__ void
+a2av_combine_finalize_kernel(A2AVFinalizeArguments args) {
+  constexpr int kElemsPerPack = PackU<T>::kElemsPerPack;
+  const int64_t packs_per_row = args.n / kElemsPerPack;
+  const int64_t total = args.ntokens * packs_per_row;
+  for (int64_t idx = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; idx < total;
+       idx += (int64_t)gridDim.x * blockDim.x) {
+    const int64_t off = (idx / packs_per_row) * args.n + (idx % packs_per_row) * kElemsPerPack;
+    PackU<T> out;
+    CUTLASS_PRAGMA_UNROLL
+    for (int i = 0; i < kElemsPerPack; i++) {
+      out.elems[i] = float_to_elem<T>(args.scratch[off + i]);
+    }
+    storePack((T *)args.output + off, out.data);
+  }
+}
+
+
+// ---- completion-bucketed receiver kernels (Slipstream gen-10) --------------
+
+__global__ void
+a2av_bucket_map_kernel(A2AVBucketMapArguments args) {
+  for (int64_t t = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; t < args.ntokens;
+       t += (int64_t)gridDim.x * blockDim.x) {
+    int pos = 0;
+    for (int32_t k = args.red_ptr[t]; k < args.red_ptr[t + 1]; k++) {
+      const int32_t row = args.red_row[k];
+      // lane of this recv row: binary search over the C' per-rank prefixes
+      int lo = 0, hi = args.world_size - 1;
+      while (lo < hi) {
+        const int mid = (lo + hi + 1) >> 1;
+        if (args.lane_off[mid] <= row) {
+          lo = mid;
+        } else {
+          hi = mid - 1;
+        }
+      }
+      const int p = args.chain_pos[lo];
+      pos = p > pos ? p : pos;
+    }
+    args.comp[t] = pos;
+    atomicAdd(args.bucket_cnt + pos, 1);
+  }
+}
+
+__global__ void
+a2av_bucket_scan_kernel(A2AVBucketScanArguments args) {
+  if (blockIdx.x != 0 || threadIdx.x != 0) {
+    return;
+  }
+  int32_t acc = 0;
+  args.bucket_ptr[0] = 0;
+  for (int b = 0; b < args.n_chain; b++) {
+    acc += args.bucket_cnt[b];
+    args.bucket_ptr[b + 1] = acc;
+    args.bucket_cur[b] = 0;
+  }
+}
+
+__global__ void
+a2av_bucket_scatter_kernel(A2AVBucketScatterArguments args) {
+  for (int64_t t = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; t < args.ntokens;
+       t += (int64_t)gridDim.x * blockDim.x) {
+    const int pos = args.comp[t];
+    const int32_t idx = atomicAdd(args.bucket_cur + pos, 1);
+    args.bucket_tok[args.bucket_ptr[pos] + idx] = (int32_t)t;
+  }
+}
+
+// One completion bucket's tokens, folded with the register CSR reduce: all
+// contributions of a bucket's tokens are resident once its lane wait fires
+// (sequential waits on one stream give the chain-prefix guarantee), so each
+// token is read once and written once — wait-all's byte budget with
+// arrival-order start times. Token order inside a bucket is
+// scatter-nondeterministic, but each token's fold walks its own CSR slice in
+// order, so the output is bitwise-identical to the wait-all reduce.
+template <typename T>
+__global__ void
+a2av_combine_bucket_reduce_kernel(A2AVBucketReduceArguments args) {
+  constexpr int kElemsPerPack = PackU<T>::kElemsPerPack;
+  const int64_t n_per = args.n_per;
+  const int64_t packs_per_row = n_per / kElemsPerPack;
+  const int32_t lo = args.bucket_ptr[args.bucket];
+  const int32_t hi = args.bucket_ptr[args.bucket + 1];
+  const int64_t total = (int64_t)(hi - lo) * packs_per_row;
+  T const *panel = (T const *)args.recv_panel + (int64_t)args.sid * args.panel_rows * n_per;
+  for (int64_t idx = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; idx < total;
+       idx += (int64_t)gridDim.x * blockDim.x) {
+    const int64_t t = args.bucket_tok[lo + idx / packs_per_row];
+    const int64_t col = (idx % packs_per_row) * kElemsPerPack;
+    float acc[kElemsPerPack];
+    CUTLASS_PRAGMA_UNROLL
+    for (int i = 0; i < kElemsPerPack; i++) {
+      acc[i] = 0.0f;
+    }
+    for (int32_t k = args.red_ptr[t]; k < args.red_ptr[t + 1]; k++) {
+      PackU<T> pk;
+      pk.data = loadPack(panel + (int64_t)args.red_row[k] * n_per + col);
+      CUTLASS_PRAGMA_UNROLL
+      for (int i = 0; i < kElemsPerPack; i++) {
+        acc[i] += elem_to_float<T>(pk.elems[i]);
+      }
+    }
+    PackU<T> out;
+    CUTLASS_PRAGMA_UNROLL
+    for (int i = 0; i < kElemsPerPack; i++) {
+      out.elems[i] = float_to_elem<T>(acc[i]);
+    }
+    storePack((T *)args.output + t * args.n + (int64_t)args.sid * n_per + col, out.data);
+  }
+}
+
 }  // namespace
 
 // Force-load every combine kernel at construction time. Under
@@ -408,6 +579,19 @@ a2av_combine_preload(DataTypeEnum dtype) {
         CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_combine_prereduce_kernel<T>));
         CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_combine_csr_reduce_kernel<T>));
         CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_combine_reduce_kernel<T>));
+        // lane-chain receiver: first launch happens behind front-end waits
+        // while the prered spin kernel is resident -- the exact lazy-load
+        // deadlock class the preload exists for
+        CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_lane_token_map_kernel));
+        CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_combine_lane_reduce_kernel<T, true>));
+        CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_combine_lane_reduce_kernel<T, false>));
+        CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_combine_finalize_kernel<T>));
+        // bucketed receiver: fold launches happen behind front-end waits with
+        // the prered spin kernel resident -- the exact lazy-load deadlock class
+        CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_bucket_map_kernel));
+        CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_bucket_scan_kernel));
+        CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_bucket_scatter_kernel));
+        CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_combine_bucket_reduce_kernel<T>));
       },
       [&]() { FLUX_CHECK(false) << "unsupported dtype for a2av combine preload: " << dtype; });
 }
@@ -516,6 +700,113 @@ a2av_combine_reduce(
         a2av_combine_reduce_kernel<T><<<grid, block, 0, stream>>>(args);
       },
       [&]() { FLUX_CHECK(false) << "unsupported dtype for a2av combine reduce: " << dtype; });
+  CUDA_CHECK(cudaGetLastError());
+}
+
+namespace {
+__global__ void
+a2av_invert_index_kernel(A2AVInvertIndexArguments args) {
+  for (int64_t p = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; p < args.n;
+       p += (int64_t)gridDim.x * blockDim.x) {
+    args.out[args.idx[p]] = (int32_t)p;
+  }
+}
+}  // namespace
+
+void
+a2av_invert_index(A2AVInvertIndexArguments const &args, cudaStream_t stream) {
+  constexpr int kThreads = 256;
+  const int blocks = (int)std::min<int64_t>((args.n + kThreads - 1) / kThreads, 4096);
+  a2av_invert_index_kernel<<<blocks > 0 ? blocks : 1, kThreads, 0, stream>>>(args);
+  CUDA_CHECK(cudaGetLastError());
+}
+
+void
+a2av_lane_token_map(A2AVLaneTokenMapArguments const &args, cudaStream_t stream) {
+  constexpr int kThreads = 256;
+  const int blocks = (int)((args.ntokens + kThreads - 1) / kThreads);
+  a2av_lane_token_map_kernel<<<blocks > 0 ? blocks : 1, kThreads, 0, stream>>>(args);
+  CUDA_CHECK(cudaGetLastError());
+}
+
+void
+a2av_combine_lane_reduce(
+    A2AVLaneReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream) {
+  constexpr int kThreads = 512;
+  FLUX_CHECK(args.n % 8 == 0) << "n must be a multiple of the 8-elem pack width";
+  const bool atomic = args.use_atomic != 0;
+  dim3 grid(args.threadblock_count), block(kThreads);
+  tuple_return_if(
+      tuple_cartesian_product(
+          cute::make_tuple(_FP16{}, _BF16{}),
+          cute::make_tuple(cute::true_type{}, cute::false_type{})),
+      [&](auto tup) {
+        auto [cdtype, atomic_] = tup;
+        return cdtype == dtype && atomic_ == atomic;
+      },
+      [&](auto tup) {
+        auto [cdtype, atomic_] = tup;
+        using T = decltype(to_cuda_dtype(cdtype));
+        constexpr bool kAtomic = decltype(atomic_){};
+        a2av_combine_lane_reduce_kernel<T, kAtomic><<<grid, block, 0, stream>>>(args);
+      },
+      [&]() { FLUX_CHECK(false) << "unsupported dtype for a2av lane reduce: " << dtype; });
+  CUDA_CHECK(cudaGetLastError());
+}
+
+void
+a2av_combine_finalize(
+    A2AVFinalizeArguments const &args, DataTypeEnum dtype, cudaStream_t stream) {
+  constexpr int kThreads = 512;
+  FLUX_CHECK(args.n % 8 == 0) << "n must be a multiple of the 8-elem pack width";
+  dim3 grid(args.threadblock_count), block(kThreads);
+  tuple_return_if(
+      cute::make_tuple(_FP16{}, _BF16{}),
+      [&](auto cdtype) { return cdtype == dtype; },
+      [&](auto cdtype) {
+        using T = decltype(to_cuda_dtype(cdtype));
+        a2av_combine_finalize_kernel<T><<<grid, block, 0, stream>>>(args);
+      },
+      [&]() { FLUX_CHECK(false) << "unsupported dtype for a2av finalize: " << dtype; });
+  CUDA_CHECK(cudaGetLastError());
+}
+
+void
+a2av_bucket_map(A2AVBucketMapArguments const &args, cudaStream_t stream) {
+  constexpr int kThreads = 256;
+  const int blocks = (int)std::min<int64_t>((args.ntokens + kThreads - 1) / kThreads, 4096);
+  a2av_bucket_map_kernel<<<blocks > 0 ? blocks : 1, kThreads, 0, stream>>>(args);
+  CUDA_CHECK(cudaGetLastError());
+}
+
+void
+a2av_bucket_scan(A2AVBucketScanArguments const &args, cudaStream_t stream) {
+  a2av_bucket_scan_kernel<<<1, 32, 0, stream>>>(args);
+  CUDA_CHECK(cudaGetLastError());
+}
+
+void
+a2av_bucket_scatter(A2AVBucketScatterArguments const &args, cudaStream_t stream) {
+  constexpr int kThreads = 256;
+  const int blocks = (int)std::min<int64_t>((args.ntokens + kThreads - 1) / kThreads, 4096);
+  a2av_bucket_scatter_kernel<<<blocks > 0 ? blocks : 1, kThreads, 0, stream>>>(args);
+  CUDA_CHECK(cudaGetLastError());
+}
+
+void
+a2av_combine_bucket_reduce(
+    A2AVBucketReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream) {
+  constexpr int kThreads = 512;
+  FLUX_CHECK(args.n_per % 8 == 0) << "n/n_split must be a multiple of the 8-elem pack width";
+  dim3 grid(args.threadblock_count), block(kThreads);
+  tuple_return_if(
+      cute::make_tuple(_FP16{}, _BF16{}),
+      [&](auto cdtype) { return cdtype == dtype; },
+      [&](auto cdtype) {
+        using T = decltype(to_cuda_dtype(cdtype));
+        a2av_combine_bucket_reduce_kernel<T><<<grid, block, 0, stream>>>(args);
+      },
+      [&]() { FLUX_CHECK(false) << "unsupported dtype for a2av bucket reduce: " << dtype; });
   CUDA_CHECK(cudaGetLastError());
 }
 

@@ -1,0 +1,31 @@
+# In-capsule confirmation of the CTA-ladder verdict flip (2026-08-24):
+# lanechain at REDUCE_BLOCKS=24 tied noeager at b8 and beat it at b64 in the
+# ladder capsule (11029bcb) but that was cross-capsule vs the reference pair
+# (8629141c). Rule 4: one capsule, one binary (gen-9 f9d78fbe), one window.
+# Also answers the canon-receiver question: does fpwp compose with the
+# lanechain-rb24 receiver (fpwp_lcrb24) for a b64 win at no b8 cost?
+platform: perlmutter
+nodes: 8
+shape: k2
+topk: 8
+budgets_mib: [8, 64]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+matrix_instance: "001"
+modes: [isolated]
+variants:
+  - l01_slipstream_v2_noeager
+  - l01_slipstream_v2_lanechain_rb24
+  - l01_slipstream_v2_fpwp
+  - l01_slipstream_v2_fpwp_lcrb24
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+n_split_l1: 7
+skip_correctness: true
+retries: 0
+timeout_s: 2400
+idle_timeout_s: 900
+extra_env:
+  FLUX_A2AV_RS_SPIN_LIMIT: "20000000"
+notes: lanechain rb24 in-capsule confirm + fpwp receiver composition

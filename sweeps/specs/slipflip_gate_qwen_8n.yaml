@@ -1,0 +1,24 @@
+# SCHEMA rule 13 flip gate, Qwen leg (2026-08-24): the bucket receiver had
+# only run on K2 routing at flip time — this gates the new canon on Qwen
+# (different incidence/bucket spreading), correctness ON at b8 (the b64 torch
+# reference needs a dense 16 GiB (M,N) buffer and OOMs at 8n — capsule
+# fb7ae2ab; b64 runs as a perf/hang probe in the companion spec).
+platform: perlmutter
+nodes: 8
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+matrix_instance: "001"
+modes: [isolated]
+budgets_mib: [8]
+variants:
+  - l01_slipstream
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+extra_env:
+  FLUX_A2AV_RS_SPIN_LIMIT: "20000000"
+notes: "rule-13 flip gate: new Slipstream on Qwen routing (bucket first Qwen run)"

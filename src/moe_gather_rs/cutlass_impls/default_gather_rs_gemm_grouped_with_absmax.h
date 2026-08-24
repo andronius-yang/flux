@@ -239,7 +239,9 @@ struct DefaultGatherRSGemmGroupedWithAbsMax<
     SharedMemoryClear,
     false, /*GatherA*/
     false, /*GatherB*/
-    false, /*ScatterD*/
+    true, /*ScatterD: gen-8c epilogue-fused pack — indices are the shared
+              identity iota in legacy mode (index-transparent), the pack
+              inverse (dest-major panel positions) under FLUX_A2AV_RS_FUSED_PACK */
     PermuteDLayout
   >::GemmKernel;
 
@@ -252,7 +254,8 @@ struct DefaultGatherRSGemmGroupedWithAbsMax<
     typename EpilogueOutputOp::ElementAuxOutput,
     ElementC,
     EpilogueOutputOp,
-    DefaultGemmKernel::Epilogue::kElementsPerAccess
+    DefaultGemmKernel::Epilogue::kElementsPerAccess,
+    true /*ScatterD*/
   >::Epilogue;
 
     /// Define the kernel in terms of the default kernel

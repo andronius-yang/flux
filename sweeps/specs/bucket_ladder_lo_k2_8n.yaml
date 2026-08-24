@@ -1,0 +1,27 @@
+# gen-10 bucket-receiver ladder (2026-08-24): in-capsule receiver A/B at
+# 8n -- noeager (wait-all canon) vs bucket, and the fpwp composition
+# pair. One capsule, one binary (rule 4).
+platform: perlmutter
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+matrix_instance: "001"
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+sm_margin: 8
+n_split_l1: 7
+timeout_s: 2400
+idle_timeout_s: 900
+extra_env:
+  FLUX_A2AV_RS_SPIN_LIMIT: "20000000"
+nodes: 8
+budgets_mib: [1, 2, 4, 8]
+variants:
+  - l01_slipstream_v2_noeager
+  - l01_slipstream_v2_bucket
+  - l01_slipstream_v2_fpwp
+  - l01_slipstream_v2_fpwp_bucket
+skip_correctness: true
+retries: 0
+notes: "gen-10 bucket ladder lo_k2_8n"

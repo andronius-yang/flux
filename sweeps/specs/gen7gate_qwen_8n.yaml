@@ -1,0 +1,17 @@
+# Slipstream v2 (M-split waves) 4n correctness gate (2026-08-24): Qwen twin of
+# msplit_gate_k2_4n.yaml — see that spec's header for the gate contract.
+platform: perlmutter
+nodes: 8
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8, 16]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+extra_env:
+  FLUX_A2AV_RS_SPIN_LIMIT: "20000000"
+notes: "gen7 gate (b8+b16: b16 = the eager-hang geometry, lane-chain must clear it): Qwen 8n b8 correctness (random payload), v1 vs v2 twin, spin-limit armed"

@@ -1,0 +1,21 @@
+# Slipstream v2 (M-split waves) 4n correctness gate (2026-08-24): b8 anchor,
+# correctness ON (runner exports FLUX_RANDOM_PAYLOAD=1 — the rule-6 wire probe:
+# a static-payload bitwise pass proves nothing), canon s1 basis. Run with
+# --variants l01_slipstream,l01_slipstream_v2 so the v1/v2 twin shares one
+# capsule/binary (rule 4). Spin-limit armed: converts any wave-gate bug into a
+# loud abort instead of a silent device spin (B.2 discipline, handoff 10).
+platform: perlmutter
+nodes: 16
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8, 16]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+extra_env:
+  FLUX_A2AV_RS_SPIN_LIMIT: "20000000"
+notes: "gen7 gate (b8+b16: b16 = the eager-hang geometry, lane-chain must clear it): K2 16n b8 correctness (random payload), v1 vs v2 twin, spin-limit armed"

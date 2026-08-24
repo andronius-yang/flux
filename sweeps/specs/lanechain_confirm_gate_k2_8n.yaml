@@ -1,0 +1,20 @@
+# Correctness gate for the never-run fpwp x lanechain-rb24 composition
+# (2026-08-24): b8 anchor, correctness ON (runner exports random payload —
+# rule-6 wire probe), spin-limit armed. Run BEFORE the perf confirm capsule.
+platform: perlmutter
+nodes: 8
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8]
+modes: [isolated]
+variants:
+  - l01_slipstream_v2_fpwp_lcrb24
+iters: 10
+warmup_iters: 5
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+extra_env:
+  FLUX_A2AV_RS_SPIN_LIMIT: "20000000"
+notes: "fpwp+lanechain-rb24 composition gate (random payload correctness)"
