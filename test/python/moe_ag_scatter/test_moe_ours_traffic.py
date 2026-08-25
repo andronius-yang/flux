@@ -713,7 +713,19 @@ def main():
                     # table is identical (finalize is deterministic in
                     # them). One small host sync; stale/drift cells have
                     # nonzero diffs and take the full path.
-                    _same = (verdict["trigger"]
+                    # KNOB-GATED (2026-08-25, default OFF): with the
+                    # early-out active, every stale-regime strict gate
+                    # today failed (torn row / spin-hang at iter 3-4,
+                    # 3/3 with vs 3/3 green without) — its mid-lane host
+                    # sync shifts movement-issue timing into a latent
+                    # race (suspect: shard/gateway mid-iteration
+                    # ordering). Perf win (place 2.6-3.1 -> 1.6-2.0) is
+                    # real and quiet-path-validated; re-enable via
+                    # FLUX_OURS_PLACE_EARLYOUT=1 once the race is
+                    # root-caused (next-session item).
+                    _same = (bool(int(os.environ.get(
+                                 "FLUX_OURS_PLACE_EARLYOUT", "0")))
+                             and verdict["trigger"]
                              and torch.equal(res_new["primary"],
                                              store.primary)
                              and torch.equal(res_new["inst_nodes"],
