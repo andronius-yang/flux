@@ -2411,6 +2411,7 @@ class EpicLayer0Runner(EPLBLayer0Runner):
     # -- transports ---------------------------------------------------------
 
     def enable_nvshmem(self, local_world_size: int, num_comm_sm: int = 8,
+                       hidden_staging: bool = True,
                        split_headroom: float = 2.0,
                        max_split_floor: int = 0):
         """One All2AllSingle pair reused across all m group calls.
@@ -2427,10 +2428,20 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         self._epic_max_split = max(
             1, int(self.elay.max_pair_rows * split_headroom),
             int(max_split_floor))
-        self._a2a_hidden = flux.All2AllSingle(
-            self.group, self._epic_max_split, self.cfg.H, local_world_size,
-            self.dtype,
-        )
+        if hidden_staging:
+            self._a2a_hidden = flux.All2AllSingle(
+                self.group, self._epic_max_split, self.cfg.H,
+                local_world_size, self.dtype,
+            )
+        else:
+            # 2026-08-25 (user decision): under the hier_compress transport
+            # the hidden-token wire is the hc dispatch / hcc combine —
+            # _a2a_hidden.forward only fires on the legacy staged-nvshmem
+            # branches — yet its 2x [max_split*W, H] symmetric buffers were
+            # the single largest heap block (8.6/6.6 GiB at 16n b64
+            # qwen/K2). Skip them; only the probs side-wire is needed. The
+            # staged branches hard-assert if reached without it.
+            self._a2a_hidden = None
         self._a2a_probs = flux.All2AllSingle(
             self.group, self._epic_max_split, 1, local_world_size,
             torch.float32,
@@ -3163,6 +3174,9 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         s_lo, s_hi = self.elay.send_off[g], self.elay.send_off[g + 1]
         r_lo, r_hi = self.elay.recv_off[g], self.elay.recv_off[g + 1]
         if self.transport == "nvshmem":
+            assert self._a2a_hidden is not None, (
+                "staged nvshmem dispatch needs the hidden A2A staging — "
+                "call enable_nvshmem(hidden_staging=True)")
             self._a2a_hidden.forward(
                 self.send_buf[s_lo:s_hi], self.recv_buf[r_lo:r_hi],
                 self._g_in_splits[g], self._g_out_splits[g],
@@ -3362,6 +3376,9 @@ class EpicLayer0Runner(EPLBLayer0Runner):
         r_lo, r_hi = self.elay.recv_off[g], self.elay.recv_off[g + 1]
         s_lo, s_hi = self.elay.send_off[g], self.elay.send_off[g + 1]
         if self.transport == "nvshmem":
+            assert self._a2a_hidden is not None, (
+                "staged nvshmem combine needs the hidden A2A staging — "
+                "call enable_nvshmem(hidden_staging=True)")
             self._a2a_hidden.forward(
                 self.comb_send_buf[r_lo:r_hi], self.comb_recv_buf[s_lo:s_hi],
                 self._g_out_splits[g], self._g_in_splits[g],

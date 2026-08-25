@@ -936,6 +936,16 @@ def parse_args():
                         help="l01 combine split-N pipeline depth (the sweep "
                         "passes the shape preset's n_split_l1: K3 -> 7, "
                         "n_per=512; H//n_split must be 8-aligned)")
+    parser.add_argument("--llc_sizing", default="capacity",
+                        choices=["capacity", "demand"],
+                        help="loccap_sl buffer-sizing contract: 'capacity'"
+                        " = provable worst-case table bounds (frozen panels"
+                        " can never overflow; the 2026-08 campaign default);"
+                        " 'demand' = EPIC-parity realized-reference sizing"
+                        " + validated drift cushions (8R recv / f_cap pair)"
+                        " — overflow fails loudly via the ops' FLUX_CHECKs"
+                        " and check_relaxed's table audits. Sizing only:"
+                        " routing, kernels, and audit tables are identical.")
     parser.add_argument("--pll_f_cap", type=int, default=0,
                         help="loccap_sl per-(src,dst) forced-admission "
                         "budget — the ONE sizing clamp that makes the "
@@ -1261,6 +1271,33 @@ if __name__ == "__main__":
         plan.phys_override = phys_all_route
         pll_bounds = loccap_sl_bounds(pll_aux, W, args.pll_f_cap)
         args.pll_f_cap = pll_bounds["f_cap"]  # resolve auto for planner/facts
+        if args.llc_sizing == "demand":
+            # EPIC-parity realized-demand sizing (2026-08-25, user decision):
+            # size every frozen buffer from the setup reference's REALIZED
+            # tables plus the validated drift cushions (8R recv, f_cap pair;
+            # handoff 17 §1: post-fix kernel drift stayed inside the 8R
+            # cushion on 14/14 16n cells) instead of the provable worst-case
+            # caps. recv_ub/pair_ub audit tables are left untouched, so
+            # check_relaxed + the ops' FLUX_CHECKs remain the loud-failure
+            # contract. This also shrinks the loccap_sl fast-tail pad width
+            # (it reads relaxed_bounds["recv_cap"]) — NEVER-MIX vs
+            # capacity-mode capsules wherever plan_ms is compared.
+            serve_ref = phys_all_route.view(W, -1).long() // cfg.nlp
+            recv_real = torch.bincount(serve_ref.reshape(-1), minlength=W)
+            pair_real = torch.bincount(
+                (torch.arange(W, dtype=torch.int64).unsqueeze(1) * W
+                 + serve_ref).reshape(-1), minlength=W * W).view(W, W)
+            _cap_prev = (pll_bounds["recv_cap"], pll_bounds["pair_cap"])
+            pll_bounds["recv_cap"] = int(recv_real.max()) + 8 * W
+            pll_bounds["pair_cap"] = (int(pair_real.max())
+                                      + pll_bounds["f_cap"])
+            # per-pair sizing table for the stage/relay cap_floors (the
+            # pair_ub analog: realized + per-pair forced cushion)
+            pll_bounds["pair_sizing"] = pair_real + pll_bounds["f_cap"]
+            if rank == 0:
+                print(f"llc_sizing=demand: recv_cap {_cap_prev[0]} -> "
+                      f"{pll_bounds['recv_cap']}, pair_cap {_cap_prev[1]}"
+                      f" -> {pll_bounds['pair_cap']}", flush=True)
     elif args.router == "evensplit":
         phys_all_route = evensplit_route(topk_all.long(), plan.l2p,
                                          plan.lcnts).cpu()
@@ -1336,6 +1373,11 @@ if __name__ == "__main__":
         runner.reserve_recv_capacity(pll_bounds["recv_cap"])
     if args.transport in ("nvshmem", "hier_compress"):
         runner.enable_nvshmem(DIST_ENV.LOCAL_WORLD_SIZE, args.num_comm_sm,
+                              # hier_compress never fires the hidden A2A
+                              # (hc dispatch + hcc combine are the token
+                              # wire); skip its 2x[max_split*W,H] symmetric
+                              # buffers — the largest heap block at 16n b64
+                              hidden_staging=(args.transport == "nvshmem"),
                               split_headroom=args.a2a_split_headroom,
                               max_split_floor=(pll_bounds["pair_cap"]
                                                if pll_bounds else 0))
@@ -1353,7 +1395,7 @@ if __name__ == "__main__":
         if args.router == "loccap_sl":
             L_ = DIST_ENV.LOCAL_WORLD_SIZE
             NN_ = W // L_
-            pu = pll_bounds["pair_ub"]
+            pu = pll_bounds.get("pair_sizing", pll_bounds["pair_ub"])
             # node-aggregated pair bounds: unique (dedup) counts never
             # exceed raw pair rows, so cross-node sums of pair_ub dominate
             # the stage/relay demands (mirrors required_a2av_knobs shapes)

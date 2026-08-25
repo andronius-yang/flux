@@ -2143,6 +2143,17 @@ VARIANTS = {
 # cells.csv labels stay the historical comm_pattern strings so capsules
 # remain comparable (incl. the one l01_wincast_bare flip-validation
 # capsule, 20260823-1144*).
+# 2026-08-25 (user decision): EPIC-parity demand-sized PLL twin — identical
+# routing/kernels/audits to llc_l01_s1; only the frozen-buffer sizing contract
+# differs (realized reference + drift cushions instead of provable caps).
+# Unblocks 16n b64 (heap fits like EPIC's) and shrinks the loccap_sl tail pad
+# (plan_ms never-mix vs capacity-mode capsules).
+VARIANTS["llc_l01_s1_demand"] = dict(
+    VARIANTS["llc_l01_s1"],
+    test_args=(VARIANTS["llc_l01_s1"]["test_args"]
+               + ["--llc_sizing", "demand"]),
+)
+
 VARIANTS["slipstream"] = VARIANTS["hier_compress_lb_union"]
 # SCHEMA rule 13 (2026-08-24, user decision): l01_slipstream now names the
 # OFFICIAL Slipstream — the destination-driven token-centric combine (msplit
