@@ -30,11 +30,19 @@ gated at 4n first).
 Net place lane: 13.7/19.5 ms -> 3.1/3.4 ms (qwen/K2 4n quiet-always);
 s2 quiet totals: 4n 22.1/33.7 -> 11.5/13.3, 8n 29.3/33.7 -> 16.6/18.5.
 
-## HELD for the post-record canon bump (dev commits, need one 4n gate)
+## FINAL CANON (2026-08-25 user ruling, post-validation)
 
-- plan_overlap ON across OURS arms (27a6483).
-- Place identity early-out at the solve fixed point (53e1baf; expect
-  quiet-always place ~3.1 -> ~1.5).
+- **Place identity early-out: CANON** (53e1baf). Validated: quiet place
+  2.6-3.1 -> 1.6-2.0 ms at 4n, in-cell correctness green on all 8 grid
+  cells, both models; final s2 gate (ov0 + early-out) green.
+- **plan_overlap: REMOVED EVERYWHERE** ("we don't overlap the plan").
+  The s1-side flip was perf-positive and gate-green, but under s2 the
+  ov side-stream x movement-lane timing re-exposed a mid-iteration
+  signal race (2/2 failures: one torn row @iter3, one spin-hang @iter4;
+  ov0 3x green same day). Rather than a per-scenario split, the user
+  ruled ov out entirely. The ~0.5-1 ms plan saving is forgone; the
+  ov x movement race is a documented open item (suspect: shard/gateway
+  chain mid-iteration ordering; WPM wire itself is blocking-default).
 
 ## Explicitly NOT applied
 

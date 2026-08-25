@@ -2253,7 +2253,7 @@ _OURS_REQUIRES = [
 VARIANTS["ours_l01_s1"] = dict(
     comm_pattern="ours_l01", driver="ours", layer="l01",
     test_args=["--eps", "0.0625", "--sizing", "demand",
-               "--plan_overlap", "1"],
+               "--plan_overlap", "0"],
     env=dict(_OURS_ENV),
     requires=list(_OURS_REQUIRES),
 )
@@ -2262,19 +2262,19 @@ VARIANTS["ours_l01_s1"] = dict(
 VARIANTS["ours_l01_s1_ov"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=["--eps", "0.0625", "--sizing", "demand",
-               "--plan_overlap", "1"],
+               "--plan_overlap", "0"],
 )
 # correctness gate twin: per-iteration output validation under relaxed
 # routing + random payload (perturbs timing — gate cells only)
 VARIANTS["ours_l01_s1_gate"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=["--eps", "0.0625", "--sizing", "demand",
-               "--plan_overlap", "1", "--check_iters", "1"],
+               "--plan_overlap", "0", "--check_iters", "1"],
 )
 VARIANTS["ours_l01_s1_gate_ov"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=["--eps", "0.0625", "--sizing", "demand",
-               "--plan_overlap", "1", "--check_iters", "1"],
+               "--plan_overlap", "0", "--check_iters", "1"],
 )
 # scenario-2 arms (live re-placement + OVERLAPPED weight movement; WPM
 # multicast + NIC-shard + per-slot weight-gated tiles). s2 sizes at the
@@ -2282,7 +2282,7 @@ VARIANTS["ours_l01_s1_gate_ov"] = dict(
 VARIANTS["ours_l01_s2"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=["--eps", "0.0625", "--sizing", "capacity",
-               "--plan_overlap", "1", "--scenario", "s2",
+               "--plan_overlap", "0", "--scenario", "s2",
                "--place_gain_threshold_ppm", "0"],
 )
 # gate: per-iteration output checks + stale-resident (movement EVERY
@@ -2290,7 +2290,7 @@ VARIANTS["ours_l01_s2"] = dict(
 VARIANTS["ours_l01_s2_gate"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=["--eps", "0.0625", "--sizing", "capacity",
-               "--plan_overlap", "1", "--scenario", "s2",
+               "--plan_overlap", "0", "--scenario", "s2",
                "--place_gain_threshold_ppm", "0",
                "--check_iters", "1", "--s2_stale", "rot",
                "--s2_force_trigger", "1", "--s2_wprobe", "1"],
@@ -2299,7 +2299,7 @@ VARIANTS["ours_l01_s2_gate"] = dict(
 VARIANTS["ours_l01_s2_stale"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=["--eps", "0.0625", "--sizing", "capacity",
-               "--plan_overlap", "1", "--scenario", "s2",
+               "--plan_overlap", "0", "--scenario", "s2",
                "--place_gain_threshold_ppm", "0",
                "--s2_stale", "rot", "--s2_force_trigger", "1"],
 )
@@ -2307,7 +2307,7 @@ VARIANTS["ours_l01_s2_stale"] = dict(
 VARIANTS["ours_l01_s2_stale_join"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=["--eps", "0.0625", "--sizing", "capacity",
-               "--plan_overlap", "1", "--scenario", "s2",
+               "--plan_overlap", "0", "--scenario", "s2",
                "--place_gain_threshold_ppm", "0",
                "--s2_stale", "rot", "--s2_force_trigger", "1",
                "--s2_join", "join"],
@@ -2316,7 +2316,7 @@ VARIANTS["ours_l01_s2_stale_join"] = dict(
 VARIANTS["ours_l01_s2_gate_noshard"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=["--eps", "0.0625", "--sizing", "capacity",
-               "--plan_overlap", "1", "--scenario", "s2",
+               "--plan_overlap", "0", "--scenario", "s2",
                "--place_gain_threshold_ppm", "0",
                "--check_iters", "1", "--s2_stale", "rot",
                "--s2_force_trigger", "1", "--s2_wprobe", "1",
@@ -2329,7 +2329,7 @@ VARIANTS["ours_l01_s2_gate_direct"] = dict(
 VARIANTS["ours_l01_s2_gate_join"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=["--eps", "0.0625", "--sizing", "capacity",
-               "--plan_overlap", "1", "--scenario", "s2",
+               "--plan_overlap", "0", "--scenario", "s2",
                "--place_gain_threshold_ppm", "0",
                "--check_iters", "1", "--s2_stale", "rot",
                "--s2_force_trigger", "1", "--s2_wprobe", "1",
@@ -2354,7 +2354,7 @@ VARIANTS["ours_l01_s1_ri"] = dict(
 VARIANTS["ours_l01_s1_ri_gate"] = dict(
     VARIANTS["ours_l01_s1_ri"],
     test_args=VARIANTS["ours_l01_s1"]["test_args"][:-2]
-              + ["--plan_overlap", "1", "--check_iters", "1"],
+              + ["--plan_overlap", "0", "--check_iters", "1"],
 )
 VARIANTS["ours_l01_s2_stale_c32"] = dict(
     VARIANTS["ours_l01_s2_stale"],
@@ -2384,5 +2384,8 @@ for _k, _env in (("noms", {"FLUX_A2AV_RS_MSPLIT": "0"}),
 VARIANTS["ours_l01_s2_prod"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=["--eps", "0.0625", "--sizing", "capacity",
-               "--plan_overlap", "1", "--scenario", "s2"],
+               "--plan_overlap", "0", "--scenario", "s2"],
+)
+               for p, a in zip(["x"] + VARIANTS["ours_l01_s2_gate"]["test_args"],
+                               VARIANTS["ours_l01_s2_gate"]["test_args"])],
 )
