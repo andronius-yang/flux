@@ -578,6 +578,45 @@ def main():
         ours_E_virt=int(E_virt),
     )
 
+    # ---- place-solve CUDA-graph capture (handoff 12 containment,
+    #      recovered 2026-08-25): the warm solve is ~200 small kernel
+    #      launches; the placefast dynamic lane graphed it (default ON)
+    #      and that is how place stayed few-ms. Capture once on the
+    #      persistent seed buffers (store.primary/store.ion — solver
+    #      clones internally, replay re-reads current contents); output
+    #      tensors are reused per replay and consumed synchronously by
+    #      adopt before the next replay. Eager fallback on any capture
+    #      failure, epic-lane style. ----
+    _solve_graph = None
+    _solve_out = None
+    if lane is not None:
+        _always0 = args.place_gain_threshold_ppm == 0
+        _solve_kw = dict(passes_a=2, passes_b=1, repair_passes=1,
+                         seed="warm", seed_primary=store.primary,
+                         seed_inst_nodes=store.ion,
+                         keep_bonus=(0 if _always0 else 90090))
+
+        def _solve_eager():
+            return plfast.build_placement_fast(
+                tk_dev_solve, L, cfg.nlp, args.G, **_solve_kw)
+        if bool(int(os.environ.get("FLUX_OURS_PLACE_GRAPH", "1"))):
+            try:
+                for _ in range(2):
+                    _solve_eager()
+                torch.cuda.synchronize()
+                _solve_graph = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(_solve_graph):
+                    _solve_out = _solve_eager()
+                _solve_graph.replay()
+                torch.cuda.synchronize()
+                if rank == 0:
+                    print("[s2] place-solve graph captured", flush=True)
+            except Exception as _e:  # noqa: BLE001 — eager fallback
+                _solve_graph = None
+                if rank == 0:
+                    print(f"[s2] place-solve graph capture failed "
+                          f"({type(_e).__name__}: {_e}); eager", flush=True)
+
     # ---- timed loop ----
     total_iters = args.warmup_iters + args.iters
     ev = lambda: [torch.cuda.Event(enable_timing=True)
@@ -637,12 +676,11 @@ def main():
                     # (4n repro: rot->warm-kb0 = 85 adds, 263k ppm; the
                     # earlier 0-adds paralysis was keep_bonus=90090).
                     # Non-always keeps the production warm defaults.
-                    res_new = plfast.build_placement_fast(
-                        tk_dev_solve, L, cfg.nlp, args.G,
-                        passes_a=2, passes_b=1, repair_passes=1,
-                        seed="warm", seed_primary=store.primary,
-                        seed_inst_nodes=store.ion,
-                        keep_bonus=(0 if always else 90090))
+                    if _solve_graph is not None:
+                        _solve_graph.replay()
+                        res_new = _solve_out
+                    else:
+                        res_new = _solve_eager()
                     _pt2 = time.perf_counter()
                     if always:
                         # always-migrate regime: the decision is foregone
