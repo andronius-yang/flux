@@ -2231,7 +2231,13 @@ _OURS_ENV = {
     "FLUX_A2AV_RS_EAGER": "0", "FLUX_A2AV_RS_FUSED_PACK": "1",
     "FLUX_A2AV_WAVE_PACK": "1", "FLUX_A2AV_RS_BUCKET": "1",
     "FLUX_A2AV_RS_WIRE_STREAMS": "16",
-    "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10",
+    # conn=32 is the OURS family's single canonical pin (2026-08-25):
+    # resolves the s2 channel-aliasing hang (qwen stale-b32) AND the K2
+    # torn-row race (shard-chain exposure); the 16n l0 probes showed -5%
+    # l0 at b64. The family runs ~21 streams; the historical conn=8 pin
+    # was sized for the 4n-era a2av mix. Pre-flip conn=8 capsules are
+    # env_json-documented, never byte-compared across the flip.
+    "CUDA_DEVICE_MAX_CONNECTIONS": "32", "FLUX_A2AV_RS_PACK_BLOCKS": "10",
     "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_RS_PRERED_BLOCKS": "6",
 }
 _OURS_REQUIRES = [

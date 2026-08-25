@@ -627,23 +627,20 @@ def main():
                 drift = plfast.drift_ppm(hist_now, store.hist)
                 always = args.place_gain_threshold_ppm == 0
                 if always or drift >= args.place_drift_prefilter_ppm:
-                    if always:
-                        # USER TEST REGIME (threshold 0): EVERY iteration
-                        # migrates — the per-iteration solve is COLD
-                        # (affinity seed, keep_bonus 0: no resident pull),
-                        # so the adopted placement is batch-optimal and
-                        # the diff vs the (stale-reset) resident is real
-                        # movement every timed iteration.
-                        res_new = plfast.build_placement_fast(
-                            tk_dev_solve, L, cfg.nlp, args.G,
-                            passes_a=4, passes_b=3, repair_passes=2,
-                            seed="affinity")
-                    else:
-                        res_new = plfast.build_placement_fast(
-                            tk_dev_solve, L, cfg.nlp, args.G,
-                            passes_a=2, passes_b=1, repair_passes=1,
-                            seed="warm", seed_primary=store.primary,
-                            seed_inst_nodes=store.ion, keep_bonus=90090)
+                    # USER TEST REGIME (threshold 0 => `always`): EVERY
+                    # iteration migrates. The solve stays the CHEAP warm
+                    # path but with keep_bonus=0 — no resident-replica
+                    # pull, so Stage B re-derives replicas fresh and the
+                    # diff vs the (stale-reset) resident is real movement
+                    # (4n repro: rot->warm-kb0 = 85 adds, 263k ppm; the
+                    # earlier 0-adds paralysis was keep_bonus=90090).
+                    # Non-always keeps the production warm defaults.
+                    res_new = plfast.build_placement_fast(
+                        tk_dev_solve, L, cfg.nlp, args.G,
+                        passes_a=2, passes_b=1, repair_passes=1,
+                        seed="warm", seed_primary=store.primary,
+                        seed_inst_nodes=store.ion,
+                        keep_bonus=(0 if always else 90090))
                     verdict = plfast.place_decision_fast(
                         tk_dev_solve, store.ion, res_new, L,
                         gain_threshold_ppm=max(
