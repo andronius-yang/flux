@@ -43,6 +43,7 @@ TEST_ULTRAEP = "test/python/moe_ag_scatter/test_moe_ultraep_traffic.py"
 TEST_MOONEP_FUSED = "test/python/moe_ag_scatter/test_moe_moonep_fused_traffic.py"
 TEST_EPLB = "test/python/moe_ag_scatter/test_moe_eplb_traffic.py"
 TEST_EPIC = "test/python/moe_ag_scatter/test_moe_epic_traffic.py"
+TEST_OURS = "test/python/moe_ag_scatter/test_moe_ours_traffic.py"
 TEST_GATHER_RS = "test/python/moe_gather_rs/test_moe_gather_rs_traffic.py"
 TEST_FAST_GATHER_RS = "test/python/moe_gather_rs/test_moe_gather_rs_fast_baseline.py"
 TEST_MOONEP_L1 = "test/python/moe_gather_rs/test_moe_moonep_l1_traffic.py"
@@ -1029,6 +1030,27 @@ def build_cell_env(spec, plat, cell, staging, matrix):
         sym_max = plat.get("sym_size_max_g")
         if sym_max and sym_g > int(sym_max):
             env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_max}G"
+    elif v.get("driver", "flux") == "ours":
+        # OURS fused arm: the driver sets the exact FLUX_A2AV_MAX_* and
+        # FLUX_A2AV_RS_MAX_* caps itself (bounds/demand from the reference
+        # route — the sweep must NOT pre-set them). Heap: both fused ops on
+        # one heap, no All2AllSingle staging, no probs side-wire. Row-sum
+        # basis x6 covers send + recv(union regions) + stage/relay + the
+        # combine conv/wire panels at locality-heavy placement.
+        with open(matrix_path) as f:
+            toks = f.read().split()
+        w = int(toks[0])
+        vals = [int(x) for x in toks[1 : 1 + w * w]]
+        max_row_bytes = max(
+            sum(vals[src_ * w : (src_ + 1) * w]) for src_ in range(w)
+        )
+        need = 6 * max_row_bytes + (1 << 30)
+        sym_g = max(6, math.ceil(need / (1 << 30)))
+        env["_A2AV_SYM_G_REQUIRED"] = str(sym_g)
+        sym_max = plat.get("sym_size_max_g")
+        if sym_max and sym_g > int(sym_max):
+            sym_g = int(sym_max)
+        env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_g}G"
     elif v.get("driver", "flux") == "moonep_l1":
         # virtual-space layer1 cells: the driver computes the EXACT
         # FLUX_A2AV_RS_MAX_* knobs from the plan (setdefault -- never
@@ -1393,7 +1415,7 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         # (layer0 flux driver only — gather_rs returned above)
         sm_margin = max(1, sm_margin)
     if v.get("driver", "flux") in ("moonep", "ultraep", "moonep_fused",
-                                   "eplb", "epic"):
+                                   "eplb", "epic", "ours"):
         # same CLI as the flux driver minus --comm_pattern; variant-specific
         # flags (--transport nvshmem / --overlap_prefetch / --nvl_domain_size
         # / --weight_path / --groups / --migration) ride test_args
@@ -1403,6 +1425,7 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
             "moonep_fused": TEST_MOONEP_FUSED,
             "eplb": TEST_EPLB,
             "epic": TEST_EPIC,
+            "ours": TEST_OURS,
         }[v["driver"]]
         test_args = [test, "--traffic_matrix", matrix_path]
         test_args += list(v.get("test_args") or [])
@@ -1416,11 +1439,16 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
             # only — matrix identity unchanged, sha recorded as a cell fact
             test_args += ["--placement_file", placement_path]
         if (
-            v["driver"] == "epic"
-            and oracle_routing_path
-            and any(
-                a in ("placelambda_fast", "placelambda_gpu")
-                for a in (v.get("test_args") or [])
+            oracle_routing_path
+            and (
+                v["driver"] == "ours"
+                or (
+                    v["driver"] == "epic"
+                    and any(
+                        a in ("placelambda_fast", "placelambda_gpu")
+                        for a in (v.get("test_args") or [])
+                    )
+                )
             )
         ):
             # scenario-1 (rule 10): the placelambda arms solve placement on
@@ -1978,7 +2006,8 @@ def cmd_run(spec, jobid_arg, dry):
                 matrices[cell["cell_id"]].update(
                     {"routing": rpath, "routing_sha": mmeta["routing_sha256"]}
                 )
-            if VARIANTS[cell["variant"]].get("driver") in ("eplb", "epic"):
+            if VARIANTS[cell["variant"]].get("driver") in ("eplb", "epic",
+                                                           "ours"):
                 # predicted-load sidecar. Placement input only — matrix
                 # identity is unchanged; the driver records the sha as a
                 # cell fact. Two bases (never mixed inside a capsule —

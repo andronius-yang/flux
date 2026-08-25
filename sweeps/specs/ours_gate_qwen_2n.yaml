@@ -1,0 +1,19 @@
+# OURS fusion campaign gate spec (2026-08-24): correctness ON (random
+# payload rides every cell), s1 canon inputs identical to the datacamp
+# specs (same content-addressed matrices/routing/oracle sidecars). Gate
+# cells run the ours_l01_s1_gate* variants (per-iteration output checks
+# under relaxed kernel routing) BEFORE any latency quote — critique H1/M2.
+platform: perlmutter
+nodes: 2
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 8]
+modes: [isolated]
+iters: 6
+warmup_iters: 2
+skip_correctness: false
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 0
+notes: "ours gate: qwen_2n b8 isolated, correctness+payload probe, s1 canon"

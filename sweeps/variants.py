@@ -2212,3 +2212,61 @@ VARIANTS["l01_slipstream_bare"] = dict(
               "FLUX_A2AV_RS_MAX_CONV_ROWS", "FLUX_A2AV_RS_MAX_WIRE_ROWS"],
     l1_pattern="a2av_hier_compress",
 )
+
+
+# ---------------------------------------------------------------------------
+# OURS (2026-08-24 fusion campaign, worktree `ours`): the integrated
+# PLACE-lambda + LocCap + Slipstream-v2 arm — LLC's placement/routing feeding
+# the fused overlapped dispatch(LB_UNION Tier-B + wave-pack)+GEMM0 and the
+# Slipstream v2 combine (msplit + fused-pack + bucket, ns1) through the
+# virtual-slot space, one op pair, per-iteration rule-5 plan. Scenario 1:
+# oracle placement (static, untimed, reported), relaxed loccap_sl kernel
+# routing per iteration. Driver: test_moe_ours_traffic.py (fresh driver —
+# the llc/slipstream baselines stay byte-untouched for in-capsule A/Bs).
+# Mechanism-vector pins mirror l01_slipstream so binary-default drift can
+# never change arm identity.
+_OURS_ENV = {
+    "FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_FUSED_STAGE2": "1",
+    "FLUX_A2AV_EARLY_LAUNCH": "1", "FLUX_A2AV_RS_MSPLIT": "1",
+    "FLUX_A2AV_RS_EAGER": "0", "FLUX_A2AV_RS_FUSED_PACK": "1",
+    "FLUX_A2AV_WAVE_PACK": "1", "FLUX_A2AV_RS_BUCKET": "1",
+    "FLUX_A2AV_RS_WIRE_STREAMS": "16",
+    "CUDA_DEVICE_MAX_CONNECTIONS": "8", "FLUX_A2AV_RS_PACK_BLOCKS": "10",
+    "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_RS_PRERED_BLOCKS": "6",
+}
+_OURS_REQUIRES = [
+    "FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2", "FLUX_A2AV_EARLY_LAUNCH",
+    "FLUX_A2AV_SLIPSTREAM2_TAG", "FLUX_A2AV_RS_MSPLIT_TAG",
+    "FLUX_A2AV_RS_FUSED_PACK_TAG", "FLUX_A2AV_WAVE_PACK_TAG",
+    "FLUX_A2AV_RS_BUCKET_TAG", "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG",
+    "FLUX_A2AV_NSPLIT_HONOR_TAG", "FLUX_A2AV_RS_CTA_1086_TAG",
+    "FLUX_A2AV_DISPATCH_ONLY_TAG", "FLUX_PLACELAMBDA_ROUTE_SL_TAG",
+    "FLUX_A2AV_RS_MAX_SEND_ROWS", "FLUX_A2AV_RS_MAX_CONV_ROWS",
+    "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+]
+VARIANTS["ours_l01_s1"] = dict(
+    comm_pattern="ours_l01", driver="ours", layer="l01",
+    test_args=["--eps", "0.0625", "--sizing", "demand",
+               "--plan_overlap", "0"],
+    env=dict(_OURS_ENV),
+    requires=list(_OURS_REQUIRES),
+)
+# plan-overlap A/B twin (combine-meta derive + scale build under the fused
+# l0 on a side stream) — identical otherwise
+VARIANTS["ours_l01_s1_ov"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "demand",
+               "--plan_overlap", "1"],
+)
+# correctness gate twin: per-iteration output validation under relaxed
+# routing + random payload (perturbs timing — gate cells only)
+VARIANTS["ours_l01_s1_gate"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "demand",
+               "--plan_overlap", "0", "--check_iters", "1"],
+)
+VARIANTS["ours_l01_s1_gate_ov"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "demand",
+               "--plan_overlap", "1", "--check_iters", "1"],
+)
