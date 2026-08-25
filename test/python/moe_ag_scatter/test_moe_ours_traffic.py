@@ -687,9 +687,13 @@ def main():
                         # (trigger unconditional), so skip the 8-round
                         # cover decision entirely — it was ~half the K2
                         # solve+decision bracket. Placement identical;
-                        # gain/adds carry the -1 sentinel (real move
-                        # counts still come from lane.apply_moves).
-                        verdict = {"trigger": 1, "gain_ppm": -1,
+                        # moves_add carries the -1 sentinel (real move
+                        # counts come from lane.apply_moves). gain_ppm
+                        # MUST be 0, not -1: apply_moves gates movement
+                        # on gain_ppm >= threshold (0 here) — a -1
+                        # sentinel silently killed ALL movement
+                        # (caught 2026-08-25: ours_s2_moves==0).
+                        verdict = {"trigger": 1, "gain_ppm": 0,
                                    "moves_add": -1, "moves_remove": -1}
                     else:
                         verdict = plfast.place_decision_fast(
