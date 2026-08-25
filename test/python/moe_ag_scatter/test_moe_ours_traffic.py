@@ -149,12 +149,18 @@ def parse_args():
                         "(movement overlaps dispatch+GEMM); join: one "
                         "zero-SM landing gate before the l0 forward "
                         "(prices the tile gate)")
-    p.add_argument("--s2_stale", type=int, default=0,
-                   help="PROBE: reset the resident placement to the "
-                        "oracle solve every iteration so the trigger + "
-                        "movement fire in EVERY timed iteration (worst-"
-                        "case movement overlap; with the weight probe "
-                        "this also wire-audits WPM per rule 6c)")
+    p.add_argument("--s2_stale", choices=["0", "oracle", "rot"],
+                   default="0",
+                   help="PROBE: reset the resident placement every "
+                        "iteration — 'oracle' (the setup solve; near-"
+                        "optimal, trigger rarely fires) or 'rot' (rank-"
+                        "rolled hosts: structurally suboptimal, adds "
+                        "guaranteed) — so movement fires in EVERY timed "
+                        "iteration (worst-case overlap; with the weight "
+                        "probe this wire-audits WPM per rule 6c)")
+    p.add_argument("--s2_force_trigger", type=int, default=0,
+                   help="GATE aid: trigger whenever the solve yields any "
+                        "adds, ignoring the gain threshold")
     p.add_argument("--s2_wprobe", type=int, default=0,
                    help="re-randomize moved experts' home weights per "
                         "trigger epoch (deterministic per (epoch, "
@@ -462,12 +468,33 @@ def main():
     # s2 machinery: oracle snapshots for the stale probe + the weight probe
     if args.scenario == "s2":
         from flux.testing.loccap_semantics import plan_tensors_from_hosts
-        oracle_snap = {
-            "p2l": plan.p2l.clone(), "l2p": plan.l2p.clone(),
-            "lcnts": plan.lcnts.clone(),
-            "primary": store.primary.clone(), "ion": store.ion.clone(),
-            "hist": store.hist.clone(), "load_e": store.load_e.clone(),
-        }
+        if args.s2_stale == "rot":
+            # rank-rolled hosts: every expert's instances shift one rank —
+            # crosses node boundaries, structurally suboptimal, so the
+            # warm solve always finds adds (movement fires per iteration)
+            hosts_rot = [sorted((r + 1) % W for r in hs)
+                         for hs in hosts_pll]
+            p2l_r, l2p_r, lcnts_r = plan_tensors_from_hosts(
+                hosts_rot, W, cfg.nlp)
+            ion_r = plfast.hosts_to_ion(hosts_rot, W, L,
+                                        device=store.ion.device)
+            primary_r = ion_r.long().argmax(dim=1)
+            oracle_snap = {
+                "p2l": p2l_r, "l2p": l2p_r, "lcnts": lcnts_r,
+                "primary": primary_r.to(store.primary.dtype),
+                "ion": ion_r,
+                "hist": store.hist.clone(),
+                "load_e": store.load_e.clone(),
+            }
+        else:
+            oracle_snap = {
+                "p2l": plan.p2l.clone(), "l2p": plan.l2p.clone(),
+                "lcnts": plan.lcnts.clone(),
+                "primary": store.primary.clone(),
+                "ion": store.ion.clone(),
+                "hist": store.hist.clone(),
+                "load_e": store.load_e.clone(),
+            }
         tk_dev_solve = tk_dev  # runtime warm solves observe the BATCH
         wprobe_version = [0]
 
@@ -559,7 +586,7 @@ def main():
     for i in range(total_iters):
         runner.prep()
         probe.step(i)
-        if lane is not None and args.s2_stale:
+        if lane is not None and args.s2_stale != "0":
             # PROBE: reset the resident placement/tables to the oracle
             # solve OUTSIDE the window — trigger+movement re-fire every
             # timed iteration (worst-case movement overlap)
@@ -601,6 +628,8 @@ def main():
                         tk_dev_solve, store.ion, res_new, L,
                         gain_threshold_ppm=args.place_gain_threshold_ppm,
                         mode="cover")
+                    if args.s2_force_trigger and verdict["moves_add"] > 0:
+                        verdict["trigger"] = 1
                     if verdict["trigger"]:
                         hosts_new = store.adopt(res_new, finalize=True)
                         p2l_n, l2p_n, lcnts_n = plan_tensors_from_hosts(
@@ -615,8 +644,17 @@ def main():
                     move_stats.append((
                         int(verdict["trigger"]), lane.moves_this_iter,
                         lane.move_bytes_this_iter, verdict["gain_ppm"]))
+                    if rank == 0 and args.check_iters:
+                        print(f"[s2] iter {i}: drift {drift} solve gain "
+                              f"{verdict['gain_ppm']} adds "
+                              f"{verdict['moves_add']} trigger "
+                              f"{verdict['trigger']} moved "
+                              f"{lane.moves_this_iter}")
                 else:
                     move_stats.append((0, 0, 0, int(drift)))
+                    if rank == 0 and args.check_iters:
+                        print(f"[s2] iter {i}: drift {drift} < prefilter"
+                              f" — quiet")
             place_end[i].record()
             ip = planner.derive(d_gather_buf)
             runner.plan_meta(ip)
@@ -687,7 +725,7 @@ def main():
             ours_s2_move_bytes=sum(m[2] for m in timed_ms),
             ours_s2_last_gain_ppm=timed_ms[-1][3] if timed_ms else 0,
             ours_s2_join=args.s2_join,
-            ours_s2_stale=int(args.s2_stale),
+            ours_s2_stale=args.s2_stale,
             ours_s2_wprobe=int(args.s2_wprobe),
             ours_s2_weight_shard=args.weight_shard,
         )

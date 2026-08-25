@@ -1,0 +1,29 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 8
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+ffn_hidden: 1536
+idle_timeout_s: 600
+iters: 4
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 4
+nodes: 8
+notes: "ours gate: qwen_4n b8 isolated, correctness+payload probe, s1 canon"
+platform: perlmutter
+profile_iters: 3
+retries: 0
+shape: qwen3
+skip_correctness: false
+sm_margin: 8
+timeout_s: 2400
+topk: 8
+variants:
+  - ours_l01_s1_gate
+warmup_iters: 2

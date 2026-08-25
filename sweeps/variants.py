@@ -2284,18 +2284,21 @@ VARIANTS["ours_l01_s2_gate"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=["--eps", "0.0625", "--sizing", "capacity",
                "--plan_overlap", "0", "--scenario", "s2",
-               "--check_iters", "1", "--s2_stale", "1", "--s2_wprobe", "1"],
+               "--check_iters", "1", "--s2_stale", "rot",
+               "--s2_force_trigger", "1", "--s2_wprobe", "1"],
 )
 # perf worst case: movement fires every timed iteration
 VARIANTS["ours_l01_s2_stale"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=["--eps", "0.0625", "--sizing", "capacity",
-               "--plan_overlap", "0", "--scenario", "s2", "--s2_stale", "1"],
+               "--plan_overlap", "0", "--scenario", "s2",
+               "--s2_stale", "rot", "--s2_force_trigger", "1"],
 )
 # ablation: one landing join before GEMM0 instead of weight-gated tiles
 VARIANTS["ours_l01_s2_stale_join"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=["--eps", "0.0625", "--sizing", "capacity",
-               "--plan_overlap", "0", "--scenario", "s2", "--s2_stale", "1",
+               "--plan_overlap", "0", "--scenario", "s2",
+               "--s2_stale", "rot", "--s2_force_trigger", "1",
                "--s2_join", "join"],
 )
