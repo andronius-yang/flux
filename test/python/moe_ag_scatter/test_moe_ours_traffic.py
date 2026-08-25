@@ -507,7 +507,13 @@ def main():
             wprobe_version[0] += 1
             ver = wprobe_version[0]
             new_p2l = plan.p2l.long()
+            # probe-scope cap: 8 experts/trigger — the wire audit needs
+            # path coverage, not volume; unbounded regen OOM-killed K2
+            # hosts (4 ranks x ~200 experts x 56 MB churn per iteration)
+            budget = 8
             for e in changed_experts:
+                if budget <= 0:
+                    break
                 inst = (new_p2l == e).nonzero(as_tuple=True)[0]
                 # skip experts with unmoved live instances (their old slots
                 # would legitimately hold pre-probe bytes)
@@ -528,6 +534,7 @@ def main():
                         _W_CACHE[("w1", e)].cuda())
                     lane.op_w2.weight_home()[e % lane.epn].copy_(
                         _W_CACHE[("w2", e)].cuda())
+                budget -= 1
             torch.cuda.synchronize()
 
     d_gather_buf = torch.zeros(W, args.G, dtype=torch.int32, device="cuda")
@@ -618,16 +625,32 @@ def main():
                 # overlaps everything up to the weight-gated tiles.
                 hist_now = d_gather_buf.long().view(nn, L, args.G).sum(1)
                 drift = plfast.drift_ppm(hist_now, store.hist)
-                if drift >= args.place_drift_prefilter_ppm:
-                    res_new = plfast.build_placement_fast(
-                        tk_dev_solve, L, cfg.nlp, args.G,
-                        passes_a=2, passes_b=1, repair_passes=1,
-                        seed="warm", seed_primary=store.primary,
-                        seed_inst_nodes=store.ion, keep_bonus=90090)
+                always = args.place_gain_threshold_ppm == 0
+                if always or drift >= args.place_drift_prefilter_ppm:
+                    if always:
+                        # USER TEST REGIME (threshold 0): EVERY iteration
+                        # migrates — the per-iteration solve is COLD
+                        # (affinity seed, keep_bonus 0: no resident pull),
+                        # so the adopted placement is batch-optimal and
+                        # the diff vs the (stale-reset) resident is real
+                        # movement every timed iteration.
+                        res_new = plfast.build_placement_fast(
+                            tk_dev_solve, L, cfg.nlp, args.G,
+                            passes_a=4, passes_b=3, repair_passes=2,
+                            seed="affinity")
+                    else:
+                        res_new = plfast.build_placement_fast(
+                            tk_dev_solve, L, cfg.nlp, args.G,
+                            passes_a=2, passes_b=1, repair_passes=1,
+                            seed="warm", seed_primary=store.primary,
+                            seed_inst_nodes=store.ion, keep_bonus=90090)
                     verdict = plfast.place_decision_fast(
                         tk_dev_solve, store.ion, res_new, L,
-                        gain_threshold_ppm=args.place_gain_threshold_ppm,
+                        gain_threshold_ppm=max(
+                            args.place_gain_threshold_ppm, 1),
                         mode="cover")
+                    if always:
+                        verdict["trigger"] = 1
                     if args.s2_force_trigger and verdict["moves_add"] > 0:
                         verdict["trigger"] = 1
                     if verdict["trigger"]:
@@ -656,6 +679,12 @@ def main():
                         print(f"[s2] iter {i}: drift {drift} < prefilter"
                               f" — quiet")
             place_end[i].record()
+            _hb = (args.check_iters and lane is not None)
+
+            def _hbp(tag):
+                if _hb:
+                    print(f"[hb-s2] r{rank} i{i} {tag}", flush=True)
+            _hbp("plan")
             ip = planner.derive(d_gather_buf)
             runner.plan_meta(ip)
             plan_end[i].record()
@@ -667,14 +696,17 @@ def main():
                     lane.op_w1.join()
                 else:
                     gate_kw = lane.gate_kwargs()
+            _hbp("l0")
             l0_out = runner.l0_forward(inputs_shard, gate_kwargs=gate_kw)
             l0_end[i].record()
             intermediate = torch.nn.functional.gelu(l0_out)
             act_end[i].record()
             if lane is not None:
                 lane.join_w2()
+            _hbp("l1")
             out = runner.l1_forward(intermediate)
             e2e_end[i].record()
+            _hbp("issued")
         if args.check_iters:
             # GATE MODE (critique H1): validate THIS iteration's output —
             # relaxed kernel routing + this iteration's random payload —

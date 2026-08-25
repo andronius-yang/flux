@@ -102,6 +102,10 @@ class OursMovementLane:
         self.gain_threshold_ppm = gain_threshold_ppm
         self.weight_shard = weight_shard
         self.shard_chunk_bytes = shard_chunk_bytes
+        # FLUX_OURS_S2_MCAST=0: direct home->dst puts for every leg (no
+        # gateway lane at all) — hang-triage / ablation knob
+        self.multicast = bool(int(os.environ.get("FLUX_OURS_S2_MCAST",
+                                                 "1")))
 
         # WPM slot space = gpe rows so prefetch_slots() IS the fused op's
         # [gpe, r0, r1] weights view; slot 0 = the pad slot (never pushed,
@@ -233,15 +237,16 @@ class OursMovementLane:
                         pairs_t, self.L,
                         self.ffn * self.H
                         * op.weight_home().element_size(),
-                        mode="multicast")
+                        mode="mcast")
                     op.set_shard_plan(shards, self.shard_chunk_bytes,
                                       self.L)
-                op.forward(True)
+                op.forward(self.multicast)
             self.ev_issue_done.record()
         self.side_stream.wait_event(self.ev_issue_done)
         with torch.cuda.stream(self.side_stream):
             for op in (self.op_w1, self.op_w2):
-                op.forward_gateway()
+                if self.multicast:
+                    op.forward_gateway()
                 if self.weight_shard != "off":
                     op.forward_egress()
                     op.forward_ingress()

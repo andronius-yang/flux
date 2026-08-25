@@ -2276,7 +2276,8 @@ VARIANTS["ours_l01_s1_gate_ov"] = dict(
 VARIANTS["ours_l01_s2"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=["--eps", "0.0625", "--sizing", "capacity",
-               "--plan_overlap", "0", "--scenario", "s2"],
+               "--plan_overlap", "0", "--scenario", "s2",
+               "--place_gain_threshold_ppm", "0"],
 )
 # gate: per-iteration output checks + stale-resident (movement EVERY
 # iteration) + the rule-6c weight payload probe (WPM wire audit)
@@ -2284,6 +2285,7 @@ VARIANTS["ours_l01_s2_gate"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=["--eps", "0.0625", "--sizing", "capacity",
                "--plan_overlap", "0", "--scenario", "s2",
+               "--place_gain_threshold_ppm", "0",
                "--check_iters", "1", "--s2_stale", "rot",
                "--s2_force_trigger", "1", "--s2_wprobe", "1"],
 )
@@ -2292,6 +2294,7 @@ VARIANTS["ours_l01_s2_stale"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=["--eps", "0.0625", "--sizing", "capacity",
                "--plan_overlap", "0", "--scenario", "s2",
+               "--place_gain_threshold_ppm", "0",
                "--s2_stale", "rot", "--s2_force_trigger", "1"],
 )
 # ablation: one landing join before GEMM0 instead of weight-gated tiles
@@ -2299,6 +2302,30 @@ VARIANTS["ours_l01_s2_stale_join"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=["--eps", "0.0625", "--sizing", "capacity",
                "--plan_overlap", "0", "--scenario", "s2",
+               "--place_gain_threshold_ppm", "0",
                "--s2_stale", "rot", "--s2_force_trigger", "1",
+               "--s2_join", "join"],
+)
+# hang triage probes (K2 4n s2, 2026-08-25)
+VARIANTS["ours_l01_s2_gate_noshard"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "capacity",
+               "--plan_overlap", "0", "--scenario", "s2",
+               "--place_gain_threshold_ppm", "0",
+               "--check_iters", "1", "--s2_stale", "rot",
+               "--s2_force_trigger", "1", "--s2_wprobe", "1",
+               "--weight_shard", "off"],
+)
+VARIANTS["ours_l01_s2_gate_direct"] = dict(
+    VARIANTS["ours_l01_s2_gate_noshard"],
+    env=dict(VARIANTS["ours_l01_s1"]["env"], FLUX_OURS_S2_MCAST="0"),
+)
+VARIANTS["ours_l01_s2_gate_join"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "capacity",
+               "--plan_overlap", "0", "--scenario", "s2",
+               "--place_gain_threshold_ppm", "0",
+               "--check_iters", "1", "--s2_stale", "rot",
+               "--s2_force_trigger", "1", "--s2_wprobe", "1",
                "--s2_join", "join"],
 )
