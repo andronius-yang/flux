@@ -2270,3 +2270,32 @@ VARIANTS["ours_l01_s1_gate_ov"] = dict(
     test_args=["--eps", "0.0625", "--sizing", "demand",
                "--plan_overlap", "1", "--check_iters", "1"],
 )
+# scenario-2 arms (live re-placement + OVERLAPPED weight movement; WPM
+# multicast + NIC-shard + per-slot weight-gated tiles). s2 sizes at the
+# provable caps (--sizing capacity implied in-driver for s2).
+VARIANTS["ours_l01_s2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "capacity",
+               "--plan_overlap", "0", "--scenario", "s2"],
+)
+# gate: per-iteration output checks + stale-resident (movement EVERY
+# iteration) + the rule-6c weight payload probe (WPM wire audit)
+VARIANTS["ours_l01_s2_gate"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "capacity",
+               "--plan_overlap", "0", "--scenario", "s2",
+               "--check_iters", "1", "--s2_stale", "1", "--s2_wprobe", "1"],
+)
+# perf worst case: movement fires every timed iteration
+VARIANTS["ours_l01_s2_stale"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "capacity",
+               "--plan_overlap", "0", "--scenario", "s2", "--s2_stale", "1"],
+)
+# ablation: one landing join before GEMM0 instead of weight-gated tiles
+VARIANTS["ours_l01_s2_stale_join"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "capacity",
+               "--plan_overlap", "0", "--scenario", "s2", "--s2_stale", "1",
+               "--s2_join", "join"],
+)

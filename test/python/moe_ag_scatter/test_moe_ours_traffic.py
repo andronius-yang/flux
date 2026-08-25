@@ -133,18 +133,56 @@ def parse_args():
                         "kernel routing + random payload — catches "
                         "first-call-freeze bugs in the fused path). "
                         "Perturbs timing; never a perf configuration.")
+    p.add_argument("--scenario", choices=["s1", "s2"], default="s1",
+                   help="s1: static oracle placement (no weight movement); "
+                        "s2: per-iteration live re-placement with "
+                        "OVERLAPPED weight movement (WPM multicast + "
+                        "NIC-shard + per-slot weight-gated tiles)")
+    p.add_argument("--place_gain_threshold_ppm", type=int, default=50000)
+    p.add_argument("--place_drift_prefilter_ppm", type=int, default=10000,
+                   help="skip the warm solve when the observed demand "
+                        "drift vs the resident placement's basis is below "
+                        "this (place_ms then ≈ the drift check)")
+    p.add_argument("--weight_shard", choices=["off", "on"], default="on")
+    p.add_argument("--s2_join", choices=["tiles", "join"], default="tiles",
+                   help="tiles: per-slot weight-epoch gated GEMM tiles "
+                        "(movement overlaps dispatch+GEMM); join: one "
+                        "zero-SM landing gate before the l0 forward "
+                        "(prices the tile gate)")
+    p.add_argument("--s2_stale", type=int, default=0,
+                   help="PROBE: reset the resident placement to the "
+                        "oracle solve every iteration so the trigger + "
+                        "movement fire in EVERY timed iteration (worst-"
+                        "case movement overlap; with the weight probe "
+                        "this also wire-audits WPM per rule 6c)")
+    p.add_argument("--s2_wprobe", type=int, default=0,
+                   help="re-randomize moved experts' home weights per "
+                        "trigger epoch (deterministic per (epoch, "
+                        "expert)); the reference follows — a stale slot "
+                        "fails allclose on exactly the moved rows")
     p.add_argument("--seed", type=int, default=1234)
     return p.parse_args()
 
 
+_W_CACHE = {}
+
+
 def gen_expert_w1(e: int, ffn: int, H: int, dtype):
-    g = torch.Generator().manual_seed(10007 + int(e))
-    return ((torch.rand((ffn, H), generator=g) * 0.02) - 0.01).to(dtype)
+    key = ("w1", int(e))
+    if key not in _W_CACHE:
+        g = torch.Generator().manual_seed(10007 + int(e))
+        _W_CACHE[key] = ((torch.rand((ffn, H), generator=g) * 0.02)
+                         - 0.01).to(dtype)
+    return _W_CACHE[key]
 
 
 def gen_expert_w2(e: int, ffn: int, H: int, dtype):
-    g = torch.Generator().manual_seed(20011 + int(e))
-    return ((torch.rand((H, ffn), generator=g) * 0.02) - 0.01).to(dtype)
+    key = ("w2", int(e))
+    if key not in _W_CACHE:
+        g = torch.Generator().manual_seed(20011 + int(e))
+        _W_CACHE[key] = ((torch.rand((H, ffn), generator=g) * 0.02)
+                         - 0.01).to(dtype)
+    return _W_CACHE[key]
 
 
 def build_slot_weights(p2l, rank, nlp, gpe, ffn, H, dtype):
@@ -268,6 +306,22 @@ def main():
         plfast.demand_hist(tk_dev, L, args.G),
         plfast.demand_hist(tk_solve, L, args.G))
 
+    # ---- scenario 2: ALSO solve the batch (adoption-target) placement at
+    #      setup — s2 sizing must cover BOTH the resident (oracle) and the
+    #      adopted placements (the stale probe oscillates between exactly
+    #      these two; the runtime warm solve lands near the cold batch
+    #      solve, covered by the drift cushions) ----
+    plan_batch = None
+    if args.scenario == "s2":
+        pf_solve_b = plfast.build_placement_fast(tk_dev, L, cfg.nlp,
+                                                 args.G, **pf_cfg)
+        hosts_b = plfast.finalize_hosts(pf_solve_b, W, L, cfg.nlp,
+                                        method="snake")
+        pblob_b = {"version": 2, "G": args.G, "W": W, "nlp": cfg.nlp,
+                   "hosts": hosts_b,
+                   "planner": plfast.stats_host(pf_solve_b)}
+        plan_batch = build_nodeaware_plan(cfg, tpe, pblob_b)
+
     # ---- setup reference route (deterministic torch; sizes buffers,
     #      binds the final correctness iteration) ----
     phys_ref, pll_aux = loccap_route_sl(
@@ -276,6 +330,13 @@ def main():
     plan.phys_override = phys_ref
     pll_bounds = loccap_sl_bounds(pll_aux, W, args.pll_f_cap)
     args.pll_f_cap = pll_bounds["f_cap"]
+    if plan_batch is not None:
+        phys_ref_b, pll_aux_b = loccap_route_sl(
+            topk_all.long().cpu(), plan_batch.p2l, plan_batch.l2p,
+            plan_batch.lcnts, cfg.nlp, L, args.eps, return_tables=True)
+        bounds_b = loccap_sl_bounds(pll_aux_b, W, args.pll_f_cap)
+        for k in ("recv_cap", "pair_cap"):
+            pll_bounds[k] = max(pll_bounds[k], bounds_b[k])
 
     gpe = cfg.nlp + 1
     E_virt = W * gpe
@@ -283,51 +344,76 @@ def main():
     vce_ref = (_pr // cfg.nlp) * gpe + 1 + _pr % cfg.nlp  # pad-FIRST
     sp_ref, sc_ref, sps_ref, uc_ref = python_meta_from_vce(
         vce_ref.cuda(), W, S, gpe, nn, L)
+    # s2: the batch-placement twin meta joins every sizing max below
+    sps_all, uc_all = [sps_ref], [uc_ref]
+    if plan_batch is not None:
+        _prb = phys_ref_b.view(ntokens, args.topk).long()
+        vce_ref_b = (_prb // cfg.nlp) * gpe + 1 + _prb % cfg.nlp
+        _, _, sps_b, uc_b = python_meta_from_vce(
+            vce_ref_b.cuda(), W, S, gpe, nn, L)
+        sps_all.append(sps_b)
+        uc_all.append(uc_b)
 
     # kernel-drift cushion (handoff 17 / llc demand-sizing lineage)
     fp_slack = int(pll_aux["forced_pair"].sum(0).max())
+    if plan_batch is not None:
+        fp_slack = max(fp_slack, int(pll_aux_b["forced_pair"].sum(0).max()))
     cushion = fp_slack + 8 * W
 
     # recv rows this rank computes (dispatch recv == combine send)
-    recv_real = int(sps_ref[:, rank * gpe:(rank + 1) * gpe].sum())
-    if args.sizing == "demand":
+    recv_real = max(int(s[:, rank * gpe:(rank + 1) * gpe].sum())
+                    for s in sps_all)
+    if args.sizing == "demand" and args.scenario == "s1":
         recv_cap = min(pll_bounds["recv_cap"], recv_real + cushion)
     else:
+        # s2 always sizes at the provable caps (placement varies at
+        # runtime; demand sizing derives from one realized placement)
         recv_cap = pll_bounds["recv_cap"]
 
-    # l0 recv buffer must ALSO hold the LB_UNION recv regions
-    union_recv_real = l0_union_recv_demand(uc_ref.cpu(), rank, W, L, S,
-                                           args.topk)
-    l0_recv_rows = max(recv_cap, union_recv_real + cushion)
-    # collective max: the l0 recv gate is per-rank — never let one rank
-    # under-size relative to a peer's view of the same expression
-    t_red = torch.tensor([l0_recv_rows, recv_cap], dtype=torch.int64,
-                         device="cuda")
+    # l0 caps: EXACT lb_union demands (union recv regions + chunk-bound
+    # stage/relay — parity-tested formulas, moonep virtual-space twin) on
+    # the reference routing + drift cushions. The old hand-rolled bound
+    # (U.sum total for relay/stage) over-sized by ~L and still
+    # under-covered nothing — 8n b64 heap failure class, fixed 2026-08-25.
+    from types import SimpleNamespace
+    from flux.testing.moonep_fused_map import (
+        required_a2av_knobs, required_a2av_rs_knobs)
+    def _exact_knobs(sps_x, uc_x):
+        m = SimpleNamespace(
+            scatter_index=sc_ref.cpu().int(),
+            splits=sps_x.cpu().sum(0).int(),
+            splits_per_source=sps_x.cpu(),
+            a2av_unique_counts=uc_x.cpu(),
+            m_per_rank=sps_x.cpu().long().view(W, W, gpe).sum(2).sum(0),
+        )
+        return (required_a2av_knobs(m, W, L),
+                required_a2av_rs_knobs(m, W, L))
+
+    knob_pairs = [_exact_knobs(s, u) for s, u in zip(sps_all, uc_all)]
+    l0_exact = {k: max(int(kp[0][k]) for kp in knob_pairs)
+                for k in knob_pairs[0][0]}
+    rs_exact = {k: max(int(kp[1][k]) for kp in knob_pairs)
+                for k in knob_pairs[0][1]}
+    cushion_sr = (fp_slack + L - 1) // L + 8 * W
+    l0_recv_rows = max(
+        int(l0_exact["FLUX_A2AV_MAX_RECV_NTOKENS"]) + cushion, recv_cap)
+    stage_rows = int(l0_exact["FLUX_A2AV_MAX_STAGE_NTOKENS"]) + cushion_sr
+    relay_rows = int(l0_exact["FLUX_A2AV_MAX_RELAY_NTOKENS"]) + cushion_sr
+    # collective max: never let one rank under-size vs a peer's view
+    t_red = torch.tensor([l0_recv_rows, recv_cap, stage_rows, relay_rows],
+                         dtype=torch.int64, device="cuda")
     torch.distributed.all_reduce(t_red,
                                  op=torch.distributed.ReduceOp.MAX,
                                  group=TP_GROUP)
-    l0_recv_rows = int(t_red[0])
-    recv_cap = int(t_red[1])
-
-    # relay/stage under lb_union: balanced chunks ~ per-round union mass
-    U_ref = uc_ref[:, W:].cpu()
-    relay_rows = int(U_ref.sum(0).max()) + cushion
-    stage_rows = relay_rows
+    l0_recv_rows, recv_cap = int(t_red[0]), int(t_red[1])
+    stage_rows, relay_rows = int(t_red[2]), int(t_red[3])
 
     os.environ["FLUX_A2AV_MAX_RECV_NTOKENS"] = str(int(l0_recv_rows))
     os.environ["FLUX_A2AV_MAX_STAGE_NTOKENS"] = str(int(stage_rows))
     os.environ["FLUX_A2AV_MAX_RELAY_NTOKENS"] = str(int(relay_rows))
 
-    # l1 (combine) capacity: EXACT demands on the reference virtual meta
-    # (parity-tested formulas from the moonep virtual space) + drift cushion
-    from types import SimpleNamespace
-    from flux.testing.moonep_fused_map import required_a2av_rs_knobs
-    ref_meta = SimpleNamespace(
-        splits=sp_ref.cpu(),
-        splits_per_source=sps_ref.cpu(),
-        a2av_unique_counts=uc_ref.cpu(),
-    )
-    rs_exact = required_a2av_rs_knobs(ref_meta, W, L)
+    # l1 (combine) capacity: EXACT demands (placement-maxed under s2) +
+    # drift cushion
     for k, v in rs_exact.items():
         os.environ[k] = str(int(v) + cushion)
     # send panel additionally bounds the fused-pack capacity check: it must
@@ -336,22 +422,86 @@ def main():
         max(int(rs_exact["FLUX_A2AV_RS_MAX_SEND_ROWS"]) + cushion, recv_cap))
 
     if rank == 0:
-        print(f"OURS sizing({args.sizing}): recv_cap {recv_cap} "
-              f"(real {recv_real}), l0_recv {l0_recv_rows} "
-              f"(union {union_recv_real}), relay {relay_rows}, "
+        print(f"OURS sizing({args.sizing},{args.scenario}): recv_cap "
+              f"{recv_cap} (real {recv_real}), l0_recv {l0_recv_rows}, "
+              f"stage {stage_rows}, relay {relay_rows}, "
               f"cushion {cushion} (fp_slack {fp_slack})")
 
-    # ---- runner + planner ----
+    # ---- runner + planner (+ s2 movement lane) ----
     runner = OursRunner(
         TP_GROUP, EP_GROUP, DIST_ENV.NNODES, L, cfg, args.ffn_hidden_size,
         input_dtype, l0_recv_rows, sm_margin=args.sm_margin,
         plan_overlap=bool(args.plan_overlap))
-    w1v, w2v = build_slot_weights(plan.p2l, rank, cfg.nlp, gpe,
-                                 args.ffn_hidden_size, args.H, input_dtype)
-    runner.set_weights(w1v, w2v)
+    lane = None
+    store = None
+    if args.scenario == "s1":
+        w1v, w2v = build_slot_weights(plan.p2l, rank, cfg.nlp, gpe,
+                                     args.ffn_hidden_size, args.H,
+                                     input_dtype)
+        runner.set_weights(w1v, w2v)
+    else:
+        from flux.testing.ours_s2 import OursMovementLane
+        store = plfast.PlacementStore(pf_solve, W, L, cfg.nlp,
+                                      hosts=hosts_pll)
+        lane = OursMovementLane(
+            TP_GROUP, rank, W, L, cfg, args.ffn_hidden_size, args.H,
+            input_dtype,
+            gen_w1=lambda e: gen_expert_w1(e, args.ffn_hidden_size,
+                                           args.H, input_dtype),
+            gen_w2=lambda e: gen_expert_w2(e, args.ffn_hidden_size,
+                                           args.H, input_dtype),
+            gain_threshold_ppm=args.place_gain_threshold_ppm,
+            weight_shard=("on" if args.weight_shard == "on" else "off"))
+        lane.fill_slots_local(plan.p2l)
+        w1v, w2v = lane.gemm_weights()
+        runner.set_weights(w1v, w2v)   # views SHARE the WPM symmetric buf
     planner = OursIterPlanner(plan, rank, torch.device("cuda"), topk_all,
                               probs_all_setup, L, args.eps, args.pll_f_cap,
                               TP_GROUP)
+
+    # s2 machinery: oracle snapshots for the stale probe + the weight probe
+    if args.scenario == "s2":
+        from flux.testing.loccap_semantics import plan_tensors_from_hosts
+        oracle_snap = {
+            "p2l": plan.p2l.clone(), "l2p": plan.l2p.clone(),
+            "lcnts": plan.lcnts.clone(),
+            "primary": store.primary.clone(), "ion": store.ion.clone(),
+            "hist": store.hist.clone(), "load_e": store.load_e.clone(),
+        }
+        tk_dev_solve = tk_dev  # runtime warm solves observe the BATCH
+        wprobe_version = [0]
+
+        def wprobe_cb(changed_experts, changed_slots):
+            # rule-6c weight payload probe: re-randomize home rows of every
+            # moved expert ALL of whose instances move this trigger; the
+            # reference cache follows (replicated determinism).
+            if not args.s2_wprobe:
+                return
+            wprobe_version[0] += 1
+            ver = wprobe_version[0]
+            new_p2l = plan.p2l.long()
+            for e in changed_experts:
+                inst = (new_p2l == e).nonzero(as_tuple=True)[0]
+                # skip experts with unmoved live instances (their old slots
+                # would legitimately hold pre-probe bytes)
+                if not all(int(i) in changed_slots for i in inst.tolist()):
+                    continue
+                g1 = torch.Generator().manual_seed(
+                    10007 + e + 1000003 * ver)
+                _W_CACHE[("w1", e)] = ((torch.rand(
+                    (args.ffn_hidden_size, args.H), generator=g1) * 0.02)
+                    - 0.01).to(input_dtype)
+                g2 = torch.Generator().manual_seed(
+                    20011 + e + 1000003 * ver)
+                _W_CACHE[("w2", e)] = ((torch.rand(
+                    (args.H, args.ffn_hidden_size), generator=g2) * 0.02)
+                    - 0.01).to(input_dtype)
+                if e // lane.epn == rank:
+                    lane.op_w1.weight_home()[e % lane.epn].copy_(
+                        _W_CACHE[("w1", e)].cuda())
+                    lane.op_w2.weight_home()[e % lane.epn].copy_(
+                        _W_CACHE[("w2", e)].cuda())
+            torch.cuda.synchronize()
 
     d_gather_buf = torch.zeros(W, args.G, dtype=torch.int32, device="cuda")
 
@@ -398,16 +548,31 @@ def main():
     total_iters = args.warmup_iters + args.iters
     ev = lambda: [torch.cuda.Event(enable_timing=True)
                   for _ in range(total_iters)]
-    iter_start, plan_comm_end, plan_end = ev(), ev(), ev()
+    iter_start, plan_comm_end, place_end, plan_end = ev(), ev(), ev(), ev()
     e2e_start, l0_end, act_end, e2e_end = ev(), ev(), ev(), ev()
     torch.cuda.synchronize()
     torch.distributed.barrier()
     isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))
     iso_sync_times = []
+    move_stats = []   # (trigger, moves, bytes, movement_ms, gain_ppm)
     out = None
     for i in range(total_iters):
         runner.prep()
         probe.step(i)
+        if lane is not None and args.s2_stale:
+            # PROBE: reset the resident placement/tables to the oracle
+            # solve OUTSIDE the window — trigger+movement re-fire every
+            # timed iteration (worst-case movement overlap)
+            plan.p2l = oracle_snap["p2l"].clone()
+            plan.l2p = oracle_snap["l2p"].clone()
+            plan.lcnts = oracle_snap["lcnts"].clone()
+            store.primary.copy_(oracle_snap["primary"])
+            store.ion.copy_(oracle_snap["ion"])
+            store.hist.copy_(oracle_snap["hist"])
+            store.load_e.copy_(oracle_snap["load_e"])
+            lane.resident_p2l = oracle_snap["p2l"].long().clone()
+            planner.refresh_placement()
+            torch.cuda.synchronize()
         if isolated:
             t_iso = time.perf_counter()
             torch.cuda.synchronize()
@@ -419,15 +584,57 @@ def main():
             torch.distributed.all_gather_into_tensor(
                 d_gather_buf, planner.local_loads(), group=TP_GROUP)
             plan_comm_end[i].record()
+            if lane is not None:
+                # PLACE lane (timed): drift prefilter -> warm solve ->
+                # decision -> trigger -> adoption + movement issue. The
+                # movement itself runs on lane.w_stream/side_stream and
+                # overlaps everything up to the weight-gated tiles.
+                hist_now = d_gather_buf.long().view(nn, L, args.G).sum(1)
+                drift = plfast.drift_ppm(hist_now, store.hist)
+                if drift >= args.place_drift_prefilter_ppm:
+                    res_new = plfast.build_placement_fast(
+                        tk_dev_solve, L, cfg.nlp, args.G,
+                        passes_a=2, passes_b=1, repair_passes=1,
+                        seed="warm", seed_primary=store.primary,
+                        seed_inst_nodes=store.ion, keep_bonus=90090)
+                    verdict = plfast.place_decision_fast(
+                        tk_dev_solve, store.ion, res_new, L,
+                        gain_threshold_ppm=args.place_gain_threshold_ppm,
+                        mode="cover")
+                    if verdict["trigger"]:
+                        hosts_new = store.adopt(res_new, finalize=True)
+                        p2l_n, l2p_n, lcnts_n = plan_tensors_from_hosts(
+                            hosts_new, W, cfg.nlp)
+                        plan.p2l, plan.l2p, plan.lcnts = (
+                            p2l_n, l2p_n, lcnts_n)
+                        planner.refresh_placement()
+                        lane.apply_moves(
+                            p2l_n.long(), verdict["gain_ppm"],
+                            wprobe_cb=(wprobe_cb if args.s2_wprobe
+                                       else None))
+                    move_stats.append((
+                        int(verdict["trigger"]), lane.moves_this_iter,
+                        lane.move_bytes_this_iter, verdict["gain_ppm"]))
+                else:
+                    move_stats.append((0, 0, 0, int(drift)))
+            place_end[i].record()
             ip = planner.derive(d_gather_buf)
             runner.plan_meta(ip)
             plan_end[i].record()
             e2e_start[i].record()
             runner.issue_combine_meta(ip)
-            l0_out = runner.l0_forward(inputs_shard)
+            gate_kw = None
+            if lane is not None:
+                if args.s2_join == "join":
+                    lane.op_w1.join()
+                else:
+                    gate_kw = lane.gate_kwargs()
+            l0_out = runner.l0_forward(inputs_shard, gate_kwargs=gate_kw)
             l0_end[i].record()
             intermediate = torch.nn.functional.gelu(l0_out)
             act_end[i].record()
+            if lane is not None:
+                lane.join_w2()
             out = runner.l1_forward(intermediate)
             e2e_end[i].record()
         if args.check_iters:
@@ -452,14 +659,17 @@ def main():
             print(f"[hb] window {i + 1}/{total_iters}")
 
     iter_times = {k: [] for k in ("e2e_ms", "l0_ms", "act_ms", "l1_ms",
-                                  "plan_comm_ms", "plan_ms", "total_ms")}
+                                  "plan_comm_ms", "place_ms", "plan_ms",
+                                  "total_ms")}
     for i in range(total_iters):
         e2e_end[i].synchronize()
         if i >= args.warmup_iters:
             iter_times["plan_comm_ms"].append(
                 iter_start[i].elapsed_time(plan_comm_end[i]))
+            iter_times["place_ms"].append(
+                plan_comm_end[i].elapsed_time(place_end[i]))
             iter_times["plan_ms"].append(
-                plan_comm_end[i].elapsed_time(plan_end[i]))
+                place_end[i].elapsed_time(plan_end[i]))
             iter_times["e2e_ms"].append(
                 e2e_start[i].elapsed_time(e2e_end[i]))
             iter_times["l0_ms"].append(e2e_start[i].elapsed_time(l0_end[i]))
@@ -469,6 +679,18 @@ def main():
                 iter_start[i].elapsed_time(e2e_end[i]))
     if isolated:
         iter_times["iso_sync_ms"] = iso_sync_times[args.warmup_iters:]
+    if lane is not None and move_stats:
+        timed_ms = move_stats[args.warmup_iters:]
+        RECORDER.emit_info(
+            ours_s2_triggers=sum(m[0] for m in timed_ms),
+            ours_s2_moves=sum(m[1] for m in timed_ms),
+            ours_s2_move_bytes=sum(m[2] for m in timed_ms),
+            ours_s2_last_gain_ppm=timed_ms[-1][3] if timed_ms else 0,
+            ours_s2_join=args.s2_join,
+            ours_s2_stale=int(args.s2_stale),
+            ours_s2_wprobe=int(args.s2_wprobe),
+            ours_s2_weight_shard=args.weight_shard,
+        )
 
     def fmt(times):
         return ", ".join(f"{k[:-3]} {sum(v) / max(len(v), 1):.3f} ms"
@@ -479,6 +701,14 @@ def main():
     RECORDER.emit_iters("ours", iter_times)
 
     # ---- final deterministic iteration + correctness ----
+    if lane is not None:
+        # s2: the setup reference route was solved on the ORACLE placement;
+        # re-solve deterministically on the CURRENT (adopted) tables so the
+        # final iteration matches the slots' weights (untimed)
+        phys_fin, _ = loccap_route_sl(
+            topk_all.long().cpu(), plan.p2l, plan.l2p, plan.lcnts,
+            cfg.nlp, L, args.eps, return_tables=True)
+        plan.phys_override = phys_fin
     ip_ref = planner.derive_reference()
     runner.prep()
     runner.plan_meta(ip_ref)
@@ -489,7 +719,8 @@ def main():
     torch.cuda.synchronize()
 
     import hashlib
-    sha = hashlib.sha256(out.cpu().numpy().tobytes()).hexdigest()[:16]
+    sha = hashlib.sha256(
+        out.cpu().view(torch.int16).numpy().tobytes()).hexdigest()[:16]
     flux.exec_in_rank_order(
         TP_GROUP, lambda: print(f"ours #{rank}: out_sha {sha}"))
     RECORDER.emit_info(ours_out_sha=sha, epic_layers="l01")

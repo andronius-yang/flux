@@ -330,7 +330,7 @@ class OursRunner:
         self.scale_buf.zero_()
         self.scale_buf.scatter_(0, idx, ip.probs_all.view(-1))
 
-    def l0_forward(self, inputs_shard: torch.Tensor):
+    def l0_forward(self, inputs_shard: torch.Tensor, gate_kwargs=None):
         self.l0_op.forward(
             inputs_shard=inputs_shard,
             weights=self.w1,
@@ -341,6 +341,7 @@ class OursRunner:
             sm_margin=self.sm_margin,
             splits_per_source=self._sps,
             a2av_unique_counts=self._uc,
+            **(gate_kwargs or {}),
         )
         return self.out_buf[:self._m_this]
 

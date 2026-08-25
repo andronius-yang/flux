@@ -1044,7 +1044,11 @@ def build_cell_env(spec, plat, cell, staging, matrix):
         max_row_bytes = max(
             sum(vals[src_ * w : (src_ + 1) * w]) for src_ in range(w)
         )
-        need = 6 * max_row_bytes + (1 << 30)
+        # 24x row-sum: measured composition at 8n qwen b64 (forced-heavy
+        # class) needs ~9-13G against a 0.5G row sum — the union recv +
+        # forced-slack cushions dominate; floor stays 6G, platform cap
+        # applies (skipped_capacity via _A2AV_SYM_G_REQUIRED).
+        need = 24 * max_row_bytes + (1 << 30)
         sym_g = max(6, math.ceil(need / (1 << 30)))
         env["_A2AV_SYM_G_REQUIRED"] = str(sym_g)
         sym_max = plat.get("sym_size_max_g")
