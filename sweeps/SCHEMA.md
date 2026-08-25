@@ -1098,3 +1098,13 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
    silently flip them — a 7-baseline rerun under conn=32 is a new never-mix
    env boundary and needs its own gates. env_json records the pin per cell;
    never byte-compare across the flip.
+
+**Amendment to rule 13 (2026-08-25, user ruling — mechanism attribution):**
+msplit is a FLUX-lineage mechanism (expert-dim M-split scheduling inside
+the grouped GEMM), NOT a Slipstream mechanism. Slipstream's identity is
+token-level splitting only. Slipstream-attributed claims must never credit
+msplit as its contribution; the `l01_slipstream` arm carries it as
+inherited flux machinery. No variant/env change is applied by this
+amendment (existing capsules unchanged), and the 2026-08-25 l1-combine
+ablation findings (msplit-off / fused-pack-off / bucket-off deltas) are
+explicitly NOT applied to any canon.
