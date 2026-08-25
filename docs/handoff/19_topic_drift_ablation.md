@@ -85,3 +85,17 @@ optimization, ablation-only per variants.py note).
 Validate at 4n, record at 8n/16n. Wire-order rule 6 applies to every
 movement leg (blocking or probe-proven); correctness cells randomize
 payload per rule.
+
+## Known defect (2026-08-25, open): K2-4n stale=rot intermittent hang
+
+After the planner-arithmetic pass (place lane 26->3 ms), the K2 4n
+`ours_l01_s2_stale` cell hangs intermittently mid-run (iter ~8/15, idle
+timeout; movement live and correct for the first ~7 iters; qwen twin
+green 15/15 with 1110 recorded moves; K2 gate green 145 s same window).
+Hypothesis: the faster place lane tightened the movement-issue cadence
+and exposed a staging/slot-reuse race in the movement lane (iter i+1
+issue vs iter i drain) — K2-4n has the largest moves/iter (~300 x 59 MB)
+and the shortest issue gap. Quarantined: K2-stale cells dropped from the
+record windows; A2/A3 arms of this ablation need the root-cause first.
+Discriminators to try: FLUX_OURS_PLACE_GRAPH=0 twin; artificial 10 ms
+issue delay; movement-lane drain barrier per iteration.
