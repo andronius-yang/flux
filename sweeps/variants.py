@@ -2350,3 +2350,13 @@ VARIANTS["ours_l01_s1_ri_gate"] = dict(
     test_args=VARIANTS["ours_l01_s1"]["test_args"][:-2]
               + ["--plan_overlap", "0", "--check_iters", "1"],
 )
+VARIANTS["ours_l01_s2_stale_c32"] = dict(
+    VARIANTS["ours_l01_s2_stale"],
+    env=dict(VARIANTS["ours_l01_s1"]["env"],
+             CUDA_DEVICE_MAX_CONNECTIONS="32"),
+)
+VARIANTS["ours_l01_s2_gate_c32"] = dict(
+    VARIANTS["ours_l01_s2_gate"],
+    env=dict(VARIANTS["ours_l01_s1"]["env"],
+             CUDA_DEVICE_MAX_CONNECTIONS="32"),
+)
