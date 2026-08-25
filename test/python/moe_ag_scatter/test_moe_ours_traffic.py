@@ -623,8 +623,10 @@ def main():
                 # decision -> trigger -> adoption + movement issue. The
                 # movement itself runs on lane.w_stream/side_stream and
                 # overlaps everything up to the weight-gated tiles.
+                _pt0 = time.perf_counter()
                 hist_now = d_gather_buf.long().view(nn, L, args.G).sum(1)
                 drift = plfast.drift_ppm(hist_now, store.hist)
+                _pt1 = time.perf_counter()
                 always = args.place_gain_threshold_ppm == 0
                 if always or drift >= args.place_drift_prefilter_ppm:
                     # USER TEST REGIME (threshold 0 => `always`): EVERY
@@ -641,6 +643,7 @@ def main():
                         seed="warm", seed_primary=store.primary,
                         seed_inst_nodes=store.ion,
                         keep_bonus=(0 if always else 90090))
+                    _pt2 = time.perf_counter()
                     verdict = plfast.place_decision_fast(
                         tk_dev_solve, store.ion, res_new, L,
                         gain_threshold_ppm=max(
@@ -650,10 +653,13 @@ def main():
                         verdict["trigger"] = 1
                     if args.s2_force_trigger and verdict["moves_add"] > 0:
                         verdict["trigger"] = 1
+                    _pt3 = time.perf_counter()
                     if verdict["trigger"]:
                         hosts_new = store.adopt(res_new, finalize=True)
+                        _pt4 = time.perf_counter()
                         p2l_n, l2p_n, lcnts_n = plan_tensors_from_hosts(
                             hosts_new, W, cfg.nlp)
+                        _pt5 = time.perf_counter()
                         plan.p2l, plan.l2p, plan.lcnts = (
                             p2l_n, l2p_n, lcnts_n)
                         planner.refresh_placement()
@@ -665,6 +671,15 @@ def main():
                         int(verdict["trigger"]), lane.moves_this_iter,
                         lane.move_bytes_this_iter, verdict["gain_ppm"]))
                     if rank == 0 and args.check_iters:
+                        # place-lane host-side split (gate mode only):
+                        # drift | solve+decision | adopt | tensors | moves
+                        _pt6 = time.perf_counter()
+                        _sp = [_pt1 - _pt0, _pt3 - _pt1]
+                        if verdict["trigger"]:
+                            _sp += [_pt4 - _pt3, _pt5 - _pt4, _pt6 - _pt5]
+                        print("[s2-split] iter %d: %s ms" %
+                              (i, " ".join("%.2f" % (x * 1e3)
+                                           for x in _sp)))
                         print(f"[s2] iter {i}: drift {drift} solve gain "
                               f"{verdict['gain_ppm']} adds "
                               f"{verdict['moves_add']} trigger "
