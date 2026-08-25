@@ -1087,3 +1087,14 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
     fpwp 116.64 vs v1 127.17 (f7d6c7f2/85fcdfec); bucket-at-16n and
     bucket-on-Qwen were extrapolated/gated at flip time (flip-gate capsule
     IDs recorded in the capsule ledger when run).
+
+14. **OURS-family channel pin (2026-08-25): `CUDA_DEVICE_MAX_CONNECTIONS=32`,
+   and it is REQUIRED for every s2 (live weight-movement) cell.** At conn<=8 the
+   s2 stream mix (16 combine wire lanes + movement/meta/side streams + SM-resident
+   weight-gated tiles) channel-aliases into (a) a hard deadlock (qwen stale-b32
+   class) and (b) a torn-row wire race (K2 1-bad-row class) — both reproduced and
+   both green at conn=32. s1 cells are perf-positive under the pin (-4.3% at 8n
+   b8-b64 qwen). Parent baselines keep their own validated conn=8 canon: do NOT
+   silently flip them — a 7-baseline rerun under conn=32 is a new never-mix
+   env boundary and needs its own gates. env_json records the pin per cell;
+   never byte-compare across the flip.
