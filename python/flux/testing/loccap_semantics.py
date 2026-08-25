@@ -497,29 +497,51 @@ def plan_tensors_from_hosts(hosts_of_expert, R, nlp):
     lcnts [G] int32). THE slot recipe shared by the offline simulator and
     build_nodeaware_plan: each rank's hosted experts in ascending expert id
     occupy its slots 0..n-1; l2p columns in ascending physical slot id
-    (no master semantics — the PINNED_MASTERS=False family)."""
+    (no master semantics — the PINNED_MASTERS=False family).
+
+    Vectorized 2026-08-25 (was a python triple-loop = the whole 4.5 ms
+    "tensors" bracket of the s2 place lane at G=384); output bitwise
+    identical to the loop version (CPU-verified on real solver hosts)."""
     G = len(hosts_of_expert)
+    lens = torch.tensor([len(h) for h in hosts_of_expert],
+                        dtype=torch.int64)
     p2l = torch.full((R * nlp,), -1, dtype=torch.int32)
     l2p = torch.full((G, R), -1, dtype=torch.int32)
-    lcnts = torch.zeros(G, dtype=torch.int32)
-    per_rank = [[] for _ in range(R)]
-    for g, hosts in enumerate(hosts_of_expert):
-        assert len(set(hosts)) == len(hosts), (g, hosts)
-        for r in hosts:
-            per_rank[r].append(g)
-    slot_of = {}
-    for r in range(R):
-        gs = sorted(per_rank[r])
-        assert len(gs) <= nlp, (r, len(gs), nlp)
-        for j, g in enumerate(gs):
-            phys = r * nlp + j
-            p2l[phys] = g
-            slot_of[(g, r)] = phys
-    for g, hosts in enumerate(hosts_of_expert):
-        slots = sorted(slot_of[(g, r)] for r in hosts)
-        lcnts[g] = len(slots)
-        for j, phys in enumerate(slots):
-            l2p[g, j] = phys
+    lcnts = lens.to(torch.int32).clone()
+    N = int(lens.sum())
+    if N == 0:
+        return p2l, l2p, lcnts
+    g_flat = torch.repeat_interleave(
+        torch.arange(G, dtype=torch.int64), lens)
+    r_flat = torch.tensor([r for h in hosts_of_expert for r in h],
+                          dtype=torch.int64)
+    # duplicate-host guard (was: per-expert set() check)
+    key_gr = g_flat * R + r_flat
+    key_s = torch.sort(key_gr).values
+    assert bool((key_s[1:] != key_s[:-1]).all()), "duplicate host"
+    idx = torch.arange(N, dtype=torch.int64)
+    # per-rank slots in ascending expert id: sort by (rank, expert)
+    o_r = torch.argsort(r_flat * G + g_flat)
+    r_s = r_flat[o_r]
+    first = torch.ones(N, dtype=torch.bool)
+    first[1:] = r_s[1:] != r_s[:-1]
+    seg0 = torch.cummax(torch.where(first, idx,
+                                    torch.zeros_like(idx)), 0).values
+    ordn = idx - seg0
+    assert bool((ordn < nlp).all()), "rank over nlp"
+    phys_s = r_s * nlp + ordn                    # phys slot per entry
+    p2l[phys_s] = g_flat[o_r].to(torch.int32)
+    # l2p: per expert, ascending phys slot
+    phys = torch.empty(N, dtype=torch.int64)
+    phys[o_r] = phys_s
+    o_g = torch.argsort(g_flat * (R * nlp) + phys)
+    g_s = g_flat[o_g]
+    first_g = torch.ones(N, dtype=torch.bool)
+    first_g[1:] = g_s[1:] != g_s[:-1]
+    seg0g = torch.cummax(torch.where(first_g, idx,
+                                     torch.zeros_like(idx)), 0).values
+    j = idx - seg0g
+    l2p[g_s, j] = phys[o_g].to(torch.int32)
     return p2l, l2p, lcnts
 
 

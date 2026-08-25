@@ -644,13 +644,21 @@ def main():
                         seed_inst_nodes=store.ion,
                         keep_bonus=(0 if always else 90090))
                     _pt2 = time.perf_counter()
-                    verdict = plfast.place_decision_fast(
-                        tk_dev_solve, store.ion, res_new, L,
-                        gain_threshold_ppm=max(
-                            args.place_gain_threshold_ppm, 1),
-                        mode="cover")
                     if always:
-                        verdict["trigger"] = 1
+                        # always-migrate regime: the decision is foregone
+                        # (trigger unconditional), so skip the 8-round
+                        # cover decision entirely — it was ~half the K2
+                        # solve+decision bracket. Placement identical;
+                        # gain/adds carry the -1 sentinel (real move
+                        # counts still come from lane.apply_moves).
+                        verdict = {"trigger": 1, "gain_ppm": -1,
+                                   "moves_add": -1, "moves_remove": -1}
+                    else:
+                        verdict = plfast.place_decision_fast(
+                            tk_dev_solve, store.ion, res_new, L,
+                            gain_threshold_ppm=max(
+                                args.place_gain_threshold_ppm, 1),
+                            mode="cover")
                     if args.s2_force_trigger and verdict["moves_add"] > 0:
                         verdict["trigger"] = 1
                     _pt3 = time.perf_counter()
