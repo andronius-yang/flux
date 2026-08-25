@@ -1282,22 +1282,26 @@ if __name__ == "__main__":
             # contract. This also shrinks the loccap_sl fast-tail pad width
             # (it reads relaxed_bounds["recv_cap"]) — NEVER-MIX vs
             # capacity-mode capsules wherever plan_ms is compared.
+            # DEMAND-SIZES THE RECV SIDE ONLY (2026-08-25 hang fix): the
+            # 8n b32 A/B caught the kernel's relaxed derive exceeding
+            # realized_ref + 8R by 23 rows (place_pad assert 50161>50138 —
+            # loud, then peers idle-timeout). The recv proof allows kernel
+            # forced ingress up to 2*Sum(fp)+8R where the reference
+            # realizes ~Sum(fp), so the demand cushion must be
+            # Sum(fp)[dst].max() + 8R, not bare 8R. Pair-side floors
+            # (pair_cap / stage / relay) stay at the PROVABLE tables —
+            # their fat was never the OOM driver once the hidden-A2A skip
+            # landed, and per-pair drift has the same under-cushion trap.
             serve_ref = phys_all_route.view(W, -1).long() // cfg.nlp
             recv_real = torch.bincount(serve_ref.reshape(-1), minlength=W)
-            pair_real = torch.bincount(
-                (torch.arange(W, dtype=torch.int64).unsqueeze(1) * W
-                 + serve_ref).reshape(-1), minlength=W * W).view(W, W)
-            _cap_prev = (pll_bounds["recv_cap"], pll_bounds["pair_cap"])
-            pll_bounds["recv_cap"] = int(recv_real.max()) + 8 * W
-            pll_bounds["pair_cap"] = (int(pair_real.max())
-                                      + pll_bounds["f_cap"])
-            # per-pair sizing table for the stage/relay cap_floors (the
-            # pair_ub analog: realized + per-pair forced cushion)
-            pll_bounds["pair_sizing"] = pair_real + pll_bounds["f_cap"]
+            _fp_slack = int(pll_aux["forced_pair"].sum(0).max())
+            _cap_prev = pll_bounds["recv_cap"]
+            pll_bounds["recv_cap"] = min(
+                _cap_prev, int(recv_real.max()) + _fp_slack + 8 * W)
             if rank == 0:
-                print(f"llc_sizing=demand: recv_cap {_cap_prev[0]} -> "
-                      f"{pll_bounds['recv_cap']}, pair_cap {_cap_prev[1]}"
-                      f" -> {pll_bounds['pair_cap']}", flush=True)
+                print(f"llc_sizing=demand: recv_cap {_cap_prev} -> "
+                      f"{pll_bounds['recv_cap']} (fp_slack {_fp_slack});"
+                      f" pair/stage floors stay provable", flush=True)
     elif args.router == "evensplit":
         phys_all_route = evensplit_route(topk_all.long(), plan.l2p,
                                          plan.lcnts).cpu()
