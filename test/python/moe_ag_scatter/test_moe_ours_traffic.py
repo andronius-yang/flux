@@ -704,7 +704,25 @@ def main():
                     if args.s2_force_trigger and verdict["moves_add"] > 0:
                         verdict["trigger"] = 1
                     _pt3 = time.perf_counter()
-                    if verdict["trigger"]:
+                    # identity early-out (2026-08-25, remove no-op
+                    # machinery): at the fixed point (stable traffic,
+                    # always-solve) the warm solve returns the resident
+                    # placement unchanged — adopt/finalize/plan-tensors/
+                    # apply_moves would all be no-ops costing ~1.5-1.7 ms.
+                    # primary+inst_nodes equality implies the whole slot
+                    # table is identical (finalize is deterministic in
+                    # them). One small host sync; stale/drift cells have
+                    # nonzero diffs and take the full path.
+                    _same = (verdict["trigger"]
+                             and torch.equal(res_new["primary"],
+                                             store.primary)
+                             and torch.equal(res_new["inst_nodes"],
+                                             store.ion))
+                    if _same:
+                        lane.moves_this_iter = 0
+                        lane.move_bytes_this_iter = 0
+                        lane.trigger_fired = 0
+                    if verdict["trigger"] and not _same:
                         hosts_new = store.adopt(res_new, finalize=True)
                         _pt4 = time.perf_counter()
                         p2l_n, l2p_n, lcnts_n = plan_tensors_from_hosts(
@@ -725,7 +743,7 @@ def main():
                         # drift | solve+decision | adopt | tensors | moves
                         _pt6 = time.perf_counter()
                         _sp = [_pt1 - _pt0, _pt3 - _pt1]
-                        if verdict["trigger"]:
+                        if verdict["trigger"] and not _same:
                             _sp += [_pt4 - _pt3, _pt5 - _pt4, _pt6 - _pt5]
                         print("[s2-split] iter %d: %s ms" %
                               (i, " ".join("%.2f" % (x * 1e3)
