@@ -768,6 +768,10 @@ def main():
             _hbp("l1")
             out = runner.l1_forward(intermediate)
             e2e_end[i].record()
+            if lane is not None:
+                # end-of-iteration weight-signal drain (K2-4n stale hang
+                # fix): after e2e_end (untimed gap) — see ours_s2.join_w1.
+                lane.join_w1()
             _hbp("issued")
         if args.check_iters:
             # GATE MODE (critique H1): validate THIS iteration's output —

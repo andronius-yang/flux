@@ -35,6 +35,8 @@ import os
 
 import torch
 
+from flux.testing.moonep_fused_map import plan_weight_shards
+
 __all__ = ["OursMovementLane", "assign_gateways_sparse"]
 
 
@@ -173,6 +175,18 @@ class OursMovementLane:
         """Zero-SM landing gate for the l1 weights, on the current stream."""
         self.op_w2.join()
 
+    def join_w1(self):
+        """End-of-iteration fabric drain for the l0 weight signals (2026-08-25
+        K2-4n stale hang fix): the gated tiles consume only ROUTED slots, so
+        a zero-row moved slot's epoch SET can still be in flight when the
+        iteration boundary's device-sync + world barrier pass (one-sided
+        remote writes are NOT bounded by the destination's sync). Under
+        movement-every-iteration the late SET lands AFTER the next epoch
+        raise and REGRESSES the flag -> next iteration's tile spins forever.
+        join() waits GEQ epoch on ALL slots -> nothing crosses the boundary.
+        Runs after e2e_end (untimed gap); satisfied reads when quiet."""
+        self.op_w1.join()
+
     # -- per-iteration movement (called from the driver's place bracket) ----
 
     def apply_moves(self, new_p2l_host, gain_ppm, wprobe_cb=None):
@@ -203,11 +217,12 @@ class OursMovementLane:
         # replicated pair list: (dst_rank, dst_slot, home_rank, src_row,
         # gw_rank, gw_slot); sparse gateway assignment (one cross-node leg
         # per (expert, dest node), NVLink fan-out)
-        adds = []
-        for idx in changed.tolist():
-            dst_rank, j = idx // self.nlp, idx % self.nlp
-            e = int(new_p2l_host[idx])
-            adds.append((dst_rank, 1 + j, e // self.epn, e % self.epn))
+        # vectorized adds build (was a ~300-iteration python loop)
+        e_t = new_p2l_host[changed]
+        adds = list(zip((changed // self.nlp).tolist(),
+                        (changed % self.nlp + 1).tolist(),
+                        (e_t // self.epn).tolist(),
+                        (e_t % self.epn).tolist()))
         pairs = assign_gateways_sparse(adds, self.L)
         pairs_t = torch.tensor(pairs, dtype=torch.int32).reshape(-1, 6)
         per_expert_bytes = 2 * self.ffn * self.H * self.op_w1.weight_home().element_size()
@@ -219,25 +234,24 @@ class OursMovementLane:
             self.ev_move_start.record()
             # raise unmoved slots to the NEW epoch so only moved slots gate
             new_epoch = int(self.op_w1.epoch()) + 1
-            moved_slots = torch.unique(
-                torch.tensor([1 + (i % self.nlp) for i in changed.tolist()
-                              if i // self.nlp == self.rank],
-                             dtype=torch.long))
+            mine = changed[(changed // self.nlp) == self.rank]
+            moved_slots = torch.unique(mine % self.nlp + 1)
+            # keep mask + shard plan hoisted out of the op loop: identical
+            # for w1/w2 (same slot space; same expert byte size ffn*H*es)
+            mask = torch.ones(self.gpe, dtype=torch.bool)
+            mask[moved_slots] = False
+            keep = mask.nonzero(as_tuple=True)[0].cuda()
+            shards = None
+            if self.weight_shard != "off":
+                shards = plan_weight_shards(
+                    pairs_t, self.L,
+                    self.ffn * self.H
+                    * self.op_w1.weight_home().element_size(),
+                    mode="mcast")
             for op in (self.op_w1, self.op_w2):
-                sig = op.signals()
-                mask = torch.ones(self.gpe, dtype=torch.bool)
-                mask[moved_slots] = False
-                keep = mask.nonzero(as_tuple=True)[0].cuda()
-                sig.index_fill_(0, keep, new_epoch)
+                op.signals().index_fill_(0, keep, new_epoch)
                 op.set_plan(pairs_t)
-                if self.weight_shard != "off":
-                    from flux.testing.moonep_fused_map import (
-                        plan_weight_shards)
-                    shards = plan_weight_shards(
-                        pairs_t, self.L,
-                        self.ffn * self.H
-                        * op.weight_home().element_size(),
-                        mode="mcast")
+                if shards is not None:
                     op.set_shard_plan(shards, self.shard_chunk_bytes,
                                       self.L)
                 op.forward(self.multicast)
