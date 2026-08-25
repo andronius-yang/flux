@@ -2366,3 +2366,12 @@ VARIANTS["ours_l01_s2_gate_c32"] = dict(
     env=dict(VARIANTS["ours_l01_s1"]["env"],
              CUDA_DEVICE_MAX_CONNECTIONS="32"),
 )
+# v2-combine mechanism ablations (2026-08-25, 16n b64 l1 gap vs llc's
+# plain staged wait-all): one knob off each, canon otherwise. Decide the
+# single shipping combine config; ablations never ship as knobs.
+for _k, _env in (("noms", {"FLUX_A2AV_RS_MSPLIT": "0"}),
+                 ("nofp", {"FLUX_A2AV_RS_FUSED_PACK": "0"}),
+                 ("nobkt", {"FLUX_A2AV_RS_RECV_BUCKET": "0"})):
+    VARIANTS[f"ours_l01_s1_{_k}"] = dict(
+        VARIANTS["ours_l01_s1"],
+        env=dict(VARIANTS["ours_l01_s1"]["env"], **_env))
