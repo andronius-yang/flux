@@ -32,9 +32,15 @@ s2 quiet totals: 4n 22.1/33.7 -> 11.5/13.3, 8n 29.3/33.7 -> 16.6/18.5.
 
 ## FINAL CANON (2026-08-25 user ruling, post-validation)
 
-- **Place identity early-out: CANON** (53e1baf). Validated: quiet place
-  2.6-3.1 -> 1.6-2.0 ms at 4n, in-cell correctness green on all 8 grid
-  cells, both models; final s2 gate (ov0 + early-out) green.
+- **Place identity early-out: knob-gated, DEFAULT OFF** (53e1baf +
+  a0f45ac, FLUX_OURS_PLACE_EARLYOUT). The perf win is real and
+  quiet-validated (place 2.6-3.1 -> 1.6-2.0 ms, 8/8 grid cells green),
+  BUT every stale-regime strict gate run with it active failed (3/3:
+  torn row @iter3, spin-hangs @iter4 — including one with plan_overlap
+  already removed), vs 3/3 green without it. Its mid-place-lane host
+  sync shifts movement-issue timing into a latent mid-iteration race
+  (suspect: shard/gateway chain ordering; WPM wire is blocking-default,
+  boundary drain in place). Root-cause the race, then flip the knob.
 - **plan_overlap: REMOVED EVERYWHERE** ("we don't overlap the plan").
   The s1-side flip was perf-positive and gate-green, but under s2 the
   ov side-stream x movement-lane timing re-exposed a mid-iteration
