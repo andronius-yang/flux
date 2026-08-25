@@ -449,6 +449,23 @@ def interleave_params_batched_fast(totals: torch.Tensor,
     return stride, offset, found_all
 
 
+# 2026-08-24 (handoff 17 §3, user-directed minimal fix): the [E, Cmax] int64
+# expansion of the prefix table OOMs at 16n qwen b64 (E = R*S*K = 4.19M,
+# Cmax = 129 -> 4.03 GiB) on a card already carrying the heap reservation +
+# data plane. Above _EXPAND_SINGLE_SHOT_MAX_BYTES the gather+searchsorted run
+# in row chunks of _EXPAND_CHUNK_BYTES — bit-identical (both ops are
+# row-independent) and latency-neutral to first order (same bytes moved, a
+# few extra launches). 2026-08-24 login-A100 bench (user decision, chunked =
+# DEFAULT): b1 delta -4.4%/-0.8% (qwen/k2, +-20 us = noise), b4-b32 +0.2..+2%,
+# b64 -45.8% (the 4 GiB single-shot allocation is itself the cost) — so the
+# threshold defaults to 0 (always chunk). NEVER-MIX note: EPLB plan_ms at
+# b32+/b64 reads LOWER than the 2026-08-24 campaign capsules (which ran
+# single-shot); sub-b32 cells are within noise. Raise the threshold to
+# restore the legacy single-shot path (monkeypatchable for A/B).
+_EXPAND_SINGLE_SHOT_MAX_BYTES = 0
+_EXPAND_CHUNK_BYTES = 1 << 30
+
+
 def reroute_expand_all_gpu_fast(rqp_all: torch.Tensor, l2p: torch.Tensor,
                                 lcnts: torch.Tensor,
                                 topk_all: torch.Tensor,
@@ -485,7 +502,12 @@ def reroute_expand_all_gpu_fast(rqp_all: torch.Tensor, l2p: torch.Tensor,
             torch.arange(G, device=dev, dtype=torch.int64).repeat(R))
     else:
         ilv_ok = torch.ones(1, dtype=torch.bool, device=dev)
-    prm = rqp_all.long().reshape(R * G, -1).cummax(dim=1).values[re]
+    prm_table = rqp_all.long().reshape(R * G, -1).cummax(dim=1).values
+    _E, _Cmax = re.numel(), prm_table.shape[1]
+    if _E * _Cmax * 8 <= _EXPAND_SINGLE_SHOT_MAX_BYTES:
+        prm = prm_table[re]      # original single-shot spelling, unchanged
+    else:
+        prm = None               # defer to the chunked searchsorted below
     ordinal = _run_ordinal_fast(re)
     totals = counts[re]
     if interleave:
@@ -496,8 +518,17 @@ def reroute_expand_all_gpu_fast(rqp_all: torch.Tensor, l2p: torch.Tensor,
             ordinal)
     else:
         qr = ordinal
-    replica = torch.searchsorted(prm, qr.unsqueeze(1),
-                                 right=True).squeeze(1)
+    if prm is not None:
+        replica = torch.searchsorted(prm, qr.unsqueeze(1),
+                                     right=True).squeeze(1)
+    else:
+        replica = torch.empty(_E, dtype=torch.int64, device=dev)
+        _rows = max(1, _EXPAND_CHUNK_BYTES // (_Cmax * 8))
+        for _beg in range(0, _E, _rows):
+            _end = min(_E, _beg + _rows)
+            replica[_beg:_end] = torch.searchsorted(
+                prm_table[re[_beg:_end]], qr[_beg:_end].unsqueeze(1),
+                right=True).squeeze(1)
     Ce = lcnts.long()[ef]
     replica = torch.minimum(replica, torch.clamp(Ce - 1, min=0))
     phys = l2p.long()[ef, replica]
