@@ -2386,6 +2386,3 @@ VARIANTS["ours_l01_s2_prod"] = dict(
     test_args=["--eps", "0.0625", "--sizing", "capacity",
                "--plan_overlap", "0", "--scenario", "s2"],
 )
-               for p, a in zip(["x"] + VARIANTS["ours_l01_s2_gate"]["test_args"],
-                               VARIANTS["ours_l01_s2_gate"]["test_args"])],
-)
