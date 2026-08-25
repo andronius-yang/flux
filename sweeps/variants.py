@@ -2375,3 +2375,14 @@ for _k, _env in (("noms", {"FLUX_A2AV_RS_MSPLIT": "0"}),
     VARIANTS[f"ours_l01_s1_{_k}"] = dict(
         VARIANTS["ours_l01_s1"],
         env=dict(VARIANTS["ours_l01_s1"]["env"], **_env))
+# PRODUCTION-SEMANTICS unified arm (2026-08-25, user direction: s2 as the
+# eventual sole OURS branch): same s2 machinery resident, but the drift
+# prefilter (10k ppm) and gain threshold (50k ppm) actually GATE — on
+# stable 7-baseline traffic the solve is skipped (place ~= drift check),
+# under drift it triggers. The threshold-0 ours_l01_s2 stays the
+# always-solve upper-bound probe.
+VARIANTS["ours_l01_s2_prod"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "capacity",
+               "--plan_overlap", "0", "--scenario", "s2"],
+)
