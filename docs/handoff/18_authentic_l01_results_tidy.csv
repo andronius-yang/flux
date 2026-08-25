@@ -229,7 +229,8 @@ PLL,llc_l01_s1,K2,16,4,ok,20260824-163617_perlmutter_2b0189fb,llc_l01_s1_trace-6
 PLL,llc_l01_s1,K2,16,8,ok,20260824-163617_perlmutter_2b0189fb,llc_l01_s1_trace-610042_b8_k8_isolated,21.431,13.013,0.035,8.328,1.565,0.68,23.425,20.913,22.303,
 PLL,llc_l01_s1,K2,16,16,ok,20260824-163617_perlmutter_2b0189fb,llc_l01_s1_trace-610042_b16_k8_isolated,31.586,17.577,0.064,13.865,1.981,0.735,34.129,30.625,32.65,
 PLL,llc_l01_s1,K2,16,32,ok,20260824-163617_perlmutter_2b0189fb,llc_l01_s1_trace-610042_b32_k8_isolated,54.54,29.711,0.133,24.081,2.987,0.529,57.457,52.151,69.2,
-PLL,llc_l01_s1,K2,16,64,pre-skipped,,,,,,,,,,,,"pre-skipped: authentic >16G NVSHMEM symmetric-heap class, hc dispatch ctor (handoff 17 s2)"
+PLL,llc_l01_s1_demand,K2,16,32,ok,20260825-031048_perlmutter_80022562,llc_l01_s1_demand_trace-610042_b32_k8_isolated,54.816,29.582,0.12,25.568,2.928,0.781,58.241,53.247,83.53,16n b32 demand-arm anchor (matches capacity within +1.6%)
+PLL,llc_l01_s1_demand,K2,16,64,ok,20260825-031048_perlmutter_80022562,llc_l01_s1_demand_trace-610042_b64_k8_isolated,100.274,51.736,0.226,48.468,4.408,0.86,104.859,98.101,106.95,"gap-fill 2026-08-25: demand sizing + hidden-A2A skip (llc_l01_s1_demand, 611e649)"
 Slipstream,l01_slipstream,K2,16,1,ok,20260824-162432_perlmutter_b1bac7cc,l01_slipstream_trace-610042_b1_k8_isolated,12.388,6.747,0.012,5.675,0.817,0.416,13.625,11.92,12.779,
 Slipstream,l01_slipstream,K2,16,2,ok,20260824-162432_perlmutter_b1bac7cc,l01_slipstream_trace-610042_b2_k8_isolated,13.112,7.113,0.015,5.995,0.919,0.617,14.561,12.88,13.502,
 Slipstream,l01_slipstream,K2,16,4,ok,20260824-162432_perlmutter_b1bac7cc,l01_slipstream_trace-610042_b4_k8_isolated,15.553,8.105,0.017,7.296,0.899,0.69,16.877,15.202,16.759,
@@ -264,7 +265,7 @@ EPLB,eplb_l01,Qwen,16,4,ok,20260824-170002_perlmutter_bb526f7f,eplb_l01_trace-a2
 EPLB,eplb_l01,Qwen,16,8,ok,20260824-170002_perlmutter_bb526f7f,eplb_l01_trace-a2e8ab_b8_k8_isolated,26.167,14.179,0.084,11.58,3.818,0.4,30.256,24.476,27.226,
 EPLB,eplb_l01,Qwen,16,16,ok,20260824-170002_perlmutter_bb526f7f,eplb_l01_trace-a2e8ab_b16_k8_isolated,51.235,27.511,0.18,23.172,5.932,0.699,57.422,49.085,52.678,
 EPLB,eplb_l01,Qwen,16,32,ok,20260824-170002_perlmutter_bb526f7f,eplb_l01_trace-a2e8ab_b32_k8_isolated,101.064,54.286,0.313,45.85,10.064,0.833,111.745,98.303,104.293,
-EPLB,eplb_l01,Qwen,16,64,pre-skipped,,,,,,,,,,,,"pre-skipped: planner [E,129] int64 intermediate OOM (4.03 GiB, ep_gpu_plan.py), non-authentic, fix declined (handoff 17 s3)"
+EPLB,eplb_l01,Qwen,16,64,ok,20260825-031147_perlmutter_01dea4d2,eplb_l01_trace-a2e8ab_b64_k8_isolated,206.414,112.973,0.623,92.495,18.567,0.805,225.267,203.518,211.694,gap-fill 2026-08-25: chunked planner (ef835c0)
 MoonEP,moonep_l01_nvshmem_getmem,Qwen,16,1,ok,20260824-171034_perlmutter_f4796901,moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated,12.362,6.403,0.015,6.264,1.418,0.688,14.339,12.233,12.957,
 MoonEP,moonep_l01_nvshmem_getmem,Qwen,16,2,ok,20260824-171034_perlmutter_f4796901,moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated,13.336,6.999,0.021,6.365,1.577,0.807,15.526,12.985,13.954,
 MoonEP,moonep_l01_nvshmem_getmem,Qwen,16,4,ok,20260824-171034_perlmutter_f4796901,moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated,17.499,9.225,0.034,8.11,1.636,0.719,19.705,17.121,18.41,
@@ -278,7 +279,8 @@ PLL,llc_l01_s1,Qwen,16,4,ok,20260824-170731_perlmutter_b7468c6e,llc_l01_s1_trace
 PLL,llc_l01_s1,Qwen,16,8,ok,20260824-170731_perlmutter_b7468c6e,llc_l01_s1_trace-a2e8ab_b8_k8_isolated,21.26,13.241,0.037,7.889,2.258,0.742,23.818,20.458,23.05,
 PLL,llc_l01_s1,Qwen,16,16,ok,20260824-170731_perlmutter_b7468c6e,llc_l01_s1_trace-a2e8ab_b16_k8_isolated,30.69,17.214,0.066,13.091,2.87,0.924,33.726,29.378,57.89,
 PLL,llc_l01_s1,Qwen,16,32,ok,20260824-170731_perlmutter_b7468c6e,llc_l01_s1_trace-a2e8ab_b32_k8_isolated,52.607,27.837,0.137,24.268,4.261,0.632,57.081,50.149,55.561,
-PLL,llc_l01_s1,Qwen,16,64,pre-skipped,,,,,,,,,,,,"pre-skipped: authentic >16G NVSHMEM symmetric-heap class, hc dispatch ctor (handoff 17 s2)"
+PLL,llc_l01_s1_demand,Qwen,16,32,ok,20260825-030938_perlmutter_7d1f9d97,llc_l01_s1_demand_trace-a2e8ab_b32_k8_isolated,53.446,27.805,0.128,25.317,4.186,0.711,57.85,51.846,54.765,16n b32 demand-arm anchor (matches capacity within +1.6%)
+PLL,llc_l01_s1_demand,Qwen,16,64,ok,20260825-030938_perlmutter_7d1f9d97,llc_l01_s1_demand_trace-a2e8ab_b64_k8_isolated,99.212,50.117,0.303,48.839,6.045,0.951,106.215,95.911,103.95,"gap-fill 2026-08-25: demand sizing + hidden-A2A skip (llc_l01_s1_demand, 611e649)"
 Slipstream,l01_slipstream,Qwen,16,1,ok,20260824-165649_perlmutter_26f674a7,l01_slipstream_trace-a2e8ab_b1_k8_isolated,11.16,6.679,0.012,4.413,0.903,0.406,12.254,10.997,12.091,
 Slipstream,l01_slipstream,Qwen,16,2,ok,20260824-165649_perlmutter_26f674a7,l01_slipstream_trace-a2e8ab_b2_k8_isolated,12.163,6.985,0.018,5.145,0.86,0.502,13.35,11.89,13.181,
 Slipstream,l01_slipstream,Qwen,16,4,ok,20260824-165649_perlmutter_26f674a7,l01_slipstream_trace-a2e8ab_b4_k8_isolated,15.116,8.23,0.026,6.91,1.123,0.723,16.719,14.845,16.949,

@@ -67,3 +67,23 @@ Process lesson for the next campaign brief (extends handoff 15 §5): lanes must
 NEVER park on background-notification waits for salloc grants or runner
 completions — poll `squeue`/foreground the runner; both incidents were
 missed-wake idle burns, caught only by the orchestrator's cross-checks.
+
+## Addendum (2026-08-25): b64 gap cells FILLED
+Three OOM classes fixed (commits ef835c0, e516bfd, 611e649 — EPLB planner
+chunking; llc demand sizing + hier_compress hidden-A2A skip; fp-informed
+cushion after the 8n b32 pad-assert hang) and the pre-skipped cells captured:
+- PLL 16n b64 (llc_l01_s1_demand): e2e 99.2/100.3 total 106.2/104.9 qwen/K2
+  (capsules 20260825-030938_7d1f9d97 / -031048_80022562) — now the FASTEST
+  arm at 16n b64 (Slipstream 116.3/125.2). The fit is the hidden-A2A skip
+  (-8.6/-6.6 GiB); the fp-clamped demand recv degenerated to the provable
+  value at these forced-heavy cells. b32 demand anchors match the campaign
+  capacity cells within +1.6%.
+- EPLB 16n qwen b64 (chunked planner): e2e 206.4 total 225.3
+  (20260825-031147_01dea4d2).
+- Validation capsules (A/B capacity-vs-demand, all latency-neutral; incl.
+  the hang-evidence capsules): 20260825-{014023_be5b5cea, 014641_85833fc3,
+  014623_8a8ee972, 021601_87d0560f, 023728_87cd4648}.
+- NEVER-MIX: llc_l01_s1_demand is a separate comparison family; at 16n b64
+  it is capacity-equivalent by clamp. Torch b32+/b64 remain authentic
+  pre-skips. Thread cost 8.87 nh (sacct-exact; ~2.7 nh burned by the two
+  window expiries + the diagnosed hang).
