@@ -204,11 +204,14 @@ class OursRunner:
         # slot -> logical expert (pad slot = -1)
         p2l = None  # filled by set_weights
 
-        # fused l0 op: Slipstream dispatch identity (LB_UNION Tier-B).
-        # The union knob must be IN the env BEFORE the ctor (it sizes the
-        # recv regions and picks the wire); FUSED_STAGE2/EARLY_LAUNCH/
-        # WAVE_PACK are binary defaults under it.
-        os.environ["FLUX_A2AV_LB_UNION"] = "1"
+        # fused l0 op: Slipstream dispatch identity (LB_UNION Tier-B) by
+        # default. setdefault: the relay-identity arm (ours_l01_s1_ri)
+        # pins LB_UNION=0 — on LocCap-placed traffic the node-union
+        # broadcast's dedup assumption weakens (copies are already
+        # rank-consolidated), and the 16n b32+ crossover vs llc suggested
+        # per-rank-exact delivery wins there. The knob must be IN the env
+        # BEFORE the ctor (it sizes recv regions and picks the wire).
+        os.environ.setdefault("FLUX_A2AV_LB_UNION", "1")
         tp_env = flux.DistEnvTPWithEP(tp_group=tp_group, nnodes=nnodes,
                                       ep_group=ep_group)
         moe_args = flux.MoeArguments(

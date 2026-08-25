@@ -2329,3 +2329,24 @@ VARIANTS["ours_l01_s2_gate_join"] = dict(
                "--s2_force_trigger", "1", "--s2_wprobe", "1",
                "--s2_join", "join"],
 )
+# relay-identity wire twin (2026-08-25, 16n b32+ crossover attack): the
+# fused pipeline with per-rank-exact delivery (LB_UNION=0 -> balanced
+# relay + identity forward) instead of the Tier-B union broadcast. On
+# LocCap-placed traffic the union's node-dedup premise is weak (copies
+# already rank-consolidated); llc's staged wire is relay-identity and won
+# 16n b32/b64 — this arm isolates wire-mode from staged-vs-fused.
+# EARLY_LAUNCH default is LB_UNION-conditioned; pinned ON explicitly
+# (conn=8 satisfies its guard) so overlap identity is preserved.
+VARIANTS["ours_l01_s1_ri"] = dict(
+    VARIANTS["ours_l01_s1"],
+    env=dict(VARIANTS["ours_l01_s1"]["env"],
+             FLUX_A2AV_LB_UNION="0", FLUX_A2AV_EARLY_LAUNCH="1",
+             FLUX_A2AV_FUSED_STAGE2="1"),
+    requires=[r for r in VARIANTS["ours_l01_s1"]["requires"]
+              if r != "FLUX_A2AV_LB_UNION"],
+)
+VARIANTS["ours_l01_s1_ri_gate"] = dict(
+    VARIANTS["ours_l01_s1_ri"],
+    test_args=VARIANTS["ours_l01_s1"]["test_args"][:-2]
+              + ["--plan_overlap", "0", "--check_iters", "1"],
+)
