@@ -3939,6 +3939,8 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       c10::optional<torch::Tensor> weight_signal,
       int64_t weight_signal_epoch,
       int64_t weight_gate_group_start,
+      c10::optional<torch::Tensor> sched_expert_order,
+      int64_t sched_n_front,
       c10::optional<UnifiedGemmHParams> const &hparams) {
     FLUX_CHECK(
 #if TORCH_SUPPORT_FP8
@@ -4281,6 +4283,24 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         return true;
       }();
       (void)kAuditOnce;
+      // Moved-last schedule (2026-08-26): per-iteration deferred set. Host
+      // computes the class+rank encoding (bit 30 = deferred / moved slot);
+      // takes precedence over sched_prefetch_last in the schedule kernel.
+      if (sched_expert_order.has_value()) {
+        FLUX_CHECK(sched_expert_order->is_cuda());
+        FLUX_CHECK(sched_expert_order->scalar_type() == at::ScalarType::Int)
+            << "sched_expert_order must be int32";
+        FLUX_CHECK(sched_expert_order->is_contiguous());
+        FLUX_CHECK_GE(sched_expert_order->numel(), ep_nexperts)
+            << "sched_expert_order too small for ep_nexperts";
+        FLUX_CHECK(sched_n_front > 0 && sched_n_front <= ep_nexperts)
+            << "sched_n_front " << sched_n_front << " out of (0, " << ep_nexperts << "]";
+        args.sched_expert_order = sched_expert_order->data_ptr<int32_t>();
+        args.sched_n_front = static_cast<int>(sched_n_front);
+      }
+    } else {
+      FLUX_CHECK(!sched_expert_order.has_value())
+          << "sched_expert_order requires a weight-gated a2av forward";
     }
     for (int gid = 0; gid < num_weights_group; gid++) {
       args.weight[gid] = weights[gid].data_ptr();
@@ -4845,6 +4865,8 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         c10::nullopt,
         0,
         -1,
+        c10::nullopt,
+        0,
         c10::nullopt);
   }
 
@@ -4879,7 +4901,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       c10::optional<torch::Tensor> a2av_unique_counts,
       c10::optional<torch::Tensor> weight_signal,
       int64_t weight_signal_epoch,
-      int64_t weight_gate_group_start) {
+      int64_t weight_gate_group_start,
+      c10::optional<torch::Tensor> sched_expert_order,
+      int64_t sched_n_front) {
     if (inputs_shard.scalar_type() == torch::kInt8) {
       return forward_triton_aot(
           inputs_shard,
@@ -4917,6 +4941,8 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         std::move(weight_signal),
         weight_signal_epoch,
         weight_gate_group_start,
+        std::move(sched_expert_order),
+        sched_n_front,
         c10::nullopt);
     return outputs[0];
   }
@@ -5012,6 +5038,8 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                 c10::nullopt,
                 0,
                 -1,
+                c10::nullopt,
+                0,
                 cp_hparams);
             timer.stop();
             if (iter >= warm_iters) {
@@ -5048,6 +5076,8 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         c10::nullopt,
         0,
         -1,
+        c10::nullopt,
+        0,
         std::move(best_hparams));
   }
 };
@@ -5166,7 +5196,9 @@ GemmGroupedV2AGScatterOp::forward(
     c10::optional<torch::Tensor> a2av_unique_counts,
     c10::optional<torch::Tensor> weight_signal,
     int64_t weight_signal_epoch,
-    int64_t weight_gate_group_start) {
+    int64_t weight_gate_group_start,
+    c10::optional<torch::Tensor> sched_expert_order,
+    int64_t sched_n_front) {
   FLUX_CHECK(impl_ != nullptr) << "GemmGroupedV2AGScatterOp is not initialized";
   return impl_->forward(
       std::move(inputs_shard),
@@ -5186,7 +5218,9 @@ GemmGroupedV2AGScatterOp::forward(
       std::move(a2av_unique_counts),
       std::move(weight_signal),
       weight_signal_epoch,
-      weight_gate_group_start);
+      weight_gate_group_start,
+      std::move(sched_expert_order),
+      sched_n_front);
 }
 torch::Tensor
 GemmGroupedV2AGScatterOp::forward_triton_aot(

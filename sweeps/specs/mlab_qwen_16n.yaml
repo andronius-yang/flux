@@ -1,0 +1,18 @@
+# 2026-08-26 moved-last/late-w2 A/B: stale (movement every iter) base vs
+# ml vs w2l vs mlw2, + quiet null twins (movement rare -> expect no
+# change). Within-capsule comparisons only (rule 4, new binary).
+platform: perlmutter
+nodes: 16
+shape: qwen3
+variants: [ours_l01_s2_stale, ours_l01_s2_stale_ml, ours_l01_s2_stale_w2l, ours_l01_s2_stale_mlw2, ours_l01_s2, ours_l01_s2_mlw2]
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8, 32, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 0
+notes: "ml/w2l A/B 16n qwen: stale quad + quiet nulls, isolated"

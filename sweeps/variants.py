@@ -2407,6 +2407,48 @@ VARIANTS["ours_l01_s2_gate_c32"] = dict(
     env=dict(VARIANTS["ours_l01_s1"]["env"],
              CUDA_DEVICE_MAX_CONNECTIONS="32"),
 )
+
+# ---- moved-last GEMM reschedule + late-w2 flow scheduling (2026-08-26
+# exposed-movement-latency session; eager adoption kept). Knobs:
+#   ml  = FLUX_OURS_SCHED_MOVED_LAST=1 — defer THIS iteration's moved
+#         slots' problems behind every resident problem in the static
+#         schedule (per-iteration moved set; generalizes the retracted
+#         NR-14 class reorder, which deferred ALWAYS-resident weights).
+#   w2l = FLUX_OURS_S2_W2_LATE=1 — issue the l1 weight pushes after the
+#         fused l0 forward is enqueued (dispatch owns the proxy-queue
+#         head; w2 runway = l0 + gelu; join_w2 unchanged).
+VARIANTS["ours_l01_s2_stale_ml"] = dict(
+    VARIANTS["ours_l01_s2_stale"],
+    env=dict(VARIANTS["ours_l01_s2_stale"]["env"],
+             FLUX_OURS_SCHED_MOVED_LAST="1"),
+)
+VARIANTS["ours_l01_s2_stale_w2l"] = dict(
+    VARIANTS["ours_l01_s2_stale"],
+    env=dict(VARIANTS["ours_l01_s2_stale"]["env"],
+             FLUX_OURS_S2_W2_LATE="1"),
+)
+VARIANTS["ours_l01_s2_stale_mlw2"] = dict(
+    VARIANTS["ours_l01_s2_stale"],
+    env=dict(VARIANTS["ours_l01_s2_stale"]["env"],
+             FLUX_OURS_SCHED_MOVED_LAST="1", FLUX_OURS_S2_W2_LATE="1"),
+)
+# quiet-regime null twin (movement rare: expect no change vs ours_l01_s2)
+VARIANTS["ours_l01_s2_mlw2"] = dict(
+    VARIANTS["ours_l01_s2"],
+    env=dict(VARIANTS["ours_l01_s2"]["env"],
+             FLUX_OURS_SCHED_MOVED_LAST="1", FLUX_OURS_S2_W2_LATE="1"),
+)
+# strict gates (check_iters + stale rot + weight payload probe)
+VARIANTS["ours_l01_s2_gate_ml"] = dict(
+    VARIANTS["ours_l01_s2_gate"],
+    env=dict(VARIANTS["ours_l01_s2_gate"]["env"],
+             FLUX_OURS_SCHED_MOVED_LAST="1"),
+)
+VARIANTS["ours_l01_s2_gate_mlw2"] = dict(
+    VARIANTS["ours_l01_s2_gate"],
+    env=dict(VARIANTS["ours_l01_s2_gate"]["env"],
+             FLUX_OURS_SCHED_MOVED_LAST="1", FLUX_OURS_S2_W2_LATE="1"),
+)
 # v2-combine mechanism ablations (2026-08-25, 16n b64 l1 gap vs llc's
 # plain staged wait-all): one knob off each, canon otherwise. Decide the
 # single shipping combine config; ablations never ship as knobs.

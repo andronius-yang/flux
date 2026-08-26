@@ -78,6 +78,15 @@ struct GemmGroupedV2AGScatterArguments {
   // skip-ahead, so without this a front-positioned prefetch tile spinning on
   // its weight signal idles CTAs that have resident work available.
   bool sched_prefetch_last = false;
+  // Moved-last schedule (OURS s2, 2026-08-26): per-expert schedule-order
+  // encoding, device int32 [ep_nexperts]; bit 30 = deferred class, low 30
+  // bits = rank within class; sched_n_front = front-class expert count.
+  // Generalizes sched_prefetch_last (class = an arbitrary per-iteration
+  // deferred set, e.g. THIS iteration's moved slots) and takes precedence
+  // over it. nullptr = disabled. Bijective remap: front entries fill
+  // [0, tp*groups*n_front) stage-major, deferred entries follow.
+  const int32_t *sched_expert_order = nullptr;
+  int sched_n_front = 0;
   // a2av_ring mode: sends follow the reverse hierarchical ring, so the dense
   // static problem schedule is used instead of the dynamic tile-claimer buckets.
   bool a2av_ring_schedule = false;

@@ -92,7 +92,12 @@ class GemmGroupedV2AGScatterOp {
       // schedule modes only. nullopt/-1 = no weight gating.
       c10::optional<torch::Tensor> weight_signal = c10::nullopt,
       int64_t weight_signal_epoch = 0,
-      int64_t weight_gate_group_start = -1);
+      int64_t weight_gate_group_start = -1,
+      // moved-last schedule (2026-08-26): int32 CUDA [ep_nexperts]
+      // class+rank encoding (bit 30 = deferred class), + front-class
+      // count. Weight-gated a2av static-schedule forwards only.
+      c10::optional<torch::Tensor> sched_expert_order = c10::nullopt,
+      int64_t sched_n_front = 0);
   // Dispatch-only entry (EPIC baseline, a2av modes): runs the dispatch wire
   // WITHOUT the fused GEMM and materializes the received rows densely.
   // Returns (dense_rows [M_this_ep, hidden], sorted_scatter_index,

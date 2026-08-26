@@ -1,0 +1,61 @@
+# Handoff 22 — s2 exposed-movement-latency: moved-last GEMM schedule + late-w2 flow (2026-08-26)
+
+Goal (user-directed): minimize the exposed latency of s2 expert movement
+with EAGER adoption kept (no next-iteration adoption), by (a) rescheduling
+the fused l0 GEMM around the per-iteration moved set and (b) scheduling
+the weight flow so token dispatch owns the wire head.
+
+## Motivating derivation (existing data only)
+- Supply (OURS s1 16n b64 nsys, capsule 20260825-183714): NIC idle
+  40.7 ms of a 113 ms iteration (10.6 ms mid-window, 27.3 ms tail);
+  dispatch wire busy 38.2 ms front-loaded under the l0 GEMM.
+- Demand (stale K2 8n capsule 20260825-123035): 364 moves/iter global
+  = ~0.67 GB/rank/iter — fits the ~1 GB idle capacity ONLY if scheduled.
+- Contention (same capsule): stale vs quiet l0 5.9→46.8 ms, place
+  4.1→48.7 — ≈ equal parts wire contention and movement-issue cost.
+
+## Mechanisms (both knob-gated, default OFF; new binary = rule-4 boundary)
+1. **Moved-last schedule** `FLUX_OURS_SCHED_MOVED_LAST=1`: the static
+   schedule's bijective remap (`calc_sorted_problem_schedule_v2`) now
+   takes a per-iteration `sched_expert_order` int32[gpe] (bit 30 =
+   deferred class = THIS iteration's moved slots; low bits = rank) +
+   `sched_n_front`; front class fills the schedule prefix stage-major.
+   Release-time criterion: under s2 every tile of a moved slot is truly
+   blocked until its push lands (weight gate is per-expert), so deferring
+   exactly that class demotes no runnable tile — unlike NR-14's retracted
+   `sched_prefetch_last` (its class held resident-weight tiles; ~29%
+   regression; that knob stays OFF and is overridden by this one).
+   Plumbing: args struct → forward/forward_impl (all 5 sites) → pybind
+   (`sched_expert_order`, `sched_n_front`) → `ours_s2.build_sched_order`
+   → `gate_kwargs()`. FLUX_CHECK'd to weight-gated static-schedule
+   forwards only.
+2. **Late-w2 issue** `FLUX_OURS_S2_W2_LATE=1`: `apply_moves` issues only
+   w1 (+relay roles); w2 legs are stashed and issued by the driver via
+   `lane.issue_w2_late()` immediately AFTER the fused l0 forward is
+   enqueued — dispatch legs reach the proxy queue first, w2 rides the l0
+   compute shadow (runway = l0 + gelu; `join_w2` unchanged, with a
+   failsafe auto-issue). NO current-stream dependency is taken at late
+   issue (a wait_stream would park w2 behind the gated GEMM = deadlock);
+   w_stream FIFO orders w2 after w1.
+
+## Validation state
+- CPU logic test (scratchpad `test_moved_last_logic.py`): 500 trials —
+  remap bijection, front-before-deferred consumption, within-class
+  order, exact F-D equivalence when the moved set = {eid >= gate}. PASS.
+- py_compile clean; C++ diff reviewed; NOT yet compiled (Lustre outage —
+  torch headers unreachable). Build with the cudatoolkit 24.5/12.4 pin.
+- Arms: `ours_l01_s2_stale_{ml,w2l,mlw2}`, quiet null `ours_l01_s2_mlw2`,
+  gates `ours_l01_s2_gate_{ml,mlw2}`. Specs `mlgate_{k2,qwen}_4n.yaml`,
+  `mlab_{k2,qwen}_{4,8,16}n.yaml`. Chain: scratchpad `mlrun.sh`
+  (probe → build → gate → ab4 → ab8 → ab16), explicit --jobid.
+
+## Predictions to test (from the theory thread)
+- Stale mid-scale (8n, moderate moves): clearest ml win (weight landing
+  slow, unmoved prefix thick). Quiet: strict null. 16n heavy-move: watch
+  for NR-14-style pacing regression (should not appear — the deferred
+  class is genuinely blocked and the unmoved prefix carries most rows).
+- w2l alone should cut the l0-window wire contention ~half (w2 = half
+  the movement bytes); ml+w2l compose.
+- Failure modes to watch: gate torn-row family (rule-6 lineage — any
+  reorder shifts movement-issue timing; 3/3-green rule before canon),
+  join_w2 hang if a driver path skips issue_w2_late (failsafe covers).

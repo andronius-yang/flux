@@ -828,6 +828,10 @@ def main():
             _hbp("l0")
             l0_out = runner.l0_forward(inputs_shard, gate_kwargs=gate_kw)
             l0_end[i].record()
+            if lane is not None:
+                # FLUX_OURS_S2_W2_LATE: l1 weight pushes enqueue AFTER the
+                # dispatch legs (no-op when the knob is off / no trigger)
+                lane.issue_w2_late()
             intermediate = torch.nn.functional.gelu(l0_out)
             act_end[i].record()
             if lane is not None:
@@ -893,6 +897,8 @@ def main():
             ours_s2_stale=args.s2_stale,
             ours_s2_wprobe=int(args.s2_wprobe),
             ours_s2_weight_shard=args.weight_shard,
+            ours_s2_sched_moved_last=int(lane.sched_moved_last),
+            ours_s2_w2_late=int(lane.w2_late),
         )
 
     def fmt(times):

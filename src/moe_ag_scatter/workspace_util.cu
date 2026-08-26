@@ -99,7 +99,23 @@ calc_sorted_problem_schedule_v2(
     // fill_problem_info's linear consumption yields residents-then-slots.
     int out = i;
     const int gate = args.weight_gate_group_start;  // INT32_MAX when ungated
-    if (args.sched_prefetch_last && gate < ep_nexperts) {
+    if (args.sched_expert_order != nullptr) {
+      // Moved-last generalization (2026-08-26): host-computed per-expert
+      // class+rank encoding. Front class (bit 30 clear) fills
+      // [0, tp*groups*n_front) stage-major; the deferred class (THIS
+      // iteration's moved slots) follows, stage-major within itself, so
+      // the persistent fleet consumes every front tile before any
+      // weight-blocked moved tile can head-block a CTA slice.
+      const int enc = args.sched_expert_order[eid];
+      const int r = enc & 0x3FFFFFFF;
+      const int n_front = args.sched_n_front;
+      if ((enc & (1 << 30)) == 0) {
+        out = (stage * num_groups + gid) * n_front + r;
+      } else {
+        out = tp_size * num_groups * n_front +
+              (stage * num_groups + gid) * (ep_nexperts - n_front) + r;
+      }
+    } else if (args.sched_prefetch_last && gate < ep_nexperts) {
       if (eid < gate) {
         out = (stage * num_groups + gid) * gate + eid;
       } else {

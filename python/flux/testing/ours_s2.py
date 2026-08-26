@@ -37,7 +37,29 @@ import torch
 
 from flux.testing.moonep_fused_map import plan_weight_shards
 
-__all__ = ["OursMovementLane", "assign_gateways_sparse"]
+__all__ = ["OursMovementLane", "assign_gateways_sparse",
+           "build_sched_order"]
+
+
+def build_sched_order(gpe, moved_slots, device="cuda"):
+    """Moved-last schedule encoding for the fused op (int32 [gpe]):
+    front class (bit 30 clear) = pad slot 0 + unmoved slots in original
+    index order, rank in [0, n_front); deferred class (bit 30 set) = the
+    moved slots in ascending slot order (== WPM issue order), rank in
+    [0, gpe - n_front). Returns (order tensor on `device`, n_front)."""
+    moved = sorted({int(x) for x in moved_slots})
+    assert 0 not in moved, "pad slot cannot move"
+    order = [0] * gpe
+    front = 0
+    mset = set(moved)
+    for e in range(gpe):
+        if e not in mset:
+            order[e] = front
+            front += 1
+    for i, e in enumerate(moved):
+        order[e] = (1 << 30) | i
+    t = torch.tensor(order, dtype=torch.int32, device=device)
+    return t, front
 
 
 def assign_gateways_sparse(adds, local_world_size):
@@ -108,6 +130,20 @@ class OursMovementLane:
         # gateway lane at all) — hang-triage / ablation knob
         self.multicast = bool(int(os.environ.get("FLUX_OURS_S2_MCAST",
                                                  "1")))
+        # 2026-08-26 exposed-latency knobs (default OFF; arms set them):
+        # moved-last GEMM schedule — defer THIS iteration's moved slots'
+        # problems behind every resident problem in the static schedule,
+        # so no CTA head-blocks on a weight spin while resident tiles
+        # remain (release-time criterion: under s2 the moved class is
+        # genuinely blocked until its push lands, unlike the NR-14
+        # prefetch class whose weights were already resident).
+        self.sched_moved_last = bool(int(os.environ.get(
+            "FLUX_OURS_SCHED_MOVED_LAST", "0")))
+        # late w2 issue — enqueue the l1 weight pushes AFTER the fused l0
+        # forward (dispatch legs reach the proxy queue first; w2 runway =
+        # l0 + gelu; join_w2 semantics unchanged).
+        self.w2_late = bool(int(os.environ.get(
+            "FLUX_OURS_S2_W2_LATE", "0")))
 
         # WPM slot space = gpe rows so prefetch_slots() IS the fused op's
         # [gpe, r0, r1] weights view; slot 0 = the pad slot (never pushed,
@@ -140,6 +176,13 @@ class OursMovementLane:
         self.move_bytes_this_iter = 0
         self.trigger_fired = 0
         self.last_gain_ppm = 0
+        # moved-last schedule products (CURRENT iteration only)
+        self._sched_order = None
+        self._sched_n_front = 0
+        # late-w2 pending state
+        self._w2_pending = False
+        self._w2_pairs = self._w2_shards = self._w2_keep = None
+        self.ev_w2_issue_done = torch.cuda.Event()
 
     # -- setup ---------------------------------------------------------------
 
@@ -165,14 +208,21 @@ class OursMovementLane:
     def gate_kwargs(self):
         """weight-gate kwargs for the fused l0 forward (pad-first slot
         convention: gate groups 1..nlp <-> WPM slots 1..nlp)."""
-        return dict(
+        kw = dict(
             weight_signal=self.op_w1.signals()[1:],
             weight_signal_epoch=int(self.op_w1.epoch()),
             weight_gate_group_start=1,
         )
+        if self._sched_order is not None:
+            # moved-last schedule (this trigger iteration's moved set)
+            kw["sched_expert_order"] = self._sched_order
+            kw["sched_n_front"] = self._sched_n_front
+        return kw
 
     def join_w2(self):
         """Zero-SM landing gate for the l1 weights, on the current stream."""
+        if self._w2_pending:  # failsafe: driver skipped issue_w2_late
+            self.issue_w2_late()
         self.op_w2.join()
 
     def join_w1(self):
@@ -201,6 +251,9 @@ class OursMovementLane:
         self.move_bytes_this_iter = 0
         self.trigger_fired = 0
         self.last_gain_ppm = int(gain_ppm)
+        self._sched_order = None
+        self._sched_n_front = 0
+        assert not self._w2_pending, "previous iteration's w2 never issued"
         if gain_ppm < self.gain_threshold_ppm:
             return False
         changed = (new_p2l_host != self.resident_p2l).nonzero(
@@ -230,45 +283,88 @@ class OursMovementLane:
 
         cur = torch.cuda.current_stream()
         self.w_stream.wait_stream(cur)
+        mine = changed[(changed // self.nlp) == self.rank]
+        moved_slots = torch.unique(mine % self.nlp + 1)
+        # keep mask + shard plan hoisted out of the op loop: identical
+        # for w1/w2 (same slot space; same expert byte size ffn*H*es)
+        mask = torch.ones(self.gpe, dtype=torch.bool)
+        mask[moved_slots] = False
+        keep = mask.nonzero(as_tuple=True)[0].cuda()
+        shards = None
+        if self.weight_shard != "off":
+            shards = plan_weight_shards(
+                pairs_t, self.L,
+                self.ffn * self.H
+                * self.op_w1.weight_home().element_size(),
+                mode="mcast")
+        if self.sched_moved_last and moved_slots.numel() > 0:
+            # moved-last GEMM schedule encoding for the fused l0 forward:
+            # front class = pad + unmoved slots (original order), deferred
+            # class = MY moved slots ascending (== push issue order)
+            self._sched_order, self._sched_n_front = build_sched_order(
+                self.gpe, moved_slots.tolist())
+        ops_now = ((self.op_w1,) if self.w2_late
+                   else (self.op_w1, self.op_w2))
         with torch.cuda.stream(self.w_stream):
             self.ev_move_start.record()
-            # raise unmoved slots to the NEW epoch so only moved slots gate
-            new_epoch = int(self.op_w1.epoch()) + 1
-            mine = changed[(changed // self.nlp) == self.rank]
-            moved_slots = torch.unique(mine % self.nlp + 1)
-            # keep mask + shard plan hoisted out of the op loop: identical
-            # for w1/w2 (same slot space; same expert byte size ffn*H*es)
-            mask = torch.ones(self.gpe, dtype=torch.bool)
-            mask[moved_slots] = False
-            keep = mask.nonzero(as_tuple=True)[0].cuda()
-            shards = None
-            if self.weight_shard != "off":
-                shards = plan_weight_shards(
-                    pairs_t, self.L,
-                    self.ffn * self.H
-                    * self.op_w1.weight_home().element_size(),
-                    mode="mcast")
-            for op in (self.op_w1, self.op_w2):
-                op.signals().index_fill_(0, keep, new_epoch)
-                op.set_plan(pairs_t)
-                if shards is not None:
-                    op.set_shard_plan(shards, self.shard_chunk_bytes,
-                                      self.L)
-                op.forward(self.multicast)
+            for op in ops_now:
+                self._issue_op(op, pairs_t, shards, keep)
             self.ev_issue_done.record()
         self.side_stream.wait_event(self.ev_issue_done)
         with torch.cuda.stream(self.side_stream):
-            for op in (self.op_w1, self.op_w2):
-                if self.multicast:
-                    op.forward_gateway()
-                if self.weight_shard != "off":
-                    op.forward_egress()
-                    op.forward_ingress()
-                    op.forward_shard_join()
+            for op in ops_now:
+                self._issue_roles(op)
             self.ev_move_end.record()
+        if self.w2_late:
+            self._w2_pending = True
+            self._w2_pairs, self._w2_shards, self._w2_keep = (
+                pairs_t, shards, keep)
 
         self.resident_p2l = new_p2l_host.long().clone()
         return True
+
+    def _issue_op(self, op, pairs_t, shards, keep):
+        """Issue one weight op's movement legs on the CURRENT stream:
+        raise unmoved slots to the new epoch (only moved slots gate),
+        install the plan, forward. Epoch read per-op at issue time (w1/w2
+        advance in lockstep, but late-w2 must not reuse a stale value)."""
+        new_epoch = int(op.epoch()) + 1
+        op.signals().index_fill_(0, keep, new_epoch)
+        op.set_plan(pairs_t)
+        if shards is not None:
+            op.set_shard_plan(shards, self.shard_chunk_bytes, self.L)
+        op.forward(self.multicast)
+
+    def _issue_roles(self, op):
+        """Late-drained relay roles for one op (side stream)."""
+        if self.multicast:
+            op.forward_gateway()
+        if self.weight_shard != "off":
+            op.forward_egress()
+            op.forward_ingress()
+            op.forward_shard_join()
+
+    def issue_w2_late(self):
+        """FLUX_OURS_S2_W2_LATE deferred l1-weight issue — called by the
+        driver right after the fused l0 forward is ENQUEUED, so the
+        dispatch wire's puts reach the proxy queue ahead of w2's. NO
+        current-stream dependency is taken here (a wait_stream would park
+        w2 behind the whole l0 GEMM, whose moved tiles spin on w1 signals
+        -> the w2 legs would deadlock join_w2); w_stream's own FIFO
+        already orders these puts after w1's. No-op unless a trigger
+        iteration stashed pending w2 state."""
+        if not self._w2_pending:
+            return
+        self._w2_pending = False
+        with torch.cuda.stream(self.w_stream):
+            self._issue_op(self.op_w2, self._w2_pairs, self._w2_shards,
+                           self._w2_keep)
+            self.ev_w2_issue_done.record()
+        self.side_stream.wait_event(self.ev_w2_issue_done)
+        with torch.cuda.stream(self.side_stream):
+            self._issue_roles(self.op_w2)
+            self.ev_move_end.record()
+        self._w2_pairs = self._w2_shards = self._w2_keep = None
 
     def movement_ms(self):
         """Off-chain movement-stream span (never summed into phases)."""
