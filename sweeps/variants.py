@@ -2650,3 +2650,17 @@ VARIANTS["ours_l01_s1_gate_wb_r2_dyn"] = dict(
              FLUX_A2AV_RS_RECV_DYN="1"),
     requires=list(_DYN_REQUIRES),
 )
+# scenario-2 at replica parity (2026-08-26): the r2 counterpart of
+# ours_l01_s2 (always-solve threshold-0 quiet — place lane timed every
+# iteration) for the slack-parity record campaign. Same never-mix
+# boundary as the s1 r2 arms: slack-2 cells never compare to R_red=0.
+VARIANTS["ours_l01_s2_r2"] = dict(
+    VARIANTS["ours_l01_s2"],
+    test_args=VARIANTS["ours_l01_s2"]["test_args"]
+              + ["--redundant_per_rank", "2"],
+)
+VARIANTS["ours_l01_s2_gate_r2"] = dict(
+    VARIANTS["ours_l01_s2_gate"],
+    test_args=VARIANTS["ours_l01_s2_gate"]["test_args"]
+              + ["--redundant_per_rank", "2"],
+)

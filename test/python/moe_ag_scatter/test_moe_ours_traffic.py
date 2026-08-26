@@ -362,7 +362,13 @@ def main():
         phys_ref_b, pll_aux_b = loccap_route_sl(
             topk_all.long().cpu(), plan_batch.p2l, plan_batch.l2p,
             plan_batch.lcnts, cfg.nlp, L, args.eps, return_tables=True)
-        bounds_b = loccap_sl_bounds(pll_aux_b, W, args.pll_f_cap)
+        # r2 fix (2026-08-26): the batch/adopted placement's forced
+        # geometry can exceed the resident-derived f_cap (kstats[2]
+        # ticket overflow at i0 under capacity sizing + replica headroom;
+        # exact no-op whenever the resident f_cap already dominates) —
+        # auto-derive the batch bounds' own f_cap and take the max.
+        bounds_b = loccap_sl_bounds(pll_aux_b, W, -1)
+        args.pll_f_cap = max(args.pll_f_cap, bounds_b["f_cap"])
         for k in ("recv_cap", "pair_cap"):
             pll_bounds[k] = max(pll_bounds[k], bounds_b[k])
 
