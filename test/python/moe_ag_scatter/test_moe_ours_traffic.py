@@ -127,6 +127,10 @@ def parse_args():
                         "plan bracket. Flip only after the 4n+16n A/B.")
     p.add_argument("--sm_margin", type=int, default=1)
     p.add_argument("--skip_correctness", default=False, action="store_true")
+    p.add_argument("--redundant_per_rank", type=int, default=0,
+                   help="replica slot headroom per rank (nlp = G/W + this). "
+                        "OURS canon = 0; EPIC/EPLB/llc default 2 -- the r2 "
+                        "arms are the parity probe (2026-08-25)")
     p.add_argument("--check_iters", type=int, default=0,
                    help="GATE MODE: validate EVERY iteration's output "
                         "against the logical local reference (relaxed "
@@ -273,7 +277,7 @@ def main():
 
     cfg = UltraEPConfig(
         S=S, K=args.topk, G=args.G, R=W, H=args.H, D=L,
-        R_red=0, locality_aware=False, interleave=True,
+        R_red=args.redundant_per_rank, locality_aware=False, interleave=True,
     )
     topk_all = choosed_experts.reshape(W, S, args.topk).cpu().int()
     tpe = loads_from_topk(cfg, topk_all)
@@ -564,6 +568,11 @@ def main():
     RECORDER.emit_info(
         ours_fusion="slipstream_v2",
         ours_plan_overlap=int(bool(args.plan_overlap)),
+        # plan-lane cost knobs (ours.py module header; all default OFF)
+        ours_plan_xchg_narrow=planner.xchg_narrow,
+        ours_plan_prealloc=int(planner.plan_prealloc),
+        ours_plan_graph=int(planner.plan_graph),
+        ours_plan_scale_graph=int(runner.scale_graph),
         ours_sizing=args.sizing,
         ours_recv_cap=int(recv_cap),
         ours_l0_recv_rows=int(l0_recv_rows),

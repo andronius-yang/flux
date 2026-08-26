@@ -55,6 +55,7 @@ Module imports torch ONLY (file-path importable by sweeps tooling).
 """
 
 import math
+import os
 
 import torch
 
@@ -565,12 +566,90 @@ def stats_host(res):
 # Stage C — rank-level finalize (trigger-time only; COLD path)
 # --------------------------------------------------------------------------
 
+def _finalize_hosts_wirebal(res, R, ranks_per_node, nlp):
+    """FLUX_OURS_PLACE_WIREBAL=1 (2026-08-25 nsys evidence): the staged
+    combine wire drains through ONE NVSHMEM host proxy per SOURCE rank
+    (~7.6 GB/s each), so per-rank OUTBOUND wire bytes — not per-rank
+    compute rows — set the combine tail; snake/lpt balance compute shares
+    and left a 272/121/53/15 MB per-rank split on one node at 16n b64.
+
+    Node-level placement is UNTOUCHED (inter-node volumes depend only on
+    node membership). WITHIN each node, instances are greedily
+    LPT-assigned to the L local ranks on their expected REMOTE-SERVED
+    rows (the wire-bytes weight), tie-broken by total served rows so the
+    dispatch-recv/GEMM0 load stays near-balanced too. Router model =
+    incidence_proxy: node-v entries of expert g are served at v when an
+    instance is resident there, else at primary[g] — so only the primary
+    instance carries the uninstanced nodes' demand over the wire:
+        w_wire(g, u) = [u == primary[g]] * sum_v hist[v, g] * !ion[g, v]
+        w_tot(g, u)  = w_wire(g, u) + hist[u, g]
+    A heuristic proxy (min-cover consolidation and eps spill ignored),
+    the same fairness class as snake/lpt's load_e/n_inst shares.
+
+    Tradeoff (CPU-measured on skewed synth cells): within-node wire
+    spread drops ~60-70%; within-node TOTAL-rows spread can grow to
+    ~+-8-10% of the per-rank mean (slot-full nodes leave phase C little
+    freedom). Deliberate: the proxy drain is the MEASURED combine
+    bottleneck (serialized ~7.6 GB/s per rank) while GEMM0 tile
+    scheduling absorbs moderate row imbalance — the wb-vs-base A/B
+    capsule is the verdict."""
+    inst_nodes = res["inst_nodes"]
+    hist = res["hist"]                                      # [NN, G]
+    primary = res["primary"]                                # [G]
+    G, NN = inst_nodes.shape
+    L = ranks_per_node
+    inst_h = inst_nodes.cpu()
+    hist_h = hist.cpu().long()
+    # remote-served rows per expert: demand from nodes WITHOUT an
+    # instance (all of it lands on the primary instance)
+    rem_g = (hist_h * (~inst_h).t().long()).sum(0)          # [G]
+    prim_h = primary.cpu().long()
+    hosts = [[] for _ in range(G)]
+    for u in range(NN):
+        insts = inst_h[:, u].nonzero(as_tuple=True)[0].tolist()
+        w_wire = {g: (int(rem_g[g]) if int(prim_h[g]) == u else 0)
+                  for g in insts}
+        w_tot = {g: w_wire[g] + int(hist_h[u, g]) for g in insts}
+        ranks = list(range(u * L, (u + 1) * L))
+        wire_load = {r: 0 for r in ranks}
+        tot_load = {r: 0 for r in ranks}
+        rslots = {r: 0 for r in ranks}
+        # two-phase LPT: a single (wire, tot) lexicographic min-key would
+        # funnel EVERY zero-wire instance onto the min-wire rank (tot only
+        # tie-breaks equal wire loads) — wire balances, compute collapses.
+        # Phase W places the wire-carrying instances by wire-LPT; phase C
+        # places the zero-wire rest by pure total-rows LPT around them.
+        wire_set = sorted((g for g in insts if w_wire[g] > 0),
+                          key=lambda g: (-w_wire[g], -w_tot[g], g))
+        comp_set = sorted((g for g in insts if w_wire[g] == 0),
+                          key=lambda g: (-w_tot[g], g))
+        for phase, group in (("w", wire_set), ("c", comp_set)):
+            for g in group:
+                cand = [r for r in ranks if rslots[r] < nlp]
+                assert cand, (u, g, "no rank slot left — raise nlp")
+                if phase == "w":
+                    r = min(cand,
+                            key=lambda r: (wire_load[r], tot_load[r], r))
+                else:
+                    r = min(cand, key=lambda r: (tot_load[r], r))
+                hosts[g].append(r)
+                wire_load[r] += w_wire[g]
+                tot_load[r] += w_tot[g]
+                rslots[r] += 1
+    return [sorted(h) for h in hosts]
+
+
 def finalize_hosts(res, R, ranks_per_node, nlp, method="snake"):
     """COLD PATH (syncs). Node-level placement -> per-expert sorted rank
     lists (python). snake: vectorized boustrophedon over per-node
     instances sorted by share desc — near-LPT, deterministic, one host
     sync. lpt: the reference host LPT (placelambda_gpu Stage C
-    semantics)."""
+    semantics). FLUX_OURS_PLACE_WIREBAL=1 (default OFF) overrides method
+    with the within-node combine-wire LPT (_finalize_hosts_wirebal) —
+    node membership identical, only rank identities inside each node
+    change; every caller (s1 setup, s2 adopt) inherits the knob."""
+    if bool(int(os.environ.get("FLUX_OURS_PLACE_WIREBAL", "0"))):
+        return _finalize_hosts_wirebal(res, R, ranks_per_node, nlp)
     inst_nodes = res["inst_nodes"]
     load_e = res["load_e"]
     G, NN = inst_nodes.shape
