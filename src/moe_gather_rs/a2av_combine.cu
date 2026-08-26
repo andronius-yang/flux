@@ -407,6 +407,10 @@ a2av_lane_token_map_kernel(A2AVLaneTokenMapArguments args) {
     for (int32_t k = args.red_ptr[t]; k < args.red_ptr[t + 1]; k++) {
       args.token_of[args.red_row[k]] = (int32_t)t;
     }
+    if (args.remain != nullptr) {
+      // arrival-dynamic receiver: outstanding contributions per token
+      args.remain[t] = args.red_ptr[t + 1] - args.red_ptr[t];
+    }
   }
 }
 
@@ -553,6 +557,151 @@ a2av_combine_bucket_reduce_kernel(A2AVBucketReduceArguments args) {
   }
 }
 
+// ---- arrival-dynamic receiver kernel (H4, FLUX_A2AV_RS_RECV_DYN) -----------
+// One persistent kernel replaces the bucket receiver's host wait chain. Warp
+// protocol: the leader polls the per-lane epoch signals (64-bit acquire, the
+// eager kernel's proven pattern), claims chunk_rows of any ARRIVED lane via
+// its atomic cursor, and decrements each claimed row's token counter; the
+// warp observing a counter hit zero folds that token in place -- the bucket
+// fold's exact per-element arithmetic (fp32 accumulate over the token's CSR
+// slice in red_ptr order, one write), so the output is BITWISE-identical to
+// the wait-all reduce for every arrival permutation.
+// Safety: each recv row is claimed exactly once (cursor atomics), belongs to
+// exactly one token (token_of), and each token is folded by exactly one warp
+// (the atomicSub total order on remain[t]). Data visibility: the payload of a
+// lane is system-visible BEFORE its signal fires (blocking-wire discipline,
+// SCHEMA rule 6) and every panel line is read for the first time inside this
+// kernel only after (a) some warp acquire-loaded that lane's signal and (b)
+// this warp observed the resulting decrement through the same-location atomic
+// total order, with a __threadfence() between the observation and the loads.
+template <typename T>
+__global__ void
+__launch_bounds__(512, 1) a2av_combine_dyn_reduce_kernel(A2AVDynReduceArguments args) {
+  constexpr int kElemsPerPack = PackU<T>::kElemsPerPack;
+  constexpr unsigned kFull = 0xffffffffu;
+  const int64_t packs_per_row = args.n / kElemsPerPack;
+  T const *panel = (T const *)args.recv_panel;
+  const int lane_id = threadIdx.x % 32;
+  const int warp = (int)(blockIdx.x * (blockDim.x / 32) + threadIdx.x / 32);
+  const uint64_t all_mask =
+      (args.n_lanes >= 64) ? ~0ull : ((1ull << args.n_lanes) - 1ull);
+  uint64_t done_mask = 0;  // warp-uniform: lanes this warp saw fully claimed
+  uint64_t spins = 0;
+  while (done_mask != all_mask) {
+    bool progress = false;
+    for (int i = 0; i < args.n_lanes; i++) {
+      const int s = (warp + i) % args.n_lanes;  // stagger start lanes across warps
+      if ((done_mask & (1ull << s)) != 0) {
+        continue;
+      }
+      int arrived = 0;
+      if (lane_id == 0) {
+        arrived =
+            load_acquire_sys_u64(args.recv_signals + args.lane_sig[s]) >= args.run_id;
+      }
+      arrived = __shfl_sync(kFull, arrived, 0);
+      if (!arrived) {
+        continue;
+      }
+      int start = 0;
+      if (lane_id == 0) {
+        start = atomicAdd(args.lane_cursor + s, args.chunk_rows);
+      }
+      start = __shfl_sync(kFull, start, 0);
+      if (start >= args.lane_rows[s]) {
+        done_mask |= 1ull << s;  // fully claimed; in-flight chunks finish in their warps
+        continue;
+      }
+      const int hi = (start + args.chunk_rows < args.lane_rows[s]) ? start + args.chunk_rows
+                                                                   : args.lane_rows[s];
+      for (int r = start; r < hi; r++) {
+        const int64_t row = args.lane_row_lo[s] + r;
+        const int32_t t = args.token_of[row];
+        if (t < 0 || t >= args.ntokens_local) {
+          // v2 slack-row guard (16n b32+ livelock fix): a row inside the
+          // uc-derived lane extent but absent from the reduce CSR reads the
+          // -1 sentinel (token_of is -1-filled before the map kernel). It is
+          // still CLAIMED — the lane exhausts and the kernel exits — but it
+          // carries no contribution: never decrement remain or fold (the
+          // garbage-t OOB atomicSub corrupted adjacent cursor metadata into
+          // perpetual fake progress).
+          continue;
+        }
+        int old = 0;
+        if (lane_id == 0) {
+          old = atomicSub(args.remain + t, 1);
+        }
+        old = __shfl_sync(kFull, old, 0);
+        if (old != 1) {
+          continue;  // token still has outstanding contributions elsewhere
+        }
+        // last contribution: fold token t. The fence upgrades the atomic
+        // observation to an acquire of every sibling row's payload (see the
+        // kernel comment); each panel line below is read for the first time.
+        __threadfence();
+        const int32_t k_lo = args.red_ptr[t];
+        const int32_t k_hi = args.red_ptr[t + 1];
+        for (int64_t pk = lane_id; pk < packs_per_row; pk += 32) {
+          const int64_t col = pk * kElemsPerPack;
+          float acc[kElemsPerPack];
+          CUTLASS_PRAGMA_UNROLL
+          for (int e = 0; e < kElemsPerPack; e++) {
+            acc[e] = 0.0f;
+          }
+          for (int32_t k = k_lo; k < k_hi; k++) {
+            PackU<T> pk_u;
+            pk_u.data = loadPack(panel + (int64_t)args.red_row[k] * args.n + col);
+            CUTLASS_PRAGMA_UNROLL
+            for (int e = 0; e < kElemsPerPack; e++) {
+              acc[e] += elem_to_float<T>(pk_u.elems[e]);
+            }
+          }
+          PackU<T> out;
+          CUTLASS_PRAGMA_UNROLL
+          for (int e = 0; e < kElemsPerPack; e++) {
+            out.elems[e] = float_to_elem<T>(acc[e]);
+          }
+          storePack((T *)args.output + (int64_t)t * args.n + col, out.data);
+        }
+      }
+      progress = true;
+    }
+    if (!progress && done_mask != all_mask) {
+      __nanosleep(200);
+      if (args.spin_limit != 0 && ++spins >= args.spin_limit) {
+        if (warp == 0 && lane_id == 0) {
+          // per-lane post-mortem: which signals are short of run_id, and how
+          // far each cursor got vs the lane extent (a negative or overrun
+          // cursor betrays OOB corruption)
+          for (int s2 = 0; s2 < args.n_lanes; s2++) {
+            printf(
+                "[a2av-combine] dyn lane %d: sig %llu want %llu cursor %d "
+                "rows %d\n",
+                s2,
+                (unsigned long long)load_acquire_sys_u64(
+                    args.recv_signals + args.lane_sig[s2]),
+                (unsigned long long)args.run_id,
+                args.lane_cursor[s2],
+                args.lane_rows[s2]);
+          }
+        }
+        if (lane_id == 0) {
+          printf(
+              "[a2av-combine] dyn reduce SPIN LIMIT: warp %d done_mask 0x%llx "
+              "of 0x%llx run_id %llu\n",
+              warp,
+              (unsigned long long)done_mask,
+              (unsigned long long)all_mask,
+              (unsigned long long)args.run_id);
+        }
+        __trap();
+      }
+    } else {
+      spins = 0;
+    }
+  }
+}
+
 }  // namespace
 
 // Force-load every combine kernel at construction time. Under
@@ -592,6 +741,9 @@ a2av_combine_preload(DataTypeEnum dtype) {
         CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_bucket_scan_kernel));
         CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_bucket_scatter_kernel));
         CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_combine_bucket_reduce_kernel<T>));
+        // arrival-dynamic receiver: persistent spin kernel, launched before
+        // the epoch's first NVSHMEM on-stream call -- same deadlock class
+        CUDA_CHECK(cudaFuncGetAttributes(&attr, a2av_combine_dyn_reduce_kernel<T>));
       },
       [&]() { FLUX_CHECK(false) << "unsupported dtype for a2av combine preload: " << dtype; });
 }
@@ -807,6 +959,28 @@ a2av_combine_bucket_reduce(
         a2av_combine_bucket_reduce_kernel<T><<<grid, block, 0, stream>>>(args);
       },
       [&]() { FLUX_CHECK(false) << "unsupported dtype for a2av bucket reduce: " << dtype; });
+  CUDA_CHECK(cudaGetLastError());
+}
+
+void
+a2av_combine_dyn_reduce(
+    A2AVDynReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream) {
+  constexpr int kThreads = 512;
+  FLUX_CHECK(args.n % 8 == 0) << "n must be a multiple of the 8-elem pack width";
+  FLUX_CHECK_GT(args.n_lanes, 0) << "arrival-dynamic reduce needs at least one lane";
+  FLUX_CHECK_LE(args.n_lanes, kA2AVMaxWorld);
+  FLUX_CHECK_LE(args.n_lanes, 64) << "arrival-dynamic lane mask holds 64 lanes";
+  FLUX_CHECK_GT(args.chunk_rows, 0);
+  FLUX_CHECK_GT(args.ntokens_local, 0);
+  dim3 grid(args.threadblock_count), block(kThreads);
+  tuple_return_if(
+      cute::make_tuple(_FP16{}, _BF16{}),
+      [&](auto cdtype) { return cdtype == dtype; },
+      [&](auto cdtype) {
+        using T = decltype(to_cuda_dtype(cdtype));
+        a2av_combine_dyn_reduce_kernel<T><<<grid, block, 0, stream>>>(args);
+      },
+      [&]() { FLUX_CHECK(false) << "unsupported dtype for a2av dyn reduce: " << dtype; });
   CUDA_CHECK(cudaGetLastError());
 }
 

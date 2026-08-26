@@ -430,6 +430,10 @@ struct A2AVLaneTokenMapArguments {
   int32_t const *red_row;  // [red_total] recv-panel rows per token
   int64_t ntokens;
   int32_t *token_of;       // [image_rows] out: recv row -> local token
+  // optional (arrival-dynamic receiver): per-token outstanding-contribution
+  // counters, remain[t] = red_ptr[t + 1] - red_ptr[t]. LAST field with
+  // default: existing launch sites use positional aggregate init.
+  int32_t *remain = nullptr;  // [ntokens] out, skipped when nullptr
 };
 
 struct A2AVLaneReduceArguments {
@@ -513,5 +517,50 @@ void a2av_bucket_scan(A2AVBucketScanArguments const &args, cudaStream_t stream);
 void a2av_bucket_scatter(A2AVBucketScatterArguments const &args, cudaStream_t stream);
 void a2av_combine_bucket_reduce(
     A2AVBucketReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream);
+
+// ---- arrival-dynamic receiver (H4, FLUX_A2AV_RS_RECV_DYN) ------------------
+// The bucket receiver's host wait chain consumes lanes in EXPECTED arrival
+// order: one out-of-order arrival head-of-line blocks the folds of every lane
+// already landed behind it (S = L + NN - 1 sequential front-end waits). This
+// ONE persistent kernel replaces the chain: warps poll the S per-lane epoch
+// signals directly, claim row chunks of any ARRIVED lane via per-lane atomic
+// cursors, and decrement each row's token counter; the warp whose decrement
+// completes a token folds it immediately (register CSR walk in red_ptr order,
+// read once / written once -- the bucket fold's exact arithmetic, so the
+// output stays BITWISE-identical to the wait-all reduce; only the schedule is
+// arrival-dependent). The post-last-arrival tail is that lane's rows plus the
+// tokens it completes -- the bucket receiver's ideal tail, robust to any
+// arrival permutation. Zero-row lanes are excluded host-side (they still
+// signal; no token can complete there).
+struct A2AVDynReduceArguments {
+  void const *recv_panel;        // [image_rows, n] (n_split == 1, sid 0)
+  int32_t const *red_ptr;        // [ntokens_local + 1]
+  int32_t const *red_row;        // [red_total] recv-panel rows per token
+  int32_t const *token_of;       // [image_rows] recv row -> local token
+  int32_t *remain;               // [ntokens_local] outstanding contributions (pre-filled)
+  // remain[] extent. v2 slack-row hardening (16n b32+ livelock fix): token_of
+  // is -1-filled before the map kernel, and the kernel skips any row whose
+  // token falls outside [0, ntokens_local) — uc-derived lane extents may
+  // exceed the reduce CSR's coverage, and such slack rows must be claimed
+  // (so lanes exhaust) but never decrement remain or fold.
+  int64_t ntokens_local;
+  int32_t *lane_cursor;          // [n_lanes] row-claim cursors (pre-zeroed)
+  void *output;                  // [ntokens_local, n]
+  uint64_t const *recv_signals;  // [world_size * n_split] epoch signals, never reset
+  uint64_t run_id;               // this epoch's expected signal value (GEQ)
+  int32_t lane_sig[kA2AVMaxWorld];     // lane -> recv_signals slot (rank * n_split + sid)
+  int64_t lane_row_lo[kA2AVMaxWorld];  // lane -> first recv row of its C' block
+  int32_t lane_rows[kA2AVMaxWorld];    // lane -> row count (> 0)
+  int n_lanes;                   // materializing lanes with rows (<= L + NN - 1)
+  int n;                         // row width (== n / n_split, n_split == 1)
+  int chunk_rows;                // rows claimed per cursor bump
+  int threadblock_count;
+  // 0 = unlimited (default). >0: trap after this many consecutive
+  // no-progress sleeps (FLUX_A2AV_RS_SPIN_LIMIT). LAST field with default:
+  // launch sites use positional aggregate init.
+  uint64_t spin_limit = 0;
+};
+void a2av_combine_dyn_reduce(
+    A2AVDynReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream);
 
 }  // namespace bytedance::flux
