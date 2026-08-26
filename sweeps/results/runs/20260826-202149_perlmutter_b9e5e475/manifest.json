@@ -1,0 +1,59 @@
+{
+  "artifacts": [],
+  "capabilities": {
+    "FLUX_A2AV_DISPATCH_ONLY_TAG": true,
+    "FLUX_A2AV_EARLY_LAUNCH": true,
+    "FLUX_A2AV_FUSED_STAGE2": true,
+    "FLUX_A2AV_LB_UNION": true,
+    "FLUX_A2AV_NSPLIT_HONOR_TAG": true,
+    "FLUX_A2AV_RS_BUCKET_TAG": true,
+    "FLUX_A2AV_RS_CTA_1086_TAG": true,
+    "FLUX_A2AV_RS_FUSED_PACK_TAG": true,
+    "FLUX_A2AV_RS_MAX_CONV_ROWS": true,
+    "FLUX_A2AV_RS_MAX_SEND_ROWS": true,
+    "FLUX_A2AV_RS_MAX_WIRE_ROWS": true,
+    "FLUX_A2AV_RS_MSPLIT_TAG": true,
+    "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG": true,
+    "FLUX_A2AV_SLIPSTREAM2_TAG": true,
+    "FLUX_A2AV_WAVE_PACK_TAG": true,
+    "FLUX_PLACELAMBDA_ROUTE_SL_TAG": true
+  },
+  "cells": [
+    {
+      "cell_id": "ours_l01_s2_gate_r2_trace-610042_b8_k8_isolated",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260826-202149_perlmutter_b9e5e475/cells/ours_l01_s2_gate_r2_trace-610042_b8_k8_isolated",
+      "status": "stuck"
+    }
+  ],
+  "created": "2026-08-26T20:33:08Z",
+  "flux_libs": [
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib/libflux_cuda.so",
+      "sha256": "0aa1b051eb3f1f64bcecc5e688c0c21069d8debff71c00e152c019ad2ac8b62b"
+    },
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib/libflux_cuda_ths_op.so",
+      "sha256": "4f98173357ff2f745a0fa06cc331752e2f56bfddfaaf1775d1cd4937d66f1be3"
+    },
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib64/libflux_cuda.so",
+      "sha256": "0aa1b051eb3f1f64bcecc5e688c0c21069d8debff71c00e152c019ad2ac8b62b"
+    },
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib64/libflux_cuda_ths_op.so",
+      "sha256": "4f98173357ff2f745a0fa06cc331752e2f56bfddfaaf1775d1cd4937d66f1be3"
+    }
+  ],
+  "git": {
+    "dirty": true,
+    "sha": "f96f5bc8b6640a4c8a504828bf71bd57ebc21293"
+  },
+  "host": "login02",
+  "platform": {
+    "fabric": "cxi",
+    "name": "perlmutter",
+    "ranks_per_node": 4
+  },
+  "run_id": "20260826-202149_perlmutter_b9e5e475",
+  "staging_root": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260826-202149_perlmutter_b9e5e475"
+}
