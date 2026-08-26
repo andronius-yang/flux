@@ -129,8 +129,11 @@ rule 4 (same binary) governs every in-table comparison.
 
 ## SLACK PARITY RULE (2026-08-25, user directive)
 
-All expert-movement baselines must run the SAME replica-slot slack
-(redundant slots per rank), currently **2**. The 2026-08-25 campaign found
+All expert-replication-based baselines MUST have their redundant slots
+per rank EXPLICITLY SPECIFIED on the command line — never rely on driver
+defaults. The campaign default is **2** for every replication baseline
+(EPIC, EPLB, UltraEP, llc, OURS); MoonEP keeps its own default selection
+(B = E/R prefetch slots — different semantics, do not force to 2). The 2026-08-25 campaign found
 OURS was the only arm at R_red=0 (a structural handicap worth 16-24% at
 8n); never let this drift again. Exact commands per baseline:
 
