@@ -126,3 +126,29 @@ root; plain python3 suffices):
 Never-mix reminders when comparing to older data: COMET/EPIC/PLL ns flips +
 Slipstream v1->v2 + llc recv-bound fix are all 8/24 boundaries vs datacamp;
 rule 4 (same binary) governs every in-table comparison.
+
+## SLACK PARITY RULE (2026-08-25, user directive)
+
+All expert-movement baselines must run the SAME replica-slot slack
+(redundant slots per rank), currently **2**. The 2026-08-25 campaign found
+OURS was the only arm at R_red=0 (a structural handicap worth 16-24% at
+8n); never let this drift again. Exact commands per baseline:
+
+- EPIC / llc arms (epic driver `test_moe_epic_traffic.py`): pass
+  `--redundant_per_rank 2` explicitly (driver default IS 2 — pin it anyway
+  so a default change can never silently unlevel the field).
+- EPLB (`test_moe_eplb_traffic.py`): pass `--redundant_per_rank 2`
+  (default 2 — pin).
+- UltraEP: `UltraEPConfig.R_red` default 2 — pin via the driver flag where
+  exposed.
+- OURS (`test_moe_ours_traffic.py`): pass `--redundant_per_rank 2` — i.e.
+  use the `_r2` arms (`ours_l01_s1_r2`, `ours_l01_s1_wb_r2`). The bare
+  `ours_l01_s1` runs R_red=0 (pre-parity identity, kept for history);
+  it is NOT slack-comparable to the other movement baselines.
+- MoonEP: its slack is the prefetch slot set `B` (default = E/R, a FULL
+  extra set, refilled per iteration) — structurally different semantics;
+  do NOT equate B to 2. Record B in the capsule notes and annotate any
+  cross-baseline slot-budget comparison.
+
+NEVER-MIX: slack-2 cells vs R_red=0 cells is a hard boundary (2026-08-25);
+headline tables must hold slack constant across arms.
