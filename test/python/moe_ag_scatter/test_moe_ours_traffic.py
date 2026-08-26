@@ -371,6 +371,23 @@ def main():
         args.pll_f_cap = max(args.pll_f_cap, bounds_b["f_cap"])
         for k in ("recv_cap", "pair_cap"):
             pll_bounds[k] = max(pll_bounds[k], bounds_b[k])
+        # s2 provable recv ceiling (2026-08-26, layer-2 of the r2 RCA —
+        # K2 4n gate: adopted-placement recv 7086 > envelope 6212, l1
+        # send-panel FLUX_CHECK): reference-derived recv bounds only cover
+        # the resident/batch placements, but the runtime warm solve adopts
+        # OTHER placements and (with the f_cap escalate-and-reroute)
+        # forced admission is uncapped. Placement-INDEPENDENT bound: a
+        # rank hosts <= nlp slots, and no expert can route more entries
+        # to one rank than its total demand — so per-rank recv <= sum of
+        # the nlp hottest experts' demands. Exact-cheap from the batch
+        # histogram; recv-scaled caps (l0_recv, RS send panel) already
+        # take max(..., recv_cap) downstream.
+        _d_glob = torch.bincount(topk_all.reshape(-1).long(),
+                                 minlength=args.G)
+        provable_recv = int(_d_glob.topk(min(cfg.nlp, args.G))
+                            .values.sum())
+        pll_bounds["recv_cap"] = max(pll_bounds["recv_cap"],
+                                     provable_recv)
 
     gpe = cfg.nlp + 1
     E_virt = W * gpe
@@ -467,7 +484,9 @@ def main():
         print(f"OURS sizing({args.sizing},{args.scenario}): recv_cap "
               f"{recv_cap} (real {recv_real}), l0_recv {l0_recv_rows}, "
               f"stage {stage_rows}, relay {relay_rows}, "
-              f"cushion {cushion} (fp_slack {fp_slack})")
+              f"cushion {cushion} (fp_slack {fp_slack})"
+              + (f", provable_recv {pll_bounds['recv_cap']}"
+                 if args.scenario == "s2" else ""))
 
     # ---- runner + planner (+ s2 movement lane) ----
     runner = OursRunner(
