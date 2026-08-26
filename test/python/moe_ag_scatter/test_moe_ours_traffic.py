@@ -473,6 +473,26 @@ def main():
 
     # l1 (combine) capacity: EXACT demands (placement-maxed under s2) +
     # drift cushion
+    if args.scenario == "s2" and nn > 1:
+        # provable per-dest-population ceilings (2026-08-26 r2 RCA layer
+        # 3, K2 4n gate: conv 4641 > 4199): reference-derived RS panels
+        # only cover the resident/batch placements; adopted placements
+        # redistribute combine sends arbitrarily. Column sums are FIXED
+        # (every owner receives exactly cpr = S*K rows), so per panel:
+        #   conv(n2, dl)  = node n2's rows for remote lane-dl owners
+        #                 <= (nn-1) * S * K   (those owners' whole cpr)
+        #   stage(gn, gl) = gateway staging of its node's remote sends
+        #                 <= (nn-1) * S * K   (same population)
+        #   wire(n2, dl)  = UNIQUE rows per (owner, source-node)
+        #                 <= (nn-1) * S       (<= 1 per owned token)
+        # send already inherits recv_cap (provable top-nlp ceiling).
+        _rs_ceil = {
+            "FLUX_A2AV_RS_MAX_CONV_ROWS": (nn - 1) * S * args.topk,
+            "FLUX_A2AV_RS_MAX_STAGE_ROWS": (nn - 1) * S * args.topk,
+            "FLUX_A2AV_RS_MAX_WIRE_ROWS": (nn - 1) * S,
+        }
+        for k, v in _rs_ceil.items():
+            rs_exact[k] = max(int(rs_exact[k]), int(v))
     for k, v in rs_exact.items():
         os.environ[k] = str(int(v) + cushion)
     # send panel additionally bounds the fused-pack capacity check: it must

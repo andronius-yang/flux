@@ -76,3 +76,19 @@ persistent). s2-only (driver sets planner.f_cap_retry), s1 untouched;
 cost = one early device sync per s2 iteration. Provenance:
 ours_s2_fcap_retries / ours_s2_fcap_final in records. Re-gate specs:
 mlgate_{k2,qwen}_4n_r2.yaml (base r2 first; ml/mlw2 x r2 gates after).
+
+### Layer 2 (found by the first re-gate, 20260826-234231): recv envelope
+
+With the route unblocked, K2 4n died one layer deeper at i0: l1
+`a2av_hier send panel overflow` (max_send_rows 7086 > a2av_send_rows_
+6212). The C++ check is the collective max over every rank's outbound
+combine rows == that rank's dispatch recv — i.e. the adopted placement
+concentrated 7086 recv rows on one rank vs the setup envelope 6212
+(recv_cap; setup real 5234). Same premise failure as f_cap, one contract
+out: reference-derived recv bounds cover only resident/batch placements.
+FIX (56e0c92): s2 sizes recv_cap at a placement-INDEPENDENT provable
+ceiling — sum of the nlp hottest experts' total batch demands (a rank
+hosts <= nlp slots; no expert routes more entries to a rank than its
+total demand). l0_recv and RS_MAX_SEND_ROWS inherit via their existing
+max(..., recv_cap). Qwen's first re-gate was already green (596 moves,
+0 f_cap retries — the merged batch-f_cap max sufficed there; cap 434).
