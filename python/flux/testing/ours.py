@@ -44,6 +44,33 @@
 # blocking putmem_signal (binary defaults); correctness cells randomize the
 # payload per iteration; the final deterministic iteration binds the torch
 # loccap_route_sl reference routing and validates the full journey.
+#
+# Plan-lane cost knobs (2026-08-25 16n plan-gap attack; EACH default OFF,
+# rule-5 legal — nothing caches plan CONTENT, only buffers/programs):
+#   FLUX_OURS_PLAN_XCHG_NARROW  0: int32 phys | fp32-bitcast probs wire
+#                                  (8 B/route entry, legacy);
+#                               1: int16 phys + fp32 probs bit-split
+#                                  (6 B/entry, LOSSLESS, needs P<=32767);
+#                               2: int16 phys + bf16 probs (4 B/entry —
+#                                  llc wire parity; LOSSY probs rounding
+#                                  ~2^-8 rel: allclose gates hold, out_sha
+#                                  changes -> never-mix vs narrow<2).
+#   FLUX_OURS_PLAN_PREALLOC     1: persistent probs/vce/phys tail buffers
+#                                  + out=-form vce arithmetic (no per-iter
+#                                  allocs in the derive tail). Implied by
+#                                  NARROW>=1 and PLAN_GRAPH.
+#   FLUX_OURS_PLAN_GRAPH        1: CUDA-graph the post-allgather derive
+#                                  tail (probs recovery + vce build) —
+#                                  capture-once/replay on the persistent
+#                                  buffers (routing VALUES stream through
+#                                  the allgather every iteration; the llc
+#                                  FLUX_PLL_TAIL_GRAPH precedent), eager
+#                                  fallback on capture failure.
+#   FLUX_OURS_PLAN_SCALE_GRAPH  1: CUDA-graph the output_vec_scale build
+#                                  (static shapes; inputs are the C++
+#                                  persistent rt_* buffers + the planner
+#                                  probs buffer — pointer-guarded replay,
+#                                  eager for reference/setup-audit calls).
 
 import os
 
@@ -56,12 +83,17 @@ __all__ = ["OursIterPlan", "OursIterPlanner", "OursRunner"]
 class OursIterPlan:
     """One iteration's routing products (relaxed kernel lane)."""
 
-    __slots__ = ("vce", "probs_all", "kstats_pinned")
+    __slots__ = ("vce", "probs_all", "kstats_pinned", "stable")
 
-    def __init__(self, vce, probs_all, kstats_pinned):
+    def __init__(self, vce, probs_all, kstats_pinned, stable=False):
         self.vce = vce                  # [ntokens, K] int32 device
         self.probs_all = probs_all      # [ntokens, K] fp32 device
         self.kstats_pinned = kstats_pinned  # [4] int64 pinned (async copy)
+        # stable=True: vce/probs_all live in the planner's PERSISTENT
+        # buffers (same pointers every iteration) — the scale-graph
+        # capture/replay precondition. Reference/setup-audit plans are
+        # stable=False and always take the eager scale path.
+        self.stable = stable
 
 
 class OursIterPlanner:
@@ -101,11 +133,54 @@ class OursIterPlanner:
         # one-hot demand accumulator (index_add — bincount hides syncs)
         self._d_own = torch.zeros(cfg.G, dtype=torch.int32, device=device)
         self._ones = torch.ones(S * K, dtype=torch.int32, device=device)
-        # fused exchange buffers: [phys(S*K) i32 | probs(S*K) i32-bitcast]
-        self._xchg_send = torch.empty(2 * S * K, dtype=torch.int32,
-                                      device=device)
-        self._xchg_gather = torch.empty(R * 2 * S * K, dtype=torch.int32,
+        # plan-lane knobs (module header): all default OFF
+        self.xchg_narrow = int(os.environ.get(
+            "FLUX_OURS_PLAN_XCHG_NARROW", "0"))
+        self.plan_graph = bool(int(os.environ.get(
+            "FLUX_OURS_PLAN_GRAPH", "0")))
+        self.plan_prealloc = (self.plan_graph or self.xchg_narrow > 0
+                              or bool(int(os.environ.get(
+                                  "FLUX_OURS_PLAN_PREALLOC", "0"))))
+        if self.xchg_narrow:
+            assert cfg.R * cfg.nlp <= 32767, (
+                f"XCHG_NARROW needs P = R*nlp <= 32767 (int16 phys), got "
+                f"{cfg.R * cfg.nlp}")
+            # narrow 1: the strided [R, 2*S*K] i16 probs slice must view
+            # as fp32 (row stride divisible by the dtype ratio)
+            assert S * K % 2 == 0, "XCHG_NARROW=1 needs S*K even"
+        # fused exchange buffers, ONE allgather either way:
+        #   narrow 0: i32 [phys(S*K) | probs fp32-bitcast (S*K)]
+        #   narrow 1: i16 [phys(S*K) | probs fp32 bit-split (2*S*K)]
+        #   narrow 2: i16 [phys(S*K) | probs bf16-bitcast (S*K)]
+        if self.xchg_narrow:
+            per = 3 * S * K if self.xchg_narrow == 1 else 2 * S * K
+            self._xchg_send = torch.empty(per, dtype=torch.int16,
+                                          device=device)
+            self._xchg_gather = torch.empty(R * per, dtype=torch.int16,
+                                            device=device)
+        else:
+            self._xchg_send = torch.empty(2 * S * K, dtype=torch.int32,
+                                          device=device)
+            self._xchg_gather = torch.empty(R * 2 * S * K, dtype=torch.int32,
+                                            device=device)
+        if self.plan_prealloc:
+            # persistent derive-tail buffers (buffer prealloc, not plan
+            # caching: contents are fully rewritten every iteration)
+            self._vce_buf = torch.empty(R * S, K, dtype=torch.int32,
                                         device=device)
+            self._vce_tmp = torch.empty(R * S, K, dtype=torch.int32,
+                                        device=device)
+            self._probs_all_buf = torch.empty(R * S, K, dtype=torch.float32,
+                                              device=device)
+            self._phys_i32 = (torch.empty(R * S, K, dtype=torch.int32,
+                                          device=device)
+                              if self.xchg_narrow else None)
+            # static-content index prep for local_loads (the topk trace is
+            # the fixed per-cell gating input; the CAST is pure overhead)
+            self._topk_own_flat_i64 = (self._topk_own_i32.reshape(-1)
+                                       .long().contiguous())
+        self._tail_graph = None
+        self._tail_graph_broken = False
         self._kstats_pinned = torch.zeros(4, dtype=torch.int64,
                                           pin_memory=True)
         self.refresh_placement()
@@ -121,8 +196,9 @@ class OursIterPlanner:
     def local_loads(self) -> torch.Tensor:
         """d[G] for this rank, sync-free (index_add, not bincount)."""
         self._d_own.zero_()
-        self._d_own.index_add_(0, self._topk_own_i32.reshape(-1).long(),
-                               self._ones)
+        idx = (self._topk_own_flat_i64 if self.plan_prealloc
+               else self._topk_own_i32.reshape(-1).long())
+        self._d_own.index_add_(0, idx, self._ones)
         return self._d_own
 
     # -- plan bracket ----------------------------------------------------------
@@ -139,9 +215,28 @@ class OursIterPlanner:
         self.last_kernel_stats = self._kstats_pinned  # read post-sync
         # fused exchange: own phys rows + own probs (bitcast) in ONE gather
         self._xchg_send[:S * K].copy_(phys_own.view(-1))
-        self._xchg_send[S * K:].copy_(self._probs_own.view(-1).view(torch.int32))
-        dist.all_gather_into_tensor(self._xchg_gather, self._xchg_send,
-                                    group=self.route_group)
+        if self.xchg_narrow == 1:
+            self._xchg_send[S * K:].copy_(
+                self._probs_own.view(-1).view(torch.int16))
+        elif self.xchg_narrow == 2:
+            self._xchg_send[S * K:].copy_(
+                self._probs_own.view(-1).to(torch.bfloat16)
+                .view(torch.int16))
+        else:
+            self._xchg_send[S * K:].copy_(
+                self._probs_own.view(-1).view(torch.int32))
+        if self.xchg_narrow:
+            # NCCL rejects int16 (Short); ship the same bytes as int8 views
+            dist.all_gather_into_tensor(self._xchg_gather.view(torch.int8),
+                                        self._xchg_send.view(torch.int8),
+                                        group=self.route_group)
+        else:
+            dist.all_gather_into_tensor(self._xchg_gather, self._xchg_send,
+                                        group=self.route_group)
+        if self.plan_prealloc:
+            vce, probs_all = self._derive_tail()
+            return OursIterPlan(vce, probs_all, self._kstats_pinned,
+                                stable=True)
         buf = self._xchg_gather.view(R, 2 * S * K)
         phys_all = buf[:, :S * K].reshape(R * S, K)
         probs_all = (buf[:, S * K:].contiguous().view(torch.float32)
@@ -149,6 +244,64 @@ class OursIterPlanner:
         # pad-FIRST slot convention (see module header)
         vce = ((phys_all // cfg.nlp) * self.gpe + 1 + phys_all % cfg.nlp)
         return OursIterPlan(vce.int(), probs_all, self._kstats_pinned)
+
+    # -- prealloc'd/graphable derive tail (post-allgather device program) ----
+
+    def _tail_compute(self):
+        """Probs recovery + pad-FIRST vce build, entirely into the
+        persistent buffers (no allocations, no host syncs — the graphable
+        device program). Bitwise-identical values to the legacy tail for
+        narrow in {0, 1}; narrow==2 recovers bf16-rounded probs."""
+        cfg = self.cfg
+        S, K, R = cfg.S, cfg.K, cfg.R
+        n = S * K
+        buf = self._xchg_gather.view(R, -1)
+        phys = buf[:, :n]
+        if self.xchg_narrow:
+            self._phys_i32.view(R, n).copy_(phys)  # i16 -> i32 upcast
+            phys = self._phys_i32.view(R, n)
+        if self.xchg_narrow == 2:
+            self._probs_all_buf.view(R, n).copy_(
+                buf[:, n:].view(torch.bfloat16))
+        else:  # narrow 1 bit-splits fp32 across i16 pairs; 0 bitcasts i32
+            self._probs_all_buf.view(R, n).copy_(
+                buf[:, n:].view(torch.float32))
+        torch.remainder(phys, cfg.nlp, out=self._vce_tmp.view(R, n))
+        torch.div(phys, cfg.nlp, rounding_mode="floor",
+                  out=self._vce_buf.view(R, n))
+        self._vce_buf.mul_(self.gpe).add_(1).add_(self._vce_tmp)
+
+    def _derive_tail(self):
+        if self.plan_graph and not self._tail_graph_broken:
+            if self._tail_graph is None:
+                self._capture_tail_graph()
+            if self._tail_graph is not None:
+                self._tail_graph.replay()
+                return self._vce_buf, self._probs_all_buf
+        self._tail_compute()
+        return self._vce_buf, self._probs_all_buf
+
+    def _capture_tail_graph(self):
+        """Capture-once on the persistent buffers (input _xchg_gather and
+        every output pointer is stable by construction — in-place/out=
+        only, so no graph-pool memory escapes to other streams). Eager
+        fallback on any capture failure, llc tail-graph style."""
+        try:
+            for _ in range(2):  # warmup (lazy module loads, allocator)
+                self._tail_compute()
+            torch.cuda.synchronize()
+            g = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(g):
+                self._tail_compute()
+            g.replay()
+            torch.cuda.synchronize()
+            self._tail_graph = g
+        except Exception as e:  # noqa: BLE001 — eager fallback
+            self._tail_graph = None
+            self._tail_graph_broken = True
+            if self.rank == 0:
+                print(f"[ours] plan tail graph capture failed "
+                      f"({type(e).__name__}: {e}); eager", flush=True)
 
     def derive_reference(self) -> OursIterPlan:
         """Deterministic vce from the setup torch loccap_route_sl routing
@@ -242,6 +395,16 @@ class OursRunner:
         self.scale_buf = torch.zeros(self.recv_cap + 1, dtype=torch.float32,
                                      device="cuda")
         self._iota_scale_src = None  # lazy
+        # FLUX_OURS_PLAN_SCALE_GRAPH (module header): CUDA-graph the scale
+        # build. Static shapes; inputs are the C++ persistent rt_* buffers
+        # (stable storage across derive_routed_meta calls) + the planner's
+        # persistent probs buffer (ip.stable) — replay is pointer-guarded,
+        # reference/setup-audit calls stay eager.
+        self.scale_graph = bool(int(os.environ.get(
+            "FLUX_OURS_PLAN_SCALE_GRAPH", "0")))
+        self._scale_graph_obj = None
+        self._scale_graph_broken = False
+        self._scale_graph_key = None
 
         # plan-overlap side stream + events
         self._meta_stream = torch.cuda.Stream()
@@ -324,6 +487,21 @@ class OursRunner:
         row r in my segment gets the gate weight of the (token, k) copy
         whose scatter_index landed there. Invalid entries route to the
         guard slot recv_cap (sliced away)."""
+        if self.scale_graph and not self._scale_graph_broken \
+                and getattr(ip, "stable", False):
+            key = (self._sd.data_ptr(), self._scd.data_ptr(),
+                   ip.probs_all.data_ptr())
+            if self._scale_graph_obj is None:
+                self._capture_scale_graph(ip, key)
+            if (self._scale_graph_obj is not None
+                    and key == self._scale_graph_key):
+                self._scale_graph_obj.replay()
+                return
+        self._scale_compute(ip)
+
+    def _scale_compute(self, ip: OursIterPlan):
+        """The scale-build device program (shape-static, sync-free,
+        in-place into the persistent scale_buf — graph-capturable)."""
         sd_long = self._sd.long()
         m_start = sd_long[:self.ep_start].sum()  # device scalar
         idx = self._scd.view(-1).long() - m_start
@@ -332,6 +510,28 @@ class OursRunner:
                           torch.full_like(idx, self.recv_cap))
         self.scale_buf.zero_()
         self.scale_buf.scatter_(0, idx, ip.probs_all.view(-1))
+
+    def _capture_scale_graph(self, ip: OursIterPlan, key):
+        """Capture-once on the stable input pointers; the only output is
+        the in-place persistent scale_buf, so no graph-pool memory escapes
+        the bracket. Eager fallback on any capture failure."""
+        try:
+            for _ in range(2):  # warmup on the live buffers (idempotent)
+                self._scale_compute(ip)
+            torch.cuda.synchronize()
+            g = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(g):
+                self._scale_compute(ip)
+            g.replay()
+            torch.cuda.synchronize()
+            self._scale_graph_obj = g
+            self._scale_graph_key = key
+        except Exception as e:  # noqa: BLE001 — eager fallback
+            self._scale_graph_obj = None
+            self._scale_graph_broken = True
+            if self.rank == 0:
+                print(f"[ours] scale graph capture failed "
+                      f"({type(e).__name__}: {e}); eager", flush=True)
 
     def l0_forward(self, inputs_shard: torch.Tensor, gate_kwargs=None):
         self.l0_op.forward(
