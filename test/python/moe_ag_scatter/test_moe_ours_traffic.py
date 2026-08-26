@@ -501,6 +501,11 @@ def main():
     planner = OursIterPlanner(plan, rank, torch.device("cuda"), topk_all,
                               probs_all_setup, L, args.eps, args.pll_f_cap,
                               TP_GROUP)
+    # r2/s2 f_cap contract fix (handoff 22 §4): runtime-adopted placements
+    # can exceed any setup-derived forced budget — enable the planner's
+    # local escalate-and-reroute (kstats[2] breach -> 4x then uncapped).
+    planner.f_cap_retry = (args.scenario == "s2")
+
 
     # s2 machinery: oracle snapshots for the stale probe + the weight probe
     if args.scenario == "s2":
@@ -905,6 +910,8 @@ def main():
             ours_s2_weight_shard=args.weight_shard,
             ours_s2_sched_moved_last=int(lane.sched_moved_last),
             ours_s2_w2_late=int(lane.w2_late),
+            ours_s2_fcap_retries=int(planner.f_cap_retries_total),
+            ours_s2_fcap_final=int(planner.f_cap_current),
         )
 
     def fmt(times):

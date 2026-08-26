@@ -59,3 +59,20 @@ the weight flow so token dispatch owns the wire head.
 - Failure modes to watch: gate torn-row family (rule-6 lineage — any
   reorder shifts movement-issue timing; 3/3-green rule before canon),
   join_w2 hang if a driver path skips issue_w2_late (failsafe covers).
+
+## Addendum 2026-08-26 (post-merge): s2xr2 f_cap contract fix
+
+Merged main @ c27b576 (r2 campaign; driver batch-placement f_cap fix
+kept). Resolution of handoff 22 §4's open mechanism gap: the planner
+(`OursIterPlanner.derive`) now does a rank-LOCAL escalate-and-reroute
+when the route kernel reports forced-budget breach (kstats[2] != 0):
+re-route with 4x f_cap, then uncapped (kernel forced_left tickets are
+per-call workspace ints; f_cap<=0 = INT_MAX/2 already in-kernel).
+Sound because the route is sender-local and the breach check happens
+BEFORE the phys/probs allgather — no collective asymmetry; nothing
+persistent is sized by f_cap; plan_meta's recv_cap assert remains the
+loud sizing backstop. The raised cap sticks (adopted geometry is
+persistent). s2-only (driver sets planner.f_cap_retry), s1 untouched;
+cost = one early device sync per s2 iteration. Provenance:
+ours_s2_fcap_retries / ours_s2_fcap_final in records. Re-gate specs:
+mlgate_{k2,qwen}_4n_r2.yaml (base r2 first; ml/mlw2 x r2 gates after).

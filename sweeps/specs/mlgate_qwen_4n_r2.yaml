@@ -1,0 +1,18 @@
+# 2026-08-26 s2xr2 re-gate after the f_cap escalate-and-reroute fix
+# (handoff 22 §4 blocker): strict gate at replica parity r2, base + the
+# moved-last/late-w2 arms are gated separately once base r2 is green.
+platform: perlmutter
+nodes: 4
+shape: qwen3
+variants: [ours_l01_s2_gate_r2]
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8]
+modes: [isolated]
+iters: 4
+warmup_iters: 2
+skip_correctness: false
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 0
+notes: "s2xr2 re-gate 4n qwen b8 post f_cap-retry fix"

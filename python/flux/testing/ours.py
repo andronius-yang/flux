@@ -121,6 +121,19 @@ class OursIterPlanner:
         self.E_virt = cfg.R * self.gpe
         self.eps = eps
         self.f_cap = f_cap
+        # r2/s2 contract fix (2026-08-26, handoff 22 §4): under live
+        # re-placement the runtime-adopted placement's forced geometry can
+        # exceed ANY setup-derived f_cap (the "oscillates between exactly
+        # two placements" sizing premise is false at r2). The kernel's
+        # forced_left tickets are per-call workspace ints (f_cap<=0 =>
+        # INT_MAX/2), so a rank-LOCAL escalate-and-reroute BEFORE the
+        # phys/probs exchange is sound: route is sender-local, nothing
+        # persistent is sized by f_cap, and the recv_cap assert in
+        # plan_meta stays the loud sizing backstop. Enabled by the driver
+        # for s2 only (adds one early device sync per iteration).
+        self.f_cap_retry = False
+        self.f_cap_retries_total = 0
+        self.f_cap_current = f_cap
         self.route_group = route_group
         self.last_kernel_stats = None
 
@@ -210,7 +223,23 @@ class OursIterPlanner:
         S, K, R = cfg.S, cfg.K, cfg.R
         phys_own, kstats = flux.placelambda_route_sl(
             self._topk_own_i32, d_gather_buf, self.l2p, self.lcnts,
-            self.rank, cfg.nlp, self.L, self.eps, self.f_cap)
+            self.rank, cfg.nlp, self.L, self.eps, self.f_cap_current)
+        if self.f_cap_retry:
+            # forced-budget breach check + local escalate-and-reroute
+            # (kstats[2] = forced_budget_overflow). Escalation ladder:
+            # 4x, then uncapped (kernel INT_MAX tickets). The raised cap
+            # STICKS (self.f_cap_current) — adopted-placement geometry is
+            # persistent, re-deriving it every iteration would pay the
+            # sync-retry twice for nothing.
+            for esc in (4 * max(self.f_cap_current, 1), 0):
+                if int(kstats[2].item()) == 0:
+                    break
+                self.f_cap_current = esc
+                self.f_cap_retries_total += 1
+                phys_own, kstats = flux.placelambda_route_sl(
+                    self._topk_own_i32, d_gather_buf, self.l2p,
+                    self.lcnts, self.rank, cfg.nlp, self.L, self.eps,
+                    self.f_cap_current)
         self._kstats_pinned.copy_(kstats, non_blocking=True)
         self.last_kernel_stats = self._kstats_pinned  # read post-sync
         # fused exchange: own phys rows + own probs (bitcast) in ONE gather
