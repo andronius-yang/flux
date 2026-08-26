@@ -2212,3 +2212,399 @@ VARIANTS["l01_slipstream_bare"] = dict(
               "FLUX_A2AV_RS_MAX_CONV_ROWS", "FLUX_A2AV_RS_MAX_WIRE_ROWS"],
     l1_pattern="a2av_hier_compress",
 )
+
+
+# ---------------------------------------------------------------------------
+# OURS (2026-08-24 fusion campaign, worktree `ours`): the integrated
+# PLACE-lambda + LocCap + Slipstream-v2 arm — LLC's placement/routing feeding
+# the fused overlapped dispatch(LB_UNION Tier-B + wave-pack)+GEMM0 and the
+# Slipstream v2 combine (msplit + fused-pack + bucket, ns1) through the
+# virtual-slot space, one op pair, per-iteration rule-5 plan. Scenario 1:
+# oracle placement (static, untimed, reported), relaxed loccap_sl kernel
+# routing per iteration. Driver: test_moe_ours_traffic.py (fresh driver —
+# the llc/slipstream baselines stay byte-untouched for in-capsule A/Bs).
+# Mechanism-vector pins mirror l01_slipstream so binary-default drift can
+# never change arm identity.
+_OURS_ENV = {
+    "FLUX_A2AV_LB_UNION": "1", "FLUX_A2AV_FUSED_STAGE2": "1",
+    "FLUX_A2AV_EARLY_LAUNCH": "1", "FLUX_A2AV_RS_MSPLIT": "1",
+    "FLUX_A2AV_RS_EAGER": "0", "FLUX_A2AV_RS_FUSED_PACK": "1",
+    "FLUX_A2AV_WAVE_PACK": "1", "FLUX_A2AV_RS_BUCKET": "1",
+    "FLUX_A2AV_RS_WIRE_STREAMS": "16",
+    # conn=32 is the OURS family's single canonical pin (2026-08-25):
+    # resolves the s2 channel-aliasing hang (qwen stale-b32) AND the K2
+    # torn-row race (shard-chain exposure); the 16n l0 probes showed -5%
+    # l0 at b64. The family runs ~21 streams; the historical conn=8 pin
+    # was sized for the 4n-era a2av mix. Pre-flip conn=8 capsules are
+    # env_json-documented, never byte-compared across the flip.
+    "CUDA_DEVICE_MAX_CONNECTIONS": "32", "FLUX_A2AV_RS_PACK_BLOCKS": "10",
+    "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_RS_PRERED_BLOCKS": "6",
+}
+_OURS_REQUIRES = [
+    "FLUX_A2AV_LB_UNION", "FLUX_A2AV_FUSED_STAGE2", "FLUX_A2AV_EARLY_LAUNCH",
+    "FLUX_A2AV_SLIPSTREAM2_TAG", "FLUX_A2AV_RS_MSPLIT_TAG",
+    "FLUX_A2AV_RS_FUSED_PACK_TAG", "FLUX_A2AV_WAVE_PACK_TAG",
+    "FLUX_A2AV_RS_BUCKET_TAG", "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG",
+    "FLUX_A2AV_NSPLIT_HONOR_TAG", "FLUX_A2AV_RS_CTA_1086_TAG",
+    "FLUX_A2AV_DISPATCH_ONLY_TAG", "FLUX_PLACELAMBDA_ROUTE_SL_TAG",
+    "FLUX_A2AV_RS_MAX_SEND_ROWS", "FLUX_A2AV_RS_MAX_CONV_ROWS",
+    "FLUX_A2AV_RS_MAX_WIRE_ROWS",
+]
+VARIANTS["ours_l01_s1"] = dict(
+    comm_pattern="ours_l01", driver="ours", layer="l01",
+    test_args=["--eps", "0.0625", "--sizing", "demand",
+               "--plan_overlap", "0"],
+    env=dict(_OURS_ENV),
+    requires=list(_OURS_REQUIRES),
+)
+# plan-overlap A/B twin (combine-meta derive + scale build under the fused
+# l0 on a side stream) — identical otherwise
+VARIANTS["ours_l01_s1_ov"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "demand",
+               "--plan_overlap", "0"],
+)
+# correctness gate twin: per-iteration output validation under relaxed
+# routing + random payload (perturbs timing — gate cells only)
+VARIANTS["ours_l01_s1_gate"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "demand",
+               "--plan_overlap", "0", "--check_iters", "1"],
+)
+VARIANTS["ours_l01_s1_gate_ov"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "demand",
+               "--plan_overlap", "0", "--check_iters", "1"],
+)
+# ---- plan-lane cost-knob probe arms (2026-08-25 16n plan-gap attack;
+# knobs documented in flux/testing/ours.py module header, all default OFF
+# in the canonical arm). Compare nw/pg arms against _pre (same tail
+# buffers) to isolate the wire / graph deltas.
+VARIANTS["ours_l01_s1_pre"] = dict(
+    VARIANTS["ours_l01_s1"],
+    env=dict(_OURS_ENV, FLUX_OURS_PLAN_PREALLOC="1"),
+)
+VARIANTS["ours_l01_s1_pg"] = dict(
+    VARIANTS["ours_l01_s1"],
+    env=dict(_OURS_ENV, FLUX_OURS_PLAN_GRAPH="1",
+             FLUX_OURS_PLAN_SCALE_GRAPH="1"),
+)
+# lossless wire cut: phys int16 + probs fp32 bit-split (6 B/entry)
+VARIANTS["ours_l01_s1_nw1"] = dict(
+    VARIANTS["ours_l01_s1"],
+    env=dict(_OURS_ENV, FLUX_OURS_PLAN_XCHG_NARROW="1"),
+)
+# llc wire parity: + probs bf16 (4 B/entry). LOSSY probs rounding —
+# out_sha never-mix vs narrow<2 arms (allclose gates still bind).
+VARIANTS["ours_l01_s1_nw2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    env=dict(_OURS_ENV, FLUX_OURS_PLAN_XCHG_NARROW="2"),
+)
+# combined candidate: narrow-2 wire + both plan graphs
+VARIANTS["ours_l01_s1_planfast"] = dict(
+    VARIANTS["ours_l01_s1"],
+    env=dict(_OURS_ENV, FLUX_OURS_PLAN_XCHG_NARROW="2",
+             FLUX_OURS_PLAN_GRAPH="1", FLUX_OURS_PLAN_SCALE_GRAPH="1"),
+)
+# 4n correctness gates for the new knob paths (run BEFORE scale probes)
+VARIANTS["ours_l01_s1_gate_nw1"] = dict(
+    VARIANTS["ours_l01_s1_gate"],
+    env=dict(_OURS_ENV, FLUX_OURS_PLAN_XCHG_NARROW="1"),
+)
+VARIANTS["ours_l01_s1_gate_planfast"] = dict(
+    VARIANTS["ours_l01_s1_gate"],
+    env=dict(_OURS_ENV, FLUX_OURS_PLAN_XCHG_NARROW="2",
+             FLUX_OURS_PLAN_GRAPH="1", FLUX_OURS_PLAN_SCALE_GRAPH="1"),
+)
+# (allin stack defined after the combo knob arms below)
+# scenario-2 arms (live re-placement + OVERLAPPED weight movement; WPM
+# multicast + NIC-shard + per-slot weight-gated tiles). s2 sizes at the
+# provable caps (--sizing capacity implied in-driver for s2).
+VARIANTS["ours_l01_s2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "capacity",
+               "--plan_overlap", "0", "--scenario", "s2",
+               "--place_gain_threshold_ppm", "0"],
+)
+# gate: per-iteration output checks + stale-resident (movement EVERY
+# iteration) + the rule-6c weight payload probe (WPM wire audit)
+VARIANTS["ours_l01_s2_gate"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "capacity",
+               "--plan_overlap", "0", "--scenario", "s2",
+               "--place_gain_threshold_ppm", "0",
+               "--check_iters", "1", "--s2_stale", "rot",
+               "--s2_force_trigger", "1", "--s2_wprobe", "1"],
+)
+# perf worst case: movement fires every timed iteration
+VARIANTS["ours_l01_s2_stale"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "capacity",
+               "--plan_overlap", "0", "--scenario", "s2",
+               "--place_gain_threshold_ppm", "0",
+               "--s2_stale", "rot", "--s2_force_trigger", "1"],
+)
+# ablation: one landing join before GEMM0 instead of weight-gated tiles
+VARIANTS["ours_l01_s2_stale_join"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "capacity",
+               "--plan_overlap", "0", "--scenario", "s2",
+               "--place_gain_threshold_ppm", "0",
+               "--s2_stale", "rot", "--s2_force_trigger", "1",
+               "--s2_join", "join"],
+)
+# hang triage probes (K2 4n s2, 2026-08-25)
+VARIANTS["ours_l01_s2_gate_noshard"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "capacity",
+               "--plan_overlap", "0", "--scenario", "s2",
+               "--place_gain_threshold_ppm", "0",
+               "--check_iters", "1", "--s2_stale", "rot",
+               "--s2_force_trigger", "1", "--s2_wprobe", "1",
+               "--weight_shard", "off"],
+)
+VARIANTS["ours_l01_s2_gate_direct"] = dict(
+    VARIANTS["ours_l01_s2_gate_noshard"],
+    env=dict(VARIANTS["ours_l01_s1"]["env"], FLUX_OURS_S2_MCAST="0"),
+)
+VARIANTS["ours_l01_s2_gate_join"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "capacity",
+               "--plan_overlap", "0", "--scenario", "s2",
+               "--place_gain_threshold_ppm", "0",
+               "--check_iters", "1", "--s2_stale", "rot",
+               "--s2_force_trigger", "1", "--s2_wprobe", "1",
+               "--s2_join", "join"],
+)
+# relay-identity wire twin (2026-08-25, 16n b32+ crossover attack): the
+# fused pipeline with per-rank-exact delivery (LB_UNION=0 -> balanced
+# relay + identity forward) instead of the Tier-B union broadcast. On
+# LocCap-placed traffic the union's node-dedup premise is weak (copies
+# already rank-consolidated); llc's staged wire is relay-identity and won
+# 16n b32/b64 — this arm isolates wire-mode from staged-vs-fused.
+# EARLY_LAUNCH default is LB_UNION-conditioned; pinned ON explicitly
+# (conn=8 satisfies its guard) so overlap identity is preserved.
+VARIANTS["ours_l01_s1_ri"] = dict(
+    VARIANTS["ours_l01_s1"],
+    env=dict(VARIANTS["ours_l01_s1"]["env"],
+             FLUX_A2AV_LB_UNION="0", FLUX_A2AV_EARLY_LAUNCH="1",
+             FLUX_A2AV_FUSED_STAGE2="1"),
+    requires=[r for r in VARIANTS["ours_l01_s1"]["requires"]
+              if r != "FLUX_A2AV_LB_UNION"],
+)
+VARIANTS["ours_l01_s1_ri_gate"] = dict(
+    VARIANTS["ours_l01_s1_ri"],
+    test_args=VARIANTS["ours_l01_s1"]["test_args"][:-2]
+              + ["--plan_overlap", "0", "--check_iters", "1"],
+)
+VARIANTS["ours_l01_s2_stale_c32"] = dict(
+    VARIANTS["ours_l01_s2_stale"],
+    env=dict(VARIANTS["ours_l01_s1"]["env"],
+             CUDA_DEVICE_MAX_CONNECTIONS="32"),
+)
+VARIANTS["ours_l01_s2_gate_c32"] = dict(
+    VARIANTS["ours_l01_s2_gate"],
+    env=dict(VARIANTS["ours_l01_s1"]["env"],
+             CUDA_DEVICE_MAX_CONNECTIONS="32"),
+)
+# v2-combine mechanism ablations (2026-08-25, 16n b64 l1 gap vs llc's
+# plain staged wait-all): one knob off each, canon otherwise. Decide the
+# single shipping combine config; ablations never ship as knobs.
+for _k, _env in (("noms", {"FLUX_A2AV_RS_MSPLIT": "0"}),
+                 ("nofp", {"FLUX_A2AV_RS_FUSED_PACK": "0"}),
+                 ("nobkt", {"FLUX_A2AV_RS_RECV_BUCKET": "0"})):
+    VARIANTS[f"ours_l01_s1_{_k}"] = dict(
+        VARIANTS["ours_l01_s1"],
+        env=dict(VARIANTS["ours_l01_s1"]["env"], **_env))
+# PRODUCTION-SEMANTICS unified arm (2026-08-25, user direction: s2 as the
+# eventual sole OURS branch): same s2 machinery resident, but the drift
+# prefilter (10k ppm) and gain threshold (50k ppm) actually GATE — on
+# stable 7-baseline traffic the solve is skipped (place ~= drift check),
+# under drift it triggers. The threshold-0 ours_l01_s2 stays the
+# always-solve upper-bound probe.
+VARIANTS["ours_l01_s2_prod"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=["--eps", "0.0625", "--sizing", "capacity",
+               "--plan_overlap", "0", "--scenario", "s2"],
+)
+# 16n-loss RCA probe twins (2026-08-25 pm campaign): one mechanism knob each,
+# canon otherwise. pull = dispatch relay pull/put stream decoupling (H3: the
+# round-1 blocking put queues FIFO behind all NN-1 rounds' NVLink relay pulls
+# on cp_stream_inter_node; knob shipped in the binary, default OFF). cta =
+# combine CTA partition 10/8/6 -> 14/12/10 (H2: fixed grids do budget-
+# proportional prered/reduce/pack work; the 3/3/2->10/8/6 flip's dose-response
+# was still rising at b64). combo = pull + cta + fused-pack OFF (H5) stacked.
+VARIANTS["ours_l01_s1_pull"] = dict(
+    VARIANTS["ours_l01_s1"],
+    env=dict(VARIANTS["ours_l01_s1"]["env"],
+             FLUX_A2AV_RELAY_PULL_STREAM="1"),
+)
+VARIANTS["ours_l01_s1_cta"] = dict(
+    VARIANTS["ours_l01_s1"],
+    env=dict(VARIANTS["ours_l01_s1"]["env"],
+             FLUX_A2AV_RS_PACK_BLOCKS="14",
+             FLUX_A2AV_RS_REDUCE_BLOCKS="12",
+             FLUX_A2AV_RS_PRERED_BLOCKS="10"),
+)
+VARIANTS["ours_l01_s1_combo"] = dict(
+    VARIANTS["ours_l01_s1"],
+    env=dict(VARIANTS["ours_l01_s1"]["env"],
+             FLUX_A2AV_RELAY_PULL_STREAM="1",
+             FLUX_A2AV_RS_PACK_BLOCKS="14",
+             FLUX_A2AV_RS_REDUCE_BLOCKS="12",
+             FLUX_A2AV_RS_PRERED_BLOCKS="10",
+             FLUX_A2AV_RS_FUSED_PACK="0"),
+)
+# correctness gates for the probe knobs (rule 6: pull re-streams the relay
+# pulls — ordering must be re-proven under random payload before adoption)
+VARIANTS["ours_l01_s1_pull_gate"] = dict(
+    VARIANTS["ours_l01_s1_pull"],
+    test_args=VARIANTS["ours_l01_s1"]["test_args"] + ["--check_iters", "1"],
+)
+VARIANTS["ours_l01_s1_combo_gate"] = dict(
+    VARIANTS["ours_l01_s1_combo"],
+    test_args=VARIANTS["ours_l01_s1"]["test_args"] + ["--check_iters", "1"],
+)
+# full stack candidate: combo (pull + cta 14/12/10 + fp-off) + planfast
+_ALLIN_ENV = dict(VARIANTS["ours_l01_s1_combo"]["env"],
+                  FLUX_OURS_PLAN_XCHG_NARROW="2",
+                  FLUX_OURS_PLAN_GRAPH="1", FLUX_OURS_PLAN_SCALE_GRAPH="1")
+VARIANTS["ours_l01_s1_allin"] = dict(
+    VARIANTS["ours_l01_s1"], env=dict(_ALLIN_ENV),
+)
+VARIANTS["ours_l01_s1_gate_allin"] = dict(
+    VARIANTS["ours_l01_s1_gate"], env=dict(_ALLIN_ENV),
+)
+# H4 arrival-dynamic combine receiver (post-rebuild only: the tag in
+# `requires` makes these arms un-runnable on binaries without the kernel)
+_DYN_REQUIRES = _OURS_REQUIRES + ["FLUX_A2AV_RS_RECV_DYN_V2_TAG"]
+VARIANTS["ours_l01_s1_dyn"] = dict(
+    VARIANTS["ours_l01_s1"],
+    env=dict(VARIANTS["ours_l01_s1"]["env"], FLUX_A2AV_RS_RECV_DYN="1"),
+    requires=list(_DYN_REQUIRES),
+)
+# full candidate stack + dyn receiver
+VARIANTS["ours_l01_s1_next"] = dict(
+    VARIANTS["ours_l01_s1"],
+    env=dict(_ALLIN_ENV, FLUX_A2AV_RS_RECV_DYN="1"),
+    requires=list(_DYN_REQUIRES),
+)
+VARIANTS["ours_l01_s1_gate_dyn"] = dict(
+    VARIANTS["ours_l01_s1_gate"],
+    env=dict(VARIANTS["ours_l01_s1"]["env"], FLUX_A2AV_RS_RECV_DYN="1"),
+    requires=list(_DYN_REQUIRES),
+)
+VARIANTS["ours_l01_s1_gate_next"] = dict(
+    VARIANTS["ours_l01_s1_gate"],
+    env=dict(_ALLIN_ENV, FLUX_A2AV_RS_RECV_DYN="1"),
+    requires=list(_DYN_REQUIRES),
+)
+# dyn + own-first production (own-lane prered emitted FIRST so token
+# completion gates on remote arrivals — the regime where arrival-order
+# folding pays; own-last is the muting case)
+VARIANTS["ours_l01_s1_dynof"] = dict(
+    VARIANTS["ours_l01_s1"],
+    env=dict(VARIANTS["ours_l01_s1"]["env"], FLUX_A2AV_RS_RECV_DYN="1",
+             FLUX_A2AV_RS_OWN_FIRST="1"),
+    requires=list(_DYN_REQUIRES),
+)
+VARIANTS["ours_l01_s1_nextof"] = dict(
+    VARIANTS["ours_l01_s1"],
+    env=dict(_ALLIN_ENV, FLUX_A2AV_RS_RECV_DYN="1",
+             FLUX_A2AV_RS_OWN_FIRST="1"),
+    requires=list(_DYN_REQUIRES),
+)
+VARIANTS["ours_l01_s1_gate_nextof"] = dict(
+    VARIANTS["ours_l01_s1_gate"],
+    env=dict(_ALLIN_ENV, FLUX_A2AV_RS_RECV_DYN="1",
+             FLUX_A2AV_RS_OWN_FIRST="1"),
+    requires=list(_DYN_REQUIRES),
+)
+# combine-wire-balanced placement finalize (2026-08-25 nsys: per-rank
+# NVSHMEM proxy serialization + within-node outbound skew 272/121/53/15 MB
+# — placelambda_fast._finalize_hosts_wirebal; node membership unchanged,
+# within-node rank identity re-assigned by remote-served-rows LPT)
+VARIANTS["ours_l01_s1_wb"] = dict(
+    VARIANTS["ours_l01_s1"],
+    env=dict(VARIANTS["ours_l01_s1"]["env"],
+             FLUX_OURS_PLACE_WIREBAL="1"),
+)
+VARIANTS["ours_l01_s1_nextwb"] = dict(
+    VARIANTS["ours_l01_s1"],
+    env=dict(_ALLIN_ENV, FLUX_A2AV_RS_RECV_DYN="1",
+             FLUX_OURS_PLACE_WIREBAL="1"),
+    requires=list(_DYN_REQUIRES),
+)
+VARIANTS["ours_l01_s1_gate_wb"] = dict(
+    VARIANTS["ours_l01_s1_gate"],
+    env=dict(VARIANTS["ours_l01_s1"]["env"],
+             FLUX_OURS_PLACE_WIREBAL="1"),
+)
+VARIANTS["ours_l01_s1_gate_nextwb"] = dict(
+    VARIANTS["ours_l01_s1_gate"],
+    env=dict(_ALLIN_ENV, FLUX_A2AV_RS_RECV_DYN="1",
+             FLUX_OURS_PLACE_WIREBAL="1"),
+    requires=list(_DYN_REQUIRES),
+)
+# shipping-candidate stack WITHOUT the dyn kernel (dyn hangs at 16n b32+,
+# open defect 2026-08-25 pm): pull + cta + fp-off + planfast + wirebal
+VARIANTS["ours_l01_s1_allinwb"] = dict(
+    VARIANTS["ours_l01_s1"],
+    env=dict(_ALLIN_ENV, FLUX_OURS_PLACE_WIREBAL="1"),
+)
+VARIANTS["ours_l01_s1_gate_allinwb"] = dict(
+    VARIANTS["ours_l01_s1_gate"],
+    env=dict(_ALLIN_ENV, FLUX_OURS_PLACE_WIREBAL="1"),
+)
+# replica-headroom PARITY probe (2026-08-25 finding: EPIC/EPLB/llc all run
+# --redundant_per_rank 2 while OURS hardcoded R_red=0 — the only arm with
+# zero replica slots; at qwen 16n that means 128 slots for 128 experts and
+# no way to split the ~1GB hot-expert proxy load that llc's solver CAN
+# split. r2 = same stack at slot parity; canon stays R_red=0 until user
+# ruling (one-decision rule).
+VARIANTS["ours_l01_s1_r2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=VARIANTS["ours_l01_s1"]["test_args"]
+              + ["--redundant_per_rank", "2"],
+)
+VARIANTS["ours_l01_s1_allinwb_r2"] = dict(
+    VARIANTS["ours_l01_s1_allinwb"],
+    test_args=VARIANTS["ours_l01_s1"]["test_args"]
+              + ["--redundant_per_rank", "2"],
+)
+VARIANTS["ours_l01_s1_gate_r2"] = dict(
+    VARIANTS["ours_l01_s1_gate"],
+    test_args=VARIANTS["ours_l01_s1_gate"]["test_args"]
+              + ["--redundant_per_rank", "2"],
+)
+VARIANTS["ours_l01_s1_gate_allinwb_r2"] = dict(
+    VARIANTS["ours_l01_s1_gate_allinwb"],
+    test_args=VARIANTS["ours_l01_s1_gate_allinwb"]["test_args"]
+              + ["--redundant_per_rank", "2"],
+)
+# wirebal ONLY + replica parity (2026-08-25 user direction: expected big win
+# = wirebal/dyn, not the knob stack; this is the minimal-mechanism record
+# candidate — placement-driven, canonical combine knobs untouched)
+VARIANTS["ours_l01_s1_wb_r2"] = dict(
+    VARIANTS["ours_l01_s1_wb"],
+    test_args=VARIANTS["ours_l01_s1"]["test_args"]
+              + ["--redundant_per_rank", "2"],
+)
+VARIANTS["ours_l01_s1_gate_wb_r2"] = dict(
+    VARIANTS["ours_l01_s1_gate_wb"],
+    test_args=VARIANTS["ours_l01_s1_gate_wb"]["test_args"]
+              + ["--redundant_per_rank", "2"],
+)
+# dyn-v2 receiver stacked on the parity winner (dyn effect measurement)
+VARIANTS["ours_l01_s1_wb_r2_dyn"] = dict(
+    VARIANTS["ours_l01_s1_wb_r2"],
+    env=dict(VARIANTS["ours_l01_s1_wb_r2"]["env"],
+             FLUX_A2AV_RS_RECV_DYN="1"),
+    requires=list(_DYN_REQUIRES),
+)
+VARIANTS["ours_l01_s1_gate_wb_r2_dyn"] = dict(
+    VARIANTS["ours_l01_s1_gate_wb_r2"],
+    env=dict(VARIANTS["ours_l01_s1_gate_wb_r2"]["env"],
+             FLUX_A2AV_RS_RECV_DYN="1"),
+    requires=list(_DYN_REQUIRES),
+)

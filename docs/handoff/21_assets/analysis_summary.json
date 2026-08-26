@@ -1,0 +1,223 @@
+{
+ "capture": "20260825-183714_perlmutter_bbe70aba, node0 (+node8 spot), iter5 (times ms rel iter5 NVTX start)",
+ "iter_wall_ms": {
+  "ours": [
+   113.1,
+   120.2,
+   114.7
+  ],
+  "llc": [
+   106.3,
+   104.1,
+   105.4
+  ]
+ },
+ "ours_node0": {
+  "dispatch_wire": {
+   "n_puts": 15,
+   "span": [
+    2.46,
+    40.86
+   ],
+   "busy_ms": 38.22,
+   "interput_idle_ms": 0.17,
+   "per_put_ms": [
+    1.74,
+    1.08,
+    1.29,
+    1.15,
+    1.46,
+    2.79,
+    2.62,
+    1.73,
+    2.78,
+    2.55,
+    6.56,
+    2.88,
+    2.73,
+    3.12,
+    3.74
+   ],
+   "staging_dtod": [
+    147.2,
+    "MB, 7 copies, [-0.30..2.28]"
+   ],
+   "relay_p2p_st170": "60 cells x 27.5MB = 1.65GB span [4.13..44.16], 4 bursts, concurrent with puts"
+  },
+  "gemm0_fused": {
+   "span": [
+    3.08,
+    43.94
+   ],
+   "per_rank_dur": [
+    40.86,
+    40.53,
+    40.77,
+    41.74
+   ],
+   "math_equiv_llc": 4.74
+  },
+  "dispatch_barrier_wait": {
+   "node0": [
+    3.08,
+    3.35,
+    3.06,
+    2.76
+   ],
+   "node8": [
+    8.3,
+    9.5,
+    9.2,
+    8.8
+   ]
+  },
+  "combine": {
+   "bracket_r0": [
+    49.76,
+    97.22
+   ],
+   "gemm1_dur_per_rank": [
+    37.55,
+    6.86,
+    2.39,
+    0.84
+   ],
+   "pack_dur": [
+    37.55,
+    6.88,
+    2.38,
+    0.85
+   ],
+   "prereduce_dur": [
+    34.13,
+    34.72,
+    33.56,
+    33.55
+   ],
+   "wire_span_r0": [
+    51.39,
+    87.24
+   ],
+   "wire_completion": "14/15 end at 87.241 +/-1us; last-issued put (83.88) ends same instant",
+   "wire_end_per_rank": [
+    87.24,
+    90.63,
+    85.06,
+    85.86
+   ],
+   "per_target_staged_MB_r0": "15 copies 17.5-18.8 (272.5 total); r1 7.9-8.5 (121); r2 (53); r3 (15.4)",
+   "nvlink_conv": "16 cells x ~18MB per peer (st148/149/150), [50.63..87.60]"
+  },
+  "bucket_reduce": {
+   "n": 19,
+   "grid": 8,
+   "iter5_stall": "r0 gap5.2 (5.04 before final lane); r1 first3 lanes early @56.6 then 31ms wait, burst @87.5, 10.64ms gap before final lane, last end 105.29; r2/r3 similar final-gap 9.0/8.0",
+   "iter4_midchain_HOL_ms": [
+    17.0,
+    28.5,
+    30.0,
+    34.2
+   ]
+  },
+  "closing_barrier_wait": {
+   "node0": [
+    8.38,
+    0.02,
+    4.09,
+    5.15
+   ],
+   "node8": [
+    22.1,
+    14.9,
+    20.0,
+    19.4
+   ]
+  }
+ },
+ "llc_node0": {
+  "layout": "plan[45.2..48.1] scatter/sort[52.4..63.9] dispatch wire[59.78..85.98] gateway gathers st167 [59.8..82.2] recv-processing[86.9..98.9] GEMM0[98.95..103.70] GELU GEMM1[104.14..109.41] combine[110.56..140.64] cbar[140.66..153.59]",
+  "dispatch_wire": {
+   "n_puts": 15,
+   "busy_ms": 26.18,
+   "interput_idle_ms": 0.03,
+   "per_put_ms": [
+    1.63,
+    2.86,
+    1.77,
+    1.9,
+    2.31,
+    1.34,
+    2.14,
+    3.11,
+    1.95,
+    1.41,
+    2.22,
+    0.54,
+    0.91,
+    1.05,
+    1.04
+   ]
+  },
+  "combine": {
+   "pack": [
+    110.56,
+    126.77
+   ],
+   "prereduce": [
+    110.57,
+    126.09
+   ],
+   "wire_span": [
+    111.71,
+    136.75
+   ],
+   "cohorts": "4 puts end ~116.72, 11 end 136.75 (r0); r3: 8 @125.03, 7 @134.80",
+   "per_target_staged_MB_r0": "15 copies 8.3-12.4 (150.7); r1 132.7; r2 70.3; r3 55.8"
+  },
+  "bucket_reduce": {
+   "n": 19,
+   "grid": 8,
+   "busy": [
+    7.51,
+    4.83,
+    6.08,
+    4.73
+   ],
+   "stall": [
+    6.25,
+    13.35,
+    8.46,
+    12.25
+   ],
+   "pattern": "all mid-chain (pos 1-11), final-lane gap = 0"
+  },
+  "gemm_dur": {
+   "g0": [
+    4.74,
+    3.88,
+    2.6,
+    2.4
+   ],
+   "g1": [
+    5.26,
+    4.41,
+    2.81,
+    2.63
+   ]
+  },
+  "closing_barrier_wait": {
+   "node0": [
+    12.93,
+    13.15,
+    16.91,
+    12.23
+   ],
+   "node8": [
+    8.09,
+    1.52,
+    6.89,
+    12.17
+   ]
+  }
+ }
+}

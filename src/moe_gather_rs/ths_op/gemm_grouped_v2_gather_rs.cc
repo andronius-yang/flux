@@ -277,6 +277,36 @@ get_a2av_rs_bucket() {
   static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_BUCKET", 1);
   return v;
 }
+// Arrival-dynamic bucket receiver (H4, 2026-08-25): replace the bucket
+// receiver's S = L + NN - 1 sequential front-end waits (EXPECTED arrival
+// order -- one inverted arrival head-of-line blocks every already-landed
+// lane behind it; at 16n the tail is the max of 15 remote arrivals) with ONE
+// persistent kernel on the reserved reduce SMs that claims row chunks of any
+// ARRIVED lane and folds each token at its true completion (per-token
+// outstanding-contribution counters). Fold arithmetic is the bucket fold's
+// (fp32 CSR-order accumulate, read once / written once), so the output stays
+// BITWISE-identical to the wait-all reduce; only the schedule is
+// arrival-dependent. Requires the bucket receiver's plan (compress C',
+// n_split == 1). Default OFF -- knob-off is bit-identical enqueue-for-enqueue
+// to the pre-knob binary. Own never-mix boundary.
+// v2 (2026-08-25): slack-row sentinel hardening — token_of -1-fill + in-kernel
+// range guard closes the 16n b32+ garbage-t OOB-atomicSub livelock; tag bumped
+// to V2 so the runner can tell fixed builds from v1 (v1 dyn arms never-mix).
+int
+get_a2av_rs_recv_dyn() {
+  (void)bytedance::flux::get_int_from_env("FLUX_A2AV_RS_RECV_DYN_V2_TAG", 0);
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_RECV_DYN", 0);
+  return v;
+}
+// Rows claimed per cursor bump in the arrival-dynamic receiver (fold spread
+// vs cursor-atomic traffic dial; folds trigger inside row processing, so a
+// smaller chunk spreads token folds across more warps).
+int
+get_a2av_rs_recv_dyn_chunk() {
+  static int v =
+      std::max(1, bytedance::flux::get_int_from_env("FLUX_A2AV_RS_RECV_DYN_CHUNK", 4));
+  return v;
+}
 // Debug watchdog for the combine's device spin loops: 0 (default) =
 // unlimited, historical behavior. >0 = trap after N no-progress sleeps
 // (~200ns each) so a missing-signal bug aborts loudly instead of hanging
@@ -908,6 +938,10 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   // FLUX_A2AV_RS_BUCKET (gen-10): completion-bucketed register receiver --
   // arrival-order folding at 1x bytes (exclusive with lane-chain)
   const bool a2av_bucket_;
+  // FLUX_A2AV_RS_RECV_DYN (H4): consume the bucket receiver's lanes in TRUE
+  // arrival order via one persistent kernel (per-token completion counters)
+  // instead of the expected-order host wait chain; bitwise-identical output
+  const bool a2av_recv_dyn_;
   // FLUX_A2AV_RS_FUSED_PACK (gen-8c): the GEMM scatters the send panel
   // directly; the pack kernel runs as a flag relay and applies NO vec_scale
   // (pre-folded into the intermediate by the caller)
@@ -1009,12 +1043,16 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         CUDA_CHECK(cudaMemset(
             this->wire_counters_.get(), 0, sizeof(int) * this->nnodes * this->n_split));
         if (this->a2av_lane_chain_) {
-          // fp32 accumulator + recv-row->token map (plain device memory; the
-          // chain's scatter-adds and finalize are the only readers/writers)
+          // fp32 accumulator (plain device memory; the chain's scatter-adds
+          // and finalize are the only readers/writers)
           const int64_t ntok_max = (int64_t)this->max_m / this->topk / this->world_size;
           this->a2av_scratch_fp32_ = empty_with_uninitialized_data(
               std::vector<int64_t>{ntok_max, (int64_t)this->n_dim},
               at::TensorOptions(at::kCUDA).dtype(at::ScalarType::Float));
+        }
+        if (this->a2av_lane_chain_ || this->a2av_recv_dyn_) {
+          // recv-row -> token map (lane-chain scatter-adds; arrival-dynamic
+          // receiver's per-row completion decrements)
           this->a2av_token_of_row_ = empty_with_uninitialized_data(
               std::vector<int64_t>{this->a2av_recv_rows_},
               at::TensorOptions(at::kCUDA).dtype(at::ScalarType::Int));
@@ -1255,6 +1293,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
             a2av_compress && nnodes_ > 1 && get_a2av_rs_bucket() != 0 &&
             (a2av_env_explicit("FLUX_A2AV_RS_BUCKET") ||
              (n_split_ == 1 && get_a2av_rs_lane_chain() == 0))),
+        a2av_recv_dyn_(a2av_bucket_ && get_a2av_rs_recv_dyn() != 0),
         a2av_fused_pack_(
             a2av_hier_ && nnodes_ > 1 && get_a2av_rs_fused_pack() != 0),
         barriers(barriers) {
@@ -1265,6 +1304,13 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       FLUX_CHECK_EQ(n_split_, 1) << "FLUX_A2AV_RS_BUCKET requires n_split == 1";
       FLUX_CHECK(!this->a2av_lane_chain_)
           << "FLUX_A2AV_RS_BUCKET and FLUX_A2AV_RS_LANE_CHAIN are exclusive receivers";
+    }
+    if (a2av_env_explicit("FLUX_A2AV_RS_RECV_DYN") && get_a2av_rs_recv_dyn() != 0) {
+      // explicit env keeps the loud contract (the default silently rides the
+      // bucket flag, so demoted-bucket configs stay untouched)
+      FLUX_CHECK(this->a2av_bucket_)
+          << "FLUX_A2AV_RS_RECV_DYN requires the bucket receiver's plan "
+             "(compress C', n_split == 1, FLUX_A2AV_RS_BUCKET on)";
     }
     FLUX_CHECK_GE(nnodes, 1);
     FLUX_CHECK_DIV(world_size, nnodes);
@@ -1864,6 +1910,90 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       a2av_combine_eager_reduce(eager_args, flux_dtype, reduce_stream);
     }
 
+    if (this->a2av_recv_dyn_) {
+      // ARRIVAL-DYNAMIC receiver (H4, FLUX_A2AV_RS_RECV_DYN): the bucket
+      // receiver's per-lane waits in EXPECTED order become one persistent
+      // kernel consuming the same S lanes in TRUE arrival order (per-token
+      // completion counters; fold arithmetic identical to the bucket fold, so
+      // the output is bitwise-equal to wait-all). Enqueued HERE -- with the
+      // eager kernel's discipline, before any host wait reaches the conn=1
+      // front-end channel -- because a persistent kernel launch parked behind
+      // a blocked wait never starts. It polls the epoch-valued recv signals
+      // directly, so it needs neither the flag-reset event nor any per-split
+      // gate below; the signal-trust contract is unchanged (a lane's rows are
+      // touched only after its signal acquires >= run_id).
+      FLUX_CHECK(this->a2av_compress_);
+      FLUX_CHECK_EQ(this->n_split, 1);
+      const int64_t ntok_local = cpr / this->topk;
+      A2AVDynReduceArguments dyn_args{
+          .recv_panel = this->a2av_recv_panel_.data_ptr(),
+          .red_ptr = reduce_csr->at(0).data_ptr<int32_t>(),
+          .red_row = reduce_csr->at(1).data_ptr<int32_t>(),
+          .token_of = this->a2av_token_of_row_.data_ptr<int32_t>(),
+          // remain reuses the bucket completion map, lane cursors the bucket
+          // meta buffer: the bucket receiver's own launches are skipped below
+          .remain = this->a2av_bucket_comp_.data_ptr<int32_t>(),
+          .ntokens_local = ntok_local,
+          .lane_cursor = this->a2av_bucket_meta_.data_ptr<int32_t>(),
+          .output = output.data_ptr(),
+          .recv_signals = recv_sig,
+          .run_id = this->run_id_,
+          .lane_sig = {},
+          .lane_row_lo = {},
+          .lane_rows = {},
+          .n_lanes = 0,
+          .n = (int)n_per,
+          .chunk_rows = get_a2av_rs_recv_dyn_chunk(),
+          .threadblock_count = get_a2av_reduce_blocks(),
+          .spin_limit = get_a2av_spin_limit()};
+      int Sd = 0;
+      auto add_lane = [&](int s2) {
+        const int64_t rows = chunk_cp(s2, this->rank);
+        if (rows <= 0) {
+          return;  // zero-row lanes still signal; nothing can complete there
+        }
+        dyn_args.lane_sig[Sd] = s2 * this->n_split;  // sid == 0
+        dyn_args.lane_row_lo[Sd] = recv_off_cp(s2, this->rank);
+        dyn_args.lane_rows[Sd] = (int32_t)rows;
+        Sd++;
+      };
+      // same S materializing lanes as the bucket chain (order is irrelevant
+      // to correctness here; kept for the staggered poll start heuristic)
+      add_lane(this->rank);
+      for (int dl = 1; dl < L; dl++) {
+        add_lane(my_node * L + (my_lr - dl + L) % L);
+      }
+      for (int gi = 1; gi < NN; gi++) {
+        add_lane(((my_node - gi + NN) % NN) * L + my_lr);
+      }
+      dyn_args.n_lanes = Sd;
+      FLUX_CHECK_GT(Sd, 0) << "arrival-dynamic receiver: empty C' image";
+      CUDA_CHECK(cudaMemsetAsync(
+          dyn_args.lane_cursor, 0, sizeof(int32_t) * (size_t)Sd, reduce_stream));
+      // v2 slack-row hardening (16n b32+ livelock fix): -1-fill the WHOLE
+      // token_of buffer (a2av_recv_rows_ rows >= cpr >= image rows >= every
+      // lane extent — the FLUX_CHECK chain above) BEFORE the map kernel
+      // writes the CSR-covered rows, so any slack row the kernel walks reads
+      // the sentinel and is skipped instead of aliasing a token (the
+      // garbage-t OOB-atomicSub livelock class). 0xFF bytes == int32 -1.
+      CUDA_CHECK(cudaMemsetAsync(
+          this->a2av_token_of_row_.data_ptr(),
+          0xFF,
+          this->a2av_token_of_row_.nbytes(),
+          reduce_stream));
+      // token map + remain counters ride the existing plan kernel, ordered
+      // before the persistent kernel on the same stream
+      a2av_lane_token_map(
+          A2AVLaneTokenMapArguments{
+              reduce_csr->at(0).data_ptr<int32_t>(),
+              reduce_csr->at(1).data_ptr<int32_t>(),
+              ntok_local,
+              this->a2av_token_of_row_.data_ptr<int32_t>(),
+              dyn_args.remain},
+          reduce_stream);
+      a2av_combine_dyn_reduce(dyn_args, flux_dtype, reduce_stream);
+    }
+
     // The ladders are enqueued INTERLEAVED PER SPLIT, in dependency order
     // (inter -> intra -> gateway -> reduce): under CUDA_DEVICE_MAX_CONNECTIONS=1
     // all streams multiplex one front-end channel and a pending wait can block
@@ -2192,12 +2322,14 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
                 get_a2av_reduce_blocks()},
             flux_dtype,
             reduce_stream);
-      } else if (this->a2av_bucket_) {
+      } else if (this->a2av_bucket_ && !this->a2av_recv_dyn_) {
         // COMPLETION-BUCKETED receiver (Slipstream gen-10): a ~us plan-time
         // bucket sort of the reduce CSR by completion chain position (on the
         // reduce stream, inside the timed bracket), then per-lane front-end
         // waits each releasing a register-CSR fold of exactly the tokens
-        // that lane completes. Own-node lanes chain FIRST -- consumption
+        // that lane completes. (Under FLUX_A2AV_RS_RECV_DYN the persistent
+        // arrival-dynamic kernel launched above consumes the same lanes and
+        // this whole branch is skipped.) Own-node lanes chain FIRST -- consumption
         // order only, the wire keeps the canon own-last production: own rows
         // are ready at GEMM end, which precedes the remote drain, so tokens
         // complete at their last REMOTE arrival and the fold spreads over
@@ -2297,7 +2429,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
               flux_dtype,
               reduce_stream);
         }
-      } else if (!this->a2av_eager_) {
+      } else if (!this->a2av_eager_ && !this->a2av_recv_dyn_) {
         for (int s = 0; s < W; s++) {
           if (this->a2av_compress_ && s / L != my_node && s % L != my_lr) {
             continue;  // lane never materializes under C'

@@ -4,7 +4,10 @@ export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib:~/.local/lib/
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 FLUX_SRC_DIR=${SCRIPT_DIR}
 
-# add flux python package to PYTHONPATH
+# add THIS tree's flux python package to PYTHONPATH (worktree `ours`: the
+# conda env's editable install points at the MAIN checkout — PYTHONPATH
+# precedes site-packages, so this worktree's package + pybind .so win)
+export PYTHONPATH="${FLUX_SRC_DIR}/python${PYTHONPATH:+:$PYTHONPATH}"
 export NVSHMEM_BOOTSTRAP=UID
 export NVSHMEM_DISABLE_CUDA_VMM=1 # moving from cpp to shell
 export CUDA_DEVICE_MAX_CONNECTIONS=${CUDA_DEVICE_MAX_CONNECTIONS:-1}
