@@ -1,0 +1,80 @@
+# Figure tables generated from /tmp/claude-101128/-global-u1-y-yufeid-workspace-changchen-andrewy-flux/4a20950d-d744-4086-9290-9d0e6a4094d5/scratchpad/ours_r2_tidy.csv
+# See figure_tables.py docstring for layout/conventions.
+
+# === Qwen 3 | 4n ===
+arm,total_b1,total_b2,total_b4,total_b8,total_b16,total_b32,total_b64,,plan_b1,plan_b2,plan_b4,plan_b8,plan_b16,plan_b32,plan_b64,,layer0_b1,layer0_b2,layer0_b4,layer0_b8,layer0_b16,layer0_b32,layer0_b64,,layer1_b1,layer1_b2,layer1_b4,layer1_b8,layer1_b16,layer1_b32,layer1_b64
+Torch + GEMM,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FAST + GEMM,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Comet,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+MoonEP,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+EPLB,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+EPIC,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1 Ours(Token Comm),,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+2 Ours(expert balance + Routing),,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1+2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1+2 + expert dispatch overlap,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+
+# === Kimi K2 | 4n ===
+arm,total_b1,total_b2,total_b4,total_b8,total_b16,total_b32,total_b64,,plan_b1,plan_b2,plan_b4,plan_b8,plan_b16,plan_b32,plan_b64,,layer0_b1,layer0_b2,layer0_b4,layer0_b8,layer0_b16,layer0_b32,layer0_b64,,layer1_b1,layer1_b2,layer1_b4,layer1_b8,layer1_b16,layer1_b32,layer1_b64
+Torch + GEMM,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FAST + GEMM,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Comet,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+MoonEP,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+EPLB,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+EPIC,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1 Ours(Token Comm),,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+2 Ours(expert balance + Routing),,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1+2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1+2 + expert dispatch overlap,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+
+# === Qwen 3 | 8n ===
+arm,total_b1,total_b2,total_b4,total_b8,total_b16,total_b32,total_b64,,plan_b1,plan_b2,plan_b4,plan_b8,plan_b16,plan_b32,plan_b64,,layer0_b1,layer0_b2,layer0_b4,layer0_b8,layer0_b16,layer0_b32,layer0_b64,,layer1_b1,layer1_b2,layer1_b4,layer1_b8,layer1_b16,layer1_b32,layer1_b64
+Torch + GEMM,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FAST + GEMM,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Comet,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+MoonEP,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+EPLB,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+EPIC,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1 Ours(Token Comm),,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+2 Ours(expert balance + Routing),,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1+2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1+2 + expert dispatch overlap,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+
+# === Kimi K2 | 8n ===
+arm,total_b1,total_b2,total_b4,total_b8,total_b16,total_b32,total_b64,,plan_b1,plan_b2,plan_b4,plan_b8,plan_b16,plan_b32,plan_b64,,layer0_b1,layer0_b2,layer0_b4,layer0_b8,layer0_b16,layer0_b32,layer0_b64,,layer1_b1,layer1_b2,layer1_b4,layer1_b8,layer1_b16,layer1_b32,layer1_b64
+Torch + GEMM,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FAST + GEMM,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Comet,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+MoonEP,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+EPLB,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+EPIC,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1 Ours(Token Comm),,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+2 Ours(expert balance + Routing),,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1+2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1+2 + expert dispatch overlap,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+
+# === Qwen 3 | 16n ===
+arm,total_b1,total_b2,total_b4,total_b8,total_b16,total_b32,total_b64,,plan_b1,plan_b2,plan_b4,plan_b8,plan_b16,plan_b32,plan_b64,,layer0_b1,layer0_b2,layer0_b4,layer0_b8,layer0_b16,layer0_b32,layer0_b64,,layer1_b1,layer1_b2,layer1_b4,layer1_b8,layer1_b16,layer1_b32,layer1_b64
+Torch + GEMM,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FAST + GEMM,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Comet,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+MoonEP,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+EPLB,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+EPIC,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1 Ours(Token Comm),,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+2 Ours(expert balance + Routing),,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1+2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1+2 + expert dispatch overlap,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+
+# === Kimi K2 | 16n ===
+arm,total_b1,total_b2,total_b4,total_b8,total_b16,total_b32,total_b64,,plan_b1,plan_b2,plan_b4,plan_b8,plan_b16,plan_b32,plan_b64,,layer0_b1,layer0_b2,layer0_b4,layer0_b8,layer0_b16,layer0_b32,layer0_b64,,layer1_b1,layer1_b2,layer1_b4,layer1_b8,layer1_b16,layer1_b32,layer1_b64
+Torch + GEMM,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+FAST + GEMM,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+Comet,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+MoonEP,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+EPLB,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+EPIC,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1 Ours(Token Comm),,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+2 Ours(expert balance + Routing),,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1+2,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+1+2 + expert dispatch overlap,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
