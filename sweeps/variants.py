@@ -2664,3 +2664,33 @@ VARIANTS["ours_l01_s2_gate_r2"] = dict(
     test_args=VARIANTS["ours_l01_s2_gate"]["test_args"]
               + ["--redundant_per_rank", "2"],
 )
+
+# moved-last / late-w2 x r2 (2026-08-26 session): movement scheduling
+# validated + measured at replica parity (the production-shaped regime).
+VARIANTS["ours_l01_s2_gate_r2_ml"] = dict(
+    VARIANTS["ours_l01_s2_gate_r2"],
+    env=dict(VARIANTS["ours_l01_s2_gate_r2"]["env"],
+             FLUX_OURS_SCHED_MOVED_LAST="1"),
+)
+VARIANTS["ours_l01_s2_gate_r2_mlw2"] = dict(
+    VARIANTS["ours_l01_s2_gate_r2"],
+    env=dict(VARIANTS["ours_l01_s2_gate_r2"]["env"],
+             FLUX_OURS_SCHED_MOVED_LAST="1", FLUX_OURS_S2_W2_LATE="1"),
+)
+VARIANTS["ours_l01_s2_stale_r2"] = dict(
+    VARIANTS["ours_l01_s2_stale"],
+    test_args=VARIANTS["ours_l01_s2_stale"]["test_args"]
+              + ["--redundant_per_rank", "2"],
+)
+for _k, _env in (("ml", {"FLUX_OURS_SCHED_MOVED_LAST": "1"}),
+                 ("w2l", {"FLUX_OURS_S2_W2_LATE": "1"}),
+                 ("mlw2", {"FLUX_OURS_SCHED_MOVED_LAST": "1",
+                           "FLUX_OURS_S2_W2_LATE": "1"})):
+    VARIANTS[f"ours_l01_s2_stale_r2_{_k}"] = dict(
+        VARIANTS["ours_l01_s2_stale_r2"],
+        env=dict(VARIANTS["ours_l01_s2_stale_r2"]["env"], **_env))
+VARIANTS["ours_l01_s2_r2_quiet"] = dict(
+    VARIANTS["ours_l01_s2"],
+    test_args=VARIANTS["ours_l01_s2"]["test_args"]
+              + ["--redundant_per_rank", "2"],
+)

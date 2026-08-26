@@ -1,0 +1,17 @@
+# 2026-08-26 moved-last/late-w2 A/B AT REPLICA PARITY (r2): stale quad +
+# quiet null. Within-capsule comparisons only (rule 4).
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [ours_l01_s2_stale_r2, ours_l01_s2_stale_r2_ml, ours_l01_s2_stale_r2_w2l, ours_l01_s2_stale_r2_mlw2, ours_l01_s2_r2_quiet]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8, 32]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 0
+notes: "ml/w2l x r2 A/B 4n k2: stale quad + quiet null, isolated"

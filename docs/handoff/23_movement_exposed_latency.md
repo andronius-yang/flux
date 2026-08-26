@@ -92,3 +92,17 @@ hosts <= nlp slots; no expert routes more entries to a rank than its
 total demand). l0_recv and RS_MAX_SEND_ROWS inherit via their existing
 max(..., recv_cap). Qwen's first re-gate was already green (596 moves,
 0 f_cap retries — the merged batch-f_cap max sufficed there; cap 434).
+
+### Layer 3 + RESOLUTION (20260826-2354/2357 gates: BOTH GREEN)
+
+Second re-gate: K2 failed one panel further (combine conv 4641 > 4199).
+FIX (27b826a): the whole RS panel family floored at placement-independent
+per-dest-population ceilings — column sums are fixed (every owner
+receives exactly cpr = S*K), so conv/stage <= (nn-1)*S*K and wire
+(unique rows) <= (nn-1)*S; send inherits recv_cap. Third re-gate:
+**K2 ok (1600 moves / 4 triggers) + Qwen ok (596 / 4)** — s2 x r2
+UNBLOCKED. Note fcap_retries = 0 in the green gates: with sound
+envelopes the batch-max f_cap sufficed; the layer-1 escalate-and-reroute
+remains armed as the safety net (and the recv/panel FLUX_CHECKs remain
+the loud contract). Capsules: 234231/234904 (failed, evidence),
+234402/235025/235437/235716 (green).
