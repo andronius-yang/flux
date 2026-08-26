@@ -2595,3 +2595,16 @@ VARIANTS["ours_l01_s1_gate_wb_r2"] = dict(
     test_args=VARIANTS["ours_l01_s1_gate_wb"]["test_args"]
               + ["--redundant_per_rank", "2"],
 )
+# dyn-v2 receiver stacked on the parity winner (dyn effect measurement)
+VARIANTS["ours_l01_s1_wb_r2_dyn"] = dict(
+    VARIANTS["ours_l01_s1_wb_r2"],
+    env=dict(VARIANTS["ours_l01_s1_wb_r2"]["env"],
+             FLUX_A2AV_RS_RECV_DYN="1"),
+    requires=list(_DYN_REQUIRES),
+)
+VARIANTS["ours_l01_s1_gate_wb_r2_dyn"] = dict(
+    VARIANTS["ours_l01_s1_gate_wb_r2"],
+    env=dict(VARIANTS["ours_l01_s1_gate_wb_r2"]["env"],
+             FLUX_A2AV_RS_RECV_DYN="1"),
+    requires=list(_DYN_REQUIRES),
+)

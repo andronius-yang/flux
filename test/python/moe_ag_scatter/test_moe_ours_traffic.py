@@ -259,10 +259,26 @@ def main():
     assert args.warmup_iters >= 1, (
         "warmup >= 1 is mandatory (LAZY module loads must happen before "
         "timing; see critique M3)")
+    # setup trace (2026-08-26 r2 16n hang RCA): the hung gate cell died
+    # with ZERO bytes on every rank log — nothing localizes a pre-print
+    # wedge (NCCL rendezvous / nvshmem init / first collectives).
+    # Rank-tagged milestone prints, default ON for gate cells
+    # (--check_iters — the validation lane, where perturbed timing is
+    # already accepted) and via FLUX_OURS_SETUP_TRACE=1 elsewhere. Perf
+    # cells are byte-unchanged by default.
+    _strace_on = bool(args.check_iters) or bool(int(os.environ.get(
+        "FLUX_OURS_SETUP_TRACE", "0")))
+
+    def _st(tag):
+        if _strace_on:
+            print(f"[setup-trace] r{rank} {tag}", flush=True)
+    _st("enter (dist env up)")
     assert_node_major_ranks()
+    _st("node-major ok")
     init_ep_group(DIST_ENV.WORLD_SIZE)
     flux.init_flux_shm(TP_GROUP)
     torch.cuda.synchronize()
+    _st("flux shm init ok")
 
     matrix = parse_traffic_matrix(args.traffic_matrix)
     assert matrix.shape[0] == W
@@ -309,6 +325,7 @@ def main():
                                       method="snake")
     torch.cuda.synchronize()
     place_solver_ms = (time.perf_counter() - t_ps) * 1e3
+    _st("placement solved")
     pblob = {"version": 2, "G": args.G, "W": W, "nlp": cfg.nlp,
              "hosts": hosts_pll, "planner": plfast.stats_host(pf_solve)}
     plan = build_nodeaware_plan(cfg, tpe, pblob)
@@ -340,6 +357,7 @@ def main():
     plan.phys_override = phys_ref
     pll_bounds = loccap_sl_bounds(pll_aux, W, args.pll_f_cap)
     args.pll_f_cap = pll_bounds["f_cap"]
+    _st("reference route + bounds ok")
     if plan_batch is not None:
         phys_ref_b, pll_aux_b = loccap_route_sl(
             topk_all.long().cpu(), plan_batch.p2l, plan_batch.l2p,
@@ -404,7 +422,14 @@ def main():
                 for k in knob_pairs[0][0]}
     rs_exact = {k: max(int(kp[1][k]) for kp in knob_pairs)
                 for k in knob_pairs[0][1]}
-    cushion_sr = (fp_slack + L - 1) // L + 8 * W
+    # r2 hardening (2026-08-26 RCA): with replica headroom the relaxed
+    # kernel's forced traffic redistributes across instance ranks in ways
+    # the reference's per-L split can understate; 16n r2 is the untested
+    # forced-heavy regime (forced_frac 0.10-0.13 at qwen b8). Use the
+    # UNDIVIDED fp_slack for the stage/relay cushions when R_red > 0
+    # (tens of MB; exact no-op at --redundant_per_rank 0).
+    cushion_sr = ((fp_slack + 8 * W) if args.redundant_per_rank > 0
+                  else (fp_slack + L - 1) // L + 8 * W)
     l0_recv_rows = max(
         int(l0_exact["FLUX_A2AV_MAX_RECV_NTOKENS"]) + cushion, recv_cap)
     stage_rows = int(l0_exact["FLUX_A2AV_MAX_STAGE_NTOKENS"]) + cushion_sr
@@ -421,6 +446,7 @@ def main():
     os.environ["FLUX_A2AV_MAX_RECV_NTOKENS"] = str(int(l0_recv_rows))
     os.environ["FLUX_A2AV_MAX_STAGE_NTOKENS"] = str(int(stage_rows))
     os.environ["FLUX_A2AV_MAX_RELAY_NTOKENS"] = str(int(relay_rows))
+    _st("sizing collective ok")
 
     # l1 (combine) capacity: EXACT demands (placement-maxed under s2) +
     # drift cushion
@@ -442,6 +468,7 @@ def main():
         TP_GROUP, EP_GROUP, DIST_ENV.NNODES, L, cfg, args.ffn_hidden_size,
         input_dtype, l0_recv_rows, sm_margin=args.sm_margin,
         plan_overlap=bool(args.plan_overlap))
+    _st("runner (fused ops) constructed")
     lane = None
     store = None
     if args.scenario == "s1":
@@ -564,6 +591,7 @@ def main():
         print(f"setup audit OK: E_virt {E_virt} gpe {gpe} m_ref "
               f"{runner._m_this}; placement basis {oracle_basis} "
               f"drift {_drift} ppm; solver {place_solver_ms:.1f} ms")
+    _st("setup audit ok")
 
     RECORDER.emit_info(
         ours_fusion="slipstream_v2",
