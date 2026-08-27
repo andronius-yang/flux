@@ -153,6 +153,12 @@ class OursMovementLane:
         # l0 + gelu; join_w2 semantics unchanged).
         self.w2_late = bool(int(os.environ.get(
             "FLUX_OURS_S2_W2_LATE", "0")))
+        # FLUX_OURS_S2_DEBUG_SYNC=1 (2026-08-27 noshard IndexKernel
+        # triage): synchronize after each movement sub-step so the async
+        # device assert is raised AT the faulting op instead of iterations
+        # later. Debug only — destroys all overlap.
+        self.debug_sync = bool(int(os.environ.get(
+            "FLUX_OURS_S2_DEBUG_SYNC", "0")))
 
         # WPM slot space = gpe rows so prefetch_slots() IS the fused op's
         # [gpe, r0, r1] weights view; slot 0 = the pad slot (never pushed,
@@ -330,6 +336,7 @@ class OursMovementLane:
             for op in ops_now:
                 self._issue_roles(op)
             self.ev_move_end.record()
+        self._dbg("roles")
         if self.w2_late:
             self._w2_pending = True
             self._w2_pairs, self._w2_shards, self._w2_keep = (
@@ -338,6 +345,13 @@ class OursMovementLane:
         self.resident_p2l = new_p2l_host.long().clone()
         return True
 
+    def _dbg(self, tag):
+        if self.debug_sync:
+            try:
+                torch.cuda.synchronize()
+            except Exception as e:
+                raise RuntimeError(f"[s2-debug-sync] fault at {tag}: {e}")
+
     def _issue_op(self, op, pairs_t, shards, keep):
         """Issue one weight op's movement legs on the CURRENT stream:
         raise unmoved slots to the new epoch (only moved slots gate),
@@ -345,10 +359,13 @@ class OursMovementLane:
         advance in lockstep, but late-w2 must not reuse a stale value)."""
         new_epoch = int(op.epoch()) + 1
         op.signals().index_fill_(0, keep, new_epoch)
+        self._dbg("index_fill")
         op.set_plan(pairs_t)
+        self._dbg("set_plan")
         if shards is not None:
             op.set_shard_plan(shards, self.shard_chunk_bytes, self.L)
         op.forward(self.multicast)
+        self._dbg("forward")
 
     def _issue_roles(self, op):
         """Late-drained relay roles for one op (side stream)."""
