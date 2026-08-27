@@ -240,3 +240,27 @@ more sharded-chain wedge mark. V2 = threshold-1 arms (keep_bonus=90090
 stickiness + cover decision + force_trigger): drift-DEMANDED moves only;
 specs mloraclekb_{k2,qwen}_4n. Build-leg post-mortem: the clean mlrun
 rewrite dropped the build leg; builds now run inline, verified.
+
+## CAMPAIGN CLOSE-OUT (2026-08-27 ~05:45)
+
+Ladder COMPLETE: 4n/8n/16n × K2/Qwen × r0/r2 + oracle/kb/pull probes.
+Report artifact (authority for numbers):
+https://claude.ai/code/artifact/44ce0fcb-4110-4e22-bde8-203abed60e39
+
+CANON PACKAGE (user one-decision items):
+1. weight_shard=off for s2 movement — perf (−42/−50/−58% K2 stale at
+   4/8/16n; −44/−32% Qwen 4n; r2 −39/−28%) + stability (every campaign
+   wedge sat in a sharded arm; noshard 0 wedges) + gates green.
+2. Keep unconditionally: 3 envelope fixes (f_cap retry, provable recv
+   ceiling, RS panel ceilings), record_stream fix, prime_pull rule,
+   s2 42x heap sizing.
+3. Regime options, default OFF: ml (Qwen-4n −6%), w2l (Qwen-8n-r2 −15%).
+4. Documented ablations: pull mode (loser, gate-green), bigchunk
+   (superseded by noshard).
+
+OPEN ITEMS: (a) sharded-arm wedge family — quarantined, root-cause only
+if sharding ever returns; (b) b64@16n = skipped_capacity (heap economy
+redesign); (c) g-axis real-drift probe — user call; (d) Qwen-16n noshard
+twin — optional symmetry; (e) prod prefilter calibration (pre-existing).
+Node-hours this session ≈ 8-10 (interactive/debug windows ~40 cells +
+three 16n regular windows), zero idle-burn, all allocations released.
