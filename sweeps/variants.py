@@ -2695,3 +2695,25 @@ VARIANTS["ours_l01_s2_gate_swap_r2"] = dict(
     VARIANTS["ours_l01_s1"],
     test_args=_SWAP_ARGS + ["--check_iters", "1"],
 )
+# tau=1 gate twin: forces the NVLink exchange to actually FIRE (the
+# canonical tau=512 gate can be vacuous when the oracle->batch drift
+# opens no >=tau pair gap — observed K2 4n b8: 0 swaps/iter)
+VARIANTS["ours_l01_s2_gate_swap_t1_r2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=_SWAP_ARGS + ["--check_iters", "1",
+                            "--swap_tau_rows", "1"],
+)
+# FORCE mode (tau=-1, user direction 2026-08-27): best exchange per pair
+# regardless of gain — oscillates at the fixed point, so NVLink movement
+# fires EVERY iteration. The always-overlapped probe: compare its
+# e2e/total against swap0 (decide-only) in the same capsule; full overlap
+# = parity. Gate twin runs it under per-iteration correctness.
+VARIANTS["ours_l01_s2_swap_force_r2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=_SWAP_ARGS + ["--swap_tau_rows", "-1"],
+)
+VARIANTS["ours_l01_s2_gate_swap_force_r2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=_SWAP_ARGS + ["--check_iters", "1",
+                            "--swap_tau_rows", "-1"],
+)

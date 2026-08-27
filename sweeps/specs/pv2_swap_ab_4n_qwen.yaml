@@ -21,4 +21,5 @@ variants:
   - ours_l01_s1_pv2_r2
   - ours_l01_s2_swap0_r2
   - ours_l01_s2_swap_r2
+  - ours_l01_s2_swap_force_r2
 notes: "swap A/B 4n qwen: intra-node NVLink swap vs decide-only vs static, r2, b1/b8/b64 isolated"

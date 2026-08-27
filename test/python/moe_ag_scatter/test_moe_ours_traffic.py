@@ -618,6 +618,17 @@ def main():
                     list(range(_u * L, (_u + 1) * L)))
                 if _u == rank // L:
                     _my_ng = _g
+            # EAGER communicator init (2026-08-27 qwen gate wedge RCA):
+            # NCCL comm creation is COLLECTIVE over the subgroup, but the
+            # first swap only makes P2P calls from the PAIR ranks — the
+            # bystanders are already parked in the world allgather ->
+            # circular wait (i0 deadlock, 925 ms partial-init then wedge).
+            # One tiny all_reduce per node group at setup initializes the
+            # communicator with all members present; issue() is then
+            # enqueue-only.
+            torch.distributed.all_reduce(
+                torch.zeros(1, device="cuda"), group=_my_ng)
+            torch.cuda.synchronize()
             swap_lane = OursSwapLane(lane, _my_ng, rank, L, cfg.nlp,
                                      args.ffn_hidden_size, args.H,
                                      input_dtype)
@@ -870,7 +881,8 @@ def main():
                 # cross-node migration; the router (next bracket) runs on
                 # the swapped tables — same-iteration benefit.
                 _pt0 = time.perf_counter()
-                d_host = d_gather_buf.cpu()
+                d_host = d_gather_buf.cpu()   # blocks on the in-flight
+                _ptd = time.perf_counter()    # allgather: d2h span below
                 load_g = d_host.long().sum(0)
                 swaps, _Lr = oswap_rt.swap_plan(
                     load_g, plan.p2l, plan.lcnts, L, cfg.nlp,
@@ -885,8 +897,9 @@ def main():
                                    swap_lane.move_bytes_this_iter, 0))
                 if rank == 0 and args.check_iters:
                     _pt2 = time.perf_counter()
-                    print(f"[swap] iter {i}: decide "
-                          f"{(_pt1 - _pt0) * 1e3:.2f} ms apply+issue "
+                    print(f"[swap] iter {i}: d2h "
+                          f"{(_ptd - _pt0) * 1e3:.2f} plan "
+                          f"{(_pt1 - _ptd) * 1e3:.2f} apply+issue "
                           f"{(_pt2 - _pt1) * 1e3:.2f} ms swaps "
                           f"{len(swaps)}: {swaps}", flush=True)
             elif lane is not None and use_pv2:

@@ -60,7 +60,15 @@ def rank_loads(load_g, p2l, lcnts, R, nlp):
 def swap_plan(load_g, p2l, lcnts, L, nlp, tau_rows):
     """One round of EPIC-greedy intra-node pairing. Host integer, pure.
     Returns (swaps, L_r) where swaps = [(r_h, s_h, e_h, r_l, s_l, e_l)]
-    (global slot ids; each rank appears in at most one swap)."""
+    (global slot ids; each rank appears in at most one swap).
+
+    tau_rows < 0 = FORCE mode (the always-overlap probe): the pair-gap
+    prefilter and the gain threshold are bypassed — every pair applies
+    its best candidate exchange regardless of gain sign. At a balanced
+    fixed point the best exchange has negative gain and the next
+    iteration's best is its reversal, so movement OSCILLATES and NVLink
+    traffic fires every iteration (worst-case overlap; the sizing orbit
+    detects the cycle)."""
     R = p2l.numel() // nlp
     NN = R // L
     L_r = rank_loads(load_g, p2l, lcnts, R, nlp)
@@ -68,13 +76,14 @@ def swap_plan(load_g, p2l, lcnts, L, nlp, tau_rows):
     p2l_h = p2l.tolist()
     lg = load_g.tolist()
     lc = lcnts.tolist()
+    force = tau_rows < 0
     swaps = []
     for u in range(NN):
         ranks = sorted(range(u * L, (u + 1) * L),
                        key=lambda r: (-lr[r], r))
         for i in range(L // 2):
             h, l = ranks[i], ranks[L - 1 - i]
-            if lr[h] - lr[l] <= tau_rows:
+            if not force and lr[h] - lr[l] <= tau_rows:
                 continue
             hs = [(s, p2l_h[s]) for s in range(h * nlp, (h + 1) * nlp)
                   if p2l_h[s] >= 0]
@@ -96,7 +105,7 @@ def swap_plan(load_g, p2l, lcnts, L, nlp, tau_rows):
                         continue      # only heavy-for-light helps
                     new_max = max(lr[h] - w_h + w_l, lr[l] - w_l + w_h)
                     gain = base - new_max
-                    if gain >= tau_rows and (
+                    if (force or gain >= tau_rows) and (
                             best is None or gain > best[0]
                             or (gain == best[0]
                                 and (e_h, e_l) < (best[1], best[2]))):
@@ -133,12 +142,17 @@ def swap_orbit(load_g, p2l, l2p, lcnts, L, nlp, tau_rows, max_rounds=8):
     of successive (p2l, l2p) placements AFTER each swapping iteration
     (empty if the start placement is already stable)."""
     out = []
+    seen = {bytes(p2l.numpy().tobytes())}
     cur_p2l, cur_l2p = p2l, l2p
     for _ in range(max_rounds):
         swaps, _ = swap_plan(load_g, cur_p2l, lcnts, L, nlp, tau_rows)
         if not swaps:
             break
         cur_p2l, cur_l2p = apply_swaps(cur_p2l, cur_l2p, swaps)
+        key = bytes(cur_p2l.numpy().tobytes())
+        if key in seen:
+            break                    # cycle (force-mode oscillation)
+        seen.add(key)
         out.append((cur_p2l, cur_l2p))
     return out
 
