@@ -13,8 +13,8 @@ iters: 10
 warmup_iters: 5
 skip_correctness: true
 sm_margin: 8
-timeout_s: 2400
-idle_timeout_s: 900
+timeout_s: 1200
+idle_timeout_s: 300
 retries: 1
 matrix_instance: "001"
 variants:
