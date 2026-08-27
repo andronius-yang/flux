@@ -188,3 +188,20 @@ in every regime except qwen-8n-r2 (where mlw2/w2l won b8) and is NOT
 canon material -> QUARANTINED as open item (suspect: late-issue x
 join_w1 boundary interplay; the keep fix covers only the index_fill
 lifetime). All other arms/corners green.
+
+### Round-4 design amendment (user review) + oracle-drift probe
+
+CORRECTION to the pull-mode note: an RDMA read moves bytes home-TX ->
+dest-RX — the SAME lanes inbound tokens use; pull does NOT free the
+tokens' direction (earlier duplex claim wrong). Pull-mode default order
+is therefore TOKENS-FIRST: adopt tables -> enqueue dispatch+l0 -> w1
+gets -> w2 gets, with ml holding moved tiles at the schedule tail.
+"w1 first" = w1-before-w2 only, never weights-before-tokens.
+
+ORACLE-DRIFT PROBE (user experiment, launched): --s2_stale oracle
+resets the resident to the pre-batch oracle solve every iteration, so every
+timed window re-moves exactly the oracle->batch drift set (expected
+small). Arms: quiet twin vs oracle vs oracle+noshard, K2+Qwen 4n
+b8/b32. Readout: ours_s2_moves per iter + premium (oracle - quiet)
+~ 0 iff small movement fully overlaps; also decides whether sharding
+earns its keep in the few-moves regime it was designed for.
