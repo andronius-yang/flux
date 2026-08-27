@@ -2706,6 +2706,27 @@ VARIANTS["ours_l01_s2_stale_bigchunk"] = dict(
     env=dict(VARIANTS["ours_l01_s2_stale"]["env"],
              FLUX_OURS_S2_SHARD_CHUNK=str(8 << 20)),
 )
+# round-4 PULL movement (2026-08-27): FLUX_OURS_S2_PULL=1 — destination
+# getmem + local epoch SET, tokens-first issue (gets enqueue after the
+# fused l0 forward), no gateway/shard chain, no remote signals. Compare
+# within-regime against the push champion (noshard).
+VARIANTS["ours_l01_s2_gate_pull"] = dict(
+    VARIANTS["ours_l01_s2_gate"],
+    env=dict(VARIANTS["ours_l01_s2_gate"]["env"], FLUX_OURS_S2_PULL="1"),
+)
+VARIANTS["ours_l01_s2_stale_pull"] = dict(
+    VARIANTS["ours_l01_s2_stale"],
+    env=dict(VARIANTS["ours_l01_s2_stale"]["env"], FLUX_OURS_S2_PULL="1"),
+)
+VARIANTS["ours_l01_s2_stale_r2_pull"] = dict(
+    VARIANTS["ours_l01_s2_stale_r2"],
+    env=dict(VARIANTS["ours_l01_s2_stale_r2"]["env"],
+             FLUX_OURS_S2_PULL="1"),
+)
+VARIANTS["ours_l01_s2_oracle_pull"] = dict(
+    VARIANTS["ours_l01_s2_oracle"],
+    env=dict(VARIANTS["ours_l01_s2_oracle"]["env"], FLUX_OURS_S2_PULL="1"),
+)
 # oracle-drift probe (2026-08-27 user experiment): resident reset to the
 # PRE-BATCH ORACLE solve every iteration -> each timed window re-moves
 # exactly the oracle->batch drift set (expected: few experts). Question:

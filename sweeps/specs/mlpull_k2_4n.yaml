@@ -1,0 +1,17 @@
+# pull vs push-champion A/B (within-regime comparisons): stale r0,
+# stale r2, oracle small-movement — all with the noshard twin
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [ours_l01_s2_stale_noshard, ours_l01_s2_stale_pull, ours_l01_s2_stale_r2_noshard, ours_l01_s2_stale_r2_pull, ours_l01_s2_oracle_noshard, ours_l01_s2_oracle_pull]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8, 32]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 0
+notes: "pull vs noshard A/B 4n k2 (stale r0/r2 + oracle)"

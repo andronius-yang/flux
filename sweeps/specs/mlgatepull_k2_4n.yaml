@@ -1,0 +1,17 @@
+# pull-mode strict gate (new binary prerequisite): check_iters +
+# stale-rot + weight payload probe under FLUX_OURS_S2_PULL=1
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [ours_l01_s2_gate_pull]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8]
+modes: [isolated]
+iters: 4
+warmup_iters: 2
+skip_correctness: false
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 0
+notes: "pull-mode strict gate 4n k2"

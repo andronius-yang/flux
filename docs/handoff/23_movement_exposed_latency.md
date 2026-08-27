@@ -205,3 +205,25 @@ small). Arms: quiet twin vs oracle vs oracle+noshard, K2+Qwen 4n
 b8/b32. Readout: ours_s2_moves per iter + premium (oracle - quiet)
 ~ 0 iff small movement fully overlaps; also decides whether sharding
 earns its keep in the few-moves regime it was designed for.
+
+### Round-4 pull mode IMPLEMENTED (e5274bf; build pending probe drain)
+
+WPM grows forward_pull(): per MY moved slot, getmem from the home's
+symmetric weight_home (local-pointer symmetric addressing) + LOCAL epoch
+SET on the same stream — signal stream-ordered behind its own payload,
+so no remote-signal hazard, no gateway/shard chain, no blocking-wire
+need. set_plan now also partitions my_pull_ (dst==me rows). Lane
+FLUX_OURS_S2_PULL=1: apply_moves only adopts (gw=-1 plan, local
+pre-raise to a stored epoch target; gate_kwargs gates on the target);
+the gets issue in issue_w2_late AFTER the l0 forward — tokens first,
+w1-before-w2 — and forward_pull's bump must equal the target (asserted).
+ml composes untouched (same gate contract); w2l is subsumed (late issue
+IS the design). Arms/specs staged: gate_pull (k2+qwen) + pull-vs-noshard
+A/B (stale r0/r2 + oracle small-movement). Build deferred until the
+oracle probe's cells stop loading the installed .so (rule 4).
+
+Ops post-mortem (two lost-edit incidents): (1) bg-chain assert used
+single-quote pattern vs double-quoted source -> edit died; (2) set -e
+is NOT reliable inside backgrounded chains here. RULE: edits+commits
+foreground with grep/import/commit-stat verification; background = 
+sallocs/builds only.
