@@ -1,0 +1,17 @@
+# noshard canon-check on Qwen (r0 + r2): confirm weight_shard=off does
+# not regress the small-expert model (12.6MB legs, low issue cost)
+platform: perlmutter
+nodes: 4
+shape: qwen3
+variants: [ours_l01_s2_stale_noshard, ours_l01_s2_stale_r2_noshard]
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8, 32]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 1800
+idle_timeout_s: 600
+retries: 0
+notes: "noshard canon-check qwen 4n r0+r2"
