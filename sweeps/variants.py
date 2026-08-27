@@ -2737,6 +2737,24 @@ VARIANTS["ours_l01_s2_oracle_noshard"] = dict(
     test_args=VARIANTS["ours_l01_s2_oracle"]["test_args"]
               + ["--weight_shard", "off"],
 )
+# minimal-movement oracle probe v2 (2026-08-27): the kb=0 always-regime
+# re-derives ~full placement from the oracle seed (362 moves/iter K2 —
+# premise-buster, capsules 5bc126dd/7f670907). Threshold=1 leaves the
+# ALWAYS regime -> warm solve runs with keep_bonus=90090 stickiness and
+# the cover decision; force_trigger adopts whenever adds exist. Expected:
+# only drift-DEMANDED moves (the user's 1-2 expert class).
+VARIANTS["ours_l01_s2_oracle_kb"] = dict(
+    VARIANTS["ours_l01_s2"],
+    test_args=["--eps", "0.0625", "--sizing", "capacity",
+               "--plan_overlap", "0", "--scenario", "s2",
+               "--place_gain_threshold_ppm", "1",
+               "--s2_stale", "oracle", "--s2_force_trigger", "1"],
+)
+VARIANTS["ours_l01_s2_oracle_kb_noshard"] = dict(
+    VARIANTS["ours_l01_s2_oracle_kb"],
+    test_args=VARIANTS["ours_l01_s2_oracle_kb"]["test_args"]
+              + ["--weight_shard", "off"],
+)
 VARIANTS["ours_l01_s2_oracle_pull"] = dict(
     VARIANTS["ours_l01_s2_oracle"],
     env=dict(VARIANTS["ours_l01_s2_oracle"]["env"], FLUX_OURS_S2_PULL="1"),

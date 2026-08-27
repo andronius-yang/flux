@@ -227,3 +227,16 @@ single-quote pattern vs double-quoted source -> edit died; (2) set -e
 is NOT reliable inside backgrounded chains here. RULE: edits+commits
 foreground with grep/import/commit-stat verification; background = 
 sallocs/builds only.
+
+### Oracle probe v1 verdict (5bc126dd/7f670907) — premise-buster
+
+The oracle->batch "drift set" at kb=0 is NOT small: --s2_stale oracle
+re-moved 362/iter (K2) and 112-115/iter (Qwen) — the always-regime
+solver has zero stickiness and re-derives placement nearly freely, so
+v1 measured heavy movement again (premiums with noshard: K2 +105 b8,
+Qwen +13.9/+9.8; quiet twins 13.7/32.2 and 11.5/29.8). Also: the
+SHARDED oracle arm wedged at K2 b32 (window 6, 12G heap fine) — one
+more sharded-chain wedge mark. V2 = threshold-1 arms (keep_bonus=90090
+stickiness + cover decision + force_trigger): drift-DEMANDED moves only;
+specs mloraclekb_{k2,qwen}_4n. Build-leg post-mortem: the clean mlrun
+rewrite dropped the build leg; builds now run inline, verified.
