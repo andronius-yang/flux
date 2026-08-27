@@ -119,3 +119,14 @@ noshard lacks the ~100ms plan_weight_shards host gap that hides it.
 FIXED: wait_stream moved to just before the w_stream block. noshard
 retest queued post-fix; round-2 chunk ladder (8 vs 16MB, ml/w2l stacked
 on bigchunk) in flight.
+
+### Issue-cost round 2 (e042d29f, 8/8 ok, K2 4n stale)
+
+Chunk ladder: 16MB == 8MB (+0.03/+0.6ms) — 8MB saturates the lever.
+ml on bigchunk: null (+0.1/+1.3) — with fast issue the K2-4n regime is
+weight-WIRE-bound during l0 (66ms); every moved tile blocks on landing
+regardless of order, so the schedule cannot create bandwidth. w2l on
+bigchunk: place 33->10 but total +1.5/+4.0 (serialized wire relocates).
+CANON CANDIDATE at K2-scale movement: bigchunk-8MB alone (-27%);
+ml stays the Qwen/moderate-movement win. Remaining stale place = 33ms
+(plan_weight_shards python + residual issue) — next lever if needed.
