@@ -2706,6 +2706,23 @@ VARIANTS["ours_l01_s2_stale_bigchunk"] = dict(
     env=dict(VARIANTS["ours_l01_s2_stale"]["env"],
              FLUX_OURS_S2_SHARD_CHUNK=str(8 << 20)),
 )
+VARIANTS["ours_l01_s2_stale_bigchunk16"] = dict(
+    VARIANTS["ours_l01_s2_stale"],
+    env=dict(VARIANTS["ours_l01_s2_stale"]["env"],
+             FLUX_OURS_S2_SHARD_CHUNK=str(16 << 20)),
+)
+VARIANTS["ours_l01_s2_stale_bigchunk_ml"] = dict(
+    VARIANTS["ours_l01_s2_stale"],
+    env=dict(VARIANTS["ours_l01_s2_stale"]["env"],
+             FLUX_OURS_S2_SHARD_CHUNK=str(8 << 20),
+             FLUX_OURS_SCHED_MOVED_LAST="1"),
+)
+VARIANTS["ours_l01_s2_stale_bigchunk_w2l"] = dict(
+    VARIANTS["ours_l01_s2_stale"],
+    env=dict(VARIANTS["ours_l01_s2_stale"]["env"],
+             FLUX_OURS_S2_SHARD_CHUNK=str(8 << 20),
+             FLUX_OURS_S2_W2_LATE="1"),
+)
 VARIANTS["ours_l01_s2_r2_quiet"] = dict(
     VARIANTS["ours_l01_s2"],
     test_args=VARIANTS["ours_l01_s2"]["test_args"]

@@ -1,0 +1,17 @@
+# 2026-08-27 issue-cost round 2 (K2 4n): bigchunk won -27%; now chunk-size
+# ladder (8 vs 16MB) + stacking ml / w2l on the bigchunk base.
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [ours_l01_s2_stale_bigchunk, ours_l01_s2_stale_bigchunk16, ours_l01_s2_stale_bigchunk_ml, ours_l01_s2_stale_bigchunk_w2l]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8, 32]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 0
+notes: "issue-cost r2: chunk ladder + ml/w2l stacked on bigchunk, K2 4n"
