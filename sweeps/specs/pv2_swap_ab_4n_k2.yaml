@@ -1,0 +1,24 @@
+# Intra-node expert-swap A/B (branch pv2, 2026-08-27): swap vs
+# decide-only twin vs static pv2 reference, one capsule per model.
+# s1-canon oracle basis supplies realistic oracle->batch drift, so swaps
+# fire in early iterations and converge (fixed-point orbit sized at setup).
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 8, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+sm_margin: 8
+timeout_s: 1800
+idle_timeout_s: 600
+retries: 1
+matrix_instance: "001"
+variants:
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s2_swap0_r2
+  - ours_l01_s2_swap_r2
+notes: "swap A/B 4n k2: intra-node NVLink swap vs decide-only vs static, r2, b1/b8/b64 isolated"

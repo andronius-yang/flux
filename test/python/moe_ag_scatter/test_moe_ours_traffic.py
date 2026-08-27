@@ -58,6 +58,7 @@ from flux.testing.ultraep_semantics import (
     loads_from_topk,
 )
 from flux.testing.ours import OursIterPlanner, OursRunner
+from flux.testing import ours_swap as oswap_rt
 from flux.testing.payload_probe import PayloadProbe, payload_probe_enabled
 from flux.testing.recorder import RECORDER
 
@@ -177,6 +178,18 @@ def parse_args():
                         "trigger epoch (deterministic per (epoch, "
                         "expert)); the reference follows — a stale slot "
                         "fails allclose on exactly the moved rows")
+    p.add_argument("--s2_swap", type=int, default=0,
+                   help="1: intra-node expert SWAP lane (EPIC §4.3 analog,"
+                        " ours_swap.py) — per-iteration greedy pair+swap"
+                        " inside each node, exchanged over NVLink on the"
+                        " movement stream, NO cross-node migration (the"
+                        " pv2 adoption lane is disabled). Decision is"
+                        " timed in the place bracket (total_ms).")
+    p.add_argument("--swap_tau_rows", type=int, default=512,
+                   help="EPIC tau in rows: accept a swap only if it drops"
+                        " the pair max load by at least this many rows"
+                        " (movement-cost threshold). A huge value gives"
+                        " the decide-but-never-swap comparator arm.")
     p.add_argument("--seed", type=int, default=1234)
     return p.parse_args()
 
@@ -383,6 +396,22 @@ def main():
                          for hs in hosts_pll]
             rot_tensors = plan_tensors_from_hosts(hosts_rot, W, cfg.nlp)
             s2_size_plans.append(("rot",) + rot_tensors)
+        if args.s2_swap:
+            # intra-node swap orbit (ours_swap.py): the runtime swap
+            # sequence on the fixed per-cell demand is setup-computable
+            # (pure function of (d, p2l)) — fold every reachable swapped
+            # placement into the sizing envelope, pv2-purity style.
+            assert use_pv2, "--s2_swap is defined on the pv2 arm"
+            assert args.s2_stale == "0", "--s2_swap excludes stale probes"
+            from flux.testing import ours_swap as oswap
+            _load_g = torch.bincount(tk_dev.reshape(-1),
+                                     minlength=args.G).cpu().long()
+            _orbit = oswap.swap_orbit(
+                _load_g, plan.p2l, plan.l2p, plan.lcnts, L, cfg.nlp,
+                args.swap_tau_rows)
+            for _oi, (_p2l_o, _l2p_o) in enumerate(_orbit):
+                s2_size_plans.append(
+                    (f"swap{_oi}", _p2l_o, _l2p_o, plan.lcnts))
         if not use_pv2:
             # warm-solve orbit, mirroring the runtime _solve_kw exactly
             # (seed = the resident the loop starts from / resets to;
@@ -555,6 +584,7 @@ def main():
     _st("runner (fused ops) constructed")
     lane = None
     store = None
+    swap_lane = None
     if args.scenario == "s1":
         w1v, w2v = build_slot_weights(plan.p2l, rank, cfg.nlp, gpe,
                                      args.ffn_hidden_size, args.H,
@@ -577,6 +607,20 @@ def main():
         lane.fill_slots_local(plan.p2l)
         w1v, w2v = lane.gemm_weights()
         runner.set_weights(w1v, w2v)   # views SHARE the WPM symmetric buf
+        swap_lane = None
+        if args.s2_swap:
+            from flux.testing.ours_swap import OursSwapLane
+            # per-node NCCL subgroups (collective creation on all ranks);
+            # intra-node P2P rides NVLink on its own communicator
+            _my_ng = None
+            for _u in range(nn):
+                _g = torch.distributed.new_group(
+                    list(range(_u * L, (_u + 1) * L)))
+                if _u == rank // L:
+                    _my_ng = _g
+            swap_lane = OursSwapLane(lane, _my_ng, rank, L, cfg.nlp,
+                                     args.ffn_hidden_size, args.H,
+                                     input_dtype)
     planner = OursIterPlanner(plan, rank, torch.device("cuda"), topk_all,
                               probs_all_setup, L, args.eps, args.pll_f_cap,
                               TP_GROUP)
@@ -818,7 +862,34 @@ def main():
             torch.distributed.all_gather_into_tensor(
                 d_gather_buf, planner.local_loads(), group=TP_GROUP)
             plan_comm_end[i].record()
-            if lane is not None and use_pv2:
+            if lane is not None and args.s2_swap:
+                # SWAP place lane (timed, counts toward total_ms): D2H of
+                # d -> greedy intra-node pair+swap decision (sub-ms host
+                # integer, EPIC §4.3 analog) -> table transposition ->
+                # NVLink exchange issued on the movement stream. No
+                # cross-node migration; the router (next bracket) runs on
+                # the swapped tables — same-iteration benefit.
+                _pt0 = time.perf_counter()
+                d_host = d_gather_buf.cpu()
+                load_g = d_host.long().sum(0)
+                swaps, _Lr = oswap_rt.swap_plan(
+                    load_g, plan.p2l, plan.lcnts, L, cfg.nlp,
+                    args.swap_tau_rows)
+                _pt1 = time.perf_counter()
+                if swaps:
+                    plan.p2l, plan.l2p = oswap_rt.apply_swaps(
+                        plan.p2l, plan.l2p, swaps)
+                    planner.refresh_placement()
+                swap_lane.issue(swaps)
+                move_stats.append((int(bool(swaps)), len(swaps),
+                                   swap_lane.move_bytes_this_iter, 0))
+                if rank == 0 and args.check_iters:
+                    _pt2 = time.perf_counter()
+                    print(f"[swap] iter {i}: decide "
+                          f"{(_pt1 - _pt0) * 1e3:.2f} ms apply+issue "
+                          f"{(_pt2 - _pt1) * 1e3:.2f} ms swaps "
+                          f"{len(swaps)}: {swaps}", flush=True)
+            elif lane is not None and use_pv2:
                 # PV2 PLACE lane (timed): one D2H of d -> host drift ->
                 # stateless marginals solve (placement_v2) -> gain /
                 # trigger -> plan tensors + adoption + movement issue.
@@ -1018,7 +1089,9 @@ def main():
             e2e_start[i].record()
             runner.issue_combine_meta(ip)
             gate_kw = None
-            if lane is not None:
+            if swap_lane is not None:
+                gate_kw = swap_lane.gate_kwargs()
+            elif lane is not None:
                 if args.s2_join == "join":
                     lane.op_w1.join()
                 else:
@@ -1028,14 +1101,18 @@ def main():
             l0_end[i].record()
             intermediate = torch.nn.functional.gelu(l0_out)
             act_end[i].record()
-            if lane is not None:
+            if swap_lane is not None:
+                swap_lane.l1_wait()
+            elif lane is not None:
                 lane.join_w2()
             _hbp("l1")
             out = runner.l1_forward(intermediate)
             e2e_end[i].record()
-            if lane is not None:
+            if lane is not None and swap_lane is None:
                 # end-of-iteration weight-signal drain (K2-4n stale hang
                 # fix): after e2e_end (untimed gap) — see ours_s2.join_w1.
+                # Swap mode: signals are LOCAL writes — nothing crosses
+                # the boundary; no drain needed.
                 lane.join_w1()
             _hbp("issued")
         if args.check_iters:

@@ -2672,3 +2672,26 @@ VARIANTS["ours_l01_s1_gate_pv2_r2"] = dict(
     test_args=VARIANTS["ours_l01_s1_gate"]["test_args"]
               + ["--place_solver", "pv2", "--redundant_per_rank", "2"],
 )
+# ---- intra-node expert SWAP arms (branch pv2, 2026-08-27; ours_swap.py —
+# EPIC §4.3 analog on the OURS stack): per-iteration greedy pair+swap
+# INSIDE each node, exchanged over NVLink on the movement stream, NO
+# cross-node migration (pv2 adoption lane disabled). The swap decision is
+# timed in the place bracket (sub-ms host integer). swap0 = the
+# decide-but-never-swap twin (tau=inf): identical machinery + decision
+# cost, zero movement — the A/B comparator.
+_SWAP_ARGS = ["--eps", "0.0625", "--sizing", "capacity",
+              "--plan_overlap", "0", "--scenario", "s2",
+              "--place_gain_threshold_ppm", "0",
+              "--place_solver", "pv2", "--s2_swap", "1",
+              "--redundant_per_rank", "2"]
+VARIANTS["ours_l01_s2_swap_r2"] = dict(
+    VARIANTS["ours_l01_s1"], test_args=list(_SWAP_ARGS),
+)
+VARIANTS["ours_l01_s2_swap0_r2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=_SWAP_ARGS + ["--swap_tau_rows", "1000000000"],
+)
+VARIANTS["ours_l01_s2_gate_swap_r2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=_SWAP_ARGS + ["--check_iters", "1"],
+)
