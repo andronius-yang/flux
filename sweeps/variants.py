@@ -2622,3 +2622,37 @@ VARIANTS["ours_l01_s2_gate_r2"] = dict(
     test_args=VARIANTS["ours_l01_s2_gate"]["test_args"]
               + ["--redundant_per_rank", "2"],
 )
+# stale (movement-every-iteration) at replica parity — the pll worst-case
+# comparator for the pv2 A/B (2026-08-27, branch pv2)
+VARIANTS["ours_l01_s2_stale_r2"] = dict(
+    VARIANTS["ours_l01_s2_stale"],
+    test_args=VARIANTS["ours_l01_s2_stale"]["test_args"]
+              + ["--redundant_per_rank", "2"],
+)
+# ---- PV2 arms (branch pv2, 2026-08-27): stateless node-aware greedy
+# placement (flux/testing/placement_v2.py) swapped into the OURS stack
+# via --place_solver pv2. Same fused transport, same LocCap routing, same
+# WPM movement machinery — the A/B isolates the placement lane (solve +
+# decision + adoption tail). NEW ARM FAMILY: never compare pv2 cells
+# against pll-placement cells' out_sha (different placements route
+# differently); allclose gates bind as always. r2 twins carry the slack
+# boundary (never-mix vs R_red=0).
+for _base in ("ours_l01_s2", "ours_l01_s2_stale", "ours_l01_s2_gate",
+              "ours_l01_s1"):
+    _pv2name = _base + "_pv2"
+    VARIANTS[_pv2name] = dict(
+        VARIANTS[_base],
+        test_args=VARIANTS[_base]["test_args"]
+                  + ["--place_solver", "pv2"],
+    )
+    VARIANTS[_pv2name + "_r2"] = dict(
+        VARIANTS[_base],
+        test_args=VARIANTS[_base]["test_args"]
+                  + ["--place_solver", "pv2", "--redundant_per_rank", "2"],
+    )
+# s1 gate twin for the pv2 static path
+VARIANTS["ours_l01_s1_gate_pv2_r2"] = dict(
+    VARIANTS["ours_l01_s1_gate"],
+    test_args=VARIANTS["ours_l01_s1_gate"]["test_args"]
+              + ["--place_solver", "pv2", "--redundant_per_rank", "2"],
+)
