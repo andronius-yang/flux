@@ -2706,6 +2706,20 @@ VARIANTS["ours_l01_s2_stale_bigchunk"] = dict(
     env=dict(VARIANTS["ours_l01_s2_stale"]["env"],
              FLUX_OURS_S2_SHARD_CHUNK=str(8 << 20)),
 )
+# oracle-drift probe (2026-08-27 user experiment): resident reset to the
+# PRE-BATCH ORACLE solve every iteration -> each timed window re-moves
+# exactly the oracle->batch drift set (expected: few experts). Question:
+# is SMALL movement completely overlapped (premium vs quiet ~ 0)?
+VARIANTS["ours_l01_s2_oracle"] = dict(
+    VARIANTS["ours_l01_s2"],
+    test_args=VARIANTS["ours_l01_s2"]["test_args"]
+              + ["--s2_stale", "oracle", "--s2_force_trigger", "1"],
+)
+VARIANTS["ours_l01_s2_oracle_noshard"] = dict(
+    VARIANTS["ours_l01_s2_oracle"],
+    test_args=VARIANTS["ours_l01_s2_oracle"]["test_args"]
+              + ["--weight_shard", "off"],
+)
 VARIANTS["ours_l01_s2_stale_r2_noshard"] = dict(
     VARIANTS["ours_l01_s2_stale_r2"],
     test_args=VARIANTS["ours_l01_s2_stale_r2"]["test_args"]
