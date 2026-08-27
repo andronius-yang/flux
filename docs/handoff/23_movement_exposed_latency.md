@@ -106,3 +106,16 @@ envelopes the batch-max f_cap sufficed; the layer-1 escalate-and-reroute
 remains armed as the safety net (and the recv/panel FLUX_CHECKs remain
 the loud contract). Capsules: 234231/234904 (failed, evidence),
 234402/235025/235437/235716 (green).
+
+### noshard crash RCA (capsule 5e606d1f) + issue-cost results
+
+bigchunk (FLUX_OURS_S2_SHARD_CHUNK=8MB) = **-27% K2 4n stale**
+(203->149 b8, 221->162 b32; place 121->33ms) — the host-enqueue volume
+finding confirmed. noshard died with an ATen IndexKernel device assert:
+ROOT CAUSE = my apply_moves hoist took the w_stream.wait_stream snapshot
+BEFORE the host prep, so `keep`'s H2D (current stream) could race
+w_stream's index_fill_; every arm carries the latent race, but only
+noshard lacks the ~100ms plan_weight_shards host gap that hides it.
+FIXED: wait_stream moved to just before the w_stream block. noshard
+retest queued post-fix; round-2 chunk ladder (8 vs 16MB, ml/w2l stacked
+on bigchunk) in flight.

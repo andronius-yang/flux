@@ -290,8 +290,6 @@ class OursMovementLane:
         per_expert_bytes = 2 * self.ffn * self.H * self.op_w1.weight_home().element_size()
         self.move_bytes_this_iter = self.moves_this_iter * per_expert_bytes
 
-        cur = torch.cuda.current_stream()
-        self.w_stream.wait_stream(cur)
         mine = changed[(changed // self.nlp) == self.rank]
         moved_slots = torch.unique(mine % self.nlp + 1)
         # keep mask + shard plan hoisted out of the op loop: identical
@@ -314,6 +312,14 @@ class OursMovementLane:
                 self.gpe, moved_slots.tolist())
         ops_now = ((self.op_w1,) if self.w2_late
                    else (self.op_w1, self.op_w2))
+        # ORDERING (2026-08-27 noshard IndexKernel crash root cause): the
+        # wait_stream snapshot must be taken AFTER the host prep above —
+        # `keep`'s H2D lands on the current stream, and w_stream's
+        # index_fill_ consumes it. The earlier hoist left wait_stream at
+        # the top, so w_stream could race the copy whenever no long host
+        # work (plan_weight_shards) sat in between — exactly the noshard
+        # arm. Latent in every arm; timing hid it elsewhere.
+        self.w_stream.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(self.w_stream):
             self.ev_move_start.record()
             for op in ops_now:
