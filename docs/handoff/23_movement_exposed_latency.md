@@ -176,3 +176,15 @@ stale_ml 8n wedge — 8n top-up spec confirms). CANON CANDIDATE (user
 one-decision): weight_shard=off for s2 movement (bigchunk fallback if
 few-moves regimes show single-NIC wire exposure). r2 x noshard window
 launched.
+
+### 8n combo (0a6a3be9 + a71c9e29) + residual w2l wedge
+
+ml 8n b8 re-ran CLEAN (wedge face cured by record_stream fix). noshard
+8n K2 b8 = 80.3 vs base 157.4 (**-49%** — the win grows with scale:
+4n -42%). Heap-patched b32 rerun: 4/5 ok; ours_l01_s2_stale_r2_w2l b32
+STUCK at window 3/15 (no asserts) — RESIDUAL wedge in the late-w2 path
+at the heaviest corner (4210 moves, r2, b32, 8n). w2l is a losing arm
+in every regime except qwen-8n-r2 (where mlw2/w2l won b8) and is NOT
+canon material -> QUARANTINED as open item (suspect: late-issue x
+join_w1 boundary interplay; the keep fix covers only the index_fill
+lifetime). All other arms/corners green.
