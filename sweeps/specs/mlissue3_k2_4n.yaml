@@ -1,0 +1,18 @@
+# 2026-08-27 round 3: bigchunk stacked on r2 (r2 stale place=134ms) +
+# post-race-fix noshard retest. Compare within regime only (r0 pair /
+# r2 pair; r2-vs-r0 never-mix).
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [ours_l01_s2_stale, ours_l01_s2_stale_noshard, ours_l01_s2_stale_r2, ours_l01_s2_stale_r2_bigchunk]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8, 32]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 0
+notes: "round3: r2+bigchunk stack + noshard retest post race-fix, K2 4n"
