@@ -1,0 +1,35 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 8
+  - 32
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+ffn_hidden: 1536
+idle_timeout_s: 900
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 4
+nodes: 4
+notes: pull vs noshard A/B 4n qwen (stale r0/r2 + oracle)
+platform: perlmutter
+profile_iters: 3
+retries: 0
+shape: qwen3
+skip_correctness: true
+sm_margin: 8
+timeout_s: 2400
+topk: 8
+variants:
+  - ours_l01_s2_stale_noshard
+  - ours_l01_s2_stale_pull
+  - ours_l01_s2_stale_r2_noshard
+  - ours_l01_s2_stale_r2_pull
+  - ours_l01_s2_oracle_noshard
+  - ours_l01_s2_oracle_pull
+warmup_iters: 5
