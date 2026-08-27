@@ -22,7 +22,7 @@ front/back, no extra knobs.
 | EPLB | `eplb_l01` | |
 | EPIC | `epic_l01_hc_m1` | staged l1 ns=1 (canon 8/24) |
 | MoonEP | `moonep_l01_nvshmem_getmem` | slowest; K2 ~70-85 s/cell |
-| PLL | `llc_l01_s1` | ns=1; needs the recv-bound fix (3e6e8ed+) |
+| PLL | `llc_l01_s1_pv2` | ns=1; PV2 placement = canon since 2026-08-27 (SCHEMA rule 15; recv-bound fix 3e6e8ed+ still required). `llc_l01_s1` (PLACE-lambda) is the historical/ablation twin — never bitwise-compare across the placement flip |
 
 FAST is EXCLUDED (broken as of 8/24; do not touch 3rdparty/FAST or its files).
 
@@ -145,9 +145,11 @@ OURS was the only arm at R_red=0 (a structural handicap worth 16-24% at
 - UltraEP: `UltraEPConfig.R_red` default 2 — pin via the driver flag where
   exposed.
 - OURS (`test_moe_ours_traffic.py`): pass `--redundant_per_rank 2` — i.e.
-  use the `_r2` arms (`ours_l01_s1_r2`, `ours_l01_s1_wb_r2`). The bare
-  `ours_l01_s1` runs R_red=0 (pre-parity identity, kept for history);
-  it is NOT slack-comparable to the other movement baselines.
+  use the `_r2` arms; since 2026-08-27 the canonical OURS arm is
+  `ours_l01_s1_pv2_r2` (PV2 placement, SCHEMA rule 15; the pll-placement
+  `ours_l01_s1_r2` is the ablation twin). The bare `ours_l01_s1` runs
+  R_red=0 (pre-parity identity, kept for history); it is NOT
+  slack-comparable to the other movement baselines.
 - MoonEP: its slack is the prefetch slot set `B` (default = E/R, a FULL
   extra set, refilled per iteration) — structurally different semantics;
   do NOT equate B to 2. Record B in the capsule notes and annotate any

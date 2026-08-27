@@ -1108,3 +1108,22 @@ inherited flux machinery. No variant/env change is applied by this
 amendment (existing capsules unchanged), and the 2026-08-25 l1-combine
 ablation findings (msplit-off / fused-pack-off / bucket-off deltas) are
 explicitly NOT applied to any canon.
+
+15. **PV2 placement canonicalization (2026-08-27, user ruling — branch
+   pv2; handoff 23 is the evidence authority).** The CANONICAL placement
+   solver of the LLC trio and the OURS arms is **PV2**
+   (`flux/testing/placement_v2.py`): stateless node-aware greedy
+   replication + affinity spread, a pure integer function of the demand
+   histogram (~1-2 ms host, no batch-size term, no warm state/CUDA
+   graph). Wherever a canon/default previously named PLACE-lambda(-FAST)
+   placement, read PV2 — "the cheaper, equal alternative" (4n/8n A/B:
+   place lane 3-10 -> 1.1-1.7 ms flat, quiet-s2 totals −10..−27%, s1
+   quality parity ±10%). PLACE-lambda stays in-tree as the reference /
+   co-occurrence-aware ablation arm, never as a default. Arm mapping:
+   `llc_l01_s1_pv2` supersedes `llc_l01_s1` as the datapoint "PLL" lane;
+   `ours_l01_*_pv2*` supersede the pll-placement OURS arms. NEVER-MIX:
+   pv2-placement cells vs placelambda-placement cells are different
+   placements (out_sha differs legitimately); regenerated pv2 rows are a
+   new build boundary vs the 8/24 handoff-18 rows (rule 4 — cross-build
+   deltas indicative only). LocCap routing, Slipstream transport,
+   slack-parity (r2) and every other canon are unchanged.

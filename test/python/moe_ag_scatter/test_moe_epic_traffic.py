@@ -884,7 +884,8 @@ def parse_args():
                         " combine -> terminal Sum (EPIC Fig 10(b))")
     parser.add_argument("--placement", default="epic",
                         choices=["none", "epic", "nodeaware",
-                                 "placelambda_gpu", "placelambda_fast"],
+                                 "placelambda_gpu", "placelambda_fast",
+                                 "pv2"],
                         help="epic = §4.2 (redundancy + GPU greedy + NIC "
                         "stage) from the pool load; none = fixed contiguous "
                         "homing, empty redundant slots; nodeaware = "
@@ -1214,10 +1215,62 @@ if __name__ == "__main__":
             print(f"placement basis: "
                   f"{'ORACLE ' + args.oracle_routing_file if args.oracle_routing_file else 'self (batch)'}"
                   f"; oracle->batch drift {_drift} ppm", flush=True)
+    elif args.placement == "pv2":
+        # PV2 (branch pv2, 2026-08-27): stateless node-aware greedy
+        # placement (flux.testing.placement_v2) — a pure function of the
+        # solve-basis demand histogram. Static only (no warm state, no
+        # dynamic lane); everything downstream (pblob recipe, loccap_sl
+        # router, sizing) is identical to the placelambda_fast arm. NEW
+        # ARM FAMILY: never compare its placements/out_sha against pll
+        # cells.
+        from flux.testing import placement_v2 as pv2mod
+        assert args.routing_file, (
+            "--placement pv2 is defined for trace cells only")
+        assert args.place_dynamic == "static", (
+            "--placement pv2 is static-only (stateless solver)")
+        tk_dev = topk_all.long().cuda()
+        tk_solve = tk_dev
+        if args.oracle_routing_file:
+            _oc = load_routing_file(args.oracle_routing_file, args.G,
+                                    args.topk)
+            assert _oc.shape[0] % W == 0, "oracle rows not divisible by W"
+            tk_solve = _oc.view(W, -1, args.topk).long().cuda()
+        torch.cuda.synchronize()
+        t_ps = time.perf_counter()
+        pv2_res = pv2mod.pv2_solve(
+            plfast.demand_hist(tk_solve, DIST_ENV.LOCAL_WORLD_SIZE,
+                               args.G).cpu(),
+            DIST_ENV.LOCAL_WORLD_SIZE, cfg.nlp)
+        hosts_pll = pv2mod.hosts_lists(pv2_res, args.G)
+        torch.cuda.synchronize()
+        place_solver_ms = (time.perf_counter() - t_ps) * 1e3
+        pblob = {"version": 2, "G": args.G, "W": W, "nlp": cfg.nlp,
+                 "hosts": hosts_pll,
+                 "planner": dict(pv2_res["stats"])}
+        plan = build_nodeaware_plan(cfg, tpe, pblob)
+        _drift = plfast.drift_ppm(
+            plfast.demand_hist(tk_dev, DIST_ENV.LOCAL_WORLD_SIZE, args.G),
+            plfast.demand_hist(tk_solve, DIST_ENV.LOCAL_WORLD_SIZE,
+                               args.G))
+        RECORDER.emit_info(
+            epic_pll_oracle_file=args.oracle_routing_file or "",
+            epic_pll_oracle_basis=("prev_batch"
+                                   if args.oracle_routing_file
+                                   else "self"),
+            epic_pll_oracle_drift_ppm=_drift,
+            epic_place_solver="pv2",
+            **{f"pv2_{k}": v for k, v in pv2_res["stats"].items()
+               if k != "mode"},
+        )
+        if rank == 0:
+            print(f"placement pv2; basis: "
+                  f"{'ORACLE ' + args.oracle_routing_file if args.oracle_routing_file else 'self (batch)'}"
+                  f"; oracle->batch drift {_drift} ppm", flush=True)
     else:
         plan = build_fixed_plan(cfg, tpe)
     plan_host_ms = (time.perf_counter() - t0) * 1e3
-    if args.placement not in ("placelambda_gpu", "placelambda_fast"):
+    if args.placement not in ("placelambda_gpu", "placelambda_fast",
+                              "pv2"):
         place_solver_ms = 0.0
         hosts_pll = None
     if args.placement != "placelambda_fast":

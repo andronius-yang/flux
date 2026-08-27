@@ -2153,6 +2153,19 @@ VARIANTS["llc_l01_s1_demand"] = dict(
     test_args=(VARIANTS["llc_l01_s1"]["test_args"]
                + ["--llc_sizing", "demand"]),
 )
+# 2026-08-27 (branch pv2, user canon ruling): PV2 placement swapped into
+# the llc stack — same LocCap sender-local kernel routing, same staged
+# transport, same sizing contract; only the placement solver changes
+# (placement_v2: stateless node-aware greedy from the demand histogram,
+# ~1-2 ms host — the cheaper, equal alternative to PLACE-lambda-FAST per
+# the 4n/8n A/B, handoff 23). THE canonical "PLL/LLC" datapoint lane
+# going forward (datapoint skill updated); never bitwise-compare its
+# placements/out_sha against placelambda cells.
+VARIANTS["llc_l01_s1_pv2"] = dict(
+    VARIANTS["llc_l01_s1"],
+    test_args=[a if a != "placelambda_fast" else "pv2"
+               for a in VARIANTS["llc_l01_s1"]["test_args"]],
+)
 
 VARIANTS["slipstream"] = VARIANTS["hier_compress_lb_union"]
 # SCHEMA rule 13 (2026-08-24, user decision): l01_slipstream now names the
