@@ -91,6 +91,18 @@ def swap_plan(load_g, p2l, lcnts, L, nlp, tau_rows):
                   if p2l_h[s] >= 0]
             h_set = {e for _, e in hs}
             l_set = {e for _, e in ls}
+            # sub-ms guard at large nlp (K2 4n nlp=26 -> 676 combos):
+            # the best exchange is heaviest-for-lightest up to the
+            # distinctness constraints — scan only the top-8 heaviest
+            # donor and top-8 lightest recipient instances (deterministic
+            # (weight, expert) order). 64 combos, quality unchanged in
+            # practice (the excluded pairs are dominated).
+            if len(hs) > 8:
+                hs = sorted(hs, key=lambda t: (
+                    -(lg[t[1]] // max(lc[t[1]], 1)), t[1]))[:8]
+            if len(ls) > 8:
+                ls = sorted(ls, key=lambda t: (
+                    lg[t[1]] // max(lc[t[1]], 1), t[1]))[:8]
             base = max(lr[h], lr[l])
             best = None  # (gain, e_h, e_l, s_h, s_l)
             for s_h, e_h in hs:
