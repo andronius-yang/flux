@@ -89,6 +89,8 @@ class WeightPushMulticast {
   // AFTER the fused forward launch (the fan-out then overlaps the forward;
   // receivers' weight-gated tiles absorb any residual arrival latency).
   void forward_gateway();
+  // round-4 pull movement: destination getmem + local epoch signal
+  int64_t forward_pull();
 
   // Destination-side landing gate: zero-SM stream waits (GEQ current epoch)
   // on each of MY incoming slots, on the current torch stream.

@@ -72,6 +72,11 @@ struct PushLeg {
   int32_t dst_slot;
   int32_t src_row;  // row in MY weight home (home legs) — see users
 };
+struct PullLeg {
+  int32_t slot;   // MY slot to fill
+  int32_t home;   // expert's home rank (get source PE)
+  int32_t src;    // row in the home's weight_home
+};
 struct FwdLeg {
   int32_t gw_slot;   // MY slot to wait on + forward from
   int32_t dst_rank;  // same-node peer
@@ -115,6 +120,7 @@ class WeightPushMulticast::WeightPushMulticastImpl {
   std::vector<PushLeg> mcast_out_;    // home == me && gw < 0: multicast legs
   std::vector<FwdLeg> mcast_fwd_;     // gw == me: NVLink forwards
   std::vector<int32_t> my_in_slots_;  // dst == me: slots join() waits on
+  std::vector<PullLeg> my_pull_;      // dst == me: round-4 pull legs
 
   // egress NIC-sharding state (see set_shard_plan; empty => disabled)
   std::vector<ShardLeg> shard_home_;     // home == me: wait-free stage/push
@@ -242,6 +248,7 @@ class WeightPushMulticast::WeightPushMulticastImpl {
     this->mcast_out_.clear();
     this->mcast_fwd_.clear();
     this->my_in_slots_.clear();
+    this->my_pull_.clear();
     const int32_t *p = pairs_cpu.data_ptr<int32_t>();
     int64_t n = pairs_cpu.size(0);
     for (int64_t i = 0; i < n; ++i) {
@@ -266,6 +273,7 @@ class WeightPushMulticast::WeightPushMulticastImpl {
       }
       if (d == this->rank_) {
         this->my_in_slots_.push_back(b);
+        this->my_pull_.push_back({b, home, src});
       }
     }
     // one CUStreamWaitValue64 per gateway slot serves all its forwards
@@ -493,6 +501,40 @@ class WeightPushMulticast::WeightPushMulticastImpl {
         continue;
       }
       emit_home_leg(leg);
+    }
+    return this->run_id_;
+  }
+
+  int64_t
+  forward_pull() {
+    // Round-4 PULL movement (2026-08-27): destination-side getmem per MY
+    // moved slot + a LOCAL epoch signal, both on the CURRENT stream. The
+    // signal is stream-ordered behind its own payload, so the CXI
+    // signal-before-data hazard (SCHEMA rule 6) cannot occur here: no
+    // remote signals, no gateway/shard chain, no blocking-wire dependency.
+    // Caller contract (tokens-first): enqueue AFTER the fused l0 forward's
+    // dispatch legs; w1's op before w2's. Homes' weight_home_ is immutable
+    // within an iteration (gate-mode wprobe synchronizes per iteration),
+    // and weight_full_ is symmetric, so the local home pointer addresses
+    // the remote PE's copy under NVSHMEM symmetric addressing.
+    cudaStream_t stream = c10::cuda::getCurrentCUDAStream();
+    this->run_id_ += 1;
+    const uint64_t epoch = static_cast<uint64_t>(this->run_id_);
+    char *home_base = static_cast<char *>(this->weight_home_.data_ptr());
+    char *slots_base = static_cast<char *>(this->prefetch_slots_.data_ptr());
+    uint64_t *sig_base = reinterpret_cast<uint64_t *>(this->signals_.data_ptr());
+    for (const auto &leg : this->my_pull_) {
+      char *dst = slots_base + static_cast<int64_t>(leg.slot) * this->expert_bytes_;
+      char *src = home_base + static_cast<int64_t>(leg.src) * this->expert_bytes_;
+      if (leg.home == this->rank_) {
+        CUDA_CHECK(cudaMemcpyAsync(
+            dst, src, this->expert_bytes_, cudaMemcpyDeviceToDevice, stream));
+      } else {
+        nvshmemx_getmem_on_stream(dst, src, this->expert_bytes_, leg.home, stream);
+      }
+      // per-slot landing: SET right after THIS slot's payload in FIFO order
+      nvshmemx_signal_op_on_stream(
+          sig_base + leg.slot, epoch, NVSHMEM_SIGNAL_SET, this->rank_, stream);
     }
     return this->run_id_;
   }
@@ -744,6 +786,11 @@ void
 WeightPushMulticast::forward_gateway() {
   FLUX_CHECK(impl_ != nullptr) << "WeightPushMulticast is not initialized!";
   impl_->forward_gateway();
+}
+int64_t
+WeightPushMulticast::forward_pull() {
+  FLUX_CHECK(impl_ != nullptr) << "WeightPushMulticast not initialized";
+  return impl_->forward_pull();
 }
 
 void

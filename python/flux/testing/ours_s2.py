@@ -153,6 +153,14 @@ class OursMovementLane:
         # l0 + gelu; join_w2 semantics unchanged).
         self.w2_late = bool(int(os.environ.get(
             "FLUX_OURS_S2_W2_LATE", "0")))
+        # FLUX_OURS_S2_PULL=1 (round-4, 2026-08-27): destination-side
+        # getmem movement. apply_moves only adopts + pre-raises epochs;
+        # the gets (w1 then w2) enqueue on w_stream AFTER the fused l0
+        # forward (tokens own the wire head), each slot's LOCAL epoch SET
+        # stream-ordered behind its payload. Deletes gateway assignment,
+        # the whole shard chain, and every remote-signal hazard. Byte
+        # cost: no node-level dedup (each needy rank pulls its copy).
+        self.pull = bool(int(os.environ.get("FLUX_OURS_S2_PULL", "0")))
         # FLUX_OURS_S2_DEBUG_SYNC=1 (2026-08-27 noshard IndexKernel
         # triage): synchronize after each movement sub-step so the async
         # device assert is raised AT the faulting op instead of iterations
@@ -197,6 +205,8 @@ class OursMovementLane:
         # late-w2 pending state
         self._w2_pending = False
         self._w2_pairs = self._w2_shards = self._w2_keep = None
+        self._pull_pending = False
+        self._epoch_target = 0
         self.ev_w2_issue_done = torch.cuda.Event()
 
     # -- setup ---------------------------------------------------------------
@@ -225,7 +235,10 @@ class OursMovementLane:
         convention: gate groups 1..nlp <-> WPM slots 1..nlp)."""
         kw = dict(
             weight_signal=self.op_w1.signals()[1:],
-            weight_signal_epoch=int(self.op_w1.epoch()),
+            # pull mode issues late: the epoch bump happens at
+            # issue_w2_late's forward_pull, so gate on the stored target
+            weight_signal_epoch=(self._epoch_target if self._pull_pending
+                                 else int(self.op_w1.epoch())),
             weight_gate_group_start=1,
         )
         if self._sched_order is not None:
@@ -269,6 +282,7 @@ class OursMovementLane:
         self._sched_order = None
         self._sched_n_front = 0
         assert not self._w2_pending, "previous iteration's w2 never issued"
+        assert not self._pull_pending, "previous iteration's pull never issued"
         if gain_ppm < self.gain_threshold_ppm:
             return False
         changed = (new_p2l_host != self.resident_p2l).nonzero(
@@ -310,6 +324,34 @@ class OursMovementLane:
                 self.ffn * self.H
                 * self.op_w1.weight_home().element_size(),
                 mode="mcast")
+        if self.pull:
+            # PULL adoption: bounds-checked plan only (gw=-1 rows, no
+            # gateway grouping, no shards); pre-raise unmoved slots to the
+            # target epoch LOCALLY on the current stream (the gate reads
+            # on this stream; moved slots' SETs come later on w_stream —
+            # disjoint indices). Gets are issued in issue_w2_late.
+            pairs_pull = torch.empty((len(adds), 6), dtype=torch.int32)
+            pairs_pull[:, 0] = torch.tensor([a[0] for a in adds],
+                                            dtype=torch.int32)
+            pairs_pull[:, 1] = torch.tensor([a[1] for a in adds],
+                                            dtype=torch.int32)
+            pairs_pull[:, 2] = torch.tensor([a[2] for a in adds],
+                                            dtype=torch.int32)
+            pairs_pull[:, 3] = torch.tensor([a[3] for a in adds],
+                                            dtype=torch.int32)
+            pairs_pull[:, 4:] = -1
+            self._epoch_target = int(self.op_w1.epoch()) + 1
+            assert self._epoch_target == int(self.op_w2.epoch()) + 1, \
+                "w1/w2 epochs diverged"
+            for op in (self.op_w1, self.op_w2):
+                op.set_plan(pairs_pull)
+                op.signals().index_fill_(0, keep, self._epoch_target)
+            if self.sched_moved_last and moved_slots.numel() > 0:
+                self._sched_order, self._sched_n_front = build_sched_order(
+                    self.gpe, moved_slots.tolist())
+            self._pull_pending = True
+            self.resident_p2l = new_p2l_host.long().clone()
+            return True
         if self.sched_moved_last and moved_slots.numel() > 0:
             # moved-last GEMM schedule encoding for the fused l0 forward:
             # front class = pad + unmoved slots (original order), deferred
@@ -392,6 +434,18 @@ class OursMovementLane:
         -> the w2 legs would deadlock join_w2); w_stream's own FIFO
         already orders these puts after w1's. No-op unless a trigger
         iteration stashed pending w2 state."""
+        if self._pull_pending:
+            # tokens-first pull issue: dispatch legs are already enqueued;
+            # w1's gets land during l0 (gated tiles absorb the tail), w2's
+            # right behind (runway = l0 + gelu, join_w2 unchanged)
+            self._pull_pending = False
+            with torch.cuda.stream(self.w_stream):
+                self.ev_move_start.record()
+                e1 = int(self.op_w1.forward_pull())
+                e2 = int(self.op_w2.forward_pull())
+                assert e1 == self._epoch_target == e2, "pull epoch skew"
+                self.ev_move_end.record()
+            return
         if not self._w2_pending:
             return
         self._w2_pending = False
