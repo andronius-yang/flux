@@ -2755,6 +2755,14 @@ VARIANTS["ours_l01_s2_oracle_kb_noshard"] = dict(
     test_args=VARIANTS["ours_l01_s2_oracle_kb"]["test_args"]
               + ["--weight_shard", "off"],
 )
+# kb ladder (v3): kb=0 gave 362 moves/iter, kb=90090 gave 0 — probe the
+# drift-demanded band in between (noshard base = canon candidate)
+for _kb in ("2000", "10000", "30000"):
+    VARIANTS[f"ours_l01_s2_oracle_kb{_kb}_ns"] = dict(
+        VARIANTS["ours_l01_s2_oracle_kb_noshard"],
+        test_args=VARIANTS["ours_l01_s2_oracle_kb_noshard"]["test_args"]
+                  + ["--place_keep_bonus", _kb],
+    )
 VARIANTS["ours_l01_s2_oracle_pull"] = dict(
     VARIANTS["ours_l01_s2_oracle"],
     env=dict(VARIANTS["ours_l01_s2_oracle"]["env"], FLUX_OURS_S2_PULL="1"),

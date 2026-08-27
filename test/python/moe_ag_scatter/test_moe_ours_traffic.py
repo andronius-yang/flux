@@ -143,6 +143,11 @@ def parse_args():
                         "OVERLAPPED weight movement (WPM multicast + "
                         "NIC-shard + per-slot weight-gated tiles)")
     p.add_argument("--place_gain_threshold_ppm", type=int, default=50000)
+    p.add_argument("--place_keep_bonus", type=int, default=-1,
+                   help="warm-solve resident stickiness; -1 = auto "
+                        "(0 in the always regime, 90090 otherwise). The "
+                        "kb ladder probes the drift-demanded-moves band: "
+                        "kb=0 re-derives ~freely, 90090 freezes.")
     p.add_argument("--place_drift_prefilter_ppm", type=int, default=10000,
                    help="skip the warm solve when the observed demand "
                         "drift vs the resident placement's basis is below "
@@ -681,7 +686,9 @@ def main():
         _solve_kw = dict(passes_a=2, passes_b=1, repair_passes=1,
                          seed="warm", seed_primary=store.primary,
                          seed_inst_nodes=store.ion,
-                         keep_bonus=(0 if _always0 else 90090))
+                         keep_bonus=(args.place_keep_bonus
+                                     if args.place_keep_bonus >= 0
+                                     else (0 if _always0 else 90090)))
 
         def _solve_eager():
             return plfast.build_placement_fast(
