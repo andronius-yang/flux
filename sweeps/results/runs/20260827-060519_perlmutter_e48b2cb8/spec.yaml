@@ -1,0 +1,32 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 1
+  - 4
+  - 16
+  - 64
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+ffn_hidden: 1536
+idle_timeout_s: 500
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 4
+nodes: 4
+notes: stale noshard grid b1/4/16/64 4n qwen
+platform: perlmutter
+profile_iters: 3
+retries: 0
+shape: qwen3
+skip_correctness: true
+sm_margin: 8
+timeout_s: 1500
+topk: 8
+variants:
+  - ours_l01_s2_stale_noshard
+warmup_iters: 5
