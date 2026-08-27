@@ -159,3 +159,20 @@ face); out-of-bounds -> IndexKernel assert (the noshard face). Triggers
 keep.record_stream in _issue_op (covers late-w2 reuse too). Historical
 8/25 triggers (early-out/ov) predate the hoist — possibly a distinct
 sibling; revalidation tells. noshard free-running revalidation launched.
+
+### Race CLOSED + noshard = best K2 stale config (2a522c2a)
+
+The first record_stream application was silently LOST by a background
+chain (commit 5a12e85 claims it but contains only capsules — cause
+unresolved; all edits now verify in-chain via grep + commit-stat gates).
+With the fix VERIFIED active (5248188 lineage): noshard 2/2 green AND
+best-in-class — K2 4n stale 118.3/133.7 (base 203/217, bigchunk
+149/162): **-42% vs base**, place lane 121 -> 4.2/4.9 ms. Reading: at
+heavy movement, inter-expert parallelism already covers the NICs, so
+DROPPING intra-expert sharding entirely removes ~all issue cost with no
+wire penalty. Triage ledger: nocache OK + dbg OK + direct FAIL + fixed
+OK = keep-UAF confirmed (in-bounds face = mis-raised epochs = the
+stale_ml 8n wedge — 8n top-up spec confirms). CANON CANDIDATE (user
+one-decision): weight_shard=off for s2 movement (bigchunk fallback if
+few-moves regimes show single-NIC wire exposure). r2 x noshard window
+launched.
