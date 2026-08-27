@@ -1,0 +1,16 @@
+# K2 8n noshard top-up: same-capsule base pairing + the missing b32 point
+platform: perlmutter
+nodes: 8
+shape: k2
+variants: [ours_l01_s2_stale, ours_l01_s2_stale_noshard]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8, 32]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 1500
+idle_timeout_s: 500
+retries: 0
+notes: "noshard 8n top-up: same-capsule base pairing, b8+b32"
