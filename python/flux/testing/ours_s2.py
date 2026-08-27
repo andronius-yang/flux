@@ -107,7 +107,7 @@ class OursMovementLane:
                  gen_w1, gen_w2,
                  gain_threshold_ppm=50000,
                  weight_shard="auto",
-                 shard_chunk_bytes=1 << 21):
+                 shard_chunk_bytes=None):
         import flux
         self.pg = pg
         self.rank = rank
@@ -125,6 +125,15 @@ class OursMovementLane:
         self.gen_w2 = gen_w2
         self.gain_threshold_ppm = gain_threshold_ppm
         self.weight_shard = weight_shard
+        # FLUX_OURS_S2_SHARD_CHUNK (2026-08-27 issue-cost lever): the
+        # per-shard pipelining chunk. 2MB default => K2-scale movement
+        # emits ~16 stream ops per (expert, op) and the HOST enqueue of
+        # that fleet (~110ms at 370 moves/iter, measured 4n b8) dominates
+        # stale place_ms. Bigger chunks trade pipelining granularity
+        # (8MB @ ~25GB/s = 0.32ms/hop) for 4x fewer enqueues.
+        if shard_chunk_bytes is None:
+            shard_chunk_bytes = int(os.environ.get(
+                "FLUX_OURS_S2_SHARD_CHUNK", str(1 << 21)))
         self.shard_chunk_bytes = shard_chunk_bytes
         # FLUX_OURS_S2_MCAST=0: direct home->dst puts for every leg (no
         # gateway lane at all) — hang-triage / ablation knob

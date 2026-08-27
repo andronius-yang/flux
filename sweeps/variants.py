@@ -2689,6 +2689,23 @@ for _k, _env in (("ml", {"FLUX_OURS_SCHED_MOVED_LAST": "1"}),
     VARIANTS[f"ours_l01_s2_stale_r2_{_k}"] = dict(
         VARIANTS["ours_l01_s2_stale_r2"],
         env=dict(VARIANTS["ours_l01_s2_stale_r2"]["env"], **_env))
+# movement-ISSUE cost arms (2026-08-27, K2 4n finding: ~110ms host
+# enqueue of shard-chunk stream ops in stale place_ms):
+#   noshard  = --weight_shard off (at high move counts inter-expert
+#              parallelism already covers the NICs; sharding is redundant
+#              16x enqueue volume)
+#   bigchunk = FLUX_OURS_S2_SHARD_CHUNK=8MB (4x fewer chunk ops, keeps
+#              the /L NIC split)
+VARIANTS["ours_l01_s2_stale_noshard"] = dict(
+    VARIANTS["ours_l01_s2_stale"],
+    test_args=VARIANTS["ours_l01_s2_stale"]["test_args"]
+              + ["--weight_shard", "off"],
+)
+VARIANTS["ours_l01_s2_stale_bigchunk"] = dict(
+    VARIANTS["ours_l01_s2_stale"],
+    env=dict(VARIANTS["ours_l01_s2_stale"]["env"],
+             FLUX_OURS_S2_SHARD_CHUNK=str(8 << 20)),
+)
 VARIANTS["ours_l01_s2_r2_quiet"] = dict(
     VARIANTS["ours_l01_s2"],
     test_args=VARIANTS["ours_l01_s2"]["test_args"]
