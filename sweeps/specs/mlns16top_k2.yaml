@@ -1,0 +1,17 @@
+# 16n top-up: noshard scale datapoint + base retry (fresh window; w2l/
+# mlw2 wedge class excluded — burns wall confirming the quarantine)
+platform: perlmutter
+nodes: 16
+shape: k2
+variants: [ours_l01_s2_stale, ours_l01_s2_stale_noshard]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8, 32]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 1500
+idle_timeout_s: 500
+retries: 0
+notes: "16n noshard top-up + base retry"
