@@ -1,0 +1,16 @@
+# noshard x r2 (post race-fix): does the -42% carry to replica parity
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [ours_l01_s2_stale_r2_noshard]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8, 32]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 1800
+idle_timeout_s: 600
+retries: 0
+notes: "noshard x r2 K2 4n post race-fix"
