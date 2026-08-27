@@ -1,0 +1,17 @@
+# oracle-drift small-movement overlap probe: quiet twin vs oracle-reset
+# (sharded + noshard). Premium = oracle - quiet; hypothesis: ~0.
+platform: perlmutter
+nodes: 4
+shape: qwen3
+variants: [ours_l01_s2, ours_l01_s2_oracle, ours_l01_s2_oracle_noshard]
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8, 32]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 1800
+idle_timeout_s: 600
+retries: 0
+notes: "oracle-drift overlap probe 4n qwen"
