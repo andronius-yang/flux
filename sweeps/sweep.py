@@ -1049,6 +1049,15 @@ def build_cell_env(spec, plat, cell, staging, matrix):
         # forced-slack cushions dominate; floor stays 6G, platform cap
         # applies (skipped_capacity via _A2AV_SYM_G_REQUIRED).
         need = 24 * max_row_bytes + (1 << 30)
+        ta_ours = v.get("test_args") or []
+        if "s2" in ta_ours:
+            # s2 sizes recv/panels at the PLACEMENT-INDEPENDENT provable
+            # ceilings (top-nlp demand sum; adopted-placement safety,
+            # 2026-08-27) — measured 6.4x recv oversize vs the reference
+            # at K2 8n b32 blew the 24x budget (all-arm heap failures at
+            # 8G). 42x covers the ceiling composition; the platform cap +
+            # skipped_capacity guard still bound it.
+            need = 42 * max_row_bytes + (1 << 30)
         sym_g = max(6, math.ceil(need / (1 << 30)))
         env["_A2AV_SYM_G_REQUIRED"] = str(sym_g)
         sym_max = plat.get("sym_size_max_g")
