@@ -145,3 +145,17 @@ noshard DEBUG_SYNC cell (FLUX_OURS_S2_DEBUG_SYNC) is in flight to
 localize the faulting op; corruption-vs-wedge are likely two faces of
 one ordering bug in the issue/role/epoch chain. 16n legs proceed
 (idle_timeout bounds wedge cost; wedge locations are themselves data).
+
+### Race RCA (debug-sync Heisenbug -> allocator lifetime)
+
+The DEBUG_SYNC noshard cell ran GREEN (08dd0e3b) — per-step syncs remove
+the fault => concurrency bug. RCA: the apply_moves hoist allocates
+`keep` on the driver stream but consumes it on w_stream with NO
+record_stream; on return the caching allocator can recycle the block
+mid-index_fill_. Garbage indices: in-bounds -> mis-raised slot epochs ->
+unmoved-slot gate never raised -> tile spin-wedge (the stale_ml 8n
+face); out-of-bounds -> IndexKernel assert (the noshard face). Triggers
+= anything that shrinks the host gap between issue and return. FIX:
+keep.record_stream in _issue_op (covers late-w2 reuse too). Historical
+8/25 triggers (early-out/ov) predate the hoist — possibly a distinct
+sibling; revalidation tells. noshard free-running revalidation launched.
