@@ -130,3 +130,18 @@ bigchunk: place 33->10 but total +1.5/+4.0 (serialized wire relocates).
 CANON CANDIDATE at K2-scale movement: bigchunk-8MB alone (-27%);
 ml stays the Qwen/moderate-movement win. Remaining stale place = 33ms
 (plan_weight_shards python + residual issue) — next lever if needed.
+
+### The race family converges (2026-08-27 ~01:00)
+
+K2 8n A/B (ec58b712): stale_ml b8 STUCK at window 12/15 — no asserts,
+pure spin-wedge. Trigger inventory for the latent mid-iteration movement
+race now spans FOUR independent timing perturbations of the movement
+lane: (1) place early-out host sync (handoff 20, 3/3 fail), (2)
+plan_overlap side stream (2/2 fail), (3) noshard = no plan_weight_shards
+host gap (IndexKernel corruption, persists post wait_stream fix), (4)
+moved-last at 8n (adds build_sched_order host work to the place lane;
+4n was 10/10 green). Same code green when timing is undisturbed. The
+noshard DEBUG_SYNC cell (FLUX_OURS_S2_DEBUG_SYNC) is in flight to
+localize the faulting op; corruption-vs-wedge are likely two faces of
+one ordering bug in the issue/role/epoch chain. 16n legs proceed
+(idle_timeout bounds wedge cost; wedge locations are themselves data).
