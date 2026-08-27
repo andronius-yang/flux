@@ -2706,6 +2706,16 @@ VARIANTS["ours_l01_s2_stale_bigchunk"] = dict(
     env=dict(VARIANTS["ours_l01_s2_stale"]["env"],
              FLUX_OURS_S2_SHARD_CHUNK=str(8 << 20)),
 )
+VARIANTS["ours_l01_s2_stale_noshard_nocache"] = dict(
+    VARIANTS["ours_l01_s2_stale_noshard"],
+    env=dict(VARIANTS["ours_l01_s2_stale_noshard"]["env"],
+             PYTORCH_NO_CUDA_MEMORY_CACHING="1"),
+)
+VARIANTS["ours_l01_s2_stale_noshard_direct"] = dict(
+    VARIANTS["ours_l01_s2_stale_noshard"],
+    env=dict(VARIANTS["ours_l01_s2_stale_noshard"]["env"],
+             FLUX_OURS_S2_MCAST="0"),
+)
 VARIANTS["ours_l01_s2_stale_noshard_dbg"] = dict(
     VARIANTS["ours_l01_s2_stale_noshard"],
     env=dict(VARIANTS["ours_l01_s2_stale_noshard"]["env"],
