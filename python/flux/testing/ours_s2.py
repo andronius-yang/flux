@@ -359,6 +359,13 @@ class OursMovementLane:
         advance in lockstep, but late-w2 must not reuse a stale value)."""
         new_epoch = int(op.epoch()) + 1
         op.signals().index_fill_(0, keep, new_epoch)
+        # ALLOCATOR LIFETIME (2026-08-27, re-applied WITH verification —
+        # the first application was lost, see handoff): `keep` is
+        # allocated on the driver stream, consumed here on w_stream; the
+        # caching allocator may recycle its block at apply_moves return
+        # while index_fill_ is in flight. In-bounds garbage indices =
+        # mis-raised epochs = spin-wedge; OOB = IndexKernel assert.
+        keep.record_stream(torch.cuda.current_stream())
         self._dbg("index_fill")
         op.set_plan(pairs_t)
         self._dbg("set_plan")
