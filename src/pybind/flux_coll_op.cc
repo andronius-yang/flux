@@ -486,6 +486,7 @@ static int reg_weight_push_multicast [[maybe_unused]] = []() {
                 py::arg("multicast") = false)
             .def("forward_gateway", &WeightPushMulticastCls::forward_gateway)
             .def("forward_pull", &WeightPushMulticastCls::forward_pull)
+            .def("prime_pull", &WeightPushMulticastCls::prime_pull)
             .def("forward_egress", &WeightPushMulticastCls::forward_egress)
             .def("forward_ingress", &WeightPushMulticastCls::forward_ingress)
             .def("forward_shard_join", &WeightPushMulticastCls::forward_shard_join)

@@ -187,6 +187,11 @@ class OursMovementLane:
         self.op_w1.weight_home().copy_(w1h.cuda())
         self.op_w2.weight_home().copy_(w2h.cuda())
 
+        if self.pull:
+            # one-time lazy-load priming of the getmem kernel classes
+            # (setup, GPU idle; module loads are process-wide so one op
+            # suffices) — both pull gates wedged at i0 l0 without this
+            self.op_w1.prime_pull(self.L)
         self.w_stream = torch.cuda.Stream()      # issue stream (movement)
         self.side_stream = torch.cuda.Stream()   # late-drained roles
         self.ev_move_start = torch.cuda.Event(enable_timing=True)

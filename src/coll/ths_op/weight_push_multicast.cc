@@ -142,6 +142,32 @@ class WeightPushMulticast::WeightPushMulticastImpl {
   torch::Tensor prime_sig_;       // symmetric u64[1] priming signal (stays 0)
 
   void
+  prime_pull(int64_t local_world_size) {
+    // 2026-08-27 pull-mode priming (lazy-load class, both gates wedged at
+    // i0 l0): getmem_on_stream is a NEW device-kernel class never primed
+    // by the put-side paths, and under tokens-first the gets' first
+    // launch happens while the gated GEMM already spins on the very
+    // signals those gets deliver. Prime BOTH get classes against the
+    // priming scratch while the GPU is idle: an INTRANODE peer (P2P get
+    // kernel) and, when one exists, an INTERNODE peer (proxy get), plus
+    // the local signal SET forward_pull uses. Lane calls this once at
+    // setup (the ctor lacks local_world_size).
+    cudaStream_t stream = c10::cuda::getCurrentCUDAStream();
+    const int64_t L = local_world_size;
+    char *buf = static_cast<char *>(this->prime_buf_.data_ptr());
+    int p2p_peer = static_cast<int>((this->rank_ / L) * L + (this->rank_ + 1) % L);
+    nvshmemx_getmem_on_stream(buf, buf, 16, p2p_peer, stream);
+    if (this->world_size_ > L) {
+      int far_peer = static_cast<int>((this->rank_ + L) % this->world_size_);
+      nvshmemx_getmem_on_stream(buf, buf, 16, far_peer, stream);
+    }
+    uint64_t *sig = reinterpret_cast<uint64_t *>(this->prime_sig_.data_ptr());
+    nvshmemx_signal_op_on_stream(sig, 0, NVSHMEM_SIGNAL_SET, this->rank_, stream);
+    nvshmemx_quiet_on_stream(stream);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+  }
+
+  void
   prime_shard_kernels(int64_t local_world_size) {
     // 2026-08-16 lazy-load lesson (ctor-priming fix 1550b67): NVSHMEM
     // on-stream signal/put ops to P2P peers are DEVICE KERNELS whose first
@@ -786,6 +812,11 @@ void
 WeightPushMulticast::forward_gateway() {
   FLUX_CHECK(impl_ != nullptr) << "WeightPushMulticast is not initialized!";
   impl_->forward_gateway();
+}
+void
+WeightPushMulticast::prime_pull(int64_t local_world_size) {
+  FLUX_CHECK(impl_ != nullptr) << "WeightPushMulticast not initialized";
+  impl_->prime_pull(local_world_size);
 }
 int64_t
 WeightPushMulticast::forward_pull() {

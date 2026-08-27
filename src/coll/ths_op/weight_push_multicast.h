@@ -91,6 +91,8 @@ class WeightPushMulticast {
   void forward_gateway();
   // round-4 pull movement: destination getmem + local epoch signal
   int64_t forward_pull();
+  // one-time setup priming of the getmem kernel classes (lazy-load rule)
+  void prime_pull(int64_t local_world_size);
 
   // Destination-side landing gate: zero-SM stream waits (GEQ current epoch)
   // on each of MY incoming slots, on the current torch stream.
