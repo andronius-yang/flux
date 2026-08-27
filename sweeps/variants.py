@@ -2164,7 +2164,10 @@ VARIANTS["llc_l01_s1_demand"] = dict(
 VARIANTS["llc_l01_s1_pv2"] = dict(
     VARIANTS["llc_l01_s1"],
     test_args=[a if a != "placelambda_fast" else "pv2"
-               for a in VARIANTS["llc_l01_s1"]["test_args"]],
+               for a in VARIANTS["llc_l01_s1"]["test_args"]]
+              # slack-parity pin (datapoint skill rule: never rely on the
+              # driver default even though it IS 2)
+              + ["--redundant_per_rank", "2"],
 )
 
 VARIANTS["slipstream"] = VARIANTS["hier_compress_lb_union"]
