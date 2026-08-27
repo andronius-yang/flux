@@ -1,0 +1,16 @@
+# best-config stale grid for the b1-b64 summary table (noshard = canon)
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [ours_l01_s2_stale_noshard]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 4, 16, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 1500
+idle_timeout_s: 500
+retries: 0
+notes: "stale noshard grid b1/4/16/64 4n k2"
