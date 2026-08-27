@@ -2723,10 +2723,6 @@ VARIANTS["ours_l01_s2_stale_r2_pull"] = dict(
     env=dict(VARIANTS["ours_l01_s2_stale_r2"]["env"],
              FLUX_OURS_S2_PULL="1"),
 )
-VARIANTS["ours_l01_s2_oracle_pull"] = dict(
-    VARIANTS["ours_l01_s2_oracle"],
-    env=dict(VARIANTS["ours_l01_s2_oracle"]["env"], FLUX_OURS_S2_PULL="1"),
-)
 # oracle-drift probe (2026-08-27 user experiment): resident reset to the
 # PRE-BATCH ORACLE solve every iteration -> each timed window re-moves
 # exactly the oracle->batch drift set (expected: few experts). Question:
@@ -2740,6 +2736,10 @@ VARIANTS["ours_l01_s2_oracle_noshard"] = dict(
     VARIANTS["ours_l01_s2_oracle"],
     test_args=VARIANTS["ours_l01_s2_oracle"]["test_args"]
               + ["--weight_shard", "off"],
+)
+VARIANTS["ours_l01_s2_oracle_pull"] = dict(
+    VARIANTS["ours_l01_s2_oracle"],
+    env=dict(VARIANTS["ours_l01_s2_oracle"]["env"], FLUX_OURS_S2_PULL="1"),
 )
 VARIANTS["ours_l01_s2_stale_r2_noshard"] = dict(
     VARIANTS["ours_l01_s2_stale_r2"],
