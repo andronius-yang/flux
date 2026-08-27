@@ -1,0 +1,17 @@
+# noshard strict gate (canon prerequisite): check_iters + stale-rot +
+# wprobe with weight_shard=off, post record_stream fix
+platform: perlmutter
+nodes: 4
+shape: qwen3
+variants: [ours_l01_s2_gate_noshard]
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8]
+modes: [isolated]
+iters: 4
+warmup_iters: 2
+skip_correctness: false
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 0
+notes: "noshard strict gate 4n qwen post race-fix (canon prerequisite)"
