@@ -1036,3 +1036,249 @@ def placement_hash(hosts) -> int:
     h = hashlib.sha256()
     h.update(repr([sorted(x) for x in hosts]).encode())
     return int.from_bytes(h.digest()[:8], "little", signed=True)
+
+
+# --------------------------------------------------------------------------
+# Route-global quota route (2026-08-29 restructure; handoff 26 §4)
+# --------------------------------------------------------------------------
+
+def _largest_remainder_rows_sf(want, budget):
+    """Sync-free twin of _largest_remainder_rows (no host early-out; the
+    scaled path is bitwise-identical for over-budget rows and an exact
+    pass-through otherwise). want [N, M] int64 >= 0, budget [N] >= 0."""
+    N, M = want.shape
+    tot = want.sum(1)
+    b = torch.minimum(tot, budget)
+    tot_c = tot.clamp(min=1)
+    base = want * b.unsqueeze(1) // tot_c.unsqueeze(1)
+    frac = want * b.unsqueeze(1) - base * tot_c.unsqueeze(1)
+    rem = b - base.sum(1)
+    key = frac * M + (M - 1 - torch.arange(M, device=want.device,
+                                           dtype=torch.int64))
+    order = torch.argsort(key, dim=1, descending=True, stable=True)
+    rankpos = torch.empty_like(order)
+    rankpos.scatter_(1, order,
+                     torch.arange(M, device=want.device,
+                                  dtype=torch.int64).expand_as(order))
+    return base + (rankpos < rem.unsqueeze(1)).long()
+
+
+def route_global_quota(topk_all, tables, nlp, ranks_per_node, eps,
+                       f_cap=0, t3_rounds=2, stats_out=None):
+    """Deterministic GLOBAL quota route — every rank computes EVERY rank's
+    assignment from the allgathered raw topk (2026-08-29 route-global
+    restructure: ONE topk+probs collective replaces the d-allgather +
+    routed-decisions allgather pair; d is derived locally).
+
+    Pure ORDER-INDEPENDENT integer program, sync-free, fixed op count,
+    static shapes (CUDA-graph capturable):
+      tiers 1+2  bitwise the loccap_route_sl quota/share tables; the
+                 per-entry materialization uses stable ordinals against
+                 quota-interval cumsums (searchsorted-style gather) in
+                 place of the reference's repeat_interleave.
+      tier 3     t3_rounds static preference passes (per-(src, g) best
+                 hosting rank by remaining share, ties lower rank) with
+                 ordinal-vs-share grants — the quota simplification of the
+                 reference's greedy min-node-cover ROUNDS (which carry
+                 host-sync control flow). Known quality gap: no cover
+                 awareness, no donation; measured offline vs the SL
+                 reference (which stays the checker).
+      forced     one pass to the frozen post-tier-2 least-loaded hosting
+                 rank, f_cap-budgeted per (src, dst) by ordinal; overflow
+                 is ASSIGNED anyway (routing stays total) and counted in
+                 stats[2] (the kstats forced-budget-overflow slot).
+
+    topk_all [R, S, K] int on device; tables = instance_tables_gpu output
+    (placement-static — compute once at setup); stats_out: optional int64
+    [4] device tensor filled in-place ([2] = forced budget overflow).
+    Returns phys [R, S, K] int32.
+    """
+    ipr, ion, hosted_rg = tables
+    R, S, K = topk_all.shape
+    dev = topk_all.device
+    G = int(hosted_rg.shape[1])
+    L = ranks_per_node
+    NN = R // L
+    topk = topk_all.long()
+    node_of_rank = torch.arange(R, device=dev, dtype=torch.int64) // L
+
+    total_rows = R * S * K
+    cap = (total_rows if math.isinf(eps)
+           else int(math.ceil((1.0 + eps) * S * K)))
+    cap_vec = torch.full((R,), cap, dtype=torch.int64, device=dev)
+
+    flat = topk.reshape(R, S * K)
+    # index_add, not bincount: CUDA bincount sizes its output via a host
+    # .item() sync — capture-illegal (the local_loads precedent)
+    d = torch.zeros(R * G, dtype=torch.int64, device=dev)
+    d.index_add_(
+        0,
+        (torch.arange(R, device=dev, dtype=torch.int64).unsqueeze(1) * G
+         + flat).reshape(-1),
+        torch.ones(total_rows, dtype=torch.int64, device=dev))
+    d = d.view(R, G)
+
+    # ---- tiers 1+2: identical shared-table math to loccap_route_sl -----
+    q1 = _largest_remainder_rows_sf(d * hosted_rg.long(), cap_vec)
+    load = q1.sum(1)
+    rd = d - q1
+    nh = ion.t()[node_of_rank]
+    t2_want = rd * nh.long()
+    t2_nlg = t2_want.view(NN, L, G)
+    D = t2_nlg.sum(1)
+    resid = (cap_vec - load).clamp(min=0)
+    hosts_nl = hosted_rg.view(NN, L, G).permute(0, 2, 1)
+    w2 = (resid.view(NN, L).clamp(max=_W_CLAMP).unsqueeze(1)
+          * hosts_nl.long())
+    alloc = _largest_remainder_rows_sf(
+        (w2 * D.unsqueeze(-1)).reshape(NN * G, L),
+        D.reshape(-1)).view(NN, G, L)
+    alloc = _largest_remainder_rows_sf(
+        alloc.permute(0, 2, 1).reshape(NN * L, G),
+        resid.reshape(-1),
+    ).view(NN, L, G).permute(0, 2, 1).contiguous()
+    src_pref = torch.cumsum(t2_nlg, dim=1) - t2_nlg
+    cumA = torch.cumsum(alloc, dim=-1)
+    lo_b = torch.cat([torch.zeros(NN, G, 1, dtype=torch.int64, device=dev),
+                      cumA[..., :-1]], dim=-1)
+    A2 = (torch.minimum(src_pref.permute(0, 2, 1).unsqueeze(3)
+                        + t2_nlg.permute(0, 2, 1).unsqueeze(3),
+                        cumA.unsqueeze(2))
+          - torch.maximum(src_pref.permute(0, 2, 1).unsqueeze(3),
+                          lo_b.unsqueeze(2))).clamp(min=0)
+    load = load + alloc.sum(1).reshape(-1)
+
+    # entry order (canonical: (src, g) groups, original index within)
+    ent_src = (torch.arange(R, device=dev, dtype=torch.int64)
+               .unsqueeze(1).expand(R, S * K).reshape(-1))
+    ent_g = flat.reshape(-1)
+    canon_key = ent_src * G + ent_g
+    order = torch.argsort(canon_key, stable=True)
+    ord_in_seg = _run_ordinal(canon_key[order])
+
+    # per-(src, g) destination sequence: own rank first, then the node's
+    # other ranks in the reference's stable permutation, with tier-1 quota
+    # + tier-2 shares as interval widths
+    src_local = torch.arange(R, device=dev, dtype=torch.int64) % L
+    A2_src = A2.permute(0, 2, 1, 3).reshape(R, G, L)
+    own_extra = torch.gather(
+        A2_src, 2, src_local.view(R, 1, 1).expand(R, G, 1)).squeeze(2)
+    amounts = A2_src.scatter(
+        2, src_local.view(R, 1, 1).expand(R, G, 1),
+        torch.zeros(R, G, 1, dtype=torch.int64, device=dev))
+    own_amt = q1 + own_extra
+    node_base = (torch.arange(R, device=dev, dtype=torch.int64) // L) * L
+    others = torch.argsort(
+        (torch.arange(L, device=dev, dtype=torch.int64).unsqueeze(0)
+         == src_local.unsqueeze(1)).long(), dim=1, stable=True)
+    perm = torch.cat([src_local.unsqueeze(1), others[:, :L - 1]], dim=1)
+    tgt_ranks = node_base.unsqueeze(1) + perm
+    tgt_amounts = torch.cat(
+        [own_amt.unsqueeze(2),
+         torch.gather(amounts, 2,
+                      perm[:, 1:].unsqueeze(1).expand(R, G, L - 1))],
+        dim=2)
+    granted2 = tgt_amounts.sum(2)
+
+    ent_src_o = ent_src[order]
+    ent_g_o = ent_g[order]
+    # interval lookup (static-shape searchsorted replacement): j = number
+    # of inclusive cumsums <= ordinal
+    cum_tgt = torch.cumsum(tgt_amounts, dim=2)          # [R, G, L]
+    cum_e = cum_tgt[ent_src_o, ent_g_o]                 # [E, L]
+    j = (ord_in_seg.unsqueeze(1) >= cum_e).sum(1).clamp(max=L - 1)
+    dst12 = tgt_ranks[ent_src_o].gather(
+        1, j.unsqueeze(1)).squeeze(1)                   # [E]
+    grant12 = ord_in_seg < granted2[ent_src_o, ent_g_o]
+
+    UNASSIGNED = -1
+    phys_flat = torch.full((total_rows,), UNASSIGNED, dtype=torch.int64,
+                           device=dev)
+    phys_flat.scatter_(
+        0, order,
+        torch.where(grant12, ipr[ent_g_o, dst12],
+                    torch.full_like(dst12, UNASSIGNED)))
+
+    # ---- tier-3 SHARE tables (pure functions of d; reference formulas) --
+    resid3 = (cap_vec - load).clamp(min=0)
+    leftover = (d - granted2).clamp(min=0)
+    w3 = ((leftover.clamp(max=_W_CLAMP).double()
+           @ hosted_rg.double().t()).long()).clamp(max=_W_CLAMP)
+    myshare = _largest_remainder_rows_sf(
+        (w3 * resid3.unsqueeze(0)).t().contiguous(), resid3,
+    ).t().contiguous()                                  # [Rsrc, Rdst]
+    load_fb = load.clone()                              # frozen (recv fix)
+
+    # ---- tier 3: static preference passes, ordinal-vs-share grants ------
+    E = total_rows
+    idxE = torch.arange(E, device=dev, dtype=torch.int64)
+    SENT = R * R
+    for _p in range(t3_rounds):
+        remaining_o = phys_flat[order] == UNASSIGNED
+        # preferred dst per (src, g): hosting rank with max remaining
+        # share (ties lower rank); pure function of the CURRENT tables
+        keyd = (myshare.clamp(max=_W_CLAMP).unsqueeze(1)
+                * hosted_rg.t().long().unsqueeze(0))    # [Rs, G, Rd]
+        keyd = keyd * R + (R - 1 - torch.arange(R, device=dev,
+                                                dtype=torch.int64))
+        valid_d = (hosted_rg.t().unsqueeze(0)
+                   & (myshare > 0).unsqueeze(1))        # [Rs, G, Rd]
+        bigneg = torch.full_like(keyd, -1)
+        best = torch.where(valid_d, keyd, bigneg).max(dim=2).values
+        has_d = best >= 0
+        dst3_tab = torch.where(
+            has_d, R - 1 - (best % R),
+            torch.zeros_like(best))                     # [Rs, G]
+        sd_o = torch.where(
+            remaining_o & has_d[ent_src_o, ent_g_o],
+            ent_src_o * R + dst3_tab[ent_src_o, ent_g_o],
+            torch.full_like(ent_src_o, SENT))
+        o3 = torch.argsort(sd_o * (E + 1) + idxE, stable=True)
+        ord3 = _run_ordinal(sd_o[o3])
+        sd_s = sd_o[o3]
+        take = (sd_s < SENT) & (ord3 < myshare.reshape(-1)[
+            sd_s.clamp(max=SENT - 1)])
+        pos = order[o3]
+        g_t = ent_g[pos]
+        d_t = sd_s % R
+        phys_flat.scatter_(
+            0, pos,
+            torch.where(take, ipr[g_t, d_t], phys_flat[pos]))
+        spent_buf = torch.zeros(SENT + 1, dtype=torch.int64, device=dev)
+        spent_buf.index_add_(
+            0, torch.where(take, sd_s, torch.full_like(sd_s, SENT)),
+            torch.ones(E, dtype=torch.int64, device=dev))
+        spent = spent_buf[:SENT].view(R, R)
+        myshare = myshare - spent
+        load = load + spent.sum(0)
+
+    # ---- forced: frozen least-loaded hosting rank, f_cap ordinal budget -
+    keyf = (load_fb.unsqueeze(0) * R
+            + torch.arange(R, device=dev, dtype=torch.int64)
+            .unsqueeze(0)).expand(G, R)
+    BIG = torch.iinfo(torch.int64).max
+    bestf = torch.where(ipr >= 0, keyf, torch.full_like(keyf, BIG)) \
+        .min(dim=1).values
+    r_fb = bestf % R                                    # [G]
+    remaining_o = phys_flat[order] == UNASSIGNED
+    sdf_o = torch.where(remaining_o,
+                        ent_src_o * R + r_fb[ent_g_o],
+                        torch.full_like(ent_src_o, SENT))
+    of = torch.argsort(sdf_o * (E + 1) + idxE, stable=True)
+    ordf = _run_ordinal(sdf_o[of])
+    sdf_s = sdf_o[of]
+    in_play = sdf_s < SENT
+    if f_cap and f_cap > 0:
+        over = in_play & (ordf >= f_cap)
+    else:
+        over = torch.zeros_like(in_play)
+    posf = order[of]
+    g_f = ent_g[posf]
+    phys_flat.scatter_(
+        0, posf,
+        torch.where(in_play, ipr[g_f, sdf_s % R], phys_flat[posf]))
+    if stats_out is not None:
+        stats_out.zero_()
+        stats_out[0] = in_play.sum()
+        stats_out[2] = over.sum()
+    return phys_flat.view(R, S, K).to(torch.int32)

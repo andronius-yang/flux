@@ -128,7 +128,8 @@ class OursIterPlanner:
     """
 
     def __init__(self, plan, rank, device, topk_all, probs_all_setup,
-                 local_world_size, eps, f_cap, route_group):
+                 local_world_size, eps, f_cap, route_group,
+                 route_global=False):
         cfg = plan.cfg
         self.cfg = cfg
         self.plan = plan
@@ -155,6 +156,13 @@ class OursIterPlanner:
         self.f_cap_current = f_cap
         self.route_group = route_group
         self.last_kernel_stats = None
+        # route-global (2026-08-29 restructure, handoff 26 §4): ONE
+        # topk+probs allgather replaces the d-allgather + routed-decisions
+        # allgather pair; every rank recomputes every rank's assignment
+        # with the deterministic quota route (route_global_quota — the
+        # relaxed kernel's atomic-ticket pairing cannot be replicated
+        # cross-rank). Requires narrow==0 buffers and the prealloc tail.
+        self.route_global = bool(route_global)
 
         S, K, R = cfg.S, cfg.K, cfg.R
         self.topk_all = topk_all.long().to(device)
@@ -215,6 +223,25 @@ class OursIterPlanner:
         self._tail_graph_broken = False
         self._kstats_pinned = torch.zeros(4, dtype=torch.int64,
                                           pin_memory=True)
+        if self.route_global:
+            assert self.xchg_narrow == 0, (
+                "route_global v1 requires narrow==0 (topk rides the phys "
+                "slot of the fused exchange)")
+            if not self.plan_prealloc:
+                self.plan_prealloc = True
+                self._vce_buf = torch.empty(R * S, K, dtype=torch.int32,
+                                            device=device)
+                self._vce_tmp = torch.empty(R * S, K, dtype=torch.int32,
+                                            device=device)
+                self._probs_all_buf = torch.empty(
+                    R * S, K, dtype=torch.float32, device=device)
+                self._phys_i32 = None
+                self._topk_own_flat_i64 = (self._topk_own_i32.reshape(-1)
+                                           .long().contiguous())
+            self._rg_stats = torch.zeros(4, dtype=torch.int64,
+                                         device=device)
+            self._rg_graph = None
+            self._rg_graph_broken = False
         self.refresh_placement()
 
     def refresh_placement(self):
@@ -222,6 +249,10 @@ class OursIterPlanner:
         self.l2p = self.plan.l2p.to(dev)
         self.lcnts = self.plan.lcnts.to(dev)
         self.p2l = self.plan.p2l.long().to(dev)
+        if self.route_global:
+            from flux.testing.placelambda_gpu import instance_tables_gpu
+            self._rg_tables = instance_tables_gpu(
+                self.l2p, self.lcnts, self.cfg.nlp, self.L, R=self.cfg.R)
 
     # -- plan_comm bracket ---------------------------------------------------
 
@@ -233,10 +264,78 @@ class OursIterPlanner:
         self._d_own.index_add_(0, idx, self._ones)
         return self._d_own
 
+    def rg_exchange(self):
+        """Route-global plan_comm: the ONE recurring collective — raw
+        topk + probs in the fused buffer (byte-identical layout to the
+        legacy phys+probs exchange; topk rides the phys slot)."""
+        S, K = self.cfg.S, self.cfg.K
+        with _nvtx("plan.rg_exchange"):
+            self._xchg_send[:S * K].copy_(self._topk_own_i32.view(-1))
+            self._xchg_send[S * K:].copy_(
+                self._probs_own.view(-1).view(torch.int32))
+            dist.all_gather_into_tensor(self._xchg_gather, self._xchg_send,
+                                        group=self.route_group)
+
+    def _rg_compute(self):
+        """Route-global derive: deterministic quota route over ALL ranks
+        from the gathered topk + vce/probs recovery, entirely into the
+        persistent buffers. Sync-free, static shapes — graph-capturable."""
+        from flux.testing.placelambda_gpu import route_global_quota
+        cfg = self.cfg
+        S, K, R = cfg.S, cfg.K, cfg.R
+        n = S * K
+        buf = self._xchg_gather.view(R, 2 * n)
+        topk_all = buf[:, :n].view(R, S, K)
+        self._probs_all_buf.view(R, n).copy_(
+            buf[:, n:].view(torch.float32))
+        phys = route_global_quota(
+            topk_all, self._rg_tables, cfg.nlp, self.L, self.eps,
+            f_cap=self.f_cap_current, stats_out=self._rg_stats).view(R, n)
+        torch.remainder(phys, cfg.nlp, out=self._vce_tmp.view(R, n))
+        torch.div(phys, cfg.nlp, rounding_mode="floor",
+                  out=self._vce_buf.view(R, n))
+        self._vce_buf.mul_(self.gpe).add_(1).add_(self._vce_tmp)
+
+    def _derive_rg(self) -> OursIterPlan:
+        with _nvtx("plan.rg_route"):
+            if self.plan_graph and not self._rg_graph_broken:
+                if self._rg_graph is None:
+                    try:
+                        for _ in range(2):
+                            self._rg_compute()
+                        torch.cuda.synchronize()
+                        g = torch.cuda.CUDAGraph()
+                        with torch.cuda.graph(g):
+                            self._rg_compute()
+                        g.replay()
+                        torch.cuda.synchronize()
+                        self._rg_graph = g
+                    except Exception as e:  # noqa: BLE001 — eager fallback
+                        self._rg_graph = None
+                        self._rg_graph_broken = True
+                        if self.rank == 0:
+                            print(f"[ours] rg graph capture failed "
+                                  f"({type(e).__name__}: {e}); eager",
+                                  flush=True)
+                if self._rg_graph is not None:
+                    self._rg_graph.replay()
+                else:
+                    self._rg_compute()
+            else:
+                self._rg_compute()
+        self._kstats_pinned.copy_(self._rg_stats, non_blocking=True)
+        self.last_kernel_stats = self._kstats_pinned
+        return OursIterPlan(self._vce_buf, self._probs_all_buf,
+                            self._kstats_pinned, stable=True)
+
     # -- plan bracket ----------------------------------------------------------
 
     def derive(self, d_gather_buf: torch.Tensor) -> OursIterPlan:
-        """Relaxed kernel route + fused phys/probs allgather + vce build."""
+        """Relaxed kernel route + fused phys/probs allgather + vce build.
+        Route-global mode: the exchange already ran (rg_exchange, in the
+        plan_comm bracket) — derive is the deterministic global route."""
+        if self.route_global:
+            return self._derive_rg()
         import flux
         cfg = self.cfg
         S, K, R = cfg.S, cfg.K, cfg.R

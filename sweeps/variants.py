@@ -2977,6 +2977,24 @@ VARIANTS["ours_l01_s1_gate_pv2_r2_wa_pfov2_noid"] = dict(
              FLUX_OURS_PLAN_GRAPH="1", FLUX_OURS_PLAN_SCALE_GRAPH="1",
              FLUX_A2AV_RS_CHECK_IDENTITY="0"),
 )
+# route-global restructure (2026-08-29, handoff 26 §4; user-directed
+# "merge two allgathers into one"): ONE topk+probs collective + the
+# deterministic quota route (route_global_quota) computed by every rank
+# for every rank — replaces the d-allgather + relaxed-kernel +
+# decisions-allgather chain. s1 only; NEVER-MIX out_sha vs kernel-routed
+# arms (different pairing); allclose gates bind. Stacked on the record
+# candidate (wa + graphs + late overlap). Gate = mode-2 protocol
+# (identity OFF) + per-iteration output checks.
+VARIANTS["ours_l01_s1_pv2_r2_wa_pfov2_rg"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2_wa_pfov2"],
+    test_args=VARIANTS["ours_l01_s1_pv2_r2_wa_pfov2"]["test_args"]
+              + ["--route_global", "1"],
+)
+VARIANTS["ours_l01_s1_gate_pv2_r2_wa_pfov2_rg"] = dict(
+    VARIANTS["ours_l01_s1_gate_pv2_r2_wa_pfov2_noid"],
+    test_args=VARIANTS["ours_l01_s1_gate_pv2_r2_wa_pfov2_noid"]["test_args"]
+              + ["--route_global", "1"],
+)
 VARIANTS["ours_l01_s1_gate_pv2_r2_wa_pfov2"] = dict(
     VARIANTS["ours_l01_s1_gate_pv2_r2_wa"],
     test_args=_ours_ov2_args(

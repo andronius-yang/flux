@@ -203,8 +203,38 @@ timeout-killed srun CLIENT orphans its compute-side STEP (nodes stay
 busy, next srun parks on "step creation disabled") — reap with
 `scancel -s KILL <jobid>.<step>` before relaunching.
 
+**Route-global restructure (2026-08-29 late, user-directed): machinery
+PROVEN, torch route too slow — needs the kernel.** One topk+probs
+allgather (byte-identical to the legacy phys+probs exchange — topk rides
+the phys slot) replaces the d-allgather + relaxed-kernel +
+decisions-allgather chain; every rank recomputes every rank's assignment
+with `route_global_quota` (placelambda_gpu.py) — the deterministic quota
+route: tiers 1+2 bitwise the SL reference tables, one-pass ordinal tier
+3 (t3_rounds static preference passes), f_cap-ordinal forced fallback;
+sync-free, static shapes, graph-capturable. CPU unit vs the full SL
+reference: **rowwise agreement 1.000** on the test instance (identical
+loads, forced counts, incidence) — the quota simplification loses
+nothing measurable to the cover rounds there. 4n gates GREEN both
+models (capsules 20260829-1126xx window; K2 158 s / Qwen 49 s,
+per-iteration output checks) — the deterministic single-exchange
+pipeline is CORRECT end-to-end. But the torch-op route program costs
+2.8 ms (b1) / 13.1 ms (b8) GPU even graph-replayed (A/B capsules
+20260829-{112649,112914}: plan 6.1-7.1 eager) — the ~10 full-E
+int64 passes (argsorts/gathers) are torch-granularity-bound. VERDICT:
+arm `_rg` parked (never headline); production route-global = a fused
+deterministic CUDA kernel (stable ordinals + quota intervals replacing
+pll_route3's relaxed atomic tickets), with route_global_quota as its
+executable spec and bitwise checker. Two capture lessons for the
+ledger: torch.bincount is capture-ILLEGAL on CUDA (hidden .max().item()
+— use index_add, the local_loads precedent); a failed capture leaves
+the default RNG generator in a state where later eager RNG ops throw
+"Offset increment outside graph capture".
+
 **Remaining queue** (plan floor now ~0.64 at b1: route 0.11 + AGs 0.18 +
 derive_routed 0.26 + m_this 0.04 + graphed tails):
+- the route-global CUDA kernel above (removes one AG latency + the
+  route<->exchange serialization; est -0.15..-0.25 with a ~0.2-0.3 ms
+  deterministic global kernel);
 - pinned compress-fast t64/t32 (pageable-H2D hidden syncs) — DONE 8/29
   pm, in the rebuild after this entry.
 - Deferred-sync derive: derive_routed_meta already keeps sps ON DEVICE

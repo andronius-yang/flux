@@ -116,6 +116,15 @@ def parse_args():
     p.add_argument("--iters", type=int, default=10)
     p.add_argument("--warmup_iters", type=int, default=5)
     p.add_argument("--eps", type=float, default=0.0625)
+    p.add_argument("--route_global", type=int, default=0,
+                   help="1: route-global restructure (handoff 26 §4) — ONE "
+                        "topk+probs allgather replaces the d-allgather + "
+                        "routed-decisions allgather; every rank recomputes "
+                        "all ranks' assignment via the deterministic quota "
+                        "route (route_global_quota; the relaxed kernel's "
+                        "ticket pairing cannot be replicated cross-rank). "
+                        "s1 only; f_cap runs uncapped (deterministic "
+                        "realized == setup sizing).")
     p.add_argument("--pll_f_cap", type=int, default=-1,
                    help="-1 = auto from the reference tables")
     p.add_argument("--sizing", choices=["demand", "capacity"],
@@ -480,9 +489,24 @@ def main():
     phys_ref, pll_aux = loccap_route_sl(
         topk_all.long().cpu(), plan.p2l, plan.l2p, plan.lcnts,
         cfg.nlp, L, args.eps, return_tables=True)
-    plan.phys_override = phys_ref
     pll_bounds = loccap_sl_bounds(pll_aux, W, args.pll_f_cap)
     args.pll_f_cap = pll_bounds["f_cap"]
+    if args.route_global:
+        # route-global: the deterministic quota route IS both the sizing
+        # reference AND the runtime routing (bitwise — same pure function
+        # of the same fixed per-cell topk), so realized == reference
+        # exactly and f_cap runs uncapped (kstats[2] identically 0). The
+        # SL bounds above are kept only for their aux diagnostics.
+        assert args.scenario == "s1", "route_global v1 is s1-only"
+        from flux.testing.placelambda_gpu import (
+            instance_tables_gpu, route_global_quota)
+        _rg_tab_cpu = instance_tables_gpu(
+            plan.l2p, plan.lcnts, cfg.nlp, L, R=W)
+        phys_ref = route_global_quota(
+            topk_all.long().cpu(), _rg_tab_cpu, cfg.nlp, L, args.eps,
+            f_cap=0)
+        args.pll_f_cap = 0
+    plan.phys_override = phys_ref
     _st("reference route + bounds ok")
     # r2 fix (2026-08-26) generalized (2026-08-27, branch pv2): every
     # placement in the s2 sizing set gets its own reference route; the
@@ -547,7 +571,11 @@ def main():
     # recv rows this rank computes (dispatch recv == combine send)
     recv_real = max(int(s[:, rank * gpe:(rank + 1) * gpe].sum())
                     for s in sps_all)
-    if args.sizing == "demand" and args.scenario == "s1":
+    if args.route_global:
+        # deterministic route: runtime == reference bitwise, realized is
+        # exact — the SL provable bound does not bound THIS algorithm
+        recv_cap = recv_real + cushion
+    elif args.sizing == "demand" and args.scenario == "s1":
         recv_cap = min(pll_bounds["recv_cap"], recv_real + cushion)
     else:
         # s2 always sizes at the provable caps (placement varies at
@@ -704,7 +732,7 @@ def main():
                 swap_sync = SwapTableSync(plan, torch.device("cuda"))
     planner = OursIterPlanner(plan, rank, torch.device("cuda"), topk_all,
                               probs_all_setup, L, args.eps, args.pll_f_cap,
-                              TP_GROUP)
+                              TP_GROUP, route_global=bool(args.route_global))
     # r2/s2 f_cap contract fix (handoff 22 §4): runtime-adopted placements
     # can exceed any setup-derived forced budget — enable the planner's
     # local escalate-and-reroute (kstats[2] breach -> 4x then uncapped).
@@ -947,8 +975,14 @@ def main():
         nvtx_tag = f"iter{i}_warmup" if i < args.warmup_iters else f"iter{i}"
         with torch.cuda.nvtx.range(nvtx_tag):
             iter_start[i].record()
-            torch.distributed.all_gather_into_tensor(
-                d_gather_buf, planner.local_loads(), group=TP_GROUP)
+            if args.route_global:
+                # ONE collective per iteration: raw topk + probs (the
+                # d-allgather is gone — d is a local pure function of the
+                # gathered topk inside the route)
+                planner.rg_exchange()
+            else:
+                torch.distributed.all_gather_into_tensor(
+                    d_gather_buf, planner.local_loads(), group=TP_GROUP)
             plan_comm_end[i].record()
             if lane is not None and args.s2_swap:
                 # SWAP place lane (timed, counts toward total_ms): D2H of
