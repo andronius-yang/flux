@@ -230,11 +230,42 @@ ledger: torch.bincount is capture-ILLEGAL on CUDA (hidden .max().item()
 the default RNG generator in a state where later eager RNG ops throw
 "Offset increment outside graph capture".
 
-**Remaining queue** (plan floor now ~0.64 at b1: route 0.11 + AGs 0.18 +
-derive_routed 0.26 + m_this 0.04 + graphed tails):
-- the route-global CUDA kernel above (removes one AG latency + the
-  route<->exchange serialization; est -0.15..-0.25 with a ~0.2-0.3 ms
-  deterministic global kernel);
+**Prior-art audit (user question 2026-08-29 late): the deterministic
+route kernel is genuinely new — never attempted, never ruled out.** The
+8/21 session (handoff 08, PLACE-lambda port) had a deterministic GLOBAL
+torch router (loccap_gpu, CPU==GPU bit-identical, 52-67 ms,
+launch/sync-bound) and then RELAXED bit-identity by user ruling — but on
+the explicit premise that "agreement across ranks comes from the
+phys-row allgather, never from replaying each other's decisions."
+Route-global deletes that exchange, inverting the premise: determinism
+becomes the enabling property. The 8/21 blocker (tier-3 greedy cover
+consuming live counters = order-dependent) is dissolved by the quota
+simplification (closed-form ordinal windows); "counts-only exchange
+instead of the phys-row allgather" was already on 8/21's next-fusion
+list, unattempted. Latency basis: the relaxed kernel is 0.40-0.45
+ms/rank at 9 launches, LAUNCH-bound — the global variant (~16 launches,
+trivial per-entry work) projects ~0.3-0.5 ms at 4n AND 8n.
+
+**Route-global kernel (2026-08-29 last): built, bitwise-proven, perf
+verdict NEGATIVE at BOTH 4n and 8n — CLOSED.** placelambda_route_global
+(commit ae0dd16, TAG'd): stable ordinals + closed-form quota windows,
+bitwise vs the torch spec on synthetic AND real configs (after the
+shares-branch fix: over-budget iff sum(w3)>1, not >resid — the
+(src15,g189) RCA), gates green 4n+8n with per-iteration identity checks,
+0.67-0.74 ms flat across scale. But the A/B (4n 135146/135434, 8n
+140248/140506): rg loses +0.07..+0.92 everywhere. The reason is
+arithmetic, not implementation: **the decisions-exchange bytes are
+irreducible** (ship raw topk or ship routed decisions — identical size),
+so the merge only ever saves the small FLAT d-allgather (~0.08 ms),
+while the single exchange's latency scales with tokens and the global
+kernel necessarily routes R x the entries of the per-rank relaxed route.
+The 8/21 sender-local relaxation had already banked the available win;
+route-global re-centralizes the computation it distributed. Negative
+result recorded for the paper; kernel + spec + checker retained as
+validated infrastructure (any future consumer needing replicable routing
+— e.g. exchange-free metadata under a counts-only wire — starts here).
+
+**Remaining queue** (plan floor now ~0.64 at b1):
 - pinned compress-fast t64/t32 (pageable-H2D hidden syncs) — DONE 8/29
   pm, in the rebuild after this entry.
 - Deferred-sync derive: derive_routed_meta already keeps sps ON DEVICE
