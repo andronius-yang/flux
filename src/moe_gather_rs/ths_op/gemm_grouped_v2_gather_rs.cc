@@ -260,7 +260,11 @@ get_a2av_rs_fused_pack() {
 int
 get_a2av_rs_wave_adapt() {
   (void)bytedance::flux::get_int_from_env("FLUX_A2AV_RS_WAVE_ADAPT_TAG", 0);
-  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_WAVE_ADAPT", 0);
+  // CANON DEFAULT 48 (2026-08-29 user ruling, handoff 26 §3b): collapse
+  // wins/neutral at reread/wire >= ~60, waves win below (Qwen b8 ~7.6).
+  // Explicit env wins; =0 restores the pre-8/29 waves-always behavior
+  // (never-byte-compare boundary vs pre-flip binaries).
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_WAVE_ADAPT", 48);
   return v;
 }
 // OWN_WAVE=first (gen-9 receiver study, 2026-08-24): compute the OWN-node

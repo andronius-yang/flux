@@ -144,9 +144,21 @@ never removed:
 
 | setting | behavior | when |
 |---|---|---|
-| `FLUX_A2AV_RS_WAVE_ADAPT=0` (binary default) | always destination-major waves (today's canon; bit-identical legacy) | wire-bound cells / pre-8/29 reproduction |
-| `FLUX_A2AV_RS_WAVE_ADAPT=R` (arm `_wa`, R=48) | per-iteration byte rule: collapse when reread > R x wire | the record candidate |
+| `FLUX_A2AV_RS_WAVE_ADAPT=48` (**binary default since the 8/29 pm canon flip**) | per-iteration byte rule: collapse when reread > 48 x wire | THE canon |
+| `FLUX_A2AV_RS_WAVE_ADAPT=0` | always destination-major waves (pre-8/29 behavior) | legacy twins / pre-flip reproduction |
 | `FLUX_A2AV_RS_MSPLIT=0` | always collapsed (single-gate, one pass) | ablation / floor probes |
+
+CANONICALIZATION (2026-08-29 pm, user ruling): wave-adapt 48 = the
+binary default; OURS arms additionally canon plan graphs + late overlap
+(`--plan_overlap 2`, `FLUX_OURS_PLAN_GRAPH/SCALE_GRAPH=1` in _OURS_ENV)
+for BOTH s1 and s2 (s2 x canon gate green 4n: 20260829-142050, movement
+stale-rot + force-trigger + weight probe). Slipstream-only inherits the
+binary flips. Regression twins: `ours_l01_s1_pv2_r2_legacy`,
+`l01_slipstream_legacy`. Staged arms (EPIC/PLL/llc) never take the wave
+path (barriers pre-filled) — touched only by the idx kernel. Memory
+authority: slipstream-comm-canon-8-29. Regen campaign: one lane agent
+per topology (4n, 8n), canon ladders + legacy anchors, reports in the
+session scratchpad canonregen/.
 
 Accepted premise (measured, not assumed): **at b1-class budgets no
 overlap is optimal** — the remote wire (~0.45 ms at 4n) is smaller than
