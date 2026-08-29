@@ -814,7 +814,11 @@ namespace {
     const int64_t n_i64 = nex /*expert_base*/ + nex /*my_cnt_cum*/ +
                           (int64_t)(NN - 1) * L * E_loc /*conv_base*/ + W /*recv_off_C*/ +
                           W /*recv_off_Cp*/ + NN /*rem_base*/;
-    torch::Tensor t64 = torch::empty({n_i64}, torch::TensorOptions().dtype(torch::kLong));
+    // pinned so the H2Ds below are truly async (pageable .to(kCUDA) hides a
+    // sync — same class as the combine-index fix, step-0 nsys 8/29)
+    torch::Tensor t64 = torch::empty(
+        {n_i64},
+        torch::TensorOptions().dtype(torch::kLong).pinned_memory(true));
     int64_t *p64 = t64.data_ptr<int64_t>();
     int64_t *expert_base = p64;
     int64_t *my_cnt_cum = expert_base + nex;
@@ -822,7 +826,9 @@ namespace {
     int64_t *recv_off_C = conv_base + (int64_t)(NN - 1) * L * E_loc;
     int64_t *recv_off_Cp = recv_off_C + W;
     int64_t *rem_base = recv_off_Cp + W;
-    torch::Tensor t32 = torch::empty({nex * W}, torch::TensorOptions().dtype(torch::kInt));
+    torch::Tensor t32 = torch::empty(
+        {nex * W},
+        torch::TensorOptions().dtype(torch::kInt).pinned_memory(true));
     int32_t *home_base = t32.data_ptr<int32_t>();
     {
       int64_t acc_e = 0;

@@ -156,14 +156,35 @@ serial minimum-put schedule is within ~0.1 ms of any scheme's bound.
 v2 (expert-major + progressive flush) remains a b16+ experiment behind
 the piece-ladder go/no-go in §3, with P=1 degenerating to the collapse.
 
-## 4. Remaining plan-lane queue
+## 4. Plan lane (2026-08-29 pm, user-directed)
 
-- Fuse/de-serialize derive_routed_meta + combine meta into one derive
-  with a single honest sync (0.26 + residual combine host cost).
-- The validated-but-off planfast knobs (PLAN_GRAPH + SCALE_GRAPH,
-  lossless; ~0.1-0.3 ms) — canonicalization = user decision.
-- Counts-only exchange (handoff 20 deferred) stays the endgame for the
-  route+exchange 0.5 ms.
+**Plan-overlap re-exploration — VERDICT: relabels, stays OFF.** s1-only
+`--plan_overlap 1` (the 8/25 s2 x movement race untouched; s2 x ov stays
+banned): gates green on both wave-adapt branches (20260829-{093436,
+093720}), but the factorial A/B (20260829-{093835,094329}, current
+binary, 4n b1+b8) shows ov moves ~0.4 ms out of plan_ms and the SAME
+cost re-lands in l0_ms (K2 b1: plan 1.09->0.69, l0 1.65->2.16, total
+4.47->4.60; Qwen identical signature). Mechanism: the bottleneck is
+HOST-serial dispatch — `issue_combine_meta` runs on the host between
+e2e_start and the l0 launches, so a side stream relocates the cost
+inside the e2e bracket instead of hiding it. Any real overlap must
+REMOVE host work (kernels/graphs), not move its stream.
+
+**Plan graphs (wa_pf) — WIN, new record candidate.** PLAN_GRAPH +
+SCALE_GRAPH (lossless; the 8/25 planfast stack minus lossy narrow-2):
+K2 b1 4.47 -> 4.20, Qwen b1 3.46 -> 3.27, b8 flat-to-better. Arm
+`ours_l01_s1_pv2_r2_wa_pf`.
+
+**Remaining queue** (plan floor now ~0.88 at b1: route 0.11 + AGs 0.18 +
+derive_routed 0.26 + compress-CSR host ~0.25 + m_this 0.04):
+- pinned compress-fast t64/t32 (pageable-H2D hidden syncs) — DONE 8/29
+  pm, in the rebuild after this entry.
+- Deferred-sync derive: derive_routed_meta already keeps sps ON DEVICE
+  (rt_sps_dev_); split into launch + join so the combine device work
+  queues before the single honest sync (needs a device table-build
+  kernel over sps_dev + API split; ~0.1-0.2).
+- Counts-only exchange (handoff 20 deferred) = endgame for the
+  route+exchange ~0.4.
 
 ## 5. Where this leaves the b1 fight (4n K2, vs COMET 4.04 total)
 
