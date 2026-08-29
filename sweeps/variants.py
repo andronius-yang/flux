@@ -2854,11 +2854,61 @@ for _base in ("ours_l01_s2", "ours_l01_s2_stale", "ours_l01_s2_gate",
         test_args=VARIANTS[_base]["test_args"]
                   + ["--place_solver", "pv2", "--redundant_per_rank", "2"],
     )
+# ---- step-0 combine-floor ablations (2026-08-29 low-budget diagnosis):
+# the l1 msplit dest-node row-split re-reads EVERY expert's w2 panel from
+# HBM once per wave (make_workspace_kernel builds n_waves x E full-N
+# sub-problems) — ~4 weight passes at 4n vs COMET's 1 (column split keeps
+# weight traffic invariant). K2 w2 = 764 MB/rank/pass => the measured
+# ~1.9 ms l1 GEMM floor; Qwen (126 MB) doesn't feel it. These arms dial
+# the pass count on the SAME binary: wn3 = ring waves of 3 nodes (2-3
+# passes, rank-dependent), msp0 = msplit+fused-pack off (1 pass, legacy
+# single gate; bucket receiver kept), msp0_nb = + bucket off (wait-all —
+# the pre-v2 receiver control). DIAGNOSTIC arms — never headline cells.
+VARIANTS["ours_l01_s1_pv2_r2_wn3"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2"],
+    env=dict(VARIANTS["ours_l01_s1_pv2_r2"]["env"],
+             FLUX_A2AV_RS_WAVE_NODES="3"),
+)
+VARIANTS["ours_l01_s1_pv2_r2_msp0"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2"],
+    env=dict(VARIANTS["ours_l01_s1_pv2_r2"]["env"],
+             FLUX_A2AV_RS_MSPLIT="0", FLUX_A2AV_RS_FUSED_PACK="0"),
+)
+VARIANTS["ours_l01_s1_pv2_r2_msp0_nb"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2"],
+    env=dict(VARIANTS["ours_l01_s1_pv2_r2"]["env"],
+             FLUX_A2AV_RS_MSPLIT="0", FLUX_A2AV_RS_FUSED_PACK="0",
+             FLUX_A2AV_RS_BUCKET="0"),
+)
 # s1 gate twin for the pv2 static path
 VARIANTS["ours_l01_s1_gate_pv2_r2"] = dict(
     VARIANTS["ours_l01_s1_gate"],
     test_args=VARIANTS["ours_l01_s1_gate"]["test_args"]
               + ["--place_solver", "pv2", "--redundant_per_rank", "2"],
+)
+# Byte-adaptive wave collapse (2026-08-29, binary tag
+# FLUX_A2AV_RS_WAVE_ADAPT_TAG): per-iteration host rule — run the legacy
+# single-gate GEMM (one weight pass) when (n_waves-1) weight re-read bytes
+# > 48x the remote combine-wire bytes, keep dest-node waves otherwise.
+# Record CANDIDATE at slack parity; canon flip = user decision. Requires
+# the 8/29 rebuild (also carries COMBINE_IDX_KERNEL default-on — never
+# byte-compare env_json across that boundary; rule 4 binaries).
+VARIANTS["ours_l01_s1_pv2_r2_wa"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2"],
+    env=dict(VARIANTS["ours_l01_s1_pv2_r2"]["env"],
+             FLUX_A2AV_RS_WAVE_ADAPT="48"),
+    requires=VARIANTS["ours_l01_s1_pv2_r2"]["requires"]
+             + ["FLUX_A2AV_RS_WAVE_ADAPT_TAG",
+                "FLUX_A2AV_RS_COMBINE_IDX_KERNEL_TAG"],
+)
+VARIANTS["ours_l01_s1_gate_pv2_r2_wa"] = dict(
+    VARIANTS["ours_l01_s1_gate_pv2_r2"],
+    env=dict(VARIANTS["ours_l01_s1_gate_pv2_r2"]["env"],
+             FLUX_A2AV_RS_WAVE_ADAPT="48",
+             FLUX_A2AV_RS_CHECK_IDENTITY="1"),
+    requires=VARIANTS["ours_l01_s1_pv2_r2"]["requires"]
+             + ["FLUX_A2AV_RS_WAVE_ADAPT_TAG",
+                "FLUX_A2AV_RS_COMBINE_IDX_KERNEL_TAG"],
 )
 # ---- intra-node expert SWAP arms (branch pv2, 2026-08-27; ours_swap.py —
 # EPIC §4.3 analog on the OURS stack): per-iteration greedy pair+swap

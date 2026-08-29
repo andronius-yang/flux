@@ -1264,4 +1264,69 @@ a2av_compress_plan(A2AVCompressPlanArguments const &args, cudaStream_t stream) {
   CUDA_CHECK(cudaGetLastError());
 }
 
+namespace {
+
+// upper_bound over an i64 prefix array: first g with cum[g] > v
+CUTLASS_DEVICE int64_t
+combine_plan_upper_bound(int64_t const *cum, int64_t n, int64_t v) {
+  int64_t lo = 0;
+  int64_t hi = n;
+  while (lo < hi) {
+    const int64_t mid = (lo + hi) >> 1;
+    if (cum[mid] <= v) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo < n ? lo : n - 1;  // clamp_max(n - 1), torch parity
+}
+
+// pack side: gemm row i (A-order) -> recv-panel slot. Identity family of the
+// torch path: g = searchsorted(cumA, i, right), sgi = offR_of_A[g] + i -
+// offA[g], pack_index[sgi] = i.
+__global__ void
+combine_plan_pack_kernel(A2AVCombinePlanArguments args) {
+  for (int64_t i = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; i < args.m_this_ep;
+       i += (int64_t)gridDim.x * blockDim.x) {
+    const int64_t g = combine_plan_upper_bound(args.cumA, args.nexG, i);
+    args.pack_index[args.offR_of_A[g] + i - args.offA[g]] = (int32_t)i;
+  }
+}
+
+// reduce side: my copy j -> its rank among my copies in (expert, copy) ==
+// recv-panel order. r = routing_idx[row0 + j]; e = searchsorted(expert_cum,
+// r, right); reduce = my_cum[e] + r - expert_base[e] - h_base[e], with
+// expert_base[e] = expert_cum[e - 1] (0 at e == 0).
+__global__ void
+combine_plan_reduce_kernel(A2AVCombinePlanArguments args) {
+  for (int64_t j = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; j < args.cpr;
+       j += (int64_t)gridDim.x * blockDim.x) {
+    const int64_t r = args.routing_idx[args.row0 + j];
+    const int64_t e = combine_plan_upper_bound(args.expert_cum, args.nex, r);
+    const int64_t e_base = e > 0 ? args.expert_cum[e - 1] : 0;
+    args.reduce_index[j] = (int32_t)(args.my_cum[e] + r - e_base - args.h_base[e]);
+  }
+}
+
+}  // namespace
+
+void
+a2av_combine_plan(A2AVCombinePlanArguments const &args, cudaStream_t stream) {
+  constexpr int kThreads = 256;
+  if (args.m_this_ep > 0) {
+    combine_plan_pack_kernel<<<
+        (int)((args.m_this_ep + kThreads - 1) / kThreads),
+        kThreads,
+        0,
+        stream>>>(args);
+  }
+  combine_plan_reduce_kernel<<<
+      (int)((args.cpr + kThreads - 1) / kThreads),
+      kThreads,
+      0,
+      stream>>>(args);
+  CUDA_CHECK(cudaGetLastError());
+}
+
 }  // namespace bytedance::flux

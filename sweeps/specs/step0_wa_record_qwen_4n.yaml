@@ -1,0 +1,17 @@
+# Wave-adapt record A/B (2026-08-29 rebuilt binary, rule-4 in-capsule):
+# rebuilt canon vs the _wa arm, b1/b8/b64 — b1/b8 measure the collapse win,
+# b64 must show waves kept (wa == canon within noise).
+platform: perlmutter
+nodes: 4
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 8, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 1
+notes: "wa record A/B 8.29: Qwen 4n b1/b8/b64 isolated, ours_l01_s1_pv2_r2 (rebuilt) vs ours_l01_s1_pv2_r2_wa"

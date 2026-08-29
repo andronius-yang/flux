@@ -242,6 +242,27 @@ get_a2av_rs_fused_pack() {
   static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_FUSED_PACK", 1);
   return v;
 }
+// Byte-adaptive wave collapse (2026-08-29 low-budget diagnosis): the msplit
+// dest-node row-split streams EVERY expert's w2 panel from HBM once per wave
+// (n_waves x E full-N sub-problems), so msplit pays (n_waves-1) extra weight
+// passes for its early wire release. At small budgets the wire is too small
+// to repay that (K2 4n b1: l1 2.84 -> 1.60 ms with msplit off, capsule
+// 20260829-084113); in wire-bound cells the overlap wins (Qwen 4n b8: 7.48
+// vs 8.00 total, capsule 20260829-084646). Per-iteration rule, host-side,
+// from the same cnt table the wave build already reads: collapse to the
+// legacy single-gate GEMM (one weight pass, n_waves=0 downstream — pack /
+// relay / receiver all key off set_msplit_waves) when
+//   (n_waves_planned - 1) * E * N * K * elt_w  >  ratio * remote_wire_bytes.
+// ratio = FLUX_A2AV_RS_WAVE_ADAPT; 0 = OFF (bit-identical legacy binary).
+// Measured 4n separation: collapse wins at reread/wire >= ~60 (K2 b1 370,
+// K2 b8 62, Qwen b1 60 all win/neutral), waves win below (K2 b16 31 unknown,
+// Qwen b8 7.6 loses) -> recommended setting 48.
+int
+get_a2av_rs_wave_adapt() {
+  (void)bytedance::flux::get_int_from_env("FLUX_A2AV_RS_WAVE_ADAPT_TAG", 0);
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_WAVE_ADAPT", 0);
+  return v;
+}
 // OWN_WAVE=first (gen-9 receiver study, 2026-08-24): compute the OWN-node
 // wave FIRST instead of last. Costs ~1/NN of the GEMM in wire-start delay;
 // buys the receiver early own-node contributions, so tokens complete at
@@ -361,9 +382,22 @@ namespace {
     auto cnt_at = [&](int h, int64_t e) -> int64_t { return cnt[h * nex + e]; };
     auto opt_i64 = torch::TensorOptions(torch::kCUDA).dtype(torch::kLong);
 
+    // Kernel-side index build (2026-08-29 plan-lane de-serialization; see
+    // A2AVCombinePlanArguments): default ON; 0 restores the torch chain.
+    // Under FLUX_A2AV_RS_CHECK_IDENTITY both run and must agree bitwise.
+    (void)get_int_from_env("FLUX_A2AV_RS_COMBINE_IDX_KERNEL_TAG", 0);
+    static const bool kIdxKernel =
+        get_int_from_env("FLUX_A2AV_RS_COMBINE_IDX_KERNEL", 1) != 0;
+    static const bool kIdxCheck =
+        get_int_from_env("FLUX_A2AV_RS_CHECK_IDENTITY", 0) != 0;
+    const bool use_idx_kernel = kIdxKernel && M_this_ep > 0;
     // host tables -- formulas identical to layer0's metadata collapse (dispatch
     // source == combine home, both index cnt rows). A-order groups g = e_loc*W+h.
-    torch::Tensor tables = torch::empty({3, nexG}, torch::TensorOptions().dtype(torch::kLong));
+    // Pinned so the H2D below is truly async (a pageable .to(kCUDA) here was
+    // a hidden sync — the 0.64 ms derive_combine_meta host span, step-0 nsys).
+    torch::Tensor tables = torch::empty(
+        {3, nexG},
+        torch::TensorOptions().dtype(torch::kLong).pinned_memory(true));
     int64_t *cumA_h = tables[0].data_ptr<int64_t>();
     int64_t *offA_h = tables[1].data_ptr<int64_t>();
     int64_t *offR_of_A_h = tables[2].data_ptr<int64_t>();
@@ -390,39 +424,18 @@ namespace {
         offR_of_A_h[e_loc * W + h] = offR[h * E_loc + e_loc];
       }
     }
-    auto tables_dev = tables.to(torch::kCUDA);
-    auto cumA = tables_dev[0];
-    auto offA = tables_dev[1];
-    auto offR_of_A = tables_dev[2];
-
-    torch::Tensor pack_index;
-    auto iota = torch::arange(M_this_ep, opt_i64);
-    if (M_this_ep > 0) {
-      auto g = torch::searchsorted(cumA, iota, /*out_int32=*/false, /*right=*/true)
-                   .clamp_max_(nexG - 1);
-      auto sgi = offR_of_A.index_select(0, g) + iota - offA.index_select(0, g);
-      pack_index =
-          torch::empty({M_this_ep}, opt_i64).scatter_(0, sgi, iota).to(torch::kInt);
-    } else {
-      pack_index = torch::empty({0}, torch::TensorOptions(torch::kCUDA).dtype(torch::kInt));
-    }
-
-    // reduce index: my copies sorted by (expert, copy index) == recv-panel
-    // order. SORT-FREE since 2026-08-22: the rank of a local copy among my
-    // copies in (e, copy) order is pure scd arithmetic — my exclusive
-    // per-expert prefix + the copy's rank inside its (e, home==me) A-order
-    // sub-block (scd - expert_base - home_base(e, me)). Same identity family
-    // as the pack side above; bitwise == the old argsort (unique keys).
-    auto routing_slice =
-        routing_idx.narrow(0, (int64_t)rank * cpr, cpr).to(torch::kLong);
-    auto splits_cum = splits_gpu.to(torch::kLong).cumsum(0);
-    auto e_of = torch::searchsorted(splits_cum, routing_slice, /*out_int32=*/false, /*right=*/true)
-                    .clamp_max_(nex - 1);
-    torch::Tensor rtab = torch::empty({3, nex}, torch::TensorOptions().dtype(torch::kLong));
+    // reduce-side host tables (shared by both paths). Row 1 = exclusive
+    // A-order expert base (torch path), row 3 = INCLUSIVE per-expert cum
+    // (kernel path's searchsorted array; values == cumsum(splits_gpu) by the
+    // cnt/splits consistency the acc==M_this_ep check above guards).
+    torch::Tensor rtab = torch::empty(
+        {4, nex},
+        torch::TensorOptions().dtype(torch::kLong).pinned_memory(true));
     {
       int64_t *my_cum = rtab[0].data_ptr<int64_t>();
       int64_t *e_base = rtab[1].data_ptr<int64_t>();
       int64_t *h_base = rtab[2].data_ptr<int64_t>();
+      int64_t *e_cum = rtab[3].data_ptr<int64_t>();
       int64_t acc_my = 0;
       int64_t acc_e = 0;
       for (int64_t e = 0; e < nex; e++) {
@@ -437,15 +450,84 @@ namespace {
         }
         acc_my += cnt_at(rank, e);
         acc_e += hb;
+        e_cum[e] = acc_e;
       }
     }
-    auto rtab_dev = rtab.to(torch::kCUDA, /*non_blocking=*/true);
-    auto reduce_index = (rtab_dev[0].index_select(0, e_of) + routing_slice -
-                         rtab_dev[1].index_select(0, e_of) - rtab_dev[2].index_select(0, e_of))
-                            .to(torch::kInt);
 
-    static const bool kCheckIdentity =
-        get_int_from_env("FLUX_A2AV_RS_CHECK_IDENTITY", 0) != 0;
+    auto compute_torch_path = [&]() -> std::pair<torch::Tensor, torch::Tensor> {
+      auto tables_dev = tables.to(torch::kCUDA);
+      auto cumA = tables_dev[0];
+      auto offA = tables_dev[1];
+      auto offR_of_A = tables_dev[2];
+      torch::Tensor pack_t;
+      auto iota = torch::arange(M_this_ep, opt_i64);
+      if (M_this_ep > 0) {
+        auto g = torch::searchsorted(cumA, iota, /*out_int32=*/false, /*right=*/true)
+                     .clamp_max_(nexG - 1);
+        auto sgi = offR_of_A.index_select(0, g) + iota - offA.index_select(0, g);
+        pack_t =
+            torch::empty({M_this_ep}, opt_i64).scatter_(0, sgi, iota).to(torch::kInt);
+      } else {
+        pack_t = torch::empty({0}, torch::TensorOptions(torch::kCUDA).dtype(torch::kInt));
+      }
+      // reduce index: my copies sorted by (expert, copy index) == recv-panel
+      // order. SORT-FREE since 2026-08-22: the rank of a local copy among my
+      // copies in (e, copy) order is pure scd arithmetic — my exclusive
+      // per-expert prefix + the copy's rank inside its (e, home==me) A-order
+      // sub-block (scd - expert_base - home_base(e, me)). Same identity family
+      // as the pack side; bitwise == the old argsort (unique keys).
+      auto routing_slice =
+          routing_idx.narrow(0, (int64_t)rank * cpr, cpr).to(torch::kLong);
+      auto splits_cum = splits_gpu.to(torch::kLong).cumsum(0);
+      auto e_of =
+          torch::searchsorted(splits_cum, routing_slice, /*out_int32=*/false, /*right=*/true)
+              .clamp_max_(nex - 1);
+      auto rtab_dev = rtab.narrow(0, 0, 3).to(torch::kCUDA, /*non_blocking=*/true);
+      auto reduce_t = (rtab_dev[0].index_select(0, e_of) + routing_slice -
+                       rtab_dev[1].index_select(0, e_of) - rtab_dev[2].index_select(0, e_of))
+                          .to(torch::kInt);
+      return {pack_t, reduce_t};
+    };
+
+    torch::Tensor pack_index;
+    torch::Tensor reduce_index;
+    if (use_idx_kernel) {
+      auto stream = c10::cuda::getCurrentCUDAStream();
+      auto tables_dev = tables.to(torch::kCUDA, /*non_blocking=*/true);
+      auto rtab_dev = rtab.to(torch::kCUDA, /*non_blocking=*/true);
+      auto opt_i32c = torch::TensorOptions(torch::kCUDA).dtype(torch::kInt);
+      pack_index = torch::empty({M_this_ep}, opt_i32c);
+      reduce_index = torch::empty({cpr}, opt_i32c);
+      int64_t const *t64 = tables_dev.data_ptr<int64_t>();
+      int64_t const *r64 = rtab_dev.data_ptr<int64_t>();
+      A2AVCombinePlanArguments cargs{
+          .routing_idx = routing_idx.data_ptr<int32_t>(),
+          .cumA = t64,
+          .offA = t64 + nexG,
+          .offR_of_A = t64 + 2 * nexG,
+          .expert_cum = r64 + 3 * nex,
+          .my_cum = r64,
+          .h_base = r64 + 2 * nex,
+          .pack_index = pack_index.data_ptr<int32_t>(),
+          .reduce_index = reduce_index.data_ptr<int32_t>(),
+          .m_this_ep = M_this_ep,
+          .cpr = cpr,
+          .row0 = (int64_t)rank * cpr,
+          .nexG = nexG,
+          .nex = nex};
+      a2av_combine_plan(cargs, stream);
+      if (kIdxCheck) {
+        auto [pack_ref, reduce_ref] = compute_torch_path();
+        FLUX_CHECK(torch::equal(pack_index, pack_ref))
+            << "combine idx kernel: pack identity mismatch";
+        FLUX_CHECK(torch::equal(reduce_index, reduce_ref))
+            << "combine idx kernel: reduce identity mismatch";
+      }
+    } else {
+      std::tie(pack_index, reduce_index) = compute_torch_path();
+    }
+
+    static const bool kCheckIdentity = kIdxCheck;
     if (kCheckIdentity && M_this_ep > 0) {
       // brute-force reference for the arithmetic pack identity: recover each gemm
       // row's global copy index from routing_idx, sort rows by (home, row)
@@ -460,7 +542,8 @@ namespace {
                              .scatter_(0, routing_idx.to(torch::kLong), iota_m)
                              .narrow(0, ep_m_start, M_this_ep);
       auto h_of = copy_of_row.div(cpr, "floor");
-      auto perm_ref = (h_of * M_this_ep + iota).argsort();
+      auto perm_ref =
+          (h_of * M_this_ep + torch::arange(M_this_ep, opt_i64)).argsort();
       FLUX_CHECK(torch::equal(pack_index, perm_ref.to(torch::kInt)))
           << "a2av_hier pack-index identity mismatch";
     }
@@ -3358,7 +3441,43 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     const int32_t *msplit_wave_M_dev = nullptr;
     const int32_t *msplit_wave_off_dev = nullptr;
     const int32_t *msplit_ne_wave_dev = nullptr;
-    if (this->msplit_) {
+    // Byte-adaptive wave collapse (see get_a2av_rs_wave_adapt): when the
+    // (n_waves-1) weight re-read passes outweigh the wire bytes the waves
+    // could overlap, run this iteration on the legacy single-gate problem
+    // structure instead (msplit_run false => ws_args.msplit 0, legacy
+    // problem_count, gemm n_split, fused pack off, set_msplit_waves(0)).
+    bool msplit_run = this->msplit_;
+    if (this->msplit_ && get_a2av_rs_wave_adapt() > 0) {
+      FLUX_CHECK(splits_per_source.has_value());
+      const int NN = this->nnodes;
+      const int E = this->ep_nexperts;
+      const int L = this->local_world_size;
+      const int my_node = this->rank / L;
+      const int NG = this->msplit_wave_nodes_;
+      const int32_t *cnt = splits_per_source->data_ptr<int32_t>();
+      int64_t remote_rows = 0;
+      for (int h = 0; h < NN * L; h++) {
+        if (h / L == my_node) {
+          continue;
+        }
+        for (int e = 0; e < E; e++) {
+          remote_rows +=
+              cnt[(int64_t)h * this->total_num_experts + this->ep_start + e];
+        }
+      }
+      const int r1 = NN - 1 - my_node;
+      const int n_waves_planned =
+          1 + (r1 + NG - 1) / NG + (my_node + NG - 1) / NG;  // own + ring runs
+      const int64_t elt_w = c10::elementSize(input_torch_type);
+      const int64_t elt_o = c10::elementSize(output_torch_type);
+      const int64_t reread_bytes =
+          (int64_t)(n_waves_planned - 1) * E * N * K * elt_w;
+      const int64_t wire_bytes = remote_rows * N * elt_o;
+      if (reread_bytes > (int64_t)get_a2av_rs_wave_adapt() * wire_bytes) {
+        msplit_run = false;
+      }
+    }
+    if (msplit_run) {
       FLUX_CHECK(splits_per_source.has_value());
       const int NN = this->nnodes;
       const int E = this->ep_nexperts;
@@ -3493,7 +3612,7 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
           weight_scales.has_value() ? weight_scales->at(i).data_ptr<float>() : nullptr;
     }
 
-    if (this->msplit_) {
+    if (msplit_run) {
       ws_args.msplit = 1;
       ws_args.n_waves = msplit_n_waves;
       ws_args.wave_M = msplit_wave_M_dev;
@@ -3502,7 +3621,7 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       ws_args.barrier = this->barrier.data_ptr<int>();
     }
     ws_args.iota = this->msplit_iota_.data_ptr<int32_t>();
-    if (this->msplit_ && this->fused_pack_) {
+    if (msplit_run && this->fused_pack_) {
       // gen-8c epilogue-fused pack: fold the gate coefficients into the
       // intermediate on the K side (mathematically identical: sum_j w_j (A_j B)
       // == sum_j (w_j A_j) B), build the pack inverse, and point D at the
@@ -3523,7 +3642,7 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       ws_args.inv_pack = this->msplit_inv_pack_.data_ptr<int32_t>();
       ws_args.send_panel = this->topk_reduce_scatter_op->send_panel_ptr();
     }
-    int problem_count = this->msplit_
+    int problem_count = msplit_run
                             ? msplit_n_waves * ws_args.ep_nexperts
                             : ws_args.N_split * ws_args.num_groups * ws_args.ep_nexperts;
     torch::Tensor workspace_gpu = empty_with_uninitialized_data(
@@ -3598,12 +3717,12 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         .routing_idx = routing_idx.data_ptr<int32_t>(),
         // msplit: the cascade's group axis is the WAVE (n_split stays 1 for
         // panels/columns — full-N sub-problems)
-        .n_split = this->msplit_ ? msplit_n_waves : n_split,
+        .n_split = msplit_run ? msplit_n_waves : n_split,
         .sm_margin = sm_margin + (this->a2av_hier
                                       ? get_a2av_pack_blocks() + get_a2av_reduce_blocks() +
                                             (this->a2av_compress ? get_a2av_prered_blocks() : 0)
                                       : get_rs_threadblock_count()),
-        .non_empty_per_group = this->msplit_ ? msplit_ne_wave_dev : nullptr,
+        .non_empty_per_group = msplit_run ? msplit_ne_wave_dev : nullptr,
         .scatter_D_ptr = scatter_D_ptr_ws};
 
     int64_t workspace_size = gemm_op->get_workspace_size(args);
@@ -3623,7 +3742,7 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     topk_reduce_scatter_op->set_msplit_waves(
         this->msplit_wave_of_node_,
         this->msplit_node_order_,
-        this->msplit_ ? msplit_n_waves : 0);
+        msplit_run ? msplit_n_waves : 0);
     output = topk_reduce_scatter_op->run(
         gemm_outs,
         output,

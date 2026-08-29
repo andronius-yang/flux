@@ -1,0 +1,18 @@
+# Step-0b wave-pass A/B (2026-08-29): weight-reread theory hardware test on
+# the CURRENT binary (rule-4 in-capsule). Canon (per-node waves = 4 passes)
+# vs WAVE_NODES=3 (2-3) vs msplit-off (1 pass). Isolated mode = honest
+# latency; verdict = l1_ms + total_ms deltas inside this capsule.
+platform: perlmutter
+nodes: 4
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 8]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 1200
+idle_timeout_s: 420
+retries: 1
+notes: "step0b 8.29: Qwen 4n b1/b8 wave-pass ladder (canon/wn3/msp0/msp0_nb) — weight-reread A/B, diagnostic"

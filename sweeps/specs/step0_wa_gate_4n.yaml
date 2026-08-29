@@ -1,0 +1,18 @@
+# Wave-adapt + combine-idx-kernel 4n gates (2026-08-29 rebuild): per-iteration
+# output checks + FLUX_A2AV_RS_CHECK_IDENTITY on both decision branches —
+# K2 b8 exercises the COLLAPSED path (reread/wire ~62 > 48), Qwen b8 the
+# WAVES path (~7.6 < 48). Model set per spec twin.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: false
+timeout_s: 1800
+idle_timeout_s: 600
+retries: 1
+notes: "wa gate 8.29: K2 4n b8 (collapsed branch) — ours_l01_s1_gate_pv2_r2_wa, identity checks on"

@@ -328,6 +328,34 @@ struct A2AVCompressPlanArguments {
 
 void a2av_compress_plan(A2AVCompressPlanArguments const &args, cudaStream_t stream);
 
+// Kernel-side a2av combine pack/reduce index build (2026-08-29 plan-lane
+// de-serialization): the sort-free identities of build_a2av_combine_indices
+// as two direct-write kernels over host prefix tables — replaces the ~15-op
+// torch dispatcher chain (arange/searchsorted/index_select/scatter + two
+// pageable H2Ds) whose host serialization dominated derive_combine_meta
+// (~0.64 ms host for ~0.03 ms GPU, step-0 nsys 20260829-081712). The torch
+// chain stays as the FLUX_A2AV_RS_CHECK_IDENTITY reference.
+struct A2AVCombinePlanArguments {
+  int32_t const *routing_idx;  // [m_full] layer0 stable scatter index (device)
+  // prefix tables (device; host-built from cnt, ONE pinned async H2D)
+  int64_t const *cumA;       // [nexG] inclusive A-order (e_loc, h) group cum
+  int64_t const *offA;       // [nexG] exclusive A-order group base
+  int64_t const *offR_of_A;  // [nexG] recv-panel base of A-order group
+  int64_t const *expert_cum;  // [nex] inclusive global per-expert row cum
+  int64_t const *my_cum;      // [nex] exclusive prefix of cnt[rank][e]
+  int64_t const *h_base;      // [nex] rank's exclusive home base within e
+  // outputs (device int32)
+  int32_t *pack_index;    // [m_this_ep]
+  int32_t *reduce_index;  // [cpr]
+  int64_t m_this_ep;
+  int64_t cpr;   // copies per rank (m_full / W)
+  int64_t row0;  // rank * cpr slice offset into routing_idx
+  int64_t nexG;  // E_loc * W A-order groups
+  int64_t nex;   // total experts
+};
+
+void a2av_combine_plan(A2AVCombinePlanArguments const &args, cudaStream_t stream);
+
 constexpr int kA2AVMaxWorld = 64;
 
 // Eager (arrival-order) destination reduce: ONE persistent kernel per forward,

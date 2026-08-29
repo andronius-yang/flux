@@ -73,11 +73,30 @@
 #                                  eager for reference/setup-audit calls).
 
 import os
+from contextlib import contextmanager, nullcontext
 
 import torch
 import torch.distributed as dist
 
 __all__ = ["OursIterPlan", "OursIterPlanner", "OursRunner"]
+
+# FLUX_OURS_NVTX=1: sub-phase NVTX ranges inside the plan lane (host-side
+# spans; nsys correlates the launched kernels/collectives). Diagnostic-only
+# knob — default OFF so record capsules are untouched.
+_NVTX = bool(int(os.environ.get("FLUX_OURS_NVTX", "0")))
+
+
+@contextmanager
+def _nvtx_range(tag):
+    torch.cuda.nvtx.range_push(tag)
+    try:
+        yield
+    finally:
+        torch.cuda.nvtx.range_pop()
+
+
+def _nvtx(tag):
+    return _nvtx_range(tag) if _NVTX else nullcontext()
 
 
 class OursIterPlan:
@@ -221,9 +240,10 @@ class OursIterPlanner:
         import flux
         cfg = self.cfg
         S, K, R = cfg.S, cfg.K, cfg.R
-        phys_own, kstats = flux.placelambda_route_sl(
-            self._topk_own_i32, d_gather_buf, self.l2p, self.lcnts,
-            self.rank, cfg.nlp, self.L, self.eps, self.f_cap_current)
+        with _nvtx("plan.route"):
+            phys_own, kstats = flux.placelambda_route_sl(
+                self._topk_own_i32, d_gather_buf, self.l2p, self.lcnts,
+                self.rank, cfg.nlp, self.L, self.eps, self.f_cap_current)
         if self.f_cap_retry:
             # forced-budget breach check + local escalate-and-reroute
             # (kstats[2] = forced_budget_overflow). Escalation ladder:
@@ -232,7 +252,9 @@ class OursIterPlanner:
             # persistent, re-deriving it every iteration would pay the
             # sync-retry twice for nothing.
             for esc in (4 * max(self.f_cap_current, 1), 0):
-                if int(kstats[2].item()) == 0:
+                with _nvtx("plan.kstats_sync"):
+                    breach = int(kstats[2].item()) != 0
+                if not breach:
                     break
                 self.f_cap_current = esc
                 self.f_cap_retries_total += 1
@@ -243,36 +265,42 @@ class OursIterPlanner:
         self._kstats_pinned.copy_(kstats, non_blocking=True)
         self.last_kernel_stats = self._kstats_pinned  # read post-sync
         # fused exchange: own phys rows + own probs (bitcast) in ONE gather
-        self._xchg_send[:S * K].copy_(phys_own.view(-1))
-        if self.xchg_narrow == 1:
-            self._xchg_send[S * K:].copy_(
-                self._probs_own.view(-1).view(torch.int16))
-        elif self.xchg_narrow == 2:
-            self._xchg_send[S * K:].copy_(
-                self._probs_own.view(-1).to(torch.bfloat16)
-                .view(torch.int16))
-        else:
-            self._xchg_send[S * K:].copy_(
-                self._probs_own.view(-1).view(torch.int32))
-        if self.xchg_narrow:
-            # NCCL rejects int16 (Short); ship the same bytes as int8 views
-            dist.all_gather_into_tensor(self._xchg_gather.view(torch.int8),
-                                        self._xchg_send.view(torch.int8),
-                                        group=self.route_group)
-        else:
-            dist.all_gather_into_tensor(self._xchg_gather, self._xchg_send,
-                                        group=self.route_group)
-        if self.plan_prealloc:
-            vce, probs_all = self._derive_tail()
-            return OursIterPlan(vce, probs_all, self._kstats_pinned,
-                                stable=True)
-        buf = self._xchg_gather.view(R, 2 * S * K)
-        phys_all = buf[:, :S * K].reshape(R * S, K)
-        probs_all = (buf[:, S * K:].contiguous().view(torch.float32)
-                     .reshape(R * S, K))
-        # pad-FIRST slot convention (see module header)
-        vce = ((phys_all // cfg.nlp) * self.gpe + 1 + phys_all % cfg.nlp)
-        return OursIterPlan(vce.int(), probs_all, self._kstats_pinned)
+        with _nvtx("plan.xchg_pack"):
+            self._xchg_send[:S * K].copy_(phys_own.view(-1))
+            if self.xchg_narrow == 1:
+                self._xchg_send[S * K:].copy_(
+                    self._probs_own.view(-1).view(torch.int16))
+            elif self.xchg_narrow == 2:
+                self._xchg_send[S * K:].copy_(
+                    self._probs_own.view(-1).to(torch.bfloat16)
+                    .view(torch.int16))
+            else:
+                self._xchg_send[S * K:].copy_(
+                    self._probs_own.view(-1).view(torch.int32))
+        with _nvtx("plan.xchg_allgather"):
+            if self.xchg_narrow:
+                # NCCL rejects int16 (Short); ship the same bytes as int8
+                # views
+                dist.all_gather_into_tensor(
+                    self._xchg_gather.view(torch.int8),
+                    self._xchg_send.view(torch.int8),
+                    group=self.route_group)
+            else:
+                dist.all_gather_into_tensor(self._xchg_gather,
+                                            self._xchg_send,
+                                            group=self.route_group)
+        with _nvtx("plan.vce_tail"):
+            if self.plan_prealloc:
+                vce, probs_all = self._derive_tail()
+                return OursIterPlan(vce, probs_all, self._kstats_pinned,
+                                    stable=True)
+            buf = self._xchg_gather.view(R, 2 * S * K)
+            phys_all = buf[:, :S * K].reshape(R * S, K)
+            probs_all = (buf[:, S * K:].contiguous().view(torch.float32)
+                         .reshape(R * S, K))
+            # pad-FIRST slot convention (see module header)
+            vce = ((phys_all // cfg.nlp) * self.gpe + 1 + phys_all % cfg.nlp)
+            return OursIterPlan(vce.int(), probs_all, self._kstats_pinned)
 
     # -- prealloc'd/graphable derive tail (post-allgather device program) ----
 
@@ -462,11 +490,13 @@ class OursRunner:
         tensor (+ combine meta inline when plan_overlap is off). The
         derive's pinned D2H event sync is the honest host sync; sps/uc are
         host-readable after it returns."""
-        sd, scd, sps, uc = self.l0_op.derive_routed_meta(ip.vce)
+        with _nvtx("plan.derive_routed_meta"):
+            sd, scd, sps, uc = self.l0_op.derive_routed_meta(ip.vce)
         self._sd, self._scd, self._sps, self._uc = sd, scd, sps, uc
         # rows this rank computes = column-sum of my slot block
-        self._m_this = int(sps[:, self.ep_start:self.ep_start + self.gpe]
-                           .sum())
+        with _nvtx("plan.m_this_host"):
+            self._m_this = int(sps[:, self.ep_start:self.ep_start
+                                   + self.gpe].sum())
         assert self._m_this <= self.recv_cap, (
             f"recv overflow: m_this {self._m_this} > recv_cap "
             f"{self.recv_cap} (kernel drift past the sized bound)")
@@ -491,9 +521,10 @@ class OursRunner:
     def _derive_combine(self, ip: OursIterPlan):
         uc_l1 = (self._uc[:, self.W:].contiguous()
                  if self.nnodes > 1 else None)
-        meta = self.l1_op.derive_combine_meta(
-            self._sd, self._scd.view(-1), self._sps,
-            a2av_unique_counts=uc_l1)
+        with _nvtx("plan.combine_meta_op"):
+            meta = self.l1_op.derive_combine_meta(
+                self._sd, self._scd.view(-1), self._sps,
+                a2av_unique_counts=uc_l1)
         if self.plan_overlap:
             # side-stream allocations consumed on the main stream by the l1
             # forward: pin lifetimes for the caching allocator (critique H3)
@@ -509,7 +540,8 @@ class OursRunner:
             l1k["a2av_reduce_csr"] = [meta[4], meta[5]]
             l1k["a2av_unique_counts"] = uc_l1
         self._l1_kwargs = l1k
-        self._build_scale(ip)
+        with _nvtx("plan.scale_build"):
+            self._build_scale(ip)
 
     def _build_scale(self, ip: OursIterPlan):
         """output_vec_scale per gemm row of THIS rank, sync-free:
