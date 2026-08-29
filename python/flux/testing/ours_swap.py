@@ -194,6 +194,53 @@ def swap_orbit(load_g, p2l, l2p, lcnts, L, nlp, tau_rows, max_rounds=8,
     return (out, cycle) if return_cycle else out
 
 
+def swap_orbit_nodes(load_g, p2l, l2p, lcnts, L, nlp, tau_rows, max_rounds=64):
+    """Force-mode orbit with PER-NODE cycle detection (2026-08-29). Each
+    node's pair oscillation is independent, so the global placement only
+    repeats when all node cycles realign (LCM of their periods — at 16n
+    this exceeded the 8-round global search and the sizing fold covered
+    the whole warmup transient, overflowing the 16G heap at b64). Returns
+    (out, T, period): out = successive placements (out[i] = after round
+    i+1), T = index into out of the first placement at which EVERY node is
+    inside its cycle (-1 = the start placement already is), period = LCM
+    of the node cycle lengths. T/period are None if some node has not
+    cycled within max_rounds (caller falls back to the full fold)."""
+    from math import gcd
+    R = p2l.numel() // nlp
+    NN = R // L
+    span = L * nlp
+    out = []
+    node_keys = [[bytes(p2l[u * span:(u + 1) * span].numpy().tobytes())]
+                 for u in range(NN)]
+    node_entry = [None] * NN      # keys-index of the node's cycle entry
+    node_len = [None] * NN
+    cur_p2l, cur_l2p = p2l, l2p
+    for _ in range(max_rounds):
+        swaps, _ = swap_plan(load_g, cur_p2l, lcnts, L, nlp, tau_rows)
+        if not swaps:
+            break
+        cur_p2l, cur_l2p = apply_swaps(cur_p2l, cur_l2p, swaps)
+        out.append((cur_p2l, cur_l2p))
+        for u in range(NN):
+            if node_entry[u] is not None:
+                continue
+            k = bytes(cur_p2l[u * span:(u + 1) * span].numpy().tobytes())
+            if k in node_keys[u]:
+                node_entry[u] = node_keys[u].index(k)
+                node_len[u] = len(node_keys[u]) - node_entry[u]
+            else:
+                node_keys[u].append(k)
+        if all(e is not None for e in node_entry):
+            break
+    if any(e is None for e in node_entry):
+        return out, None, None
+    T = max(node_entry) - 1           # keys index -> out index (-1 = start)
+    period = 1
+    for n in node_len:
+        period = period * n // gcd(period, n)
+    return out, T, period
+
+
 def _libcuda():
     """ctypes handle on the CUDA driver for the zero-SM stream memops the
     P2P exchange uses (same primitive WPM's C++ join uses on this heap)."""
