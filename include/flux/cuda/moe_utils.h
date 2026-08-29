@@ -62,4 +62,22 @@ void placelambda_route_sl(
 
 size_t placelambda_route_sl_workspace_bytes(int G, int R, int ranks_per_node);
 
+/* Route-global deterministic quota router (2026-08-29, handoff 26 §4):
+ * every rank computes EVERY rank's assignment from the allgathered raw
+ * topk — stable ordinals vs closed-form quota windows replace the SL
+ * kernel's relaxed atomic tickets (bitwise spec + checker:
+ * placelambda_gpu.route_global_quota). d is derived internally. */
+void placelambda_route_global(
+    const int *topk_all,  // [R, S, K]
+    const int *l2p,       // [G, Cmax]
+    const int *lcnts,     // [G]
+    int *phys_all,        // [R, S, K] out
+    long long *stats,     // [4] out, pre-zeroed ([2] = forced overflow)
+    void *workspace,      // >= placelambda_route_global_workspace_bytes(...)
+    int S, int K, int G, int R, int Cmax, int nlp, int ranks_per_node,
+    long long cap64, int f_cap, cudaStream_t stream);
+
+size_t placelambda_route_global_workspace_bytes(
+    int G, int R, int ranks_per_node, int S, int K);
+
 }  // namespace bytedance::flux

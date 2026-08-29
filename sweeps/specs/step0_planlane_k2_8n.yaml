@@ -1,0 +1,17 @@
+# Plan-lane re-exploration A/B (2026-08-29, current 8/29 binary, python-only
+# arms): wa control vs _ov (s1 plan-overlap, side-stream combine meta+scale)
+# vs _pf (lossless plan graphs) vs _ovpf. s2 x ov stays banned (8/25 race).
+platform: perlmutter
+nodes: 8
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 8]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 1
+notes: "planlane A/B 8.29: K2 8n b1/b8 isolated — wa vs wa_ov vs wa_pf vs wa_ovpf (s1 plan overlap + plan graphs)"

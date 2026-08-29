@@ -2994,6 +2994,10 @@ VARIANTS["ours_l01_s1_gate_pv2_r2_wa_pfov2_rg"] = dict(
     VARIANTS["ours_l01_s1_gate_pv2_r2_wa_pfov2_noid"],
     test_args=VARIANTS["ours_l01_s1_gate_pv2_r2_wa_pfov2_noid"]["test_args"]
               + ["--route_global", "1"],
+    env=dict(VARIANTS["ours_l01_s1_gate_pv2_r2_wa_pfov2_noid"]["env"],
+             FLUX_OURS_RG_CHECK="1"),
+    requires=VARIANTS["ours_l01_s1_pv2_r2"]["requires"]
+             + ["FLUX_PLACELAMBDA_ROUTE_GLOBAL_TAG"],
 )
 VARIANTS["ours_l01_s1_gate_pv2_r2_wa_pfov2"] = dict(
     VARIANTS["ours_l01_s1_gate_pv2_r2_wa"],

@@ -731,4 +731,439 @@ placelambda_route_sl_workspace_bytes(int G, int R, int ranks_per_node) {
   return b;
 }
 
+
+//===--------------------------------------------------------------------===//
+// Route-global deterministic quota router (placelambda_route_global,
+// 2026-08-29; handoff 26 §4). Executable spec + bitwise checker:
+// python/flux/testing/placelambda_gpu.py::route_global_quota.
+//
+// Every rank computes EVERY rank's assignment from the allgathered raw
+// topk (ONE topk+probs collective replaces the d-allgather + relaxed
+// route + decisions-allgather chain). The 8/21 relaxation ruling ("no
+// bit-determinism required — agreement comes from the phys-row
+// allgather") inverted when the exchange was removed: here determinism
+// is the enabling property. The relaxed ATOMIC TICKETS are replaced by
+// STABLE ORDINALS (counting-sort pattern, the a2av_stable_scatter
+// precedent) compared against closed-form quota windows:
+//   tiers 1+2  the existing deterministic table kernels verbatim
+//              (q1 / t2alloc / t2clip), split emitted for ALL sources;
+//   tier 3     t3_rounds static preference passes — per-(src, g) best
+//              hosting rank by remaining share, per-(src, dst) prefix
+//              windows over g (the reference cover ROUNDS reduced to the
+//              quota rule; offline gate: rowwise agreement 1.000 on the
+//              unit instance);
+//   forced     frozen least-loaded hosting rank, f_cap-ordinal window
+//              (overflow assigned anyway + counted in stats[2]).
+// All counts/tables are order-independent integer functions of d; the
+// per-entry pass is gather-only. No host syncs anywhere.
+//===--------------------------------------------------------------------===//
+
+namespace {
+
+constexpr int kRgChunk = 4096;  // entries per stable-ordinal block
+
+// per-(src, chunk) expert histogram (counts only — deterministic)
+__global__ void
+rg_blockhist_kernel(
+    const int *topk_all, int *bh, int SK, int G, int nchunk) {
+  long long e = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  int src = blockIdx.y;
+  if (e >= SK) return;
+  int g = topk_all[(long long)src * SK + e];
+  int c = (int)(e / kRgChunk);
+  atomicAdd(&bh[((long long)src * nchunk + c) * G + g], 1);
+}
+
+// exclusive prefix over chunks per (src, g); emits d[src, g]
+__global__ void
+rg_scan_kernel(
+    int *bh, int *d, int G, int R, int nchunk) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= R * G) return;
+  int src = idx / G, g = idx % G;
+  int acc = 0;
+  for (int c = 0; c < nchunk; ++c) {
+    int *p = &bh[((long long)src * nchunk + c) * G + g];
+    int v = *p;
+    *p = acc;
+    acc += v;
+  }
+  d[src * G + g] = acc;
+}
+
+// stable in-chunk ordinals: ord[e] = chunk base + running count (serial
+// walk per chunk keeps index order — the stability contract)
+__global__ void
+rg_ord_kernel(
+    const int *topk_all, const int *bh, int *ord, int SK, int G,
+    int nchunk) {
+  extern __shared__ int s_cnt[];  // [G]
+  int src = blockIdx.y;
+  int c = blockIdx.x;
+  long long lo = (long long)c * kRgChunk;
+  if (lo >= SK) return;
+  int n = min((long long)kRgChunk, (long long)SK - lo);
+  for (int g = threadIdx.x; g < G; g += blockDim.x) s_cnt[g] = 0;
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    const int *base = &bh[((long long)src * nchunk + c) * G];
+    const int *tk = &topk_all[(long long)src * SK + lo];
+    int *out = &ord[(long long)src * SK + lo];
+    for (int i = 0; i < n; ++i) {
+      int g = tk[i];
+      out[i] = base[g] + s_cnt[g]++;
+    }
+  }
+}
+
+// t2split for ALL sources: granted2 + per-(src, g) interval bounds/tgts
+__global__ void
+rg_t2split_all_kernel(
+    const int *d, const int *q1, const int *allocT, int *granted2,
+    int *bound_all, int *tgt_all, int G, int R, int L, int NN) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= R * G) return;
+  int src = idx / G, g = idx % G;
+  int u = src / L, lsrc = src % L;
+  int *bound = &bound_all[((long long)src * G + g) * L];
+  int *tgt = &tgt_all[((long long)src * G + g) * L];
+  long long pref = 0, want = 0, Gug = 0;
+  for (int l = 0; l < L; ++l) {
+    int s2 = u * L + l;
+    long long rdv = d[s2 * G + g] - q1[s2 * G + g];
+    if (l < lsrc) pref += rdv;
+    if (l == lsrc) want = rdv;
+    Gug += allocT[(u * G + g) * L + l];
+  }
+  if (Gug == 0 || want == 0) {
+    granted2[src * G + g] = q1[src * G + g];
+    for (int j = 0; j < L; ++j) {
+      bound[j] = q1[src * G + g];
+      tgt[j] = u * L + ((j == 0) ? lsrc : (j <= lsrc ? j - 1 : j));
+    }
+    return;
+  }
+  long long lo = min(pref, Gug), hi = min(pref + want, Gug);
+  granted2[src * G + g] = q1[src * G + g] + (int)(hi - lo);
+  long long amt[32], cum = 0;
+  for (int l = 0; l < L; ++l) {
+    long long c0 = cum;
+    cum += allocT[(u * G + g) * L + l];
+    long long ov = min(hi, cum) - max(lo, c0);
+    amt[l] = ov > 0 ? ov : 0;
+  }
+  long long acc = q1[src * G + g] + amt[lsrc];
+  bound[0] = (int)acc;
+  tgt[0] = src;
+  int j = 1;
+  for (int l = 0; l < L; ++l) {
+    if (l == lsrc) continue;
+    acc += amt[l];
+    bound[j] = (int)acc;
+    tgt[j] = u * L + l;
+    ++j;
+  }
+}
+
+// tier-3 shares for ALL sources (block per destination; the pll_shares
+// largest-remainder, every source's row emitted) + forced fallback
+__global__ void
+rg_shares_all_kernel(
+    const long long *w3, const int *load, const int *ipr, int *share_all,
+    int *fallback, int G, int R, int cap) {
+  extern __shared__ long long s_frac[];  // [R]
+  int r = blockIdx.x;
+  long long resid = max(0, cap - load[r]);
+  __shared__ long long s_tot, s_base;
+  __shared__ int s_bs[1024];
+  if (threadIdx.x == 0) s_tot = s_base = 0;
+  __syncthreads();
+  long long tot = 0;
+  for (int s = threadIdx.x; s < R; s += blockDim.x) {
+    s_frac[s] = w3[s * R + r];
+    tot += s_frac[s];
+  }
+  atomicAdd((unsigned long long *)&s_tot, (unsigned long long)tot);
+  __syncthreads();
+  tot = s_tot;
+  // torch-spec parity: the reference's row is want_s = w3[s] * resid with
+  // budget resid, so it is OVER budget iff sum(w3) > 1 (resid cancels) —
+  // and its pass-through value is w3[s] * resid, not raw w3 (the
+  // 1 < sum(w3) <= resid window was the 8/29 (src 15, g 189) mismatch)
+  if (tot <= 1) {
+    for (int s = threadIdx.x; s < R; s += blockDim.x)
+      share_all[s * R + r] = (int)min(s_frac[s] * resid,
+                                      (long long)INT_MAX / 2);
+  } else {
+    long long sum_base = 0;
+    for (int s = threadIdx.x; s < R; s += blockDim.x) {
+      long long w = s_frac[s];
+      long long base = w * resid / tot;
+      s_bs[s] = (int)base;
+      sum_base += base;
+    }
+    atomicAdd((unsigned long long *)&s_base, (unsigned long long)sum_base);
+    __syncthreads();
+    for (int s = threadIdx.x; s < R; s += blockDim.x) {
+      long long w = s_frac[s];
+      s_frac[s] = w * resid - (long long)s_bs[s] * tot;
+    }
+    __syncthreads();
+    int rem = (int)(resid - s_base);
+    for (int s = threadIdx.x; s < R; s += blockDim.x) {
+      int rk = pll_frac_rank(s_frac, R, s);
+      share_all[s * R + r] = s_bs[s] + (rk < rem ? 1 : 0);
+    }
+  }
+  // forced fallback per expert: least-loaded hosting rank (block 0)
+  if (r == 0) {
+    __syncthreads();
+    for (int g = threadIdx.x; g < G; g += blockDim.x) {
+      long long best = LLONG_MAX;
+      int bestr = -1;
+      for (int rr = 0; rr < R; ++rr) {
+        if (ipr[g * R + rr] < 0) continue;
+        long long key = (long long)load[rr] * R + rr;
+        if (key < best) { best = key; bestr = rr; }
+      }
+      fallback[g] = bestr;
+    }
+  }
+}
+
+// tier-3 static preference: dst per (src, g) = hosting rank with max
+// remaining share (ties lower rank); -1 when none
+__global__ void
+rg_pref_kernel(
+    const int *share, const int *ipr, int *t3d, int G, int R) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= R * G) return;
+  int src = idx / G, g = idx % G;
+  long long best = -1;
+  int bd = -1;
+  for (int r = 0; r < R; ++r) {
+    if (ipr[g * R + r] < 0) continue;
+    int sh = share[src * R + r];
+    if (sh <= 0) continue;
+    long long key = (long long)min(sh, kWClamp) * R + (R - 1 - r);
+    if (key > best) { best = key; bd = r; }
+  }
+  t3d[src * G + g] = bd;
+}
+
+// tier-3 windows: per (src, dst) prefix over g ascending among
+// {g : t3d == dst}; width = clamp(share - pref, 0, rem); share -= spent
+__global__ void
+rg_win_kernel(
+    const int *d, const int *granted2, const int *taken, const int *t3d,
+    int *share, int *t3w, int G, int R) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= R * R) return;
+  int src = idx / R, dst = idx % R;
+  long long budget = share[src * R + dst];
+  long long pref = 0;
+  for (int g = 0; g < G; ++g) {
+    if (t3d[src * G + g] != dst) continue;
+    long long rem = d[src * G + g] - granted2[src * G + g]
+                    - (taken ? taken[src * G + g] : 0);
+    if (rem <= 0) continue;
+    long long w = min(max(budget - pref, 0ll), rem);
+    t3w[src * G + g] = (int)w;
+    pref += rem;
+  }
+  share[src * R + dst] = (int)max(0ll, budget - min(pref, budget));
+}
+
+// forced windows: per (src, r_fb) prefix over g; f_cap window (0 = uncapped)
+__global__ void
+rg_forcedwin_kernel(
+    const int *d, const int *granted2, const int *taken, const int *fallback,
+    int *fwin, int f_cap, int G, int R) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= R * R) return;
+  int src = idx / R, dst = idx % R;
+  long long pref = 0;
+  for (int g = 0; g < G; ++g) {
+    if (fallback[g] != dst) continue;
+    long long rem = d[src * G + g] - granted2[src * G + g]
+                    - taken[src * G + g];
+    if (rem <= 0) continue;
+    long long w = (f_cap > 0) ? min(max((long long)f_cap - pref, 0ll), rem)
+                              : rem;
+    fwin[src * G + g] = (int)w;
+    pref += rem;
+  }
+}
+
+// elementwise a += b (tier-3 taken accumulation)
+__global__ void
+rg_addw_kernel(int *a, const int *b, int n) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < n) a[i] += b[i];
+}
+
+// final per-entry assignment: stable ordinal vs the window cascade
+__global__ void
+rg_assign_kernel(
+    const int *topk_all, const int *ord, const int *granted2,
+    const int *bound_all, const int *tgt_all, const int *t3w1,
+    const int *t3d1, const int *t3w2, const int *t3d2, const int *fwin,
+    const int *fallback, const int *ipr, int *phys_all, long long *stats,
+    int SK, int G, int R, int L) {
+  long long e = (long long)blockIdx.x * blockDim.x + threadIdx.x;
+  int src = blockIdx.y;
+  if (e >= SK) return;
+  long long pe = (long long)src * SK + e;
+  int g = topk_all[pe];
+  int o = ord[pe];
+  long long sg = (long long)src * G + g;
+  int g2 = granted2[sg];
+  int dst;
+  if (o < g2) {
+    const int *bound = &bound_all[sg * L];
+    int j = 0;
+    while (bound[j] <= o) ++j;  // o < bound[L-1] == g2
+    dst = tgt_all[sg * L + j];
+  } else {
+    int o1 = o - g2;
+    int w1 = t3w1[sg];
+    if (o1 < w1) {
+      dst = t3d1[sg];
+    } else {
+      int o2 = o1 - w1;
+      int w2 = t3w2[sg];
+      if (o2 < w2) {
+        dst = t3d2[sg];
+      } else {
+        int o3 = o2 - w2;
+        dst = fallback[g];
+        atomicAdd((unsigned long long *)&stats[0], 1ull);
+        if (o3 >= fwin[sg])
+          atomicAdd((unsigned long long *)&stats[2], 1ull);
+      }
+    }
+  }
+  phys_all[pe] = ipr[g * R + dst];
+}
+
+}  // namespace
+
+void
+placelambda_route_global(
+    const int *topk_all,   // [R, S, K] allgathered gating (device)
+    const int *l2p,        // [G, Cmax]
+    const int *lcnts,      // [G]
+    int *phys_all,         // [R, S, K] out
+    long long *stats,      // [4] out (zeroed): forced, -, overflow
+    void *workspace,       // placelambda_route_global_workspace_bytes(...)
+    int S, int K, int G, int R, int Cmax, int nlp, int ranks_per_node,
+    long long cap64, int f_cap, cudaStream_t stream) {
+  static const char *kTag = "FLUX_PLACELAMBDA_ROUTE_GLOBAL_TAG";
+  (void)std::getenv(kTag);
+  int L = ranks_per_node;
+  int NN = R / L;
+  int SK = S * K;
+  int nchunk = (SK + kRgChunk - 1) / kRgChunk;
+  int cap = (int)std::min(cap64, (long long)SK * R);
+  char *ws = (char *)workspace;
+  int *ipr = (int *)ws;               ws += sizeof(int) * G * R;
+  unsigned *covmask = (unsigned *)ws; ws += sizeof(int) * G;
+  int *q1 = (int *)ws;                ws += sizeof(int) * R * G;
+  int *load = (int *)ws;              ws += sizeof(int) * R;
+  int *allocT = (int *)ws;            ws += sizeof(int) * NN * G * L;
+  int *granted2 = (int *)ws;          ws += sizeof(int) * R * G;
+  int *bound_all = (int *)ws;         ws += sizeof(int) * (size_t)R * G * L;
+  int *tgt_all = (int *)ws;           ws += sizeof(int) * (size_t)R * G * L;
+  long long *w3 = (long long *)ws;    ws += sizeof(long long) * R * R;
+  int *share_all = (int *)ws;         ws += sizeof(int) * R * R;
+  int *fallback = (int *)ws;          ws += sizeof(int) * G;
+  int *d = (int *)ws;                 ws += sizeof(int) * R * G;
+  int *bh = (int *)ws;                ws += sizeof(int) * (size_t)R * nchunk * G;
+  int *t3d1 = (int *)ws;              ws += sizeof(int) * R * G;
+  int *t3w1 = (int *)ws;              ws += sizeof(int) * R * G;
+  int *t3d2 = (int *)ws;              ws += sizeof(int) * R * G;
+  int *t3w2 = (int *)ws;              ws += sizeof(int) * R * G;
+  int *taken = (int *)ws;             ws += sizeof(int) * R * G;
+  int *fwin = (int *)ws;              ws += sizeof(int) * R * G;
+  int *ord = (int *)ws;               ws += sizeof(int) * (size_t)R * SK;
+
+  CUDA_CHECK(cudaMemsetAsync(ipr, 0xFF, sizeof(int) * G * R, stream));
+  CUDA_CHECK(cudaMemsetAsync(covmask, 0, sizeof(int) * G, stream));
+  CUDA_CHECK(cudaMemsetAsync(bh, 0,
+                             sizeof(int) * (size_t)R * nchunk * G, stream));
+  CUDA_CHECK(cudaMemsetAsync(t3w1, 0, sizeof(int) * R * G, stream));
+  CUDA_CHECK(cudaMemsetAsync(t3w2, 0, sizeof(int) * R * G, stream));
+  CUDA_CHECK(cudaMemsetAsync(fwin, 0, sizeof(int) * R * G, stream));
+  int tb = kPllThreads;
+  auto blocks = [tb](long long n) { return (int)((n + tb - 1) / tb); };
+  size_t smemG = sizeof(long long) * G;
+  size_t smemR = sizeof(long long) * R;
+  dim3 gridE(blocks(SK), R);
+  pll_ipr_kernel<<<blocks(G), tb, 0, stream>>>(
+      l2p, lcnts, ipr, covmask, G, R, Cmax, nlp, L);
+  rg_blockhist_kernel<<<gridE, tb, 0, stream>>>(
+      topk_all, bh, SK, G, nchunk);
+  rg_scan_kernel<<<blocks((long long)R * G), tb, 0, stream>>>(
+      bh, d, G, R, nchunk);
+  rg_ord_kernel<<<dim3(nchunk, R), tb, sizeof(int) * G, stream>>>(
+      topk_all, bh, ord, SK, G, nchunk);
+  pll_q1_kernel<<<R, tb, smemG, stream>>>(d, ipr, q1, load, G, R, cap);
+  pll_t2alloc_kernel<<<blocks((long long)NN * G), tb, 0, stream>>>(
+      d, q1, ipr, covmask, load, allocT, G, R, L, NN, cap);
+  pll_t2clip_kernel<<<R, tb, smemG, stream>>>(allocT, load, G, L, cap);
+  rg_t2split_all_kernel<<<blocks((long long)R * G), tb, 0, stream>>>(
+      d, q1, allocT, granted2, bound_all, tgt_all, G, R, L, NN);
+  pll_w3_kernel<<<blocks((long long)R * R), tb, 0, stream>>>(
+      d, granted2, ipr, w3, G, R);
+  rg_shares_all_kernel<<<R, tb, smemR, stream>>>(
+      w3, load, ipr, share_all, fallback, G, R, cap);
+  // tier-3 pass 1 (taken = nullptr -> rem = d - granted2)
+  rg_pref_kernel<<<blocks((long long)R * G), tb, 0, stream>>>(
+      share_all, ipr, t3d1, G, R);
+  rg_win_kernel<<<blocks((long long)R * R), tb, 0, stream>>>(
+      d, granted2, nullptr, t3d1, share_all, t3w1, G, R);
+  // taken = t3w1 for pass 2 / forced
+  CUDA_CHECK(cudaMemcpyAsync(taken, t3w1, sizeof(int) * R * G,
+                             cudaMemcpyDeviceToDevice, stream));
+  rg_pref_kernel<<<blocks((long long)R * G), tb, 0, stream>>>(
+      share_all, ipr, t3d2, G, R);
+  rg_win_kernel<<<blocks((long long)R * R), tb, 0, stream>>>(
+      d, granted2, taken, t3d2, share_all, t3w2, G, R);
+  // taken += t3w2 (fold via a second copy pass in rg_forcedwin's rem calc:
+  // pass taken = t3w1 and subtract t3w2 inline) — keep one array: add w2
+  rg_addw_kernel<<<blocks((long long)R * G), tb, 0, stream>>>(
+      taken, t3w2, R * G);
+  rg_forcedwin_kernel<<<blocks((long long)R * R), tb, 0, stream>>>(
+      d, granted2, taken, fallback, fwin, f_cap, G, R);
+  rg_assign_kernel<<<gridE, tb, 0, stream>>>(
+      topk_all, ord, granted2, bound_all, tgt_all, t3w1, t3d1, t3w2, t3d2,
+      fwin, fallback, ipr, phys_all, stats, SK, G, R, L);
+  CUDA_CHECK(cudaGetLastError());
+}
+
+size_t
+placelambda_route_global_workspace_bytes(
+    int G, int R, int ranks_per_node, int S, int K) {
+  int L = ranks_per_node;
+  int NN = R / L;
+  int SK = S * K;
+  int nchunk = (SK + kRgChunk - 1) / kRgChunk;
+  size_t b = 0;
+  b += sizeof(int) * (size_t)G * R;        // ipr
+  b += sizeof(int) * G;                    // covmask
+  b += sizeof(int) * (size_t)R * G;        // q1
+  b += sizeof(int) * R;                    // load
+  b += sizeof(int) * (size_t)NN * G * L;   // allocT
+  b += sizeof(int) * (size_t)R * G;        // granted2
+  b += sizeof(int) * (size_t)R * G * L * 2;  // bound_all + tgt_all
+  b += sizeof(long long) * (size_t)R * R;  // w3
+  b += sizeof(int) * (size_t)R * R;        // share_all
+  b += sizeof(int) * G;                    // fallback
+  b += sizeof(int) * (size_t)R * G;        // d
+  b += sizeof(int) * (size_t)R * nchunk * G;  // bh
+  b += sizeof(int) * (size_t)R * G * 6;    // t3d1/w1/d2/w2/taken/fwin
+  b += sizeof(int) * (size_t)R * SK;       // ord
+  return b;
+}
+
 }  // namespace bytedance::flux

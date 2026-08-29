@@ -120,6 +120,46 @@ placelambda_route_sl_impl(
   return {phys, stats};
 }
 
+std::vector<torch::Tensor>
+placelambda_route_global_impl(
+    const torch::Tensor topk_all,  // [R, S, K] int32 cuda
+    const torch::Tensor l2p,       // [G, Cmax] int32 cuda
+    const torch::Tensor lcnts,     // [G] int32 cuda
+    int64_t G,
+    int64_t nlp,
+    int64_t ranks_per_node,
+    double eps,
+    int64_t f_cap) {
+  CHECK_INPUT(topk_all, at::ScalarType::Int);
+  CHECK_INPUT(l2p, at::ScalarType::Int);
+  CHECK_INPUT(lcnts, at::ScalarType::Int);
+  TORCH_CHECK(topk_all.dim() == 3, "topk_all must be [R, S, K]");
+  int R = topk_all.size(0), S = topk_all.size(1), K = topk_all.size(2);
+  int Cmax = l2p.size(1);
+  TORCH_CHECK(lcnts.size(0) == G && l2p.size(0) == G);
+  TORCH_CHECK(G <= 4096 && R <= 1024, "placelambda_route_global size guard");
+  long long cap64 = std::isinf(eps)
+                        ? (long long)S * K * R
+                        : (long long)std::ceil((1.0 + eps) * S * K);
+  torch::Tensor phys = at::empty_like(topk_all);
+  torch::Tensor stats =
+      at::zeros({4}, topk_all.options().dtype(at::ScalarType::Long));
+  torch::Tensor ws = at::empty(
+      {(int64_t)placelambda_route_global_workspace_bytes(
+          G, R, ranks_per_node, S, K)},
+      topk_all.options().dtype(at::ScalarType::Byte));
+  auto stream = at::cuda::getCurrentCUDAStream();
+  placelambda_route_global(
+      topk_all.data_ptr<int>(),
+      l2p.data_ptr<int>(),
+      lcnts.data_ptr<int>(),
+      phys.data_ptr<int>(),
+      (long long *)stats.data_ptr<int64_t>(),
+      ws.data_ptr(),
+      S, K, G, R, Cmax, nlp, ranks_per_node, cap64, (int)f_cap, stream);
+  return {phys, stats};
+}
+
 void
 init_profiling_context(py::module &m) {
   py::class_<ProfilingContext, c10::intrusive_ptr<ProfilingContext>>(m, "ProfilingContext")
@@ -376,6 +416,18 @@ PYBIND11_MODULE(FLUX_TORCH_EXTENSION_NAME, m) {
       py::arg("ranks_per_node"),
       py::arg("eps"),
       py::arg("f_cap") = -1);
+
+  m.def(
+      "placelambda_route_global",
+      &placelambda_route_global_impl,
+      py::arg("topk_all"),
+      py::arg("l2p"),
+      py::arg("lcnts"),
+      py::arg("G"),
+      py::arg("nlp"),
+      py::arg("ranks_per_node"),
+      py::arg("eps"),
+      py::arg("f_cap") = 0);
 
   init_tuning_record(m);
   init_profiling_context(m);

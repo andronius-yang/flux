@@ -240,6 +240,12 @@ class OursIterPlanner:
                                            .long().contiguous())
             self._rg_stats = torch.zeros(4, dtype=torch.int64,
                                          device=device)
+            # contiguous topk staging (the gathered buffer's topk slice is
+            # strided; the kernel wants [R, S, K] contiguous)
+            self._rg_topk_buf = torch.empty(R, S, K, dtype=torch.int32,
+                                            device=device)
+            self._rg_check = bool(int(os.environ.get(
+                "FLUX_OURS_RG_CHECK", "0")))
             self._rg_graph = None
             self._rg_graph_broken = False
         self.refresh_placement()
@@ -277,20 +283,27 @@ class OursIterPlanner:
                                         group=self.route_group)
 
     def _rg_compute(self):
-        """Route-global derive: deterministic quota route over ALL ranks
-        from the gathered topk + vce/probs recovery, entirely into the
-        persistent buffers. Sync-free, static shapes — graph-capturable."""
-        from flux.testing.placelambda_gpu import route_global_quota
+        """Route-global derive: the deterministic quota route KERNEL
+        (flux.placelambda_route_global — stable ordinals vs closed-form
+        windows; bitwise spec = placelambda_gpu.route_global_quota) over
+        ALL ranks from the gathered topk + vce/probs recovery, entirely
+        into persistent buffers. Sync-free, static shapes —
+        graph-capturable (outputs consumed only via persistent buffers,
+        so the graph-pool pointers never escape)."""
+        import flux
         cfg = self.cfg
         S, K, R = cfg.S, cfg.K, cfg.R
         n = S * K
         buf = self._xchg_gather.view(R, 2 * n)
-        topk_all = buf[:, :n].view(R, S, K)
+        self._rg_topk_buf.view(R, n).copy_(buf[:, :n])
         self._probs_all_buf.view(R, n).copy_(
             buf[:, n:].view(torch.float32))
-        phys = route_global_quota(
-            topk_all, self._rg_tables, cfg.nlp, self.L, self.eps,
-            f_cap=self.f_cap_current, stats_out=self._rg_stats).view(R, n)
+        phys, stats = flux.placelambda_route_global(
+            self._rg_topk_buf, self.l2p, self.lcnts,
+            int(self.lcnts.numel()), cfg.nlp, self.L, self.eps,
+            self.f_cap_current if self.f_cap_current else 0)
+        self._rg_stats.copy_(stats)
+        phys = phys.view(R, n)
         torch.remainder(phys, cfg.nlp, out=self._vce_tmp.view(R, n))
         torch.div(phys, cfg.nlp, rounding_mode="floor",
                   out=self._vce_buf.view(R, n))
@@ -323,6 +336,37 @@ class OursIterPlanner:
                     self._rg_compute()
             else:
                 self._rg_compute()
+        if self._rg_check:
+            # gate-only kernel-vs-spec identity (FLUX_OURS_RG_CHECK=1):
+            # the torch quota route recomputed from the same gathered
+            # buffer must produce the identical vce, every iteration
+            from flux.testing.placelambda_gpu import route_global_quota
+            cfg = self.cfg
+            n = cfg.S * cfg.K
+            phys_ref = route_global_quota(
+                self._rg_topk_buf, self._rg_tables, cfg.nlp, self.L,
+                self.eps, f_cap=self.f_cap_current or 0).view(cfg.R, n)
+            vce_ref = ((phys_ref.long() // cfg.nlp) * self.gpe + 1
+                       + phys_ref.long() % cfg.nlp).int()
+            if not torch.equal(self._vce_buf.view(cfg.R, n), vce_ref):
+                bad = (self._vce_buf.view(cfg.R, n) != vce_ref)
+                nb = int(bad.sum())
+                src, pos = [int(x) for x in bad.nonzero()[0]]
+                g = int(self._rg_topk_buf.view(cfg.R, n)[src, pos])
+                o_k = int(self._vce_buf.view(cfg.R, n)[src, pos])
+                o_r = int(vce_ref[src, pos])
+                bsrc = torch.unique(bad.nonzero()[:, 0]).tolist()[:8]
+                dump = os.environ.get("FLUX_OURS_RG_DUMP")
+                if dump and self.rank == 0:
+                    torch.save(
+                        {"topk": self._rg_topk_buf.cpu(),
+                         "l2p": self.l2p.cpu(), "lcnts": self.lcnts.cpu(),
+                         "nlp": cfg.nlp, "L": self.L, "eps": self.eps,
+                         "f_cap": self.f_cap_current or 0}, dump)
+                raise AssertionError(
+                    f"route_global kernel != torch spec: {nb} bad; first "
+                    f"(src {src}, pos {pos}, g {g}): kernel vce {o_k} vs "
+                    f"ref {o_r}; bad srcs {bsrc}")
         self._kstats_pinned.copy_(self._rg_stats, non_blocking=True)
         self.last_kernel_stats = self._kstats_pinned
         return OursIterPlan(self._vce_buf, self._probs_all_buf,
