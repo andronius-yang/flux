@@ -1059,8 +1059,20 @@ def build_cell_env(spec, plat, cell, staging, matrix):
             # skipped_capacity guard still bound it.
             need = 42 * max_row_bytes + (1 << 30)
         sym_g = max(6, math.ceil(need / (1 << 30)))
-        env["_A2AV_SYM_G_REQUIRED"] = str(sym_g)
         sym_max = plat.get("sym_size_max_g")
+        if sym_max and sym_g > int(sym_max) and "s2" in ta_ours:
+            # 2026-08-29: the 42x s2 prior crosses the 16G cap at b64 (22G)
+            # although every b64 s2 cell to date ran clean at the 24x
+            # figure (13G, 4n/8n, K2+Qwen, capsules 20260829-003817/
+            # 010720/011029/013139). Treat the 42x figure as a prior, not a
+            # requirement: when the 24x basis fits, clamp to the cap and
+            # surface the at-cap WARNING instead of skipping the cell.
+            need24 = 24 * max_row_bytes + (1 << 30)
+            if math.ceil(need24 / (1 << 30)) <= int(sym_max):
+                sym_g = int(sym_max)
+                env["_A2AV_SYM_G_AT_CAP"] = "1"
+        if "_A2AV_SYM_G_AT_CAP" not in env:
+            env["_A2AV_SYM_G_REQUIRED"] = str(sym_g)
         if sym_max and sym_g > int(sym_max):
             sym_g = int(sym_max)
         env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_g}G"

@@ -1,0 +1,21 @@
+# s2 swap best-overlap arm (always-swap, P2P transport, early issue) —
+# table fill 2026-08-29: full budget ladder at 4n on the merged binary
+# (integrate 044aaf8, ths_op 744612b0). 30-min windows; one arm only.
+platform: perlmutter
+nodes: 4
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 8, 16, 32, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+sm_margin: 8
+timeout_s: 600
+idle_timeout_s: 300
+retries: 1
+matrix_instance: "001"
+variants:
+  - ours_l01_s2_swap_force_p2p_r2
+notes: "swap best-overlap ladder 4n qwen: force p2p early, b1-b64 isolated (merged binary 744612b0)"
