@@ -2910,6 +2910,46 @@ VARIANTS["ours_l01_s1_gate_pv2_r2_wa"] = dict(
              + ["FLUX_A2AV_RS_WAVE_ADAPT_TAG",
                 "FLUX_A2AV_RS_COMBINE_IDX_KERNEL_TAG"],
 )
+
+
+def _ours_ov_args(args):
+    """test_args with --plan_overlap flipped 0 -> 1 (s1-only re-exploration
+    2026-08-29, user-directed: the 8/25 removal was the s2 x movement race;
+    the s1 ov path was gate-green + perf-positive — handoff 20)."""
+    out = list(args)
+    i = out.index("--plan_overlap")
+    out[i + 1] = "1"
+    return out
+
+
+# plan-lane re-exploration arms (2026-08-29, current binary, python-only):
+# _ov  = combine-meta derive + scale build on a side stream under the fused
+#        l0 (--plan_overlap 1; residue lands in l1_ms honestly — module
+#        timing contract). s1 ONLY: s2 x ov stays BANNED until the movement
+#        race is root-caused (8/25 user ruling stands for s2).
+# _pf  = lossless plan graphs (FLUX_OURS_PLAN_GRAPH + SCALE_GRAPH; the 8/25
+#        planfast stack MINUS the lossy narrow-2 wire).
+# _ovpf = both. Factorial vs _wa isolates each effect.
+VARIANTS["ours_l01_s1_pv2_r2_wa_ov"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2_wa"],
+    test_args=_ours_ov_args(VARIANTS["ours_l01_s1_pv2_r2_wa"]["test_args"]),
+)
+VARIANTS["ours_l01_s1_pv2_r2_wa_pf"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2_wa"],
+    env=dict(VARIANTS["ours_l01_s1_pv2_r2_wa"]["env"],
+             FLUX_OURS_PLAN_GRAPH="1", FLUX_OURS_PLAN_SCALE_GRAPH="1"),
+)
+VARIANTS["ours_l01_s1_pv2_r2_wa_ovpf"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2_wa_pf"],
+    test_args=_ours_ov_args(VARIANTS["ours_l01_s1_pv2_r2_wa"]["test_args"]),
+)
+VARIANTS["ours_l01_s1_gate_pv2_r2_wa_ovpf"] = dict(
+    VARIANTS["ours_l01_s1_gate_pv2_r2_wa"],
+    test_args=_ours_ov_args(
+        VARIANTS["ours_l01_s1_gate_pv2_r2_wa"]["test_args"]),
+    env=dict(VARIANTS["ours_l01_s1_gate_pv2_r2_wa"]["env"],
+             FLUX_OURS_PLAN_GRAPH="1", FLUX_OURS_PLAN_SCALE_GRAPH="1"),
+)
 # ---- intra-node expert SWAP arms (branch pv2, 2026-08-27; ours_swap.py —
 # EPIC §4.3 analog on the OURS stack): per-iteration greedy pair+swap
 # INSIDE each node, exchanged over NVLink on the movement stream, NO
