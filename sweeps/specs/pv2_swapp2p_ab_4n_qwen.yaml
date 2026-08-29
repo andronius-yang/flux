@@ -1,0 +1,27 @@
+# P2P swap transport + issue-point A/B (branch pv2-swap2, 2026-08-28):
+# same capsule = nccl force (8.27 transport) vs p2p force early/late/split
+# vs swap0 decide-only twin vs static pv2 reference. Headline: p2p force
+# arms vs swap0 on total_ms (full overlap = parity).
+platform: perlmutter
+nodes: 4
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 8, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+sm_margin: 8
+timeout_s: 1800
+idle_timeout_s: 600
+retries: 1
+matrix_instance: "001"
+variants:
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s2_swap0_r2
+  - ours_l01_s2_swap_force_r2
+  - ours_l01_s2_swap_force_p2p_r2
+  - ours_l01_s2_swap_force_p2pl_r2
+  - ours_l01_s2_swap_force_p2ps_r2
+notes: "swap p2p A/B 4n qwen: nccl-vs-p2p force early/late/split vs swap0 vs static, r2, b1/b8/b64 isolated"

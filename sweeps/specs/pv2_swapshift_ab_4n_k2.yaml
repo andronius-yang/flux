@@ -1,0 +1,28 @@
+# Topic-shift oracle A/B (branch pv2-swap2, 2026-08-28): does intra-node
+# swapping absorb REAL per-GPU skew? Oracle basis mmlu/professional_law, eval batch
+# livecodebench/execution. Arms (one capsule): s1 static on the skewed
+# oracle placement (baseline), swap0 decide-only, p2p swap tau=512 (canon)
+# and tau=1 (any positive gain; converges in warmup, timed iters run
+# rebalanced), s2_pv2 quiet = cross-node migration ceiling.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;opool=mmlu/professional_law;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 8, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+sm_margin: 8
+timeout_s: 1800
+idle_timeout_s: 600
+retries: 1
+matrix_instance: "001"
+variants:
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s2_swap0_r2
+  - ours_l01_s2_swap_p2p_r2
+  - ours_l01_s2_swap_p2p_t1_r2
+  - ours_l01_s2_pv2_r2
+notes: "swap topic-shift A/B 4n k2: opool=mmlu/professional_law; s1 skewed vs swap0 vs p2p tau512/tau1 vs s2_pv2 ceiling, r2, b1/b8/b64 isolated"

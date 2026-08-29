@@ -675,7 +675,16 @@ def ensure_oracle_sidecars(
             f" got sem={params['sem']!r}"
         )
     ostart, oend = oracle_slots(params)
-    bench, subject = specs[0]
+    # opool=<bench>/<subject> (2026-08-28, topic-shift oracle): the placement
+    # basis comes from ANOTHER pool's same layer + same decode window while
+    # the eval batch stays on `pools` — the stale-oracle skew regime (the
+    # oracle plans for topic A, the batch is topic B). Folds into the matrix
+    # identity via params, so eval matrices/sidecars never alias homog ones.
+    opool = params.get("opool")
+    if opool:
+        bench, subject = opool.split("/", 1)
+    else:
+        bench, subject = specs[0]
     sdir = os.path.join(traces_root, MODEL_PREFIXES[params["model"]], bench, subject)
     orows = load_layer_pool(sdir, int(params["layer"]), params["pool"], slots=(ostart, oend))
     trimmed = len(orows) % W
@@ -696,7 +705,8 @@ def ensure_oracle_sidecars(
     olblob = {
         "version": ORACLE_LOAD_VERSION,
         "G": nexperts,
-        "basis": f"scenario1_oracle_window_slots_{ostart}_{oend}",
+        "basis": f"scenario1_oracle_window_slots_{ostart}_{oend}"
+                 + (f"_opool_{bench}_{subject}" if opool else ""),
         "source": os.path.basename(orpath),
         "matrix_id": mid,
         "model": params["model"],
@@ -709,6 +719,10 @@ def ensure_oracle_sidecars(
         "rows_trimmed_for_W": trimmed,
         "load": load,
     }
+    if opool:
+        # extra key ONLY for topic-shift cells: homog sidecar bodies must
+        # stay byte-identical to their pre-opool regeneration (content guard)
+        olblob["oracle_pool"] = f"{bench}/{subject}"
     olbody = json.dumps(olblob, indent=1, sort_keys=True) + "\n"
     olpath = os.path.join(out_root, f"{mid}.oracle_load.json")
 

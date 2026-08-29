@@ -1,0 +1,27 @@
+# Intra-node expert-swap A/B at 8n (branch pv2, 2026-08-28): latency
+# verification pass — correctness gates already green (b914d73). Headline
+# comparison = swap_force (tau=-1, always-trigger migration every iter)
+# vs swap0 (decide-only twin): total_ms barely affected => NVLink swap
+# movement fully overlapped. s1-canon oracle basis supplies realistic
+# oracle->batch drift for the tau arm.
+platform: perlmutter
+nodes: 8
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 8, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+sm_margin: 8
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+matrix_instance: "001"
+variants:
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s2_swap0_r2
+  - ours_l01_s2_swap_r2
+  - ours_l01_s2_swap_force_r2
+notes: "swap A/B 8n qwen: force-vs-decide-only overlap latency, r2, b1/b8/b64 isolated"

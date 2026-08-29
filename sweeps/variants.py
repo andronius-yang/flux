@@ -2153,6 +2153,22 @@ VARIANTS["llc_l01_s1_demand"] = dict(
     test_args=(VARIANTS["llc_l01_s1"]["test_args"]
                + ["--llc_sizing", "demand"]),
 )
+# 2026-08-27 (branch pv2, user canon ruling): PV2 placement swapped into
+# the llc stack — same LocCap sender-local kernel routing, same staged
+# transport, same sizing contract; only the placement solver changes
+# (placement_v2: stateless node-aware greedy from the demand histogram,
+# ~1-2 ms host — the cheaper, equal alternative to PLACE-lambda-FAST per
+# the 4n/8n A/B, handoff 23). THE canonical "PLL/LLC" datapoint lane
+# going forward (datapoint skill updated); never bitwise-compare its
+# placements/out_sha against placelambda cells.
+VARIANTS["llc_l01_s1_pv2"] = dict(
+    VARIANTS["llc_l01_s1"],
+    test_args=[a if a != "placelambda_fast" else "pv2"
+               for a in VARIANTS["llc_l01_s1"]["test_args"]]
+              # slack-parity pin (datapoint skill rule: never rely on the
+              # driver default even though it IS 2)
+              + ["--redundant_per_rank", "2"],
+)
 
 VARIANTS["slipstream"] = VARIANTS["hier_compress_lb_union"]
 # SCHEMA rule 13 (2026-08-24, user decision): l01_slipstream now names the
@@ -2677,6 +2693,8 @@ VARIANTS["ours_l01_s2_gate_r2_mlw2"] = dict(
     env=dict(VARIANTS["ours_l01_s2_gate_r2"]["env"],
              FLUX_OURS_SCHED_MOVED_LAST="1", FLUX_OURS_S2_W2_LATE="1"),
 )
+# stale (movement-every-iteration) at replica parity — the pll worst-case
+# comparator for the pv2 A/B (2026-08-27, branch pv2)
 VARIANTS["ours_l01_s2_stale_r2"] = dict(
     VARIANTS["ours_l01_s2_stale"],
     test_args=VARIANTS["ours_l01_s2_stale"]["test_args"]
@@ -2813,4 +2831,120 @@ VARIANTS["ours_l01_s2_r2_quiet"] = dict(
     VARIANTS["ours_l01_s2"],
     test_args=VARIANTS["ours_l01_s2"]["test_args"]
               + ["--redundant_per_rank", "2"],
+)
+
+# ---- PV2 arms (branch pv2, 2026-08-27): stateless node-aware greedy
+# placement (flux/testing/placement_v2.py) swapped into the OURS stack
+# via --place_solver pv2. Same fused transport, same LocCap routing, same
+# WPM movement machinery — the A/B isolates the placement lane (solve +
+# decision + adoption tail). NEW ARM FAMILY: never compare pv2 cells
+# against pll-placement cells' out_sha (different placements route
+# differently); allclose gates bind as always. r2 twins carry the slack
+# boundary (never-mix vs R_red=0).
+for _base in ("ours_l01_s2", "ours_l01_s2_stale", "ours_l01_s2_gate",
+              "ours_l01_s1"):
+    _pv2name = _base + "_pv2"
+    VARIANTS[_pv2name] = dict(
+        VARIANTS[_base],
+        test_args=VARIANTS[_base]["test_args"]
+                  + ["--place_solver", "pv2"],
+    )
+    VARIANTS[_pv2name + "_r2"] = dict(
+        VARIANTS[_base],
+        test_args=VARIANTS[_base]["test_args"]
+                  + ["--place_solver", "pv2", "--redundant_per_rank", "2"],
+    )
+# s1 gate twin for the pv2 static path
+VARIANTS["ours_l01_s1_gate_pv2_r2"] = dict(
+    VARIANTS["ours_l01_s1_gate"],
+    test_args=VARIANTS["ours_l01_s1_gate"]["test_args"]
+              + ["--place_solver", "pv2", "--redundant_per_rank", "2"],
+)
+# ---- intra-node expert SWAP arms (branch pv2, 2026-08-27; ours_swap.py —
+# EPIC §4.3 analog on the OURS stack): per-iteration greedy pair+swap
+# INSIDE each node, exchanged over NVLink on the movement stream, NO
+# cross-node migration (pv2 adoption lane disabled). The swap decision is
+# timed in the place bracket (sub-ms host integer). swap0 = the
+# decide-but-never-swap twin (tau=inf): identical machinery + decision
+# cost, zero movement — the A/B comparator.
+_SWAP_ARGS = ["--eps", "0.0625", "--sizing", "capacity",
+              "--plan_overlap", "0", "--scenario", "s2",
+              "--place_gain_threshold_ppm", "0",
+              "--place_solver", "pv2", "--s2_swap", "1",
+              "--redundant_per_rank", "2"]
+VARIANTS["ours_l01_s2_swap_r2"] = dict(
+    VARIANTS["ours_l01_s1"], test_args=list(_SWAP_ARGS),
+)
+VARIANTS["ours_l01_s2_swap0_r2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=_SWAP_ARGS + ["--swap_tau_rows", "1000000000"],
+)
+VARIANTS["ours_l01_s2_gate_swap_r2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=_SWAP_ARGS + ["--check_iters", "1"],
+)
+# tau=1 gate twin: forces the NVLink exchange to actually FIRE (the
+# canonical tau=512 gate can be vacuous when the oracle->batch drift
+# opens no >=tau pair gap — observed K2 4n b8: 0 swaps/iter)
+VARIANTS["ours_l01_s2_gate_swap_t1_r2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=_SWAP_ARGS + ["--check_iters", "1",
+                            "--swap_tau_rows", "1"],
+)
+# FORCE mode (tau=-1, user direction 2026-08-27): best exchange per pair
+# regardless of gain — oscillates at the fixed point, so NVLink movement
+# fires EVERY iteration. The always-overlapped probe: compare its
+# e2e/total against swap0 (decide-only) in the same capsule; full overlap
+# = parity. Gate twin runs it under per-iteration correctness.
+VARIANTS["ours_l01_s2_swap_force_r2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=_SWAP_ARGS + ["--swap_tau_rows", "-1"],
+)
+VARIANTS["ours_l01_s2_gate_swap_force_r2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=_SWAP_ARGS + ["--check_iters", "1",
+                            "--swap_tau_rows", "-1"],
+)
+
+# ---- P2P transport + issue-point arms (branch pv2-swap2, 2026-08-28) ----
+# The 8.28 4n capsules attributed the whole force-vs-swap0 delta
+# (+2.0..2.9 ms) to the HOST apply+issue path (per-pair table loop +
+# torch NCCL P2P enqueue). p2p = symmetric-heap staging with node-local
+# peer views: one cudaMemcpy over NVLink + zero-SM landed-signal wait;
+# apply_swaps vectorized. Issue point: early (place bracket, leads the
+# plan derive), late (after the fused l0 enqueue — the reorder probe:
+# moved slot's tiles spin until landing, exchange rides under
+# dispatch/GEMM), split (w1 early, w2 late). nccl arms above are the
+# same-capsule comparators (explicit default, unchanged semantics).
+_SWAP_P2P = _SWAP_ARGS + ["--swap_xport", "p2p"]
+for _iss, _tag in (("early", "p2p"), ("late", "p2pl"), ("split", "p2ps")):
+    VARIANTS[f"ours_l01_s2_swap_force_{_tag}_r2"] = dict(
+        VARIANTS["ours_l01_s1"],
+        test_args=_SWAP_P2P + ["--swap_issue", _iss,
+                               "--swap_tau_rows", "-1"],
+    )
+    VARIANTS[f"ours_l01_s2_gate_swap_force_{_tag}_r2"] = dict(
+        VARIANTS["ours_l01_s1"],
+        test_args=_SWAP_P2P + ["--swap_issue", _iss, "--check_iters", "1",
+                               "--swap_tau_rows", "-1"],
+    )
+    VARIANTS[f"ours_l01_s2_swap_{_tag}_r2"] = dict(
+        VARIANTS["ours_l01_s1"],
+        test_args=_SWAP_P2P + ["--swap_issue", _iss],
+    )
+
+# tau=1 swap arms (2026-08-28, topic-shift oracle test): under a REAL
+# per-GPU skew (opool= oracle basis) the canonical tau=512 rows is a
+# budget-relative threshold (b1: ~585 rows/rank => never fires); tau=1
+# accepts any positive-gain exchange — the "does intra-node rebalance pay"
+# probe. Comparators in-capsule: s1_pv2_r2 (static on the skewed oracle
+# placement), swap0 (decide-only), s2_pv2_r2 (cross-node migration ceiling).
+VARIANTS["ours_l01_s2_swap_p2p_t1_r2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=_SWAP_P2P + ["--swap_issue", "early", "--swap_tau_rows", "1"],
+)
+VARIANTS["ours_l01_s2_gate_swap_p2p_t1_r2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=_SWAP_P2P + ["--swap_issue", "early", "--swap_tau_rows", "1",
+                           "--check_iters", "1"],
 )

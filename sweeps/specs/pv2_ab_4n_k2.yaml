@@ -1,0 +1,27 @@
+# PV2 placement A/B (branch pv2, 2026-08-27): pll vs pv2 place solver in
+# the OURS s2 lane at replica parity (r2), same capsule / one binary.
+# Arms: quiet always-solve pair + stale (movement-every-iteration) pair +
+# static s1 pair. Datapoint conventions (isolated, 5+10, s1-canon inputs).
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 8, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+sm_margin: 8
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+matrix_instance: "001"
+variants:
+  - ours_l01_s1_r2
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s2_r2
+  - ours_l01_s2_pv2_r2
+  - ours_l01_s2_stale_r2
+  - ours_l01_s2_stale_pv2_r2
+notes: "pv2 A/B 4n k2: pll-vs-pv2 place solver, r2 parity, b1/b8/b64 isolated"

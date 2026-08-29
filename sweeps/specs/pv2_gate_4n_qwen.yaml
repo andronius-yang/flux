@@ -1,0 +1,24 @@
+# PV2 gates (branch pv2): correctness ON, per-iteration output checks +
+# stale-rot + force-trigger + rule-6c weight probe. ours_l01_s2_gate_r2
+# (pll) is the handoff-22 blocked gate, retried under the extended
+# sizing-envelope fix (warm-solve orbit fold).
+platform: perlmutter
+nodes: 4
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8]
+modes: [isolated]
+iters: 6
+warmup_iters: 2
+skip_correctness: false
+sm_margin: 8
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 0
+matrix_instance: "001"
+variants:
+  - ours_l01_s1_gate_pv2_r2
+  - ours_l01_s2_gate_pv2_r2
+  - ours_l01_s2_gate_r2
+notes: "pv2 gates 4n qwen: s1+s2 pv2 gates + pll s2_gate_r2 retry (orbit sizing fix)"

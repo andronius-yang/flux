@@ -1,0 +1,23 @@
+# P2P swap transport + issue-point gates (branch pv2-swap2, 2026-08-28):
+# force mode (swap fires every iteration) under per-iteration correctness
+# (check_iters) for early / late / split issue. b8, one capsule per model.
+platform: perlmutter
+nodes: 4
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: false
+sm_margin: 8
+timeout_s: 1500
+idle_timeout_s: 600
+retries: 1
+matrix_instance: "001"
+variants:
+  - ours_l01_s2_gate_swap_force_p2p_r2
+  - ours_l01_s2_gate_swap_force_p2pl_r2
+  - ours_l01_s2_gate_swap_force_p2ps_r2
+notes: "swap p2p gates 4n qwen: force early/late/split under check_iters, b8"

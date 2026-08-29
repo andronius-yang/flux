@@ -58,6 +58,7 @@ from flux.testing.ultraep_semantics import (
     loads_from_topk,
 )
 from flux.testing.ours import OursIterPlanner, OursRunner
+from flux.testing import ours_swap as oswap_rt
 from flux.testing.payload_probe import PayloadProbe, payload_probe_enabled
 from flux.testing.recorder import RECORDER
 
@@ -148,6 +149,13 @@ def parse_args():
                         "(0 in the always regime, 90090 otherwise). The "
                         "kb ladder probes the drift-demanded-moves band: "
                         "kb=0 re-derives ~freely, 90090 freezes.")
+    p.add_argument("--place_solver", choices=["pll", "pv2"], default="pll",
+                   help="pll: PLACE-lambda FAST (warm-solve dynamic lane); "
+                        "pv2: stateless node-aware greedy placement "
+                        "(placement_v2 — marginals-only host solve, no "
+                        "warm state/CUDA graph; runtime adoption == the "
+                        "setup batch solve by purity, restoring the "
+                        "handoff-22 sizing premise). Branch pv2 A/B.")
     p.add_argument("--place_drift_prefilter_ppm", type=int, default=10000,
                    help="skip the warm solve when the observed demand "
                         "drift vs the resident placement's basis is below "
@@ -175,6 +183,36 @@ def parse_args():
                         "trigger epoch (deterministic per (epoch, "
                         "expert)); the reference follows — a stale slot "
                         "fails allclose on exactly the moved rows")
+    p.add_argument("--swap_xport", choices=("nccl", "p2p"), default="nccl",
+                   help="swap exchange transport: nccl = torch P2P ops in"
+                        " the node subgroup (2026-08-27 baseline); p2p ="
+                        " symmetric-heap staging + peer views, cudaMemcpy"
+                        " over NVLink + zero-SM landed-signal wait")
+    p.add_argument("--swap_issue", choices=("early", "late", "split"),
+                   default="early",
+                   help="where the exchange is enqueued: early = in the"
+                        " place bracket right after the decision; late ="
+                        " after the fused l0 forward is enqueued (moved"
+                        " slot's tiles spin until landing); split = w1"
+                        " early, w2 late")
+    p.add_argument("--swap_tables", choices=("upload", "device"),
+                   default="device",
+                   help="how a fired swap reaches the planner's device"
+                        " tables: upload = refresh_placement (3 blocking"
+                        " H2D, 8.27); device = SwapTableSync (pinned"
+                        " mirrors + 2 non-blocking copies, zero syncs)")
+    p.add_argument("--s2_swap", type=int, default=0,
+                   help="1: intra-node expert SWAP lane (EPIC §4.3 analog,"
+                        " ours_swap.py) — per-iteration greedy pair+swap"
+                        " inside each node, exchanged over NVLink on the"
+                        " movement stream, NO cross-node migration (the"
+                        " pv2 adoption lane is disabled). Decision is"
+                        " timed in the place bracket (total_ms).")
+    p.add_argument("--swap_tau_rows", type=int, default=512,
+                   help="EPIC tau in rows: accept a swap only if it drops"
+                        " the pair max load by at least this many rows"
+                        " (movement-cost threshold). A huge value gives"
+                        " the decide-but-never-swap comparator arm.")
     p.add_argument("--seed", type=int, default=1234)
     return p.parse_args()
 
@@ -322,37 +360,118 @@ def main():
         repair_passes=int(os.environ.get("FLUX_PLACE_FAST_REPAIR", "2")),
         seed=os.environ.get("FLUX_PLACE_FAST_SEED", "affinity"),
     )
+    use_pv2 = args.place_solver == "pv2"
+    pv2mod = None
+    if use_pv2:
+        from flux.testing import placement_v2 as pv2mod
     torch.cuda.synchronize()
     t_ps = time.perf_counter()
-    pf_solve = plfast.build_placement_fast(tk_solve, L, cfg.nlp, args.G,
-                                          **pf_cfg)
-    hosts_pll = plfast.finalize_hosts(pf_solve, W, L, cfg.nlp,
-                                      method="snake")
+    if use_pv2:
+        pf_solve = None
+        pv2_res = pv2mod.pv2_solve(
+            plfast.demand_hist(tk_solve, L, args.G).cpu(), L, cfg.nlp)
+        hosts_pll = pv2mod.hosts_lists(pv2_res, args.G)
+        planner_stats = dict(pv2_res["stats"])
+    else:
+        pf_solve = plfast.build_placement_fast(tk_solve, L, cfg.nlp, args.G,
+                                              **pf_cfg)
+        hosts_pll = plfast.finalize_hosts(pf_solve, W, L, cfg.nlp,
+                                          method="snake")
+        planner_stats = plfast.stats_host(pf_solve)
     torch.cuda.synchronize()
     place_solver_ms = (time.perf_counter() - t_ps) * 1e3
     _st("placement solved")
     pblob = {"version": 2, "G": args.G, "W": W, "nlp": cfg.nlp,
-             "hosts": hosts_pll, "planner": plfast.stats_host(pf_solve)}
+             "hosts": hosts_pll, "planner": planner_stats}
     plan = build_nodeaware_plan(cfg, tpe, pblob)
     _drift = plfast.drift_ppm(
         plfast.demand_hist(tk_dev, L, args.G),
         plfast.demand_hist(tk_solve, L, args.G))
 
-    # ---- scenario 2: ALSO solve the batch (adoption-target) placement at
-    #      setup — s2 sizing must cover BOTH the resident (oracle) and the
-    #      adopted placements (the stale probe oscillates between exactly
-    #      these two; the runtime warm solve lands near the cold batch
-    #      solve, covered by the drift cushions) ----
-    plan_batch = None
+    # ---- scenario 2 sizing set (handoff 22 §4, extended 2026-08-27 on
+    #      branch pv2): the caps must cover EVERY placement the runtime
+    #      can route on — the resident (oracle), the cold batch solve,
+    #      the stale-rot resident (routed on only if a trigger ever
+    #      forgoes adoption — cheap insurance), and, for the STATEFUL
+    #      pll solver, the runtime warm-solve orbit from the resident
+    #      seed (the 8/26 gate failure: warm adoptions left the
+    #      {resident, cold-batch} envelope). pv2 is a pure function of
+    #      the demand histogram, so its runtime adoption IS the batch
+    #      solve — no orbit exists. ----
+    from flux.testing.loccap_semantics import plan_tensors_from_hosts
+    s2_size_plans = []              # [(tag, p2l, l2p, lcnts)]
+    hosts_rot = None
+    rot_tensors = None
     if args.scenario == "s2":
-        pf_solve_b = plfast.build_placement_fast(tk_dev, L, cfg.nlp,
-                                                 args.G, **pf_cfg)
-        hosts_b = plfast.finalize_hosts(pf_solve_b, W, L, cfg.nlp,
-                                        method="snake")
-        pblob_b = {"version": 2, "G": args.G, "W": W, "nlp": cfg.nlp,
-                   "hosts": hosts_b,
-                   "planner": plfast.stats_host(pf_solve_b)}
-        plan_batch = build_nodeaware_plan(cfg, tpe, pblob_b)
+        if use_pv2:
+            pv2_res_b = pv2mod.pv2_solve(
+                plfast.demand_hist(tk_dev, L, args.G).cpu(), L, cfg.nlp)
+            hosts_b = pv2mod.hosts_lists(pv2_res_b, args.G)
+        else:
+            pf_solve_b = plfast.build_placement_fast(tk_dev, L, cfg.nlp,
+                                                     args.G, **pf_cfg)
+            hosts_b = plfast.finalize_hosts(pf_solve_b, W, L, cfg.nlp,
+                                            method="snake")
+        s2_size_plans.append(
+            ("batch",) + plan_tensors_from_hosts(hosts_b, W, cfg.nlp))
+        if args.s2_stale == "rot":
+            hosts_rot = [sorted((r + 1) % W for r in hs)
+                         for hs in hosts_pll]
+            rot_tensors = plan_tensors_from_hosts(hosts_rot, W, cfg.nlp)
+            s2_size_plans.append(("rot",) + rot_tensors)
+        if args.s2_swap:
+            # intra-node swap orbit (ours_swap.py): the runtime swap
+            # sequence on the fixed per-cell demand is setup-computable
+            # (pure function of (d, p2l)) — fold every reachable swapped
+            # placement into the sizing envelope, pv2-purity style.
+            assert use_pv2, "--s2_swap is defined on the pv2 arm"
+            assert args.s2_stale == "0", "--s2_swap excludes stale probes"
+            from flux.testing import ours_swap as oswap
+            _load_g = torch.bincount(tk_dev.reshape(-1),
+                                     minlength=args.G).cpu().long()
+            _orbit = oswap.swap_orbit(
+                _load_g, plan.p2l, plan.l2p, plan.lcnts, L, cfg.nlp,
+                args.swap_tau_rows)
+            for _oi, (_p2l_o, _l2p_o) in enumerate(_orbit):
+                s2_size_plans.append(
+                    (f"swap{_oi}", _p2l_o, _l2p_o, plan.lcnts))
+        if not use_pv2:
+            # warm-solve orbit, mirroring the runtime _solve_kw exactly
+            # (seed = the resident the loop starts from / resets to;
+            # keep_bonus follows the always/threshold regime). Under a
+            # stale probe the resident resets every iteration, so only
+            # depth 1 is reachable; quiet runs iterate to a fixed point
+            # (bounded depth — in practice depth 1).
+            _always0 = args.place_gain_threshold_ppm == 0
+            _wk = dict(passes_a=2, passes_b=1, repair_passes=1,
+                       seed="warm",
+                       keep_bonus=(0 if _always0 else 90090))
+            if args.s2_stale == "rot":
+                _ion_seed = plfast.hosts_to_ion(hosts_rot, W, L).cuda()
+                _pri_seed = _ion_seed.long().argmax(dim=1)
+            else:
+                _pri_seed = pf_solve["primary"]
+                _ion_seed = pf_solve["inst_nodes"]
+            _seen = {tuple(map(tuple, hosts_pll)),
+                     tuple(map(tuple, hosts_b))}
+            for _depth in range(3):
+                _r_o = plfast.build_placement_fast(
+                    tk_dev, L, cfg.nlp, args.G,
+                    seed_primary=_pri_seed, seed_inst_nodes=_ion_seed,
+                    **_wk)
+                _hosts_o = plfast.finalize_hosts(_r_o, W, L, cfg.nlp,
+                                                 method="snake")
+                _key = tuple(map(tuple, _hosts_o))
+                if _key in _seen:
+                    break           # fixed point / already covered
+                _seen.add(_key)
+                s2_size_plans.append(
+                    (f"orbit{_depth}",)
+                    + plan_tensors_from_hosts(_hosts_o, W, cfg.nlp))
+                if args.s2_stale != "0":
+                    break           # resident resets: depth 1 reachable
+                _pri_seed = _r_o["primary"]
+                _ion_seed = _r_o["inst_nodes"]
 
     # ---- setup reference route (deterministic torch; sizes buffers,
     #      binds the final correctness iteration) ----
@@ -363,19 +482,26 @@ def main():
     pll_bounds = loccap_sl_bounds(pll_aux, W, args.pll_f_cap)
     args.pll_f_cap = pll_bounds["f_cap"]
     _st("reference route + bounds ok")
-    if plan_batch is not None:
-        phys_ref_b, pll_aux_b = loccap_route_sl(
-            topk_all.long().cpu(), plan_batch.p2l, plan_batch.l2p,
-            plan_batch.lcnts, cfg.nlp, L, args.eps, return_tables=True)
-        # r2 fix (2026-08-26): the batch/adopted placement's forced
-        # geometry can exceed the resident-derived f_cap (kstats[2]
-        # ticket overflow at i0 under capacity sizing + replica headroom;
-        # exact no-op whenever the resident f_cap already dominates) —
-        # auto-derive the batch bounds' own f_cap and take the max.
-        bounds_b = loccap_sl_bounds(pll_aux_b, W, -1)
-        args.pll_f_cap = max(args.pll_f_cap, bounds_b["f_cap"])
+    # r2 fix (2026-08-26) generalized (2026-08-27, branch pv2): every
+    # placement in the s2 sizing set gets its own reference route; the
+    # f_cap / recv / pair caps are maxed over the whole set (kstats[2]
+    # ticket overflow at i0 was the runtime-adopted placement leaving the
+    # setup envelope; exact no-op whenever the resident caps dominate).
+    s2_refs = []
+    for _tag, _p2l_x, _l2p_x, _lc_x in s2_size_plans:
+        phys_x, aux_x = loccap_route_sl(
+            topk_all.long().cpu(), _p2l_x, _l2p_x, _lc_x,
+            cfg.nlp, L, args.eps, return_tables=True)
+        bounds_x = loccap_sl_bounds(aux_x, W, -1)
+        args.pll_f_cap = max(args.pll_f_cap, bounds_x["f_cap"])
         for k in ("recv_cap", "pair_cap"):
-            pll_bounds[k] = max(pll_bounds[k], bounds_b[k])
+            pll_bounds[k] = max(pll_bounds[k], bounds_x[k])
+        s2_refs.append((phys_x, aux_x))
+        if rank == 0:
+            print(f"[s2-sizing] {_tag}: f_cap {bounds_x['f_cap']} recv "
+                  f"{bounds_x['recv_cap']} pair {bounds_x['pair_cap']}",
+                  flush=True)
+    if s2_size_plans:
         # s2 provable recv ceiling (2026-08-26, layer-2 of the r2 RCA —
         # K2 4n gate: adopted-placement recv 7086 > envelope 6212, l1
         # send-panel FLUX_CHECK): reference-derived recv bounds only cover
@@ -400,10 +526,10 @@ def main():
     vce_ref = (_pr // cfg.nlp) * gpe + 1 + _pr % cfg.nlp  # pad-FIRST
     sp_ref, sc_ref, sps_ref, uc_ref = python_meta_from_vce(
         vce_ref.cuda(), W, S, gpe, nn, L)
-    # s2: the batch-placement twin meta joins every sizing max below
+    # s2: every sizing-set placement's twin meta joins the maxes below
     sps_all, uc_all = [sps_ref], [uc_ref]
-    if plan_batch is not None:
-        _prb = phys_ref_b.view(ntokens, args.topk).long()
+    for phys_x, _aux_x in s2_refs:
+        _prb = phys_x.view(ntokens, args.topk).long()
         vce_ref_b = (_prb // cfg.nlp) * gpe + 1 + _prb % cfg.nlp
         _, _, sps_b, uc_b = python_meta_from_vce(
             vce_ref_b.cuda(), W, S, gpe, nn, L)
@@ -412,8 +538,8 @@ def main():
 
     # kernel-drift cushion (handoff 17 / llc demand-sizing lineage)
     fp_slack = int(pll_aux["forced_pair"].sum(0).max())
-    if plan_batch is not None:
-        fp_slack = max(fp_slack, int(pll_aux_b["forced_pair"].sum(0).max()))
+    for _phys_x, aux_x in s2_refs:
+        fp_slack = max(fp_slack, int(aux_x["forced_pair"].sum(0).max()))
     cushion = fp_slack + 8 * W
 
     # recv rows this rank computes (dispatch recv == combine send)
@@ -521,6 +647,7 @@ def main():
     _st("runner (fused ops) constructed")
     lane = None
     store = None
+    swap_lane = None
     if args.scenario == "s1":
         w1v, w2v = build_slot_weights(plan.p2l, rank, cfg.nlp, gpe,
                                      args.ffn_hidden_size, args.H,
@@ -528,8 +655,9 @@ def main():
         runner.set_weights(w1v, w2v)
     else:
         from flux.testing.ours_s2 import OursMovementLane
-        store = plfast.PlacementStore(pf_solve, W, L, cfg.nlp,
-                                      hosts=hosts_pll)
+        if not use_pv2:
+            store = plfast.PlacementStore(pf_solve, W, L, cfg.nlp,
+                                          hosts=hosts_pll)
         lane = OursMovementLane(
             TP_GROUP, rank, W, L, cfg, args.ffn_hidden_size, args.H,
             input_dtype,
@@ -542,6 +670,36 @@ def main():
         lane.fill_slots_local(plan.p2l)
         w1v, w2v = lane.gemm_weights()
         runner.set_weights(w1v, w2v)   # views SHARE the WPM symmetric buf
+        swap_lane = None
+        if args.s2_swap:
+            from flux.testing.ours_swap import OursSwapLane
+            # per-node NCCL subgroups (collective creation on all ranks);
+            # intra-node P2P rides NVLink on its own communicator
+            _my_ng = None
+            for _u in range(nn):
+                _g = torch.distributed.new_group(
+                    list(range(_u * L, (_u + 1) * L)))
+                if _u == rank // L:
+                    _my_ng = _g
+            # EAGER communicator init (2026-08-27 qwen gate wedge RCA):
+            # NCCL comm creation is COLLECTIVE over the subgroup, but the
+            # first swap only makes P2P calls from the PAIR ranks — the
+            # bystanders are already parked in the world allgather ->
+            # circular wait (i0 deadlock, 925 ms partial-init then wedge).
+            # One tiny all_reduce per node group at setup initializes the
+            # communicator with all members present; issue() is then
+            # enqueue-only.
+            torch.distributed.all_reduce(
+                torch.zeros(1, device="cuda"), group=_my_ng)
+            torch.cuda.synchronize()
+            swap_lane = OursSwapLane(lane, _my_ng, rank, L, cfg.nlp,
+                                     args.ffn_hidden_size, args.H,
+                                     input_dtype, xport=args.swap_xport,
+                                     issue=args.swap_issue, pg=TP_GROUP)
+            swap_sync = None
+            if args.swap_tables == "device":
+                from flux.testing.ours_swap import SwapTableSync
+                swap_sync = SwapTableSync(plan, torch.device("cuda"))
     planner = OursIterPlanner(plan, rank, torch.device("cuda"), topk_all,
                               probs_all_setup, L, args.eps, args.pll_f_cap,
                               TP_GROUP)
@@ -552,35 +710,58 @@ def main():
 
 
     # s2 machinery: oracle snapshots for the stale probe + the weight probe
+    pv2_state = None
+    pv2_snap = None
     if args.scenario == "s2":
-        from flux.testing.loccap_semantics import plan_tensors_from_hosts
+        if use_pv2:
+            # pv2 resident state (host): the histogram the resident
+            # placement was solved on (drift reference), its node map,
+            # and the slot table identity
+            pv2_state = {
+                "hist": plfast.demand_hist(tk_solve, L, args.G)
+                        .cpu().long(),
+                "ion": pv2_res["ion"].clone(),
+                "p2l": plan.p2l.long().clone(),
+            }
         if args.s2_stale == "rot":
-            # rank-rolled hosts: every expert's instances shift one rank —
-            # crosses node boundaries, structurally suboptimal, so the
-            # warm solve always finds adds (movement fires per iteration)
-            hosts_rot = [sorted((r + 1) % W for r in hs)
-                         for hs in hosts_pll]
-            p2l_r, l2p_r, lcnts_r = plan_tensors_from_hosts(
-                hosts_rot, W, cfg.nlp)
-            ion_r = plfast.hosts_to_ion(hosts_rot, W, L,
-                                        device=store.ion.device)
-            primary_r = ion_r.long().argmax(dim=1)
+            # rank-rolled hosts (precomputed in the sizing set): every
+            # expert's instances shift one rank — crosses node
+            # boundaries, structurally suboptimal, so the runtime solve
+            # always finds adds (movement fires per iteration)
+            p2l_r, l2p_r, lcnts_r = rot_tensors
+            ion_r_h = plfast.hosts_to_ion(hosts_rot, W, L)
             oracle_snap = {
                 "p2l": p2l_r, "l2p": l2p_r, "lcnts": lcnts_r,
-                "primary": primary_r.to(store.primary.dtype),
-                "ion": ion_r,
-                "hist": store.hist.clone(),
-                "load_e": store.load_e.clone(),
             }
+            if store is not None:
+                ion_r = ion_r_h.to(store.ion.device)
+                primary_r = ion_r.long().argmax(dim=1)
+                oracle_snap.update(
+                    primary=primary_r.to(store.primary.dtype),
+                    ion=ion_r,
+                    hist=store.hist.clone(),
+                    load_e=store.load_e.clone(),
+                )
+            else:
+                pv2_snap = {
+                    "hist": pv2_state["hist"].clone(),
+                    "ion": ion_r_h.clone(),
+                    "p2l": p2l_r.long().clone(),
+                }
         else:
             oracle_snap = {
                 "p2l": plan.p2l.clone(), "l2p": plan.l2p.clone(),
                 "lcnts": plan.lcnts.clone(),
-                "primary": store.primary.clone(),
-                "ion": store.ion.clone(),
-                "hist": store.hist.clone(),
-                "load_e": store.load_e.clone(),
             }
+            if store is not None:
+                oracle_snap.update(
+                    primary=store.primary.clone(),
+                    ion=store.ion.clone(),
+                    hist=store.hist.clone(),
+                    load_e=store.load_e.clone(),
+                )
+            else:
+                pv2_snap = {k: v.clone() for k, v in pv2_state.items()}
         tk_dev_solve = tk_dev  # runtime warm solves observe the BATCH
         wprobe_version = [0]
 
@@ -666,6 +847,10 @@ def main():
         epic_pll_oracle_basis=oracle_basis,
         epic_pll_oracle_drift_ppm=_drift,
         epic_place_solver_ms=round(place_solver_ms, 3),
+        ours_place_solver=args.place_solver,
+        ours_s2_sizing_plans=",".join(t[0] for t in s2_size_plans),
+        **({f"pv2_{k}": v for k, v in pv2_res["stats"].items()
+            if k != "mode"} if use_pv2 else {}),
         timing_accounting="per_iter_gpu",
         ours_E_virt=int(E_virt),
     )
@@ -681,7 +866,7 @@ def main():
     #      failure, epic-lane style. ----
     _solve_graph = None
     _solve_out = None
-    if lane is not None:
+    if lane is not None and not use_pv2:
         _always0 = args.place_gain_threshold_ppm == 0
         _solve_kw = dict(passes_a=2, passes_b=1, repair_passes=1,
                          seed="warm", seed_primary=store.primary,
@@ -711,6 +896,15 @@ def main():
                     print(f"[s2] place-solve graph capture failed "
                           f"({type(_e).__name__}: {_e}); eager", flush=True)
 
+    # pv2 host lane: pin to one intra-op thread for the timed loop —
+    # tiny host tensor ops jitter badly under a contended OMP pool
+    # (login-A100 bench: 6 -> 56 ms outliers at 128 threads); integer
+    # results are thread-count-independent. Restored after the loop.
+    _nt_prev = None
+    if use_pv2 and lane is not None:
+        _nt_prev = torch.get_num_threads()
+        torch.set_num_threads(1)
+
     # ---- timed loop ----
     total_iters = args.warmup_iters + args.iters
     ev = lambda: [torch.cuda.Event(enable_timing=True)
@@ -733,10 +927,13 @@ def main():
             plan.p2l = oracle_snap["p2l"].clone()
             plan.l2p = oracle_snap["l2p"].clone()
             plan.lcnts = oracle_snap["lcnts"].clone()
-            store.primary.copy_(oracle_snap["primary"])
-            store.ion.copy_(oracle_snap["ion"])
-            store.hist.copy_(oracle_snap["hist"])
-            store.load_e.copy_(oracle_snap["load_e"])
+            if store is not None:
+                store.primary.copy_(oracle_snap["primary"])
+                store.ion.copy_(oracle_snap["ion"])
+                store.hist.copy_(oracle_snap["hist"])
+                store.load_e.copy_(oracle_snap["load_e"])
+            else:
+                pv2_state = {k: v.clone() for k, v in pv2_snap.items()}
             lane.resident_p2l = oracle_snap["p2l"].long().clone()
             planner.refresh_placement()
             torch.cuda.synchronize()
@@ -751,7 +948,115 @@ def main():
             torch.distributed.all_gather_into_tensor(
                 d_gather_buf, planner.local_loads(), group=TP_GROUP)
             plan_comm_end[i].record()
-            if lane is not None:
+            if lane is not None and args.s2_swap:
+                # SWAP place lane (timed, counts toward total_ms): D2H of
+                # d -> greedy intra-node pair+swap decision (sub-ms host
+                # integer, EPIC §4.3 analog) -> table transposition ->
+                # NVLink exchange issued on the movement stream. No
+                # cross-node migration; the router (next bracket) runs on
+                # the swapped tables — same-iteration benefit.
+                _pt0 = time.perf_counter()
+                d_host = d_gather_buf.cpu()   # blocks on the in-flight
+                _ptd = time.perf_counter()    # allgather: d2h span below
+                load_g = d_host.long().sum(0)
+                swaps, _Lr = oswap_rt.swap_plan(
+                    load_g, plan.p2l, plan.lcnts, L, cfg.nlp,
+                    args.swap_tau_rows)
+                _pt1 = time.perf_counter()
+                if swaps:
+                    plan.p2l, plan.l2p = oswap_rt.apply_swaps(
+                        plan.p2l, plan.l2p, swaps)
+                    if swap_sync is not None:
+                        swap_sync.apply(planner, plan)
+                    else:
+                        planner.refresh_placement()
+                swap_lane.prepare(swaps)
+                swap_lane.issue_early()
+                move_stats.append((int(bool(swaps)), len(swaps),
+                                   swap_lane.move_bytes_this_iter, 0))
+                if rank == 0 and args.check_iters:
+                    _pt2 = time.perf_counter()
+                    print(f"[swap/{args.swap_xport}/{args.swap_issue}]"
+                          f" iter {i}: d2h "
+                          f"{(_ptd - _pt0) * 1e3:.2f} plan "
+                          f"{(_pt1 - _ptd) * 1e3:.2f} apply+issue "
+                          f"{(_pt2 - _pt1) * 1e3:.2f} ms swaps "
+                          f"{len(swaps)}: {swaps}", flush=True)
+            elif lane is not None and use_pv2:
+                # PV2 PLACE lane (timed): one D2H of d -> host drift ->
+                # stateless marginals solve (placement_v2) -> gain /
+                # trigger -> plan tensors + adoption + movement issue.
+                # No warm state, no CUDA graph, no batch-size term; the
+                # adopted placement equals the setup batch solve by
+                # purity (sizing envelope exact).
+                _pt0 = time.perf_counter()
+                hist_now = (d_gather_buf.cpu().long()
+                            .view(nn, L, args.G).sum(1))
+                drift = plfast.drift_ppm(hist_now, pv2_state["hist"])
+                _pt1 = time.perf_counter()
+                always = args.place_gain_threshold_ppm == 0
+                if always or drift >= args.place_drift_prefilter_ppm:
+                    res_new = pv2mod.pv2_solve(hist_now, L, cfg.nlp)
+                    p2l_new = res_new["p2l"].long()
+                    changed_n = int((p2l_new != pv2_state["p2l"]).sum())
+                    _pt2 = time.perf_counter()
+                    if always:
+                        # trigger foregone; gain MUST be 0 (apply_moves
+                        # gates on gain >= threshold — pll-lane lesson)
+                        verdict = {"trigger": 1, "gain_ppm": 0}
+                    else:
+                        rr_cur = pv2mod.pv2_remote_rows(
+                            hist_now, pv2_state["ion"])
+                        rr_new = pv2mod.pv2_remote_rows(
+                            hist_now, res_new["ion"])
+                        gain = (0 if rr_cur == 0 else
+                                (rr_cur - rr_new) * 1_000_000 // rr_cur)
+                        verdict = {
+                            "trigger": int(gain >= max(
+                                args.place_gain_threshold_ppm, 1)),
+                            "gain_ppm": int(gain),
+                        }
+                    if args.s2_force_trigger and changed_n > 0:
+                        verdict["trigger"] = 1
+                    _pt3 = time.perf_counter()
+                    if verdict["trigger"] and changed_n > 0:
+                        plan.p2l, plan.l2p, plan.lcnts = (
+                            res_new["p2l"], res_new["l2p"],
+                            res_new["lcnts"])
+                        planner.refresh_placement()
+                        lane.apply_moves(
+                            p2l_new, verdict["gain_ppm"],
+                            wprobe_cb=(wprobe_cb if args.s2_wprobe
+                                       else None))
+                        pv2_state = {"hist": hist_now,
+                                     "ion": res_new["ion"],
+                                     "p2l": p2l_new}
+                    else:
+                        lane.moves_this_iter = 0
+                        lane.move_bytes_this_iter = 0
+                        lane.trigger_fired = 0
+                        lane.last_gain_ppm = verdict["gain_ppm"]
+                    move_stats.append((
+                        int(verdict["trigger"]), lane.moves_this_iter,
+                        lane.move_bytes_this_iter, verdict["gain_ppm"]))
+                    if rank == 0 and args.check_iters:
+                        _pt4 = time.perf_counter()
+                        print("[pv2-split] iter %d: drift %.2f solve "
+                              "%.2f decide %.2f adopt+moves %.2f ms" % (
+                                  i, (_pt1 - _pt0) * 1e3,
+                                  (_pt2 - _pt1) * 1e3,
+                                  (_pt3 - _pt2) * 1e3,
+                                  (_pt4 - _pt3) * 1e3))
+                        print(f"[s2] iter {i}: drift {drift} gain "
+                              f"{verdict['gain_ppm']} adds {changed_n} "
+                              f"trigger {verdict['trigger']} moved "
+                              f"{lane.moves_this_iter}")
+                else:
+                    move_stats.append((0, 0, 0, int(drift)))
+                    if rank == 0 and args.check_iters:
+                        print(f"[s2] iter {i}: drift {drift} < "
+                              f"prefilter — quiet")
+            elif lane is not None:
                 # PLACE lane (timed): drift prefilter -> warm solve ->
                 # decision -> trigger -> adoption + movement issue. The
                 # movement itself runs on lane.w_stream/side_stream and
@@ -877,13 +1182,19 @@ def main():
             e2e_start[i].record()
             runner.issue_combine_meta(ip)
             gate_kw = None
-            if lane is not None:
+            if swap_lane is not None:
+                gate_kw = swap_lane.gate_kwargs()
+            elif lane is not None:
                 if args.s2_join == "join":
                     lane.op_w1.join()
                 else:
                     gate_kw = lane.gate_kwargs()
             _hbp("l0")
             l0_out = runner.l0_forward(inputs_shard, gate_kwargs=gate_kw)
+            if swap_lane is not None:
+                # late/split issue: the exchange rides under the enqueued
+                # l0 (movement stream depends only on the pre-l0 event)
+                swap_lane.issue_late()
             l0_end[i].record()
             if lane is not None:
                 # FLUX_OURS_S2_W2_LATE: l1 weight pushes enqueue AFTER the
@@ -891,14 +1202,18 @@ def main():
                 lane.issue_w2_late()
             intermediate = torch.nn.functional.gelu(l0_out)
             act_end[i].record()
-            if lane is not None:
+            if swap_lane is not None:
+                swap_lane.l1_wait()
+            elif lane is not None:
                 lane.join_w2()
             _hbp("l1")
             out = runner.l1_forward(intermediate)
             e2e_end[i].record()
-            if lane is not None:
+            if lane is not None and swap_lane is None:
                 # end-of-iteration weight-signal drain (K2-4n stale hang
                 # fix): after e2e_end (untimed gap) — see ours_s2.join_w1.
+                # Swap mode: signals are LOCAL writes — nothing crosses
+                # the boundary; no drain needed.
                 lane.join_w1()
             _hbp("issued")
         if args.check_iters:
@@ -922,6 +1237,8 @@ def main():
         if rank == 0:
             print(f"[hb] window {i + 1}/{total_iters}")
 
+    if _nt_prev is not None:
+        torch.set_num_threads(_nt_prev)
     iter_times = {k: [] for k in ("e2e_ms", "l0_ms", "act_ms", "l1_ms",
                                   "plan_comm_ms", "place_ms", "plan_ms",
                                   "total_ms")}
