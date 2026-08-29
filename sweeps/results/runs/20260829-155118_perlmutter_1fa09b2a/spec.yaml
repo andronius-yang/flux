@@ -1,0 +1,29 @@
+G: 384
+H: 7168
+budgets_mib:
+  - 8
+chunk_bytes: 14336
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+ffn_hidden: 2048
+idle_timeout_s: 600
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 7
+nodes: 4
+notes: "gate: force-orbit pre-converge v2 (per-node cycles), K2 b8 check_iters"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+shape: k2
+skip_correctness: false
+sm_margin: 8
+timeout_s: 1500
+topk: 8
+variants:
+  - ours_l01_s2_gate_swap_force_p2p_r2
+warmup_iters: 5

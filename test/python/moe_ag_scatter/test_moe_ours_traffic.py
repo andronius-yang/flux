@@ -555,7 +555,12 @@ def main():
             print(f"[s2-sizing] {_tag}: f_cap {bounds_x['f_cap']} recv "
                   f"{bounds_x['recv_cap']} pair {bounds_x['pair_cap']}",
                   flush=True)
-    if s2_size_plans:
+    if s2_size_plans and not args.s2_swap:
+        # (swap lane excluded 2026-08-29: its runtime placements are exactly
+        # the orbit fold above — a pure function of the fixed batch demand —
+        # so the placement-independent bound is unnecessary, and at 16n b64
+        # K2 it is 4.9x the fold's recv_cap (343805 vs 70156 rows), which
+        # alone overflowed the 16G symmetric heap.)
         # s2 provable recv ceiling (2026-08-26, layer-2 of the r2 RCA —
         # K2 4n gate: adopted-placement recv 7086 > envelope 6212, l1
         # send-panel FLUX_CHECK): reference-derived recv bounds only cover
