@@ -123,9 +123,11 @@ def parse_args():
                    help="demand: realized reference + drift cushions "
                         "(default); capacity: provable caps everywhere")
     p.add_argument("--plan_overlap", type=int, default=0,
-                   help="1: combine-meta derive + scale build overlap the "
-                        "fused l0 on a side stream; 0 (default): inside the "
-                        "plan bracket. Flip only after the 4n+16n A/B.")
+                   help="0 (default): combine meta inside the plan bracket; "
+                        "1: pre-l0 side stream (8/25 structure — measured "
+                        "to relabel plan_ms into l0_ms); 2: LATE issue "
+                        "after the l0 enqueue (host meta work runs under "
+                        "the executing GEMM, kernels on sm_margin SMs).")
     p.add_argument("--sm_margin", type=int, default=1)
     p.add_argument("--skip_correctness", default=False, action="store_true")
     p.add_argument("--redundant_per_rank", type=int, default=0,
@@ -643,7 +645,7 @@ def main():
     runner = OursRunner(
         TP_GROUP, EP_GROUP, DIST_ENV.NNODES, L, cfg, args.ffn_hidden_size,
         input_dtype, l0_recv_rows, sm_margin=args.sm_margin,
-        plan_overlap=bool(args.plan_overlap))
+        plan_overlap=int(args.plan_overlap))
     _st("runner (fused ops) constructed")
     lane = None
     store = None
@@ -1191,6 +1193,12 @@ def main():
                     gate_kw = lane.gate_kwargs()
             _hbp("l0")
             l0_out = runner.l0_forward(inputs_shard, gate_kwargs=gate_kw)
+            # late plan-overlap (mode 2): the combine-meta host work runs
+            # HERE, while the GPU executes the just-enqueued l0 — host stays
+            # ahead (l0 GPU span >> meta host span at every budget), so no
+            # timed bracket inflates; the meta kernels ride the side stream
+            # on the sm_margin headroom concurrently with the GEMM.
+            runner.issue_combine_meta(ip, late=True)
             if swap_lane is not None:
                 # late/split issue: the exchange rides under the enqueued
                 # l0 (movement stream depends only on the pre-l0 event)
@@ -1299,6 +1307,7 @@ def main():
     runner.plan_meta(ip_ref)
     runner.issue_combine_meta(ip_ref)
     l0_out = runner.l0_forward(inputs_shard)
+    runner.issue_combine_meta(ip_ref, late=True)  # no-op unless mode 2
     intermediate = torch.nn.functional.gelu(l0_out)
     out = runner.l1_forward(intermediate)
     torch.cuda.synchronize()

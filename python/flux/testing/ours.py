@@ -405,9 +405,13 @@ class OursRunner:
         self.M_all = self.ntokens * cfg.K
         if plan_overlap is None:
             # default OFF until the A/B proves it at 4n AND 16n (critique H3)
-            plan_overlap = bool(int(os.environ.get(
-                "FLUX_OURS_PLAN_OVERLAP", "0")))
-        self.plan_overlap = plan_overlap
+            plan_overlap = int(os.environ.get(
+                "FLUX_OURS_PLAN_OVERLAP", "0"))
+        # 0 = inline (combine meta in the plan bracket); 1 = pre-l0 side
+        # stream (8/25 structure — measured to relabel plan_ms into l0_ms);
+        # 2 = late issue after the l0 enqueue (host meta work runs under
+        # the executing GEMM, kernels on the sm_margin headroom)
+        self.plan_overlap = int(plan_overlap)
 
         self.ep_start = self.rank * self.gpe
 
@@ -466,6 +470,7 @@ class OursRunner:
         # plan-overlap side stream + events
         self._meta_stream = torch.cuda.Stream()
         self._meta_ev = torch.cuda.Event()
+        self._plan_ev = torch.cuda.Event()  # derive-done marker (mode 2)
 
         # stashed per-iteration metadata
         self._sd = self._scd = self._sps = self._uc = None
@@ -503,14 +508,35 @@ class OursRunner:
         if ip.kstats_pinned is not None:
             assert int(ip.kstats_pinned[2]) == 0, (
                 "loccap_sl forced-budget overflow (kstats[2] != 0)")
+        if self.plan_overlap == 2:
+            # late-issue mode: mark derive-results readiness so the side
+            # stream can start the combine meta DURING the l0 GEMM (waiting
+            # this event, NOT wait_stream — wait_stream after the l0 enqueue
+            # would order the meta kernels behind the whole GEMM)
+            self._plan_ev.record(torch.cuda.current_stream())
         if not self.plan_overlap:
             self._derive_combine(ip)
 
-    def issue_combine_meta(self, ip: OursIterPlan):
+    def issue_combine_meta(self, ip: OursIterPlan, late: bool = False):
         """Plan-overlap lane: launch the combine-meta derive + scale build
         on the side stream, gated on the (already synced) derive results;
-        the l1 forward waits self._meta_ev."""
-        if not self.plan_overlap:
+        the l1 forward waits self._meta_ev.
+
+        Mode 1 (late=False call site, pre-l0): side stream chains after the
+        current stream — the 8/25 structure; host issue cost lands before
+        the l0 launches (measured: relabels plan_ms into l0_ms).
+        Mode 2 (late=True call site, post-l0-enqueue): the HOST meta work
+        runs while the GPU executes l0; the side stream waits only the
+        plan-derive event, so the meta kernels execute concurrently with
+        the GEMM on the sm_margin headroom."""
+        if self.plan_overlap == 2 and late:
+            self._main_stream = torch.cuda.current_stream()
+            self._meta_stream.wait_event(self._plan_ev)
+            with torch.cuda.stream(self._meta_stream):
+                self._derive_combine(ip)
+            self._meta_ev.record(self._meta_stream)
+            return
+        if self.plan_overlap != 1 or late:
             return
         self._main_stream = torch.cuda.current_stream()
         self._meta_stream.wait_stream(self._main_stream)

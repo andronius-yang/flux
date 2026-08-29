@@ -2943,6 +2943,47 @@ VARIANTS["ours_l01_s1_pv2_r2_wa_ovpf"] = dict(
     VARIANTS["ours_l01_s1_pv2_r2_wa_pf"],
     test_args=_ours_ov_args(VARIANTS["ours_l01_s1_pv2_r2_wa"]["test_args"]),
 )
+# _ov2 = LATE plan overlap (2026-08-29 pm, user-directed): combine meta
+# issued AFTER the l0 enqueue — host meta work runs under the executing
+# GEMM, kernels on the sm_margin headroom via a derive-done event (NOT
+# wait_stream). Fixes mode 1's relabeling (host issue before the l0
+# launches). Stacked on the graphs (_pf). s1 ONLY (s2 x ov ban stands).
+def _ours_ov2_args(args):
+    out = list(args)
+    out[out.index("--plan_overlap") + 1] = "2"
+    return out
+
+
+VARIANTS["ours_l01_s1_pv2_r2_wa_pfov2"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2_wa_pf"],
+    test_args=_ours_ov2_args(
+        VARIANTS["ours_l01_s1_pv2_r2_wa_pf"]["test_args"]),
+)
+# bisect twins for the 8/29 mode-2 GATE slowdown (~4 min/iter vs ~10 s;
+# perf cells normal — gate-machinery interaction, not the production path):
+# _ov2 = mode 2, graphs OFF, identity ON; _pfov2_noid = mode 2, graphs ON,
+# identity OFF. Against _pfov2 (graphs ON, identity ON, the slow one) this
+# pins graphs x mode2 vs identity x mode2 vs the check loop itself.
+VARIANTS["ours_l01_s1_gate_pv2_r2_wa_ov2"] = dict(
+    VARIANTS["ours_l01_s1_gate_pv2_r2_wa"],
+    test_args=_ours_ov2_args(
+        VARIANTS["ours_l01_s1_gate_pv2_r2_wa"]["test_args"]),
+)
+VARIANTS["ours_l01_s1_gate_pv2_r2_wa_pfov2_noid"] = dict(
+    VARIANTS["ours_l01_s1_gate_pv2_r2_wa"],
+    test_args=_ours_ov2_args(
+        VARIANTS["ours_l01_s1_gate_pv2_r2_wa"]["test_args"]),
+    env=dict(VARIANTS["ours_l01_s1_gate_pv2_r2_wa"]["env"],
+             FLUX_OURS_PLAN_GRAPH="1", FLUX_OURS_PLAN_SCALE_GRAPH="1",
+             FLUX_A2AV_RS_CHECK_IDENTITY="0"),
+)
+VARIANTS["ours_l01_s1_gate_pv2_r2_wa_pfov2"] = dict(
+    VARIANTS["ours_l01_s1_gate_pv2_r2_wa"],
+    test_args=_ours_ov2_args(
+        VARIANTS["ours_l01_s1_gate_pv2_r2_wa"]["test_args"]),
+    env=dict(VARIANTS["ours_l01_s1_gate_pv2_r2_wa"]["env"],
+             FLUX_OURS_PLAN_GRAPH="1", FLUX_OURS_PLAN_SCALE_GRAPH="1"),
+)
 VARIANTS["ours_l01_s1_gate_pv2_r2_wa_ovpf"] = dict(
     VARIANTS["ours_l01_s1_gate_pv2_r2_wa"],
     test_args=_ours_ov_args(

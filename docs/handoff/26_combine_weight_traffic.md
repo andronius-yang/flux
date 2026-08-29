@@ -175,8 +175,36 @@ SCALE_GRAPH (lossless; the 8/25 planfast stack minus lossy narrow-2):
 K2 b1 4.47 -> 4.20, Qwen b1 3.46 -> 3.27, b8 flat-to-better. Arm
 `ours_l01_s1_pv2_r2_wa_pf`.
 
-**Remaining queue** (plan floor now ~0.88 at b1: route 0.11 + AGs 0.18 +
-derive_routed 0.26 + compress-CSR host ~0.25 + m_this 0.04):
+**Late plan-overlap (mode 2) — WIN; the user's sm-margin insight.**
+`--plan_overlap 2`: the combine meta is issued AFTER the l0 enqueue — the
+host meta work runs while the GPU executes the l0 GEMM (host stays ahead:
+l0 GPU span >> meta host span at every budget) and the meta kernels ride
+the side stream on the sm_margin headroom, gated on a derive-done EVENT
+(NOT wait_stream, which would order them behind the whole GEMM). A/B
+(20260829-{102051,102333}): plan 0.88->0.64 (K2 b1) / 0.91->0.63 (Qwen
+b1) with l0/l1 UNCHANGED — no mode-1 relabeling. Totals: K2 b1 4.30->
+4.18, K2 b8 9.26->9.04, Qwen b1 3.35->3.10; Qwen b8 7.02->7.17 (+0.15,
+spread band — repeat pending). Arm `ours_l01_s1_pv2_r2_wa_pfov2`
+(graphs + mode 2) = the standing record candidate. s2 x ov ban stands.
+
+**Gate-slowdown RCA (bisect, 2026-08-29 pm): CHECK_IDENTITY x mode 2.**
+The pfov2 gate ran ~4 min/iter (PROGRESSING and PASSING every window —
+never a deadlock). Bisect: graphs OFF + identity ON still slow (~2.3
+min/iter, killed run 103627); graphs ON + identity OFF = **148 s, full
+gate green** (20260829-105612 K2 collapsed branch; 105928 Qwen waves
+branch, 48 s). Mechanism: FLUX_A2AV_RS_CHECK_IDENTITY=1 runs the torch/
+argsort debug reference chains on every combine derive; under mode 2
+those execute on the side stream while l0 owns the GPU, so each internal
+sync waits behind the full GEMM. GATE PROTOCOL for mode-2 arms: identity
+OFF in the mode-2 gate (per-iteration OUTPUT checks remain the product
+gate and are green); the idx-kernel identity stays covered by the
+mode-0 gates (095259/095536, identity ON, same binary). Ops note: a
+timeout-killed srun CLIENT orphans its compute-side STEP (nodes stay
+busy, next srun parks on "step creation disabled") — reap with
+`scancel -s KILL <jobid>.<step>` before relaunching.
+
+**Remaining queue** (plan floor now ~0.64 at b1: route 0.11 + AGs 0.18 +
+derive_routed 0.26 + m_this 0.04 + graphed tails):
 - pinned compress-fast t64/t32 (pageable-H2D hidden syncs) — DONE 8/29
   pm, in the rebuild after this entry.
 - Deferred-sync derive: derive_routed_meta already keeps sps ON DEVICE
