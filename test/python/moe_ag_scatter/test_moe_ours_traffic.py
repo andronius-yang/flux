@@ -195,8 +195,7 @@ def parse_args():
                    help="how a fired swap reaches the planner's device"
                         " tables: upload = refresh_placement (3 blocking"
                         " H2D, 8.27); device = SwapTableSync (pinned"
-                        " non-blocking ids + index ops on the device"
-                        " tables)")
+                        " mirrors + 2 non-blocking copies, zero syncs)")
     p.add_argument("--s2_swap", type=int, default=0,
                    help="1: intra-node expert SWAP lane (EPIC §4.3 analog,"
                         " ours_swap.py) — per-iteration greedy pair+swap"
@@ -655,8 +654,7 @@ def main():
             swap_sync = None
             if args.swap_tables == "device":
                 from flux.testing.ours_swap import SwapTableSync
-                swap_sync = SwapTableSync(W * cfg.nlp, W // 2,
-                                          torch.device("cuda"))
+                swap_sync = SwapTableSync(plan, torch.device("cuda"))
     planner = OursIterPlanner(plan, rank, torch.device("cuda"), topk_all,
                               probs_all_setup, L, args.eps, args.pll_f_cap,
                               TP_GROUP)
@@ -917,8 +915,7 @@ def main():
                     plan.p2l, plan.l2p = oswap_rt.apply_swaps(
                         plan.p2l, plan.l2p, swaps)
                     if swap_sync is not None:
-                        swap_sync.apply(planner, swaps)
-                        planner._p2l_host.copy_(plan.p2l.long())
+                        swap_sync.apply(planner, plan)
                     else:
                         planner.refresh_placement()
                 swap_lane.prepare(swaps)

@@ -2744,3 +2744,19 @@ for _iss, _tag in (("early", "p2p"), ("late", "p2pl"), ("split", "p2ps")):
         VARIANTS["ours_l01_s1"],
         test_args=_SWAP_P2P + ["--swap_issue", _iss],
     )
+
+# tau=1 swap arms (2026-08-28, topic-shift oracle test): under a REAL
+# per-GPU skew (opool= oracle basis) the canonical tau=512 rows is a
+# budget-relative threshold (b1: ~585 rows/rank => never fires); tau=1
+# accepts any positive-gain exchange — the "does intra-node rebalance pay"
+# probe. Comparators in-capsule: s1_pv2_r2 (static on the skewed oracle
+# placement), swap0 (decide-only), s2_pv2_r2 (cross-node migration ceiling).
+VARIANTS["ours_l01_s2_swap_p2p_t1_r2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=_SWAP_P2P + ["--swap_issue", "early", "--swap_tau_rows", "1"],
+)
+VARIANTS["ours_l01_s2_gate_swap_p2p_t1_r2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=_SWAP_P2P + ["--swap_issue", "early", "--swap_tau_rows", "1",
+                           "--check_iters", "1"],
+)

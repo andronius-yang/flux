@@ -137,35 +137,33 @@ def apply_swaps(p2l, l2p, swaps):
     """Apply a swap list to (p2l [R*nlp] i32, l2p [G, R] i32) -> new host
     tensors. A swap is a slot-content transposition: p2l[s_h] <-> p2l[s_l]
     and the two experts' l2p rows have those phys entries exchanged
-    (columns re-sorted ascending, the canonical l2p order)."""
+    (columns re-sorted ascending, the canonical l2p order). numpy
+    (2026-08-28): all transpositions compose as one slot relabeling —
+    slots are distinct across swaps (a rank joins at most one); bitwise
+    == the 2026-08-27 per-pair loop."""
     p2l_n = p2l.clone()
     l2p_n = l2p.clone()
     if not swaps:
         return p2l_n, l2p_n
-    # Vectorized (2026-08-28): the per-pair torch-scalar loop cost ~70 us
-    # per pair on the host (1.2 ms at 16 pairs) and sat in the place
-    # bracket. Slots are distinct across swaps (a rank joins at most one),
-    # so all transpositions compose as one slot relabeling.
-    sh = torch.tensor([sw[1] for sw in swaps], dtype=torch.long)
-    sl = torch.tensor([sw[4] for sw in swaps], dtype=torch.long)
-    eh = torch.tensor([sw[2] for sw in swaps], dtype=torch.long)
-    el = torch.tensor([sw[5] for sw in swaps], dtype=torch.long)
-    assert bool((p2l_n[sh].long() == eh).all()) and bool(
-        (p2l_n[sl].long() == el).all()), "swap list stale vs p2l"
-    p2l_n[sh] = el.to(p2l_n.dtype)
-    p2l_n[sl] = eh.to(p2l_n.dtype)
-    slot_map = torch.arange(p2l_n.numel(), dtype=torch.long)
+    pa = p2l_n.numpy()
+    la = l2p_n.numpy()
+    ids = np.array([(sw[1], sw[4], sw[2], sw[5]) for sw in swaps],
+                   dtype=np.int64)
+    sh, sl, eh, el = ids[:, 0], ids[:, 1], ids[:, 2], ids[:, 3]
+    assert (pa[sh] == eh).all() and (pa[sl] == el).all(), \
+        "swap list stale vs p2l"
+    pa[sh] = el
+    pa[sl] = eh
+    slot_map = np.arange(pa.shape[0], dtype=np.int64)
     slot_map[sh] = sl
     slot_map[sl] = sh
-    experts = torch.unique(torch.cat([eh, el]))
-    rows = l2p_n[experts].long()
+    experts = np.unique(np.concatenate([eh, el]))
+    rows = la[experts].astype(np.int64)
     valid = rows >= 0
-    rows = torch.where(valid, slot_map[rows.clamp(min=0)], rows)
-    big = p2l_n.numel() + 1
-    srt, _ = torch.sort(torch.where(valid, rows, torch.full_like(rows, big)),
-                        dim=1)
-    l2p_n[experts] = torch.where(srt == big, torch.full_like(srt, -1),
-                                 srt).to(l2p_n.dtype)
+    big = pa.shape[0] + 1
+    rows = np.where(valid, slot_map[np.maximum(rows, 0)], big)
+    rows.sort(axis=1)
+    la[experts] = np.where(rows == big, -1, rows).astype(la.dtype)
     return p2l_n, l2p_n
 
 
@@ -211,36 +209,30 @@ CU_STREAM_WAIT_VALUE_FLUSH = 0x4
 
 
 class SwapTableSync:
-    """Applies a swap list to the planner's DEVICE tables (p2l long
-    [R*nlp], l2p [G, R]) with one pinned non-blocking upload of the swap
-    ids and ~10 enqueued index ops — replaces refresh_placement()'s three
-    blocking H2D re-uploads (0.3-0.4 ms host) on the fired-swap path.
-    Semantics == apply_swaps (slot relabel map + row re-sort); duplicate
-    expert rows (a replica pair per node at r2) receive identical values.
+    """Pushes the planner's HOST tables (plan.p2l, plan.l2p — updated by
+    apply_swaps) into its existing DEVICE tables with two non-blocking
+    copies from pinned mirrors: zero stream syncs, two launches (~40 us
+    host). Replaces refresh_placement() on the fired-swap path (three
+    pageable .to(dev) = three cudaStreamSynchronize, ~0.15-0.3 ms) and
+    the first device-index attempt (12 launches, ~0.4 ms — slower).
+    Pinned mirrors are double-buffered by parity so the host write of
+    iteration i+1 can never race the in-flight H2D of iteration i.
     lcnts is invariant under a transposition."""
 
-    def __init__(self, n_slots, max_pairs, device):
-        self.n_slots = n_slots
-        self._pin = [torch.empty(4, max_pairs, dtype=torch.long).pin_memory()
-                     for _ in range(2)]
-        self._dev = torch.empty(4, max_pairs, dtype=torch.long, device=device)
-        self._arange = torch.arange(n_slots, dtype=torch.long, device=device)
-        self._slot_map = torch.empty_like(self._arange)
+    def __init__(self, plan, device):
+        self._pin_p2l = [torch.empty_like(plan.p2l, dtype=torch.long).pin_memory()
+                         for _ in range(2)]
+        self._pin_l2p = [torch.empty_like(plan.l2p).pin_memory()
+                         for _ in range(2)]
         self._parity = 0
 
-    def apply(self, planner, swaps):
-        P = len(swaps)
-        if P == 0:
-            return
-        pin = self._pin[self._parity]
+    def apply(self, planner, plan):
+        k = self._parity
         self._parity ^= 1
-        pn = pin.numpy()
-        for j, sw in enumerate(swaps):
-            pn[0, j], pn[1, j], pn[2, j], pn[3, j] = sw[1], sw[4], sw[2], sw[5]
-        self._dev[:, :P].copy_(pin[:, :P], non_blocking=True)
-        sh, sl, eh, el = (self._dev[k, :P] for k in range(4))
-        apply_swaps_tables_(planner.p2l, planner.l2p, sh, sl, eh, el,
-                            self._slot_map, self._arange, self.n_slots)
+        self._pin_p2l[k].copy_(plan.p2l)
+        self._pin_l2p[k].copy_(plan.l2p)
+        planner.p2l.copy_(self._pin_p2l[k], non_blocking=True)
+        planner.l2p.copy_(self._pin_l2p[k], non_blocking=True)
 
 
 def apply_swaps_tables_(p2l, l2p, sh, sl, eh, el, slot_map, arange, n_slots):
