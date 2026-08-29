@@ -2886,6 +2886,23 @@ VARIANTS["ours_l01_s1_pv2_r2_msp0_nb"] = dict(
              FLUX_A2AV_RS_MSPLIT="0", FLUX_A2AV_RS_FUSED_PACK="0",
              FLUX_A2AV_RS_BUCKET="0"),
 )
+# b64-crash bisect twins (8/29 pm): canon minus ONE ingredient each
+VARIANTS["ours_l01_s1_pv2_r2_nog"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2"],
+    env=dict(VARIANTS["ours_l01_s1_pv2_r2"]["env"],
+             FLUX_OURS_PLAN_GRAPH="0", FLUX_OURS_PLAN_SCALE_GRAPH="0"),
+)
+VARIANTS["ours_l01_s1_pv2_r2_noov"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2"],
+    test_args=[a if i == 0 or VARIANTS["ours_l01_s1_pv2_r2"]["test_args"][i - 1]
+               != "--plan_overlap" else "0"
+               for i, a in enumerate(VARIANTS["ours_l01_s1_pv2_r2"]["test_args"])],
+)
+VARIANTS["ours_l01_s1_pv2_r2_noidx"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2"],
+    env=dict(VARIANTS["ours_l01_s1_pv2_r2"]["env"],
+             FLUX_A2AV_RS_COMBINE_IDX_KERNEL="0"),
+)
 # pre-8/29 LEGACY twin (regression A/B comparator): waves-always, no plan
 # graphs, inline combine meta — pins every 8/29 canon flip back off.
 def _ours_legacy_args(args):

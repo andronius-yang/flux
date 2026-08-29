@@ -1,0 +1,75 @@
+{
+  "artifacts": [
+    {
+      "bytes": 2965,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260829-151911_perlmutter_54043bd6/cells/ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated/records/rank_008.jsonl",
+      "sha256": "571ff37cf904d02dcaaedaad91850a26cda7c9a61515be8967060af62e93f391"
+    },
+    {
+      "bytes": 2967,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260829-151911_perlmutter_54043bd6/cells/ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated/records/rank_012.jsonl",
+      "sha256": "a938227d57ad7da984ea9f78ebb495662be853f0297a57e43830b22351e110c4"
+    },
+    {
+      "bytes": 2966,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260829-151911_perlmutter_54043bd6/cells/ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated/records/rank_015.jsonl",
+      "sha256": "dac732982caf7a25b3b1a386f3191923a8b6439fd2346002b9a821da01cd8bfa"
+    }
+  ],
+  "capabilities": {
+    "FLUX_A2AV_DISPATCH_ONLY_TAG": true,
+    "FLUX_A2AV_EARLY_LAUNCH": true,
+    "FLUX_A2AV_FUSED_STAGE2": true,
+    "FLUX_A2AV_LB_UNION": true,
+    "FLUX_A2AV_NSPLIT_HONOR_TAG": true,
+    "FLUX_A2AV_RS_BUCKET_TAG": true,
+    "FLUX_A2AV_RS_CTA_1086_TAG": true,
+    "FLUX_A2AV_RS_FUSED_PACK_TAG": true,
+    "FLUX_A2AV_RS_MAX_CONV_ROWS": true,
+    "FLUX_A2AV_RS_MAX_SEND_ROWS": true,
+    "FLUX_A2AV_RS_MAX_WIRE_ROWS": true,
+    "FLUX_A2AV_RS_MSPLIT_TAG": true,
+    "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG": true,
+    "FLUX_A2AV_SLIPSTREAM2_TAG": true,
+    "FLUX_A2AV_WAVE_PACK_TAG": true,
+    "FLUX_PLACELAMBDA_ROUTE_SL_TAG": true
+  },
+  "cells": [
+    {
+      "cell_id": "ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260829-151911_perlmutter_54043bd6/cells/ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated",
+      "status": "failed"
+    }
+  ],
+  "created": "2026-08-29T15:20:35Z",
+  "flux_libs": [
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib/libflux_cuda.so",
+      "sha256": "1fa8782cfca0132e35332aa33b9405702f0ce2d9ae64976c2f942b917d96ec7e"
+    },
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib/libflux_cuda_ths_op.so",
+      "sha256": "3a5dc836eba2788f5ea5303179931e35d11d2181d2917f42cbe84d4647bba075"
+    },
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib64/libflux_cuda.so",
+      "sha256": "1fa8782cfca0132e35332aa33b9405702f0ce2d9ae64976c2f942b917d96ec7e"
+    },
+    {
+      "path": "/global/u1/y/yufeid/workspace/changchen/andrewy/flux/python/flux/lib64/libflux_cuda_ths_op.so",
+      "sha256": "3a5dc836eba2788f5ea5303179931e35d11d2181d2917f42cbe84d4647bba075"
+    }
+  ],
+  "git": {
+    "dirty": true,
+    "sha": "f3da6f3e2062f2fd248cb28df17f6085b2c2a0ad"
+  },
+  "host": "login14",
+  "platform": {
+    "fabric": "cxi",
+    "name": "perlmutter",
+    "ranks_per_node": 4
+  },
+  "run_id": "20260829-151911_perlmutter_54043bd6",
+  "staging_root": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260829-151911_perlmutter_54043bd6"
+}

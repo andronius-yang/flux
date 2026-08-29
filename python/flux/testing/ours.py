@@ -503,6 +503,19 @@ class OursIterPlanner:
                 print(f"[ours] plan tail graph capture failed "
                       f"({type(e).__name__}: {e}); eager", flush=True)
 
+    def prime_graphs(self):
+        """Capture the plan tail graph at SETUP inside a rank-quiesced
+        region (canon-regen 8/29 finding: lazy first-use capture
+        mid-iteration SIGABRTs large-budget cells — torch's pre-capture
+        sync waits on peers' in-flight NCCL/NVSHMEM work that needs this
+        rank; b32/b64 volumes expose it). No-op when graphs are off or
+        already captured; the capture records ops only, buffer VALUES are
+        irrelevant."""
+        if (self.plan_graph and self.plan_prealloc
+                and not self._tail_graph_broken
+                and self._tail_graph is None):
+            self._capture_tail_graph()
+
     def derive_reference(self) -> OursIterPlan:
         """Deterministic vce from the setup torch loccap_route_sl routing
         (plan.phys_override) — the final-iteration correctness routing."""
@@ -762,6 +775,23 @@ class OursRunner:
             if self.rank == 0:
                 print(f"[ours] scale graph capture failed "
                       f"({type(e).__name__}: {e}); eager", flush=True)
+
+    def prime_scale_graph(self, planner):
+        """Setup-time scale-graph capture (same quiesced-region rationale
+        as OursIterPlanner.prime_graphs). Requires a prior plan_meta (the
+        setup audit) so _sd/_scd point at the op's persistent buffers;
+        the stub plan reuses the planner's persistent vce/probs buffers,
+        so the pointer key matches every runtime stable plan."""
+        if not (self.scale_graph and not self._scale_graph_broken
+                and self._scale_graph_obj is None):
+            return
+        if getattr(self, "_sd", None) is None:
+            return
+        if not getattr(planner, "plan_prealloc", False):
+            return
+        ip = OursIterPlan(planner._vce_buf, planner._probs_all_buf, None,
+                          stable=True)
+        self._build_scale(ip)
 
     def l0_forward(self, inputs_shard: torch.Tensor, gate_kwargs=None):
         self.l0_op.forward(

@@ -688,6 +688,21 @@ def main():
               + (f", provable_recv {pll_bounds['recv_cap']}"
                  if args.scenario == "s2" else ""))
 
+    # late plan-overlap byte gate (canon-regen 8/29 bisect: mode 2 is
+    # SAFE and winning at <= b16-class budgets but SIGABRTs/stalls b32+
+    # cells at 4n AND 8n — an unexplained interaction with heavy wire
+    # load; graphs and combine-idx kernel exonerated by the bisect; RCA
+    # OPEN, handoff 26. Same engage-below-threshold shape as wave-adapt.
+    if args.plan_overlap == 2:
+        _ov2_max = int(os.environ.get("FLUX_OURS_OV2_MAX_MIB", "16"))
+        _budget_mib = (S * args.chunk_bytes) / (1 << 20)
+        if _budget_mib > _ov2_max:
+            if rank == 0:
+                print(f"[ours] plan_overlap 2 -> 0 (budget "
+                      f"{_budget_mib:.0f} MiB/rank > OV2_MAX {_ov2_max})",
+                      flush=True)
+            args.plan_overlap = 0
+
     # ---- runner + planner (+ s2 movement lane) ----
     runner = OursRunner(
         TP_GROUP, EP_GROUP, DIST_ENV.NNODES, L, cfg, args.ffn_hidden_size,
@@ -960,6 +975,14 @@ def main():
                   for _ in range(total_iters)]
     iter_start, plan_comm_end, place_end, plan_end = ev(), ev(), ev(), ev()
     e2e_start, l0_end, act_end, e2e_end = ev(), ev(), ev(), ev()
+    # graph-capture priming (canon-regen 8/29): capture the plan/scale
+    # graphs HERE, all ranks quiesced between barriers — lazy first-use
+    # capture inside an iteration SIGABRTs b32/b64 cells (torch's
+    # pre-capture sync deadlocks against peers' in-flight collectives)
+    torch.cuda.synchronize()
+    torch.distributed.barrier()
+    planner.prime_graphs()
+    runner.prime_scale_graph(planner)
     torch.cuda.synchronize()
     torch.distributed.barrier()
     isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))

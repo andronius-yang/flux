@@ -152,13 +152,38 @@ CANONICALIZATION (2026-08-29 pm, user ruling): wave-adapt 48 = the
 binary default; OURS arms additionally canon plan graphs + late overlap
 (`--plan_overlap 2`, `FLUX_OURS_PLAN_GRAPH/SCALE_GRAPH=1` in _OURS_ENV)
 for BOTH s1 and s2 (s2 x canon gate green 4n: 20260829-142050, movement
-stale-rot + force-trigger + weight probe). Slipstream-only inherits the
-binary flips. Regression twins: `ours_l01_s1_pv2_r2_legacy`,
-`l01_slipstream_legacy`. Staged arms (EPIC/PLL/llc) never take the wave
-path (barriers pre-filled) — touched only by the idx kernel. Memory
-authority: slipstream-comm-canon-8-29. Regen campaign: one lane agent
-per topology (4n, 8n), canon ladders + legacy anchors, reports in the
-session scratchpad canonregen/.
+stale-rot + force-trigger + weight probe; 8n s2 gate green in the regen
+lane). Slipstream-only inherits the binary flips. Regression twins:
+`ours_l01_s1_pv2_r2_legacy`, `l01_slipstream_legacy`. Staged arms
+(EPIC/PLL/llc) never take the wave path — touched only by the idx
+kernel. Memory authority: slipstream-comm-canon-8-29.
+
+**Regen campaign verdict (two lane agents, 4n + 8n; reports in the
+session scratchpad canonregen/):** gates 9/9 green (incl. slipstream
+correctness on the flipped binary, both models, and the 8n s2 canon
+gate); canon-vs-legacy anchors — canon equal-or-faster at EVERY passing
+anchor (b1 up to −32% ours / −27% slipstream at 4n; b1 −0.5..−1.8 ms at
+8n); the comm-overlap signature confirmed at both scales: l1/budget
+slope FLATTENS above the wave-adapt boundary (4n ours 0.44→0.36
+ms/MiB, slipstream 0.49→0.43; 8n ours 0.59-0.65→0.42-0.46) — collapsed
+weight-lean small-b, wave-overlapped large-b, no superlinear kink.
+
+**MODE-2 x LARGE-BUDGET DEFECT (found by the regen, bisected, byte-gated
+— RCA OPEN):** canon b32/b64 cells SIGABRT (CUDA illegal memory access)
+at 4n and stall 8x / crash at 8n; three-way bisect at K2 4n b64 pinned
+it to `--plan_overlap 2` (graphs-off fails, idx-kernel-off fails,
+overlap-off passes); the pass/fail boundary tracks BUDGET BYTES (b16
+green both models/scales, b32+ broken) — an unexplained interaction of
+the late side-stream combine-meta issue with heavy wire load. Setup-time
+graph-capture priming (prime_graphs/prime_scale_graph, kept — hygiene)
+did NOT fix it. Mitigation shipped: `FLUX_OURS_OV2_MAX_MIB` (default 16)
+— the driver drops mode 2 -> 0 above the threshold, same
+engage-below-threshold shape as wave-adapt. All 12 failed/pathological
+cells re-ran GREEN and in-band with the gate (4n: b64 46.7/47.7 K2,
+40.1/42.8 Qwen; 8n: 62.6/61.1 K2 — was 505 —, 58.4/51.4 Qwen; Qwen b32
+bimodality gone). Follow-up: root-cause the >16 MiB interaction
+(suspects: side-stream allocator pressure at wire-heavy iterations,
+op-internal-stream consumption of side-stream-allocated meta).
 
 Accepted premise (measured, not assumed): **at b1-class budgets no
 overlap is optimal** — the remote wire (~0.45 ms at 4n) is smaller than
