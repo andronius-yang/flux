@@ -55,7 +55,20 @@ l0 enqueue).
 
 ## 4. Designed gate pass on f8163d8 (this handoff's action)
 
-(appended below when the cells land — 4n interactive + 8n debug)
+**4n (job 57717798, 30-min interactive) — ALL GREEN, 9/9:**
+- swap P2P early-issue arm under full canon
+  (`ours_l01_s2_gate_swap_force_p2p_r2`, correctness on, per-iteration
+  output checks): K2 b1/b16/b32 ok (114/169/159 s), Qwen b1/b16/b32 ok
+  (46/48/51 s) — capsules 20260829-232125 (K2), 20260829-232849 (Qwen).
+  b1+b16 exercise the mode-2-active range next to the swap lane's
+  early issue; b32 exercises the OV2 byte-gate fallback (mode 0).
+- moved-last gate (`mlgate_k2_4n_r2`: s2_gate_r2 / _ml / _mlw2 at K2
+  b8): 3/3 ok (130/130/124 s) — capsule 20260829-233118. The WPM
+  migration lane with moved-last and late-w2 is canon-consistent.
+The previously incidental swap coverage is now designed-in at 4n.
+
+**8n (debug QOS):** (appended when the window is granted — Slurm
+controller "Connection timed out" on the first three debug requests.)
 
 ## 5. Open items carried forward
 
