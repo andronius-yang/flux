@@ -178,6 +178,25 @@ def parse_args():
                         "trigger epoch (deterministic per (epoch, "
                         "expert)); the reference follows — a stale slot "
                         "fails allclose on exactly the moved rows")
+    p.add_argument("--swap_xport", choices=("nccl", "p2p"), default="nccl",
+                   help="swap exchange transport: nccl = torch P2P ops in"
+                        " the node subgroup (2026-08-27 baseline); p2p ="
+                        " symmetric-heap staging + peer views, cudaMemcpy"
+                        " over NVLink + zero-SM landed-signal wait")
+    p.add_argument("--swap_issue", choices=("early", "late", "split"),
+                   default="early",
+                   help="where the exchange is enqueued: early = in the"
+                        " place bracket right after the decision; late ="
+                        " after the fused l0 forward is enqueued (moved"
+                        " slot's tiles spin until landing); split = w1"
+                        " early, w2 late")
+    p.add_argument("--swap_tables", choices=("upload", "device"),
+                   default="device",
+                   help="how a fired swap reaches the planner's device"
+                        " tables: upload = refresh_placement (3 blocking"
+                        " H2D, 8.27); device = SwapTableSync (pinned"
+                        " non-blocking ids + index ops on the device"
+                        " tables)")
     p.add_argument("--s2_swap", type=int, default=0,
                    help="1: intra-node expert SWAP lane (EPIC §4.3 analog,"
                         " ours_swap.py) — per-iteration greedy pair+swap"
@@ -631,7 +650,13 @@ def main():
             torch.cuda.synchronize()
             swap_lane = OursSwapLane(lane, _my_ng, rank, L, cfg.nlp,
                                      args.ffn_hidden_size, args.H,
-                                     input_dtype)
+                                     input_dtype, xport=args.swap_xport,
+                                     issue=args.swap_issue, pg=TP_GROUP)
+            swap_sync = None
+            if args.swap_tables == "device":
+                from flux.testing.ours_swap import SwapTableSync
+                swap_sync = SwapTableSync(W * cfg.nlp, W // 2,
+                                          torch.device("cuda"))
     planner = OursIterPlanner(plan, rank, torch.device("cuda"), topk_all,
                               probs_all_setup, L, args.eps, args.pll_f_cap,
                               TP_GROUP)
@@ -891,13 +916,19 @@ def main():
                 if swaps:
                     plan.p2l, plan.l2p = oswap_rt.apply_swaps(
                         plan.p2l, plan.l2p, swaps)
-                    planner.refresh_placement()
-                swap_lane.issue(swaps)
+                    if swap_sync is not None:
+                        swap_sync.apply(planner, swaps)
+                        planner._p2l_host.copy_(plan.p2l.long())
+                    else:
+                        planner.refresh_placement()
+                swap_lane.prepare(swaps)
+                swap_lane.issue_early()
                 move_stats.append((int(bool(swaps)), len(swaps),
                                    swap_lane.move_bytes_this_iter, 0))
                 if rank == 0 and args.check_iters:
                     _pt2 = time.perf_counter()
-                    print(f"[swap] iter {i}: d2h "
+                    print(f"[swap/{args.swap_xport}/{args.swap_issue}]"
+                          f" iter {i}: d2h "
                           f"{(_ptd - _pt0) * 1e3:.2f} plan "
                           f"{(_pt1 - _ptd) * 1e3:.2f} apply+issue "
                           f"{(_pt2 - _pt1) * 1e3:.2f} ms swaps "
@@ -1111,6 +1142,10 @@ def main():
                     gate_kw = lane.gate_kwargs()
             _hbp("l0")
             l0_out = runner.l0_forward(inputs_shard, gate_kwargs=gate_kw)
+            if swap_lane is not None:
+                # late/split issue: the exchange rides under the enqueued
+                # l0 (movement stream depends only on the pre-l0 event)
+                swap_lane.issue_late()
             l0_end[i].record()
             intermediate = torch.nn.functional.gelu(l0_out)
             act_end[i].record()

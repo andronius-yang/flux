@@ -2717,3 +2717,30 @@ VARIANTS["ours_l01_s2_gate_swap_force_r2"] = dict(
     test_args=_SWAP_ARGS + ["--check_iters", "1",
                             "--swap_tau_rows", "-1"],
 )
+
+# ---- P2P transport + issue-point arms (branch pv2-swap2, 2026-08-28) ----
+# The 8.28 4n capsules attributed the whole force-vs-swap0 delta
+# (+2.0..2.9 ms) to the HOST apply+issue path (per-pair table loop +
+# torch NCCL P2P enqueue). p2p = symmetric-heap staging with node-local
+# peer views: one cudaMemcpy over NVLink + zero-SM landed-signal wait;
+# apply_swaps vectorized. Issue point: early (place bracket, leads the
+# plan derive), late (after the fused l0 enqueue — the reorder probe:
+# moved slot's tiles spin until landing, exchange rides under
+# dispatch/GEMM), split (w1 early, w2 late). nccl arms above are the
+# same-capsule comparators (explicit default, unchanged semantics).
+_SWAP_P2P = _SWAP_ARGS + ["--swap_xport", "p2p"]
+for _iss, _tag in (("early", "p2p"), ("late", "p2pl"), ("split", "p2ps")):
+    VARIANTS[f"ours_l01_s2_swap_force_{_tag}_r2"] = dict(
+        VARIANTS["ours_l01_s1"],
+        test_args=_SWAP_P2P + ["--swap_issue", _iss,
+                               "--swap_tau_rows", "-1"],
+    )
+    VARIANTS[f"ours_l01_s2_gate_swap_force_{_tag}_r2"] = dict(
+        VARIANTS["ours_l01_s1"],
+        test_args=_SWAP_P2P + ["--swap_issue", _iss, "--check_iters", "1",
+                               "--swap_tau_rows", "-1"],
+    )
+    VARIANTS[f"ours_l01_s2_swap_{_tag}_r2"] = dict(
+        VARIANTS["ours_l01_s1"],
+        test_args=_SWAP_P2P + ["--swap_issue", _iss],
+    )
