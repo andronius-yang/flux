@@ -440,10 +440,29 @@ def main():
             from flux.testing import ours_swap as oswap
             _load_g = torch.bincount(tk_dev.reshape(-1),
                                      minlength=args.G).cpu().long()
-            _orbit = oswap.swap_orbit(
+            _orbit, _cyc = oswap.swap_orbit(
                 _load_g, plan.p2l, plan.l2p, plan.lcnts, L, cfg.nlp,
-                args.swap_tau_rows)
-            for _oi, (_p2l_o, _l2p_o) in enumerate(_orbit):
+                args.swap_tau_rows, return_cycle=True)
+            _fold = _orbit
+            if args.swap_tau_rows < 0 and _cyc is not None and _cyc >= 0:
+                # FORCE pre-converge (2026-08-29): the timed iterations only
+                # ever alternate inside the orbit's cycle; the placements
+                # before the cycle entry are a warmup transient that exists
+                # only because the probe starts from the batch solve. Adopt
+                # the cycle-entry placement as the initial tables (slots are
+                # filled from plan.p2l below) and fold ONLY the cycle members
+                # into the sizing envelope — at 16n b64 K2 the full 8-deep
+                # fold (f_cap 824 / recv 83k vs batch 554 / 66k) pushed the
+                # symmetric heap past the 16G cap; the cycle alone is
+                # 616 / 69k.
+                plan.p2l = _orbit[_cyc][0].clone()
+                plan.l2p = _orbit[_cyc][1].clone()
+                _fold = _orbit[_cyc:]
+                if rank == 0:
+                    print(f"[swap-orbit] force pre-converge: cycle entry "
+                          f"{_cyc}, folding {len(_fold)} of {len(_orbit)} "
+                          f"orbit placements", flush=True)
+            for _oi, (_p2l_o, _l2p_o) in enumerate(_fold):
                 s2_size_plans.append(
                     (f"swap{_oi}", _p2l_o, _l2p_o, plan.lcnts))
         if not use_pv2:

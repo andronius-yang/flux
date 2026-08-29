@@ -167,25 +167,31 @@ def apply_swaps(p2l, l2p, swaps):
     return p2l_n, l2p_n
 
 
-def swap_orbit(load_g, p2l, l2p, lcnts, L, nlp, tau_rows, max_rounds=8):
+def swap_orbit(load_g, p2l, l2p, lcnts, L, nlp, tau_rows, max_rounds=8,
+               return_cycle=False):
     """Setup-side fixed-point iteration of the runtime swap sequence on a
     fixed demand vector (the sizing-envelope fold input). Returns the list
     of successive (p2l, l2p) placements AFTER each swapping iteration
-    (empty if the start placement is already stable)."""
+    (empty if the start placement is already stable). With
+    return_cycle=True also returns the index into that list where the
+    detected cycle begins (-1 = the cycle includes the start placement,
+    None = no cycle: a fixed point or max_rounds reached)."""
     out = []
-    seen = {bytes(p2l.numpy().tobytes())}
+    keys = [bytes(p2l.numpy().tobytes())]
     cur_p2l, cur_l2p = p2l, l2p
+    cycle = None
     for _ in range(max_rounds):
         swaps, _ = swap_plan(load_g, cur_p2l, lcnts, L, nlp, tau_rows)
         if not swaps:
             break
         cur_p2l, cur_l2p = apply_swaps(cur_p2l, cur_l2p, swaps)
         key = bytes(cur_p2l.numpy().tobytes())
-        if key in seen:
-            break                    # cycle (force-mode oscillation)
-        seen.add(key)
+        if key in keys:
+            cycle = keys.index(key) - 1   # cycle (force-mode oscillation)
+            break
+        keys.append(key)
         out.append((cur_p2l, cur_l2p))
-    return out
+    return (out, cycle) if return_cycle else out
 
 
 def _libcuda():
