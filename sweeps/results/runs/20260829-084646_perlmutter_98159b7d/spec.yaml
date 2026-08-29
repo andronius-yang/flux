@@ -1,0 +1,33 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 1
+  - 8
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+ffn_hidden: 1536
+idle_timeout_s: 420
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 4
+nodes: 4
+notes: "step0b 8.29: Qwen 4n b1/b8 wave-pass ladder (canon/wn3/msp0/msp0_nb) — weight-reread A/B, diagnostic"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+shape: qwen3
+skip_correctness: true
+sm_margin: 8
+timeout_s: 1200
+topk: 8
+variants:
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s1_pv2_r2_wn3
+  - ours_l01_s1_pv2_r2_msp0
+  - ours_l01_s1_pv2_r2_msp0_nb
+warmup_iters: 5
