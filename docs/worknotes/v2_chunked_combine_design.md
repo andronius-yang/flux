@@ -161,3 +161,10 @@ l1_ms K2 4n:  b1: canon 1.61 / msp0 1.67 / P2 1.75 / P4 2.15 / wa0 2.82
 - FOLLOW-UPS: skew-aware piece boundaries (cut chunk index at
   n_chunks*(p/P)^(1/4) to balance wire mass); 8n regime (tax/overlap
   ratio shifts); placement-aware chunking (cluster contributors).
+
+Qwen M2 4n (capsule 20260830-024455): pieces = pure rent (no reread to
+save) — b16 P2 6.42 / P4 6.70 vs canon 5.83 / wa0 5.90; b64 P4 22.26 vs
+canon 21.02. Auto-engage rule must keep pieces OFF for small-panel
+models (same byte-rule shape as wave-adapt). Qwen b2 canon cell = CXI
+transient outlier (void). 4n campaign COMPLETE; 8n lanes pending
+allocation 57721926.
