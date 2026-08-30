@@ -168,3 +168,15 @@ canon 21.02. Auto-engage rule must keep pieces OFF for small-panel
 models (same byte-rule shape as wave-adapt). Qwen b2 canon cell = CXI
 transient outlier (void). 4n campaign COMPLETE; 8n lanes pending
 allocation 57721926.
+
+## 8n K2 RESULTS (debug window, capsule 20260830-053552_perlmutter_37e660ec; gate green 120s)
+l1_ms: b1 msp0 2.18 / canon 2.28 / wa0 3.35 / P4 4.96
+      b16 wa0 9.21 / canon 9.34 / msp0 11.28 / P4 11.43
+      b64 wa0 32.34 / canon 33.10 / P4 37.38 / msp0 39.60
+VERDICT: at 8n the put fragmentation dominates exactly as pre-registered
+— P4 = 28 blocking wire puts (~3.4 ms serial proxy constants) + 196 conv
+puts; pieces trails even the collapse at b16 and recovers only ~30% of
+the overlap at b64. Waves win outright at 8n; the canon dial holds at
+BOTH scales. Pieces needs P-shrink-with-NN + skew-aware boundaries
+(+ possibly piece-sliced conv only, whole-lane wire) before it can
+compete beyond 4n. Campaign (4n+8n, K2+Qwen, b1-b64) COMPLETE.
