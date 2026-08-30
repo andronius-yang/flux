@@ -467,8 +467,9 @@ public:
     using ElementC = typename Epilogue::OutputTileIterator::Element;
     using LayoutC = typename Epilogue::OutputTileIterator::Layout;
 
-    if (params.progress_slots != nullptr && params.signal_ptr != nullptr &&
-        blockIdx.x == 0 && threadIdx.x == 0) {
+    if (params.progress_slots != nullptr && blockIdx.x == 0 && threadIdx.x == 0) {
+      // (TILE_TRACE_DENSE debug passes slots with signal_ptr == nullptr; the
+      // host advances signal_expected as the epoch either way)
       // layer C epoch base: consumed only offline (trace times are absolute
       // low-32 %globaltimer, so no other CTA ever reads this)
       params.progress_slots->t0_gt = bytedance::flux::a2av_globaltimer();
@@ -684,7 +685,18 @@ public:
         }
         else {
           cuda::atomic_ref<int32_t, cuda::thread_scope_device> barrier(params.barrier_ptr[seg]);
-          while (barrier.load(cuda::memory_order_acquire) != 1) {
+          if (barrier.load(cuda::memory_order_acquire) != 1) {
+            while (barrier.load(cuda::memory_order_acquire) != 1) {
+            }
+            if (params.progress_slots != nullptr && threadIdx.x < 32) {
+              // TILE_TRACE_DENSE debug: mirror of the a2av arrival stamp —
+              // slow path only, spin exit IS the arrival observation; stores
+              // are idempotent, no cross-tile register state needed
+              *reinterpret_cast<uint64_t volatile *>(&params.progress_slots->arrival_gt[seg]) =
+                  bytedance::flux::a2av_globaltimer();
+              *reinterpret_cast<uint64_t volatile *>(&params.progress_slots->ready_seq[seg]) =
+                  params.signal_expected;
+            }
           }
         }
       }
@@ -709,8 +721,9 @@ public:
       // dense (static-schedule) a2av mode: attribute the tile to its gating
       // source segment_end (the last segment it spans). The claimer path
       // counts at claim time instead (exact single-source bucket attribution).
-      if (params.progress_slots != nullptr && params.signal_ptr != nullptr && params.bucket_tiles_ptr == nullptr &&
-          threadIdx.x == 0) {
+      if (params.progress_slots != nullptr &&
+          (params.signal_ptr != nullptr || params.barrier_ptr != nullptr) &&
+          params.bucket_tiles_ptr == nullptr && threadIdx.x == 0) {
         atomicAdd(&params.progress_slots->claimed[segment_end], 1u);
       }
       if (params.tile_trace != nullptr && threadIdx.x == 0) {
@@ -895,8 +908,9 @@ public:
                iterator_Aux,
                problem_size.mn(),
                threadblock_offset.mn());
-      if (params.progress_slots != nullptr && params.signal_ptr != nullptr && params.bucket_tiles_ptr == nullptr &&
-          threadIdx.x == 0) {
+      if (params.progress_slots != nullptr &&
+          (params.signal_ptr != nullptr || params.barrier_ptr != nullptr) &&
+          params.bucket_tiles_ptr == nullptr && threadIdx.x == 0) {
         // thread 0's epilogue done; the CTA's tail is within poller resolution.
         // Recompute the gating segment scalar-ly instead of keeping the ballot
         // result live across the mainloop (register pressure costs occupancy).

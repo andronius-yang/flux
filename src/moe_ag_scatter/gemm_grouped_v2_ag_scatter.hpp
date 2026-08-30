@@ -284,18 +284,20 @@ class GemmGroupedV2AGScatter_Device
         ws_args.tile_count,
         args.ep_nexperts};
     gemm_args.seg_gate_ballot = args.seg_gate_ballot;
+    // layer-C trace plumbing is schedule-agnostic: the TILE_TRACE_DENSE debug
+    // path reaches here with signal_ptr == nullptr (barrier gating unchanged)
+    gemm_args.signal_expected = args.signal_expected;
+    gemm_args.progress_slots = reinterpret_cast<A2AVProgressSlots *>(args.progress_slots);
+    gemm_args.tile_trace = reinterpret_cast<A2AVTileRecord *>(args.tile_trace);
+    gemm_args.tile_trace_capacity = args.tile_trace_capacity;
     if (args.signal_ptr != nullptr) {
       // a2av dispatch mode: per-source signals + dynamically claimed tile buckets
       A2AVScheduleWorkspace a2av_ws = get_a2av_ws(args, args_workspace);
       gemm_args.signal_ptr = args.signal_ptr;
-      gemm_args.signal_expected = args.signal_expected;
       gemm_args.bucket_tiles_ptr = (void *)a2av_ws.bucket_tiles;
       gemm_args.bucket_offsets = a2av_ws.bucket_offsets;
       gemm_args.bucket_cursors = a2av_ws.bucket_cursors;
       gemm_args.multi_masks = a2av_ws.multi_masks;
-      gemm_args.progress_slots = reinterpret_cast<A2AVProgressSlots *>(args.progress_slots);
-      gemm_args.tile_trace = reinterpret_cast<A2AVTileRecord *>(args.tile_trace);
-      gemm_args.tile_trace_capacity = args.tile_trace_capacity;
       gemm_args.weight_signal_ptr = args.weight_signal_ptr;
       gemm_args.weight_signal_expected = args.weight_signal_expected;
       gemm_args.weight_gate_group_start = args.weight_gate_group_start;

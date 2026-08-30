@@ -1,0 +1,27 @@
+# Motivation-figure raw capture: COMET (stock dense allgather) vs Slipstream
+# tile-fire traces + nsys, SAME capsule/binary (rule 4). Requires the
+# motif-tiletrace build (binary tag FLUX_A2AV_TILE_TRACE_DENSE_TAG): the
+# layer-C tile trace extended to the stock path as a DEBUG knob (never
+# default). Instrumented mode — NEVER quote latency (SCHEMA rule 3); the
+# deliverable is per-rank tile-fire rasters/arrival stamps for the paper's
+# imbalance motivation diagram (plot_a2av_trace.py --scan-ranks/--compare).
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [l01_allgather_dense, l01_slipstream]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8, 32]
+modes: [nsys]
+extra_env:
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+  FLUX_A2AV_NVTX_PROXY: "1"
+  FLUX_A2AV_TILE_TRACE_DENSE: "1"
+  FLUX_A2AV_EARLY_LAUNCH: "1"
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 0
+notes: "motif: COMET-vs-slipstream tile-fire capture 4n K2 b8/b32 for the motivation diagram"

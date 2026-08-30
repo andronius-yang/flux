@@ -1109,8 +1109,14 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     for (int i = 0; i < kNumRelayFwdEvents; i++) {
       CUDA_CHECK(cudaEventCreate(&this->relay_fwd_events_[i]));  // timing-capable
     }
+    // FLUX_A2AV_TILE_TRACE_DENSE=1 (+NVTX_PROXY=1): DEBUG-ONLY extension of
+    // the layer-C tile trace to the stock (non-a2av) dense/allgather dispatch
+    // path (COMET baseline arm) — never a default, instrumented cells only.
+    (void)get_int_from_env("FLUX_A2AV_TILE_TRACE_DENSE_TAG", 0);
     this->nvtx_proxy_enabled_ =
-        this->a2av_dispatch_ && get_int_from_env("FLUX_A2AV_NVTX_PROXY", 0) != 0;
+        (this->a2av_dispatch_ ||
+         get_int_from_env("FLUX_A2AV_TILE_TRACE_DENSE", 0) != 0) &&
+        get_int_from_env("FLUX_A2AV_NVTX_PROXY", 0) != 0;
     if (this->nvtx_proxy_enabled_) {
       CUDA_CHECK(cudaHostAlloc(
           (void **)&this->progress_slots_, sizeof(A2AVProgressSlots), cudaHostAllocDefault));
@@ -4242,6 +4248,34 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       problem_schedules_gpu = empty_with_uninitialized_data(
           std::vector<int64_t>{num_problem_schedules * (int64_t)sizeof(ProblemSchedule)},
           torch::TensorOptions(torch::kInt8).device(torch::kCUDA));
+      if (this->nvtx_proxy_enabled_) {
+        // TILE_TRACE_DENSE debug: the dense path never touches run_id_
+        // otherwise — advance it here so layer-C epochs stay monotonic
+        // (sidecar blocks, t0_seq and ready_seq validation all key on it)
+        this->run_id_ += 1;
+        // [E, W] inclusive source cumsum for the host expected[]/rows[]
+        // sidecar meta: from cnt_host when the harness provides it, else a
+        // sync D2H of the device cumsum (debug-only path; sync acceptable)
+        const int64_t nexG = (int64_t)ep_nexperts * world_size;
+        this->nvtx_ssc_.resize(nexG);
+        if (cnt_host != nullptr) {
+          for (int e = 0; e < ep_nexperts; e++) {
+            int32_t c = 0;
+            for (int s = 0; s < world_size; s++) {
+              c += cnt_host[(int64_t)s * this->nexperts + ep_start + e];
+              this->nvtx_ssc_[(int64_t)e * world_size + s] = c;
+            }
+          }
+        } else {
+          CUDA_CHECK(cudaMemcpyAsync(
+              this->nvtx_ssc_.data(),
+              sorted_splits_cumsum.data_ptr<int32_t>(),
+              sizeof(int32_t) * nexG,
+              cudaMemcpyDeviceToHost,
+              stream));
+          CUDA_CHECK(cudaStreamSynchronize(stream));
+        }
+      }
     }  // end dense (non-a2av) path
     // Step 4: prepare GEMM args
     torch::Tensor barrier;  // engaged iff nnodes == 1 (dense path)
@@ -4314,6 +4348,12 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       if (this->nvtx_proxy_enabled_) {
         args.progress_slots = this->progress_slots_dev_;
       }
+    } else if (this->nvtx_proxy_enabled_) {
+      // TILE_TRACE_DENSE debug: slots + epoch for the stock path's layer-C
+      // trace. signal_ptr stays null — barrier gating is unchanged;
+      // signal_expected only feeds the t0_seq/ready_seq stamps.
+      args.progress_slots = this->progress_slots_dev_;
+      args.signal_expected = this->run_id_;
     }
     if (weight_signal.has_value() && weight_gate_group_start >= 0) {
       // weight-gated tiles (moonep_fused scenario 2): prefetch-slot problems
@@ -4451,7 +4491,12 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           // worst-case tiles per iteration: recv-buffer row capacity plus one
           // partial tile per expert, x tile columns x weight groups
           const int grid_n = (N + tile_N - 1) / tile_N;
-          const int64_t tiled_m_max = this->max_recv_ntokens_ / tile_M + ep_nexperts;
+          // TILE_TRACE_DENSE debug: no a2av recv buffer to size against —
+          // bound by this iteration's M (routing is fixed per sweep cell;
+          // x2 slack for boundary variation)
+          const int64_t m_bound =
+              this->a2av_dispatch_ ? this->max_recv_ntokens_ : (int64_t)M_this_ep * 2;
+          const int64_t tiled_m_max = m_bound / tile_M + ep_nexperts;
           // x FLUX_A2AV_TRACE_EPOCHS iterations of headroom: the sidecar
           // drain is decoupled from the stream (snapshot ring), so the
           // device ring must survive the drain lagging a few epochs behind
