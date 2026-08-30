@@ -1,0 +1,21 @@
+# v2chunk M1 attribution probe: nsys spans for the l1 GEMM under the three
+# wave schedules (wa0 = legacy waves, chunk = chunked order, msp0 =
+# collapse). Instrumented — NEVER latency (SCHEMA rule 3); the deliverable
+# is the grouped-GEMM kernel span comparison (reuse verdict).
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [ours_l01_s1_pv2_r2_wa0, ours_l01_s1_pv2_r2_chunk, ours_l01_s1_pv2_r2_msp0]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [16]
+modes: [nsys]
+extra_env:
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 0
+notes: "v2chunk nsys span probe 4n k2 b16: wa0 vs chunk vs msp0 GEMM spans"

@@ -66,3 +66,34 @@ inflation (each row still sent once, at its last contributor's chunk).
 b {1,2,4,16,64}, 4n + 8n, K2 + Qwen, one binary per capsule:
 arms = canon ours_l01_s1_pv2_r2_wa_pf(ov2 where green) / _wa twin /
 msp0 twin / chunk (M1) / chunk+pieces (M2, P ladder 2..4).
+
+## 4n RESULTS (2026-08-29 night; capsules 20260830-013149 K2,
+## -014319 Qwen, -015422 nsys; gates -0128xx green w/ reference checks)
+
+l1_ms (isolated, mean of per-iter max-rank), K2 4n:
+  b:      1     2     4     16    64
+  canon   1.61  1.97  2.77  7.15  24.26
+  wa0     2.84  3.14  3.53  7.00  24.66
+  msp0    1.62  1.95  2.80  7.94  28.92
+  chunk   3.01  3.43  4.19  8.94  29.56
+Qwen 4n: chunk-msp0 = +0.21/+0.22/+0.52 at b1/16/64; wa0-msp0 =
+-1.09/-4.23 at b16/64 (overlap value).
+
+nsys l1 GEMM spans (K2 b16): msp0 2.32 / chunk 3.44 / wa0 3.87.
+- L2 reuse WORKS: chunk beats wa0's GEMM by 0.43 (the true marginal
+  HBM-reread cost — rereads partially hide under MMA, so the 1.4 ms
+  bandwidth model overstates it).
+- The SPLIT structure costs +1.12 over the collapse (padding ~0.5 +
+  L2 re-traversal ~0.46) — bigger than the reread it was built to fix.
+- Overlap value (wa0 vs msp0): 0.94 (b16) -> 4.26 (b64) K2; 4.2 Qwen
+  b64. M1 (no release) loses to wa0 wherever waves win, as designed.
+- b1-b4: collapse owns them; the b1 wave tax is mostly PADDING FLOPS
+  (~104 padded tiles ~1.9 ms), refining handoff 26's pass model.
+
+DESIGN CONSEQUENCE for M2: drop the (chunk, wave) sub-problem
+structure; go NO-SPLIT per-tile-flag (one problem per expert,
+dest-sorted rows — already the layout; epilogue per-tile counters
+fire per (expert, dest-range); pack/conv/prereduce/wire consume
+(dest, chunk-watermark) pieces as in §M2 above). Ceiling at K2 b16:
+~6.1 vs canon 7.15; auto-collapse at b1-b4 (1 tile/expert). The
+piece-ladder put-constant fit still gates the wire fragmentation.
