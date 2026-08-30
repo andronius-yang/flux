@@ -67,8 +67,18 @@ l0 enqueue).
   migration lane with moved-last and late-w2 is canon-consistent.
 The previously incidental swap coverage is now designed-in at 4n.
 
-**8n (debug QOS):** (appended when the window is granted — Slurm
-controller "Connection timed out" on the first three debug requests.)
+**8n: CARRIED OVER (site condition).** Twelve 8-node requests (debug
+x11, regular x1) over ~45 min all returned "Unable to allocate
+resources: Connection timed out" while 4-node requests granted
+instantly; `sinfo` showed the GPU partition heavily drained (129
+drained + 13 down). Coverage already green at 8n from the regen lane:
+s1 canon, slipstream, and the s2-pv2 canon gate (20260829-143351). The
+ONE pending 8n item is the swap-lane x canon gate:
+`python sweeps/sweep.py run --spec sweeps/specs/pv2_swapp2p_gate_8n_{k2,qwen}.yaml
+ --variants ours_l01_s2_gate_swap_force_p2p_r2 --budgets-mib 1,8 --jobid <OWN>`
+(~10 min on a debug window; spec twins committed in ef141d9). Until it
+runs, 8n swap-arm numbers on this binary are quotable only with that
+annotation.
 
 ## 5. Open items carried forward
 
