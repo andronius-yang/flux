@@ -1023,13 +1023,21 @@ compress_plan_token_kernel(A2AVCompressPlanArguments args) {
       // source side: I am the gateway lane for home rank h
       const int seg = hn - (hn > my_node ? 1 : 0);
       int cntc = 0;
+      int rp = 0;  // v2 M2: ready piece = max contributor piece
       for (int k = 0; k < args.topk; k++) {
         const int64_t e = args.e_of_copy[t * args.topk + k];
         if ((int)(e / args.ep_nexperts) / L == my_node) {
           cntc++;
+          if (args.piece_of_e != nullptr) {
+            const int pe = (int)args.piece_of_e[e];
+            rp = pe > rp ? pe : rp;
+          }
         }
       }
       args.conv_count[(int64_t)seg * tpr + tl] = cntc;
+      if (args.wire_piece != nullptr) {
+        args.wire_piece[(int64_t)seg * tpr + tl] = rp;
+      }
     }
     if (h == args.rank) {
       // destination side: my tokens' per-node contribution flags
@@ -1037,7 +1045,14 @@ compress_plan_token_kernel(A2AVCompressPlanArguments args) {
         const int64_t e = args.e_of_copy[t * args.topk + k];
         const int on = (int)(e / args.ep_nexperts) / L;
         if (on != my_node) {
-          args.red_flags[tl * NN + on] = 1;
+          // v2 M2: store max contributor piece + 1 (single writer per tl;
+          // 1 when pieces are off — phase B/C treat nonzero as the flag)
+          const int32_t v =
+              args.piece_of_e != nullptr ? (int32_t)args.piece_of_e[e] + 1 : 1;
+          int32_t &f = args.red_flags[tl * NN + on];
+          if (v > f) {
+            f = v;
+          }
         }
       }
     }
@@ -1063,38 +1078,60 @@ compress_plan_scan_kernel(A2AVCompressPlanArguments args) {
   const int nwarps = blockDim.x / 32;
   const unsigned kFull = 0xffffffffu;
 
-  // phase A: wire rows over (seg-major, token asc): exclusive flag scan ->
-  // wire_row_of; inclusive conv_count scan -> wire_ptr[row + 1]
+  // phase A: wire rows over (seg, ready_piece, token asc) — P passes of the
+  // exclusive flag scan per segment (P == 1 with pieces off reproduces the
+  // legacy (seg, token) order bitwise). wire_row_of is -1-prefilled by the
+  // launcher, so each pass writes only its own piece's rows; wire_ptr slots
+  // follow the SAME renumbering (conv positions are order-independent).
   if (warp == 0) {
-    const int64_t n = (int64_t)(NN - 1) * tpr;
+    const int P = args.n_pieces > 0 ? args.n_pieces : 1;
     int64_t run_rows = 0;
     int64_t run_cnt = 0;
     if (lane == 0 && args.wire_ptr != nullptr) {
       args.wire_ptr[0] = 0;
     }
-    const int64_t n_pad = (n + 31) / 32 * 32;
-    for (int64_t i = lane; i < n_pad; i += 32) {
-      const int c = i < n ? args.conv_count[i] : 0;
-      const int f = c > 0 ? 1 : 0;
-      int pf = f;
-      int pc = c;
-      for (int d = 1; d < 32; d <<= 1) {
-        const int uf = __shfl_up_sync(kFull, pf, d);
-        const int uc = __shfl_up_sync(kFull, pc, d);
-        if (lane >= d) {
-          pf += uf;
-          pc += uc;
+    const int64_t n_pad = (tpr + 31) / 32 * 32;
+    for (int seg = 0; seg < NN - 1; seg++) {
+      const int64_t seg_entry = run_rows;
+      for (int p = 0; p < P; p++) {
+        if (lane == 0 && args.wire_piece_start != nullptr) {
+          args.wire_piece_start[seg * (P + 1) + p] =
+              (int32_t)(run_rows - seg_entry);
+        }
+        for (int64_t i = lane; i < n_pad; i += 32) {
+          const int64_t gi = (int64_t)seg * tpr + i;
+          int c = 0;
+          if (i < tpr) {
+            c = args.conv_count[gi];
+            if (c > 0 && P > 1 && args.wire_piece != nullptr &&
+                args.wire_piece[gi] != p) {
+              c = 0;  // another piece's row: skip in this pass
+            }
+          }
+          const int f = c > 0 ? 1 : 0;
+          int pf = f;
+          int pc = c;
+          for (int d = 1; d < 32; d <<= 1) {
+            const int uf = __shfl_up_sync(kFull, pf, d);
+            const int uc = __shfl_up_sync(kFull, pc, d);
+            if (lane >= d) {
+              pf += uf;
+              pc += uc;
+            }
+          }
+          if (i < tpr && f) {
+            const int64_t row_excl = run_rows + pf - f;
+            args.wire_row_of[gi] = (int32_t)row_excl;
+            args.wire_ptr[row_excl + 1] = (int32_t)(run_cnt + pc);
+          }
+          run_rows += __shfl_sync(kFull, pf, 31);
+          run_cnt += __shfl_sync(kFull, pc, 31);
         }
       }
-      if (i < n) {
-        const int64_t row_excl = run_rows + pf - f;
-        args.wire_row_of[i] = f ? (int32_t)row_excl : -1;
-        if (f) {
-          args.wire_ptr[row_excl + 1] = (int32_t)(run_cnt + pc);
-        }
+      if (lane == 0 && args.wire_piece_start != nullptr) {
+        args.wire_piece_start[seg * (P + 1) + P] =
+            (int32_t)(run_rows - seg_entry);
       }
-      run_rows += __shfl_sync(kFull, pf, 31);
-      run_cnt += __shfl_sync(kFull, pc, 31);
     }
   }
 
@@ -1116,7 +1153,7 @@ compress_plan_scan_kernel(A2AVCompressPlanArguments args) {
           }
         }
         for (int m = 0; m < NN; m++) {
-          cnt += args.red_flags[tl * NN + m];
+          cnt += args.red_flags[tl * NN + m] != 0 ? 1 : 0;  // holds piece+1
         }
       }
       int p = cnt;
@@ -1138,25 +1175,32 @@ compress_plan_scan_kernel(A2AVCompressPlanArguments args) {
   if (warp < 2) {
     return;
   }
+  const int Pc = args.n_pieces > 0 ? args.n_pieces : 1;
   for (int m = warp - 2; m < NN; m += nwarps - 2) {
     if (m == my_node) {
       continue;
     }
+    // Pc passes: remote lane rows order (piece, token) — the dest twin of
+    // phase A's renumbering (red_flags holds piece+1; pieces off => one
+    // pass over value 1, bitwise the legacy token-asc order)
     int64_t run = 0;
     const int64_t n_pad = (ntok_local + 31) / 32 * 32;
-    for (int64_t tl = lane; tl < n_pad; tl += 32) {
-      const int f = tl < ntok_local ? args.red_flags[tl * NN + m] : 0;
-      int p = f;
-      for (int d = 1; d < 32; d <<= 1) {
-        const int u = __shfl_up_sync(kFull, p, d);
-        if (lane >= d) {
-          p += u;
+    for (int pp = 1; pp <= Pc; pp++) {
+      for (int64_t tl = lane; tl < n_pad; tl += 32) {
+        const int32_t fv = tl < ntok_local ? args.red_flags[tl * NN + m] : 0;
+        const int f = fv == pp ? 1 : 0;
+        int p = f;
+        for (int d = 1; d < 32; d <<= 1) {
+          const int u = __shfl_up_sync(kFull, p, d);
+          if (lane >= d) {
+            p += u;
+          }
         }
+        if (tl < ntok_local && f) {
+          args.rem_pos[tl * NN + m] = (int32_t)(run + p - f);
+        }
+        run += __shfl_sync(kFull, p, 31);
       }
-      if (tl < ntok_local) {
-        args.rem_pos[tl * NN + m] = (int32_t)(run + p - f);
-      }
-      run += __shfl_sync(kFull, p, 31);
     }
     __syncwarp();
   }
@@ -1259,6 +1303,13 @@ a2av_compress_plan(A2AVCompressPlanArguments const &args, cudaStream_t stream) {
   CUDA_CHECK(cudaMemsetAsync(args.conv_count, 0, seg_tokens * sizeof(int32_t), stream));
   CUDA_CHECK(
       cudaMemsetAsync(args.red_flags, 0, tpr * args.nnodes * sizeof(int32_t), stream));
+  // v2 M2: the P-pass phase A only writes real rows — prefill the misses
+  CUDA_CHECK(
+      cudaMemsetAsync(args.wire_row_of, 0xFF, seg_tokens * sizeof(int32_t), stream));
+  if (args.wire_piece != nullptr) {
+    CUDA_CHECK(
+        cudaMemsetAsync(args.wire_piece, 0, seg_tokens * sizeof(int32_t), stream));
+  }
   constexpr int kThreads = 256;
   compress_plan_token_kernel<<<(int)((ntokens + kThreads - 1) / kThreads), kThreads, 0, stream>>>(
       args);

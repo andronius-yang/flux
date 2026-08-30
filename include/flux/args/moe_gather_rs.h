@@ -323,6 +323,17 @@ struct A2AVCompressPlanArguments {
   int32_t *wire_copy;  // [conv_total]
   int32_t *red_ptr;    // [ntok_local + 1]
   int32_t *red_row;    // [own_total + rem_total]
+  // v2 M2 pieces (nullptr / 0 = off, bit-identical legacy order):
+  // deterministic piece of each global expert (shared chunk merge); wire
+  // rows renumber (seg, ready_piece, token) on BOTH sides, where
+  // ready_piece = max contributor piece. red_flags then stores piece+1
+  // (0 = no contribution) instead of 0/1.
+  int32_t const *piece_of_e = nullptr;  // [nexperts] device
+  int n_pieces = 0;
+  int32_t *wire_piece = nullptr;        // scratch [(NN-1) * tokens_per_rank]
+  // out [(NN-1) * (n_pieces + 1)]: per-seg RELATIVE piece row starts
+  // ([seg][P] = seg total) — equal on sender and dest by construction
+  int32_t *wire_piece_start = nullptr;
   // geometry
   int64_t m_full;
   int topk;
