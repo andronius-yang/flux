@@ -67,18 +67,24 @@ l0 enqueue).
   migration lane with moved-last and late-w2 is canon-consistent.
 The previously incidental swap coverage is now designed-in at 4n.
 
-**8n: CARRIED OVER (site condition).** Twelve 8-node requests (debug
-x11, regular x1) over ~45 min all returned "Unable to allocate
-resources: Connection timed out" while 4-node requests granted
-instantly; `sinfo` showed the GPU partition heavily drained (129
-drained + 13 down). Coverage already green at 8n from the regen lane:
-s1 canon, slipstream, and the s2-pv2 canon gate (20260829-143351). The
-ONE pending 8n item is the swap-lane x canon gate:
-`python sweeps/sweep.py run --spec sweeps/specs/pv2_swapp2p_gate_8n_{k2,qwen}.yaml
- --variants ours_l01_s2_gate_swap_force_p2p_r2 --budgets-mib 1,8 --jobid <OWN>`
-(~10 min on a debug window; spec twins committed in ef141d9). Until it
-runs, 8n swap-arm numbers on this binary are quotable only with that
-annotation.
+**8n (job 57720475, debug) — ALL GREEN, 4/4:** swap P2P early-issue
+arm under full canon, correctness on: K2 b1/b8 ok (120/154 s), Qwen
+b1/b8 ok (47/51 s) — capsules 20260830-004148 (K2), 20260830-004623
+(Qwen). With the regen lane's 8n s1/slipstream/s2-pv2 gates
+(20260829-1428xx..143351) every arm is now gated at both scales on the
+trunk binary.
+
+Ops notes from getting the 8n window (GPU partition was FULL — 1635
+allocated / 4 idle): (1) 8-node sallocs returned "Unable to allocate
+resources: Connection timed out" client-side while the controller
+sometimes GRANTED anyway — one such orphan grant (57720279) showed
+RUNNING in squeue for ~7 min and then reported "job has expired" the
+moment an srun used it (capsules 20260830-003926/003930 = those
+0-second launch failures, not gate verdicts, left uncommitted);
+(2) the fix that worked: a detached grant->gate->release chain script
+(scratchpad gate8n_chain.sh pattern: salloc -I300 in a retry loop,
+parse the jobid from ITS OWN output, run, scancel) — the grant is spent
+the second it lands, so nothing idles or expires.
 
 ## 5. Open items carried forward
 
