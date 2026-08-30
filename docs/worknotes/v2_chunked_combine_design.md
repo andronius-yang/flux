@@ -97,3 +97,48 @@ fire per (expert, dest-range); pack/conv/prereduce/wire consume
 (dest, chunk-watermark) pieces as in §M2 above). Ceiling at K2 b16:
 ~6.1 vs canon 7.15; auto-collapse at b1-b4 (1 tile/expert). The
 piece-ladder put-constant fit still gates the wire fragmentation.
+
+## M2 IMPLEMENTATION SPEC (settled 8/30 ~02:40, after the 4n verdict)
+
+Structure: NO-SPLIT (one problem per expert; kills the +0.5-1.9ms padding)
++ per-chunk flags via M1's prob_group_map (group = expert-chunk; the
+existing per-problem cascade IS the producer — zero new kernel-side GEMM
+code) + piece-granular comm chain. Knob FLUX_A2AV_RS_PIECES (0=off,
+N=max pieces/dest, -1=auto); requires msplit+fused_pack+bucket+ns1+NG1.
+
+- M2a (host-only): waves=[one wave, all nodes] => E full-row problems;
+  prob_group_map=chunk_of(e); gemm n_split arg = n_chunks;
+  non_empty_per_group[c] = nonempty experts of chunk c; ws preset for
+  empty chunks (new ws_args.n_flags decoupling problem_count from flag
+  count). Comm: pack waits ALL chunk flags (collapse timing) — gate
+  arm equals msp0 within noise; scaffolding only.
+- Piece merge (host): per-chunk send bytes from cnt -> pieces (<=P,
+  byte floor FLUX_A2AV_RS_PIECE_FLOOR_MIB), piece_of_chunk[].
+- Pack relay per (node, piece): group_flags -> [NN x P]; wait the
+  piece's chunk flags in order, flip per (tn, p).
+- Conv ladder per (tn, dl, piece): send-panel per-dest rows are
+  (expert, token) asc => piece slices are contiguous prefixes; offsets
+  from per-(d, piece) cnt prefixes. conv_sig -> [L x NN x P], epoch
+  SET per slot (intra-node NVLink, stream-ordered, wire rule safe).
+- Prereduce per (tn, piece): wait L conv sigs of (tn, p); wire rows
+  sorted (seg, ready_piece, token) => contiguous per-piece ranges via
+  wire_piece_start[NN-1][P]; flip wire_flags[tn*P + p].
+- Wire ladder per (tn, piece): blocking put of the piece range into
+  the dest C' lane at the piece base; SIGNALS = per (lane, piece)
+  slots [W x P], SET run_id (NO signal-ADD needed — distinct slots
+  keep the epoch trust contract; zero-row pieces bare-signal as today).
+- Receiver: bucket lane wait becomes P sequential CUStreamWaitValue64
+  (piece asc). Piece-progressive folding (sub-lane buckets) DEFERRED.
+- Plan (two-sided contract change): ready_piece(seg token) = max over
+  the token's my-node contributors of chunk_of(e on its owner rank)
+  (same Ec on all ranks — deterministic from splits; BOTH sides hold
+  e_of_copy). Sender: compress_plan_token_kernel adds atomicMax
+  wire_piece[(seg,t)]; phase A scan becomes per-(seg,piece) counting
+  order. Dest: phase C rem_pos becomes per (node col, piece) bases +
+  token-asc positions; red kernel emits accordingly. The .cc sort
+  reference gets wkey = (seg, ready_piece, token) for CHECK_IDENTITY;
+  python _dev twin + sim: TODO note (update before running the sim).
+- Sizing: flag/sig regions ctor-sized at max(n_split, 8) pieces.
+- Auto rule: engage pieces only when waves would run (reuse the
+  wave-adapt byte rule) AND wire_bytes/(NN-1) >= floor; P shrinks
+  with NN (put constants), P=1 == collapse fixed point.
