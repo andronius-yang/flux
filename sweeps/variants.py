@@ -1421,6 +1421,27 @@ VARIANTS = {
         requires_file="3rdparty/FAST/nvidia/libflash.so",
         l1_pattern="fast",
     ),
+    # Primitive NCCL grouped-P2P combined baseline (2026-08-29): the baseline
+    # of baselines — dispatch alltoallv -> un-overlapped grouped GEMM0 ->
+    # GELU -> grouped GEMM1 -> combine alltoallv (transposed splits) -> home
+    # topk-reduce, with BOTH wires a single torch.distributed.all_to_all_single
+    # (the NCCL backend lowers it to ncclGroupStart + per-peer ncclSend/
+    # ncclRecv). Index math + GemmGroupedV2 ops shared VERBATIM with l01_fast
+    # (fast_baseline_utils.derive_fast_l01_meta_gpu) — only the wire differs.
+    # No NVSHMEM/flux-shm in the process, no libflash, no capacity heap or
+    # credit resets: works single-node, and the stream-ordered wire keeps the
+    # generic perf_combined window, so isolated/torchprof/nsys modes all work
+    # (phases excluded like driver l01). plan_ms = the same in-window derive
+    # + honest D2H every rule-5 arm pays (near-zero: splits + pack/unpack
+    # index sorts only).
+    "l01_nccl": dict(
+        comm_pattern="l01_nccl_p2p",  # cells.csv label only
+        driver="l01_nccl",
+        layer="l01",
+        test_args=["--impl", "nccl"],
+        env={},
+        requires=[],
+    ),
     "l01_torch": dict(
         comm_pattern="l01_torch_unfused",  # cells.csv label only
         driver="l01",

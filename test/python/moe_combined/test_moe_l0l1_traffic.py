@@ -75,7 +75,14 @@ Arms (--impl):
   event names, emitted impl="torch". It materializes the full (ntokens, H)
   gathered input, the (ntokens*topk, H) scatter staging buffer and a
   (ntokens*topk, H) layer1 staging output — watch memory at large budgets.
-- fast : NOT IMPLEMENTED yet (stub below).
+- fast : FAST+FAST combined unfused baseline (dispatch alltoallv -> grouped
+  GEMM0 -> GELU -> grouped GEMM1 -> combine alltoallv -> home topk-reduce).
+- nccl : primitive NCCL grouped-P2P baseline (2026-08-29) — the baseline of
+  baselines: the SAME unfused chain and index math as fast (shared
+  derive_fast_l01_meta_gpu) with the wire swapped to one
+  torch.distributed.all_to_all_single per direction (NCCL lowers it to
+  ncclGroupStart + per-peer ncclSend/ncclRecv). No NVSHMEM/libflash in the
+  process; single-node OK; stream-ordered wire, so isolated mode works.
 
 Correctness (skippable via --skip_correctness): the flux arm's final
 RS-sharded output is compared against ONE untimed run of the torch two-layer
@@ -342,9 +349,10 @@ def parse_args():
     parser.add_argument(
         "--impl",
         default="flux",
-        choices=["torch", "flux", "fast"],
+        choices=["torch", "flux", "fast", "nccl"],
         help="timed arm: flux (fused pairing), torch (unfused two-layer reference,"
-        " same window discipline), fast (NOT IMPLEMENTED — stub)",
+        " same window discipline), fast (FAST+FAST combined baseline), nccl"
+        " (primitive NCCL grouped-p2p alltoallv baseline, same chain as fast)",
     )
     parser.add_argument(
         "--routing_file",
@@ -407,14 +415,15 @@ if __name__ == "__main__":
     RANK, WORLD_SIZE, NNODES = TP_GROUP.rank(), TP_GROUP.size(), flux.testing.NNODES()
     LOCAL_WORLD_SIZE = DIST_ENV.LOCAL_WORLD_SIZE
 
-    if args.impl != "fast":
+    if args.impl in ("flux", "torch"):
         # --impl fast skips flux shm: FAST owns the only NVSHMEM init in the
-        # process (same contract as the layer0 fast test)
+        # process (same contract as the layer0 fast test). --impl nccl skips
+        # it too — pure NCCL baseline, no NVSHMEM anywhere in the process.
         print("before flux_shm initialization")
         flux.init_flux_shm(TP_GROUP)
         torch.cuda.synchronize()
         print("after flux_shm initialization")
-    else:
+    elif args.impl == "fast":
         assert LOCAL_WORLD_SIZE in (4, 8), (
             f"FAST expects 4 (Perlmutter) or 8 (p4d) GPUs/node; got {LOCAL_WORLD_SIZE}"
         )
@@ -654,11 +663,12 @@ if __name__ == "__main__":
     # The l0 op doubles as the rule-5 meta engine (derive_routed_meta): the
     # flux arm builds it with its comm pattern; the torch arm builds the plain
     # allgather-mode op purely for the per-iteration derivation (minimal
-    # heap). The fast arm builds NO flux op (FAST owns NVSHMEM) — it derives
-    # via derive_fast_l01_meta_gpu, guarded in its own branch below.
+    # heap). The fast arm builds NO flux op (FAST owns NVSHMEM) and neither
+    # does the nccl arm (no flux shm at all) — both derive via
+    # derive_fast_l01_meta_gpu, guarded in their own branches below.
     is_flux = args.impl == "flux"
     l0_op = None
-    if args.impl != "fast":
+    if args.impl in ("flux", "torch"):
         tp_env = flux.DistEnvTPWithEP(
             tp_group=TP_GROUP, nnodes=DIST_ENV.NNODES, ep_group=EP_GROUP
         )
@@ -679,11 +689,11 @@ if __name__ == "__main__":
             a2av_hier=is_flux and (args.l0_comm_pattern == "a2av_hier"),
             a2av_hier_compress=is_flux and (args.l0_comm_pattern == "a2av_hier_compress"),
         )
-    if args.impl == "fast":
+    if args.impl in ("fast", "nccl"):
         g_sd = g_scd = g_sps = g_uc = None
     else:
         g_sd, g_scd, g_sps, g_uc = l0_op.derive_routed_meta(topk_gather_buf)
-    if args.impl != "fast":
+    if args.impl in ("flux", "torch"):
         assert torch.equal(g_sd.cpu(), split_cpu[: args.G].cpu().int()), "derive splits drift"
         assert torch.equal(g_scd, moe_ctx.scatter_index.int()), "derive scatter_index drift"
         assert torch.equal(g_sps, splits_per_source_cpu), "derive splits_per_source drift"
@@ -719,7 +729,7 @@ if __name__ == "__main__":
                 (d_rr, r_rr, "red_row"),
             ):
                 assert torch.equal(got, ref.int()), f"in-window compress {nm} drift"
-    if need_torch_path and args.impl != "fast":
+    if need_torch_path and args.impl in ("flux", "torch"):
         # torch-arm in-window reconstructions, guarded once here (the fast
         # arm's untimed reference uses the setup gating values directly)
         _iota_m = torch.arange(M, dtype=torch.int32, device="cuda")
@@ -961,6 +971,137 @@ if __name__ == "__main__":
                 torch_l1,
                 probe=PayloadProbe(moe_ctx.inputs_shard, RANK, keep_ledger=False),
             )
+    elif args.impl == "nccl":  # primitive NCCL grouped-P2P baseline (2026-08-29)
+        # The baseline of baselines: dispatch alltoallv -> un-overlapped
+        # grouped GEMM0 -> GELU -> grouped GEMM1 -> combine alltoallv
+        # (transposed splits) -> home topk-reduce. Index math + GemmGroupedV2
+        # ops are IDENTICAL to --impl fast (shared derive_fast_l01_meta_gpu;
+        # same dest-major send / source-major recv wire contract) — ONLY the
+        # wire differs: one torch.distributed.all_to_all_single per direction,
+        # which the NCCL backend lowers to ncclGroupStart + per-peer
+        # ncclSend/ncclRecv. No NVSHMEM, no capacity buffers, no resets; the
+        # wire is stream-ordered (c10d work.wait() blocks the stream, not the
+        # host), so unlike FAST this arm keeps the generic perf_combined
+        # window/events and supports isolated mode and single-node runs.
+        sys.path.insert(
+            0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "moe_ag_scatter")
+        )
+        from fast_baseline_utils import (  # noqa: E402
+            build_pack_index,
+            build_unpack_index,
+            derive_fast_l01_meta_gpu,
+        )
+
+        def derive_fn(buf):
+            return derive_fast_l01_meta_gpu(
+                buf, RANK, args.G, WORLD_SIZE, tokens_per_rank, args.chunk_bytes
+            )
+
+        # drift guard (untimed, once): same reference identities as the fast arm
+        gm = derive_fn(topk_gather_buf)
+        ce_local = choosed_experts[RANK * tokens_per_rank : (RANK + 1) * tokens_per_rank]
+        pack_ref = build_pack_index(ce_local, args.topk).cuda()
+        unpack_ref, split_ref = build_unpack_index(
+            splits_per_source_cpu, RANK, args.G, WORLD_SIZE
+        )
+        assert torch.equal(gm["pack_index"], pack_ref), "derived pack_index drift"
+        assert torch.equal(gm["unpack_index"], unpack_ref.cuda()), "derived unpack_index drift"
+        assert torch.equal(gm["split_cpu"], split_ref), "derived gemm splits drift"
+        assert torch.equal(gm["matrix_cpu"], matrix.long()), "derived wire matrix drift"
+        assert torch.equal(gm["pack_order"] // args.topk, gm["pack_index"]), (
+            "pack_order/pack_index identity drift"
+        )
+        assert torch.equal(
+            gm["inv_unpack"][gm["unpack_index"]],
+            torch.arange(gm["unpack_index"].numel(), device="cuda"),
+        ), "inv_unpack is not the inverse of unpack_index"
+
+        # pure-GEMM contract shared with the fast arm: the reference gemm
+        # loop multiplies by output_scale, the standalone GemmGroupedV2 not
+        moe_ctx.output_scale[0].fill_(1.0)
+        gemm0_op = flux.GemmGroupedV2(
+            moe_ctx.weights[0], n_experts_per_rank, input_dtype, output_dtype
+        )
+        gemm1_op = flux.GemmGroupedV2(l1_weight, n_experts_per_rank, input_dtype, output_dtype)
+        l1_scale_const = (l1_weight_scale * l1_input_scale).float()  # [epr]
+
+        _nccl_last = {}  # bitwise-correctness taps from the final window
+
+        def nccl_prep():
+            pass  # stateless: no credit buffers, no op scratch to clear
+
+        def nccl_plan():
+            # rule 5: ALL metadata for both wire directions re-derives on GPU
+            # per iteration; split_cpu/matrix_cpu carry the honest D2H the
+            # host-issued NCCL group + grouped GEMMs require. Splits are in
+            # ROWS (dim-0 slices of the [rows, H] buffers).
+            m = derive_fn(topk_gather_buf)
+            disp_send = (m["matrix_cpu"][RANK] // args.chunk_bytes).tolist()
+            disp_recv = (m["matrix_cpu"][:, RANK] // args.chunk_bytes).tolist()
+            return {"m": m, "disp_send": disp_send, "disp_recv": disp_recv}
+
+        def nccl_l0(plan):
+            m = plan["m"]
+            send0 = torch.index_select(moe_ctx.inputs_shard, dim=0, index=m["pack_index"])
+            recv0 = torch.empty(
+                sum(plan["disp_recv"]), H, dtype=input_dtype, device="cuda"
+            )
+            torch.distributed.all_to_all_single(
+                recv0,
+                send0,
+                output_split_sizes=plan["disp_recv"],
+                input_split_sizes=plan["disp_send"],
+                group=TP_GROUP,
+            )
+            gemm_in0 = torch.index_select(recv0, dim=0, index=m["unpack_index"])
+            _nccl_last["gemm_in0"] = gemm_in0
+            return gemm0_op.forward(gemm_in0, m["split_cpu"], sm_margin=args.sm_margin)
+
+        def nccl_l1(plan, intermediate):
+            m = plan["m"]
+            out1 = gemm1_op.forward(intermediate, m["split_cpu"], sm_margin=args.sm_margin)
+            row_scale = torch.repeat_interleave(
+                l1_scale_const, m["split_cpu"].to("cuda", non_blocking=True).long()
+            )
+            out1.mul_(row_scale.unsqueeze(1))
+            out1.mul_(l1_output_vec_scale.unsqueeze(1))
+            _nccl_last["out1"] = out1
+            # combine send order at an owner IS its dispatch recv-wire order
+            send1 = torch.index_select(out1, dim=0, index=m["inv_unpack"])
+            recv1 = torch.empty(
+                tokens_per_rank * args.topk, H, dtype=input_dtype, device="cuda"
+            )
+            # transposed wire: combine send splits = dispatch recv splits
+            torch.distributed.all_to_all_single(
+                recv1,
+                send1,
+                output_split_sizes=plan["disp_send"],
+                input_split_sizes=plan["disp_recv"],
+                group=TP_GROUP,
+            )
+            # home side: recv arrives in this rank's own dispatch pack order
+            full = torch.empty_like(recv1)
+            full.index_copy_(0, m["pack_order"], recv1)
+            return full.view(tokens_per_rank, args.topk, H).float().sum(1).to(input_dtype)
+
+        with flux.group_profile(
+            name="moe_ag_scatter_traffic_" + os.environ.get("TORCHELASTIC_RUN_ID", "l01"),
+            do_prof=args.profile,
+            group=TP_GROUP,
+        ):
+            perf_result = perf_combined(
+                f"nccl #{RANK}",
+                args.iters,
+                args.warmup_iters,
+                nccl_prep,
+                plan_comm_fn,
+                nccl_plan,
+                nccl_l0,
+                nccl_l1,
+                probe=PayloadProbe(moe_ctx.inputs_shard, RANK, keep_ledger=False),
+            )
+        # feed the shared fast/nccl correctness block below
+        fast_out1, fast_gemm_in0 = _nccl_last["out1"], _nccl_last["gemm_in0"]
     else:  # --impl fast (2026-08-21): FAST+FAST combined — the authoritative
         # unfused paper baseline on REAL routing: trace-driven dispatch
         # alltoallv -> grouped GEMM0 -> GELU -> grouped GEMM1 -> combine
@@ -1205,14 +1346,14 @@ if __name__ == "__main__":
         flux.exec_in_rank_order(TP_GROUP, check_result)
         RECORDER.emit_correctness(bitwise=False, allclose=True)
 
-    if args.impl == "fast" and not args.skip_correctness:
+    if args.impl in ("fast", "nccl") and not args.skip_correctness:
         torch_output = run_torch_two_layer()
-        # (a) bitwise: FAST dispatch wire + unpack must reproduce the reference
+        # (a) bitwise: the dispatch wire + unpack must reproduce the reference
         # scatter block (local_scatter: scatter_inputs IS the local EP block)
         assert flux.testing.bitwise_eq(
             fast_gemm_in0, moe_ctx.scatter_inputs[: moe_ctx.nrows_ep]
-        ), "❌ FAST dispatch+unpack does not match the reference scatter block"
-        print(f"✅ #{RANK} FAST dispatch+unpack bitwise-match the reference scatter block")
+        ), f"❌ {args.impl} dispatch+unpack does not match the reference scatter block"
+        print(f"✅ #{RANK} {args.impl} dispatch+unpack bitwise-match the reference scatter block")
         # (b) bitwise same-op chain on the reference block — isolates the
         # combine wire as the only movement the final allclose still covers
         ref0 = gemm0_op.forward(
@@ -1243,14 +1384,17 @@ if __name__ == "__main__":
             except Exception as e:
                 dump_dir = os.environ.get("FLUX_DEBUG_DUMP_DIR", "/tmp")
                 os.makedirs(dump_dir, exist_ok=True)
-                torch.save(perf_result.output, os.path.join(dump_dir, f"l01_fast_output_{RANK}.pt"))
+                torch.save(
+                    perf_result.output,
+                    os.path.join(dump_dir, f"l01_{args.impl}_output_{RANK}.pt"),
+                )
                 torch.save(torch_output, os.path.join(dump_dir, f"l01_torch_output_{RANK}.pt"))
-                print(f"❌ fast and torch not matches, debug tensors dumped to {dump_dir}")
+                print(f"❌ {args.impl} and torch not matches, debug tensors dumped to {dump_dir}")
                 RECORDER.emit_correctness(bitwise=True, allclose=False)
                 RECORDER.flush()
                 raise e
             else:
-                print("✅ fast and torch matches")
+                print(f"✅ {args.impl} and torch matches")
 
         flux.exec_in_rank_order(TP_GROUP, check_fast)
         RECORDER.emit_correctness(bitwise=True, allclose=True)

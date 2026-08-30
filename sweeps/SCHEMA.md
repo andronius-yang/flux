@@ -504,7 +504,7 @@ Highlights (full list = header row):
 - `layer` (appended 2026-08-16) — `l0` (dispatch, the historical default;
   older capsules simply lack the column), `l1` (gather-rs combine,
   driver=gather_rs / fast_gather_rs), `l01` (combined continuous pass,
-  drivers l01 + l01_fast; RULE-5 CONVERTED 2026-08-21,
+  drivers l01 + l01_fast + l01_nccl; RULE-5 CONVERTED 2026-08-21,
   timing_accounting=per_iter_gpu: one timed window per iteration = routing
   allgather (`plan_comm_ms`) -> ALL routing-derived metadata for BOTH
   layers on GPU (`plan_ms`: the l0 op's fused derive_routed_meta seeding
@@ -532,7 +532,17 @@ Highlights (full list = header row):
   vendored patch scripts/fast_two_instance.patch) so both credit resets
   stay OUTSIDE the window (`reset_ms`); e2e-only, >= 2 nodes; extra
   metrics gemm2/cpack/comb_*/acc mirror the moonep l01 chain. No
-  timing_mode axis, no phases cells. **Reference combined configuration
+  timing_mode axis, no phases cells.
+  Driver l01_nccl (--impl nccl, 2026-08-29): the primitive grouped-P2P
+  combined baseline (the baseline of baselines) — the IDENTICAL unfused
+  chain and index math as l01_fast (shared derive_fast_l01_meta_gpu, same
+  GemmGroupedV2 ops, same bitwise correctness ladder) with both wires
+  swapped to one torch.distributed.all_to_all_single per direction (NCCL
+  lowers it to ncclGroupStart + per-peer ncclSend/ncclRecv). No NVSHMEM/
+  libflash in the process, works single-node; the wire is stream-ordered,
+  so the generic perf_combined window applies and e2e/isolated/torchprof/
+  nsys modes are all valid (phases excluded like driver l01). Standard
+  l01 metric set only (plan_comm/plan/e2e/l0/act/l1/total). **Reference combined configuration
   since 2026-08-16: `l01_lbunion_compress`** — see variants.py for the
   14/14-budget verdict; the standalone-l1 verdict differs at small budgets
   and must never be conflated with the combined one).

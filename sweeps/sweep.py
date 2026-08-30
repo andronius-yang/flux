@@ -633,7 +633,7 @@ def expand_cells(spec, plat):
                             " cell would be an empty perturbed cell"
                         )
                         continue
-                    if driver == "l01" and mode == "phases":
+                    if driver in ("l01", "l01_nccl") and mode == "phases":
                         print(
                             f"NOTE: {vname} x phases not generated — the combined"
                             " bench reports l0/act/l1 sub-events via the recorder"
@@ -994,6 +994,11 @@ def build_cell_env(spec, plat, cell, staging, matrix):
         if sym_max and sym_g > int(sym_max):
             sym_g = max(2, int(sym_max) // 2)
         env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_g}G"
+    elif v.get("driver", "flux") == "l01_nccl":
+        # pure-NCCL combined baseline (2026-08-29): the test never
+        # initializes flux shm / NVSHMEM and consumes no FLUX_A2AV_* knobs —
+        # platform env only, nothing to size, no capacity guard
+        pass
     elif v.get("driver", "flux") == "gather_rs":
         # layer1 flux cells: exact FLUX_A2AV_RS_MAX_*_ROWS + heap from the
         # collective FLUX_CHECK expressions (dispatch-orientation inputs;
@@ -1288,7 +1293,7 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         if spec["skip_correctness"]:
             test_args.append("--skip_correctness")
         return srun_prefix + ["./launch_fast.sh"] + test_args, sm_margin, iters, warmup
-    if v.get("driver", "flux") in ("l01", "l01_fast"):
+    if v.get("driver", "flux") in ("l01", "l01_fast", "l01_nccl"):
         # combined layer0+1 continuous bench: full argv built here and
         # returned early (layer1-style single-dash dims; l0/l1 patterns and
         # --impl ride the variant's test_args). driver l01_fast (2026-08-21)
