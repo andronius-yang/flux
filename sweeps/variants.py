@@ -2890,6 +2890,14 @@ VARIANTS["ours_l01_s1_pv2_r2_chunk"] = dict(
     requires=list(VARIANTS["ours_l01_s1_pv2_r2"].get("requires", []))
              + ["FLUX_A2AV_RS_CHUNK_TAG"],
 )
+# gate twin: per-iteration OUTPUT checks (the product gate; random payload
+# rides the runner's gate env). The pv2 arm loop never built an s1 gate,
+# so the chunk gate carries its own --check_iters.
+VARIANTS["ours_l01_s1_pv2_r2_chunk_gate"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2_chunk"],
+    test_args=VARIANTS["ours_l01_s1_pv2_r2_chunk"]["test_args"]
+              + ["--check_iters", "1"],
+)
 # waves-always twin on the same binary (chunk off): the M1 A/B pair
 VARIANTS["ours_l01_s1_pv2_r2_wa0"] = dict(
     VARIANTS["ours_l01_s1_pv2_r2"],

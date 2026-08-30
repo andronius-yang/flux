@@ -2955,7 +2955,7 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
   bool msplit_ = false;
   bool fused_pack_ = false;    // gen-8c: GEMM scatters the send panel directly
   int msplit_wave_nodes_ = 1;
-  torch::Tensor msplit_host_;  // pinned int32 [2 * NN * E + NN]
+  torch::Tensor msplit_host_;  // pinned int32 [4 * NN * E + NN] (v2 chunked)
   torch::Tensor msplit_dev_;   // device int32, same capacity
   torch::Tensor msplit_iota_;      // int32 [max_m] shared identity indices
   torch::Tensor msplit_inv_pack_;  // int32 [max_m] gemm row -> panel row

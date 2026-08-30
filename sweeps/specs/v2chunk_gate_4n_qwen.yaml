@@ -4,7 +4,7 @@
 platform: perlmutter
 nodes: 4
 shape: qwen3
-variants: [ours_l01_s1_pv2_r2_chunk]
+variants: [ours_l01_s1_pv2_r2_chunk_gate]
 families:
   - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
 budgets_mib: [8]
