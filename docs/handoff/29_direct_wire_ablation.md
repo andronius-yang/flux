@@ -81,11 +81,70 @@ e2e (total) at 4n:
 4. dwire l1 beats fused l1 at K2 b1 (2.09 vs 2.79): single w2 pass per
    expert, no per-wave re-read (the handoff-26 floor sidestepped).
 
-## 4. 16n (the actual question) — specs ready, run pending
+## 4. 16n (the actual question) — HANDED OFF, specs ready, prediction registered
 
 `sweeps/specs/dwire_ab_16n_{k2,qwen}.yaml`: pv2_r2 vs dwire vs eplb_l01,
-b1/2/4, isolated, one capsule per model. Prediction registered before
-the run: dwire ≈ 7.5–8.5 total at K2 b1 (transport ~5.5 e2e + our plan
-~1.5) vs fused 14.1 and EPLB 9.7 — i.e. dwire takes the 16n low-budget
-crown and the crossover vs fused sits between 8n and 16n. Allocation was
-pending in gpu_regular (-N 16 -t 45, m5350_g) at write time.
+**b1/2/4/16/64** (full ladder, user 2026-08-30; budget-major cell order
+so low budgets land first if a window cuts the tail), isolated, one
+capsule per model. Prediction registered BEFORE any 16n run:
+
+- dwire ≈ 7.5–8.5 ms total at K2 b1 (transport ~5.5 e2e + our plan
+  ~1.5–2.1) vs fused 14.1 and EPLB ~9.5–10 → **flip vs EPLB at b1/b2 in
+  our favor, ~85–90% confidence**; flip vs our own fused arm >95%
+  (fused l0 alone is 7.07 at 16n b1).
+- Mechanism the numbers must show: dwire e2e ≡ eplb_l01 e2e (same
+  transport), dwire total = EPLB total − (plan-lane gap ~2 ms ± wire
+  delta from pv2 node-awareness).
+- Falsifiers: dwire wire ≫ eplb wire in-capsule (r2/loccap pair-pattern
+  skew at 64 ranks), or EPLB's planner much cheaper than its 8/24 16n
+  reading (partially defused: the 4n in-capsule plan gap was measured on
+  THIS binary).
+
+The 8/30 origin session queued 16n three times (gpu_regular congested,
+2h+ pending, no backfill estimate at -t 45 or -t 30) and CANCELLED its
+final request (57735507) when the user reassigned the run to another
+session's 16n sweep — see §5.
+
+## 5. Takeover run-book (for the session running the 16n sweep)
+
+Everything is committed on `pv2` — code `8ef4406`, spec ladder + this
+section in the follow-up commit; capsules `33f2148` (gates) and
+`786fb5c` (4n A/B). **All changes are python/spec-level — no C++
+touched, no rebuild needed**; the editable install picks up
+`flux/testing/ours_direct.py` automatically. `git pull` on the same
+checkout is sufficient.
+
+How to run (either form is fine):
+1. As-is: `python3 sweeps/sweep.py run --spec sweeps/specs/dwire_ab_16n_k2.yaml
+   --jobid <id>` then the qwen twin. 15 cells each, all three arms
+   in-capsule (rule 4 satisfied per model).
+2. Folded into your own 16n specs: add
+   `ours_l01_s1_pv2_r2_dwire` and `eplb_l01` to your `variants:` list.
+   Keep `ours_l01_s1_pv2_r2` in the same capsule — it is the comparator.
+   Do NOT hand the dwire arm extra env: its variant already pins conn=8
+   and the sweep sizes its heap via the eplb row-sum bound
+   (`sweep.py` ours-branch override — verify dry-run shows the eplb-style
+   2/4/9/16/16G ladder for dwire, NOT the fused arm's flat 6G).
+
+Time budget (confidence for one-go): measured 4n cell rates + 8/24 16n
+history give **K2 ≈ 25–35 min, qwen ≈ 20–30 min** — b1–b4 cells are
+40–90 s, b16 ~2–3 min, b64 the long pole (eplb_l01 K2 16n b64 ran e2e
+~211 ms/iter on 8/24; expect 4–6 min/cell incl. the first-eplb-cell
+load-sidecar generation). **One allocation of -t 75–90 covers both
+models comfortably; -t 30 covers roughly one model's b1–b16.** Cell
+order is budget-major, so a cut window still yields the b1/b2 verdict.
+
+Per-budget confidence the cells run clean: b1–b4 ~95% (gates + 4n A/B
+green, sizing verified in dry-run), b16 ~90%, b64 ~75–80% — the 16G
+at-cap heap class (same as eplb_l01, which DID run 16n b64 on 8/24;
+dwire's real staging is max_split-based, far under the row-sum prior).
+Failure modes are all loud/clean: nvshmem_malloc failure or the
+per-iteration `max_split`/`recv_cap` asserts → `failed` cell, no hang
+class known. Never quote `_gate` cells for latency (their per-iteration
+reference inflates the wire ~2x — measured).
+
+After the run: check dwire e2e ≡ eplb_l01 e2e per cell (transport
+identity — if it drifts, something is wrong with the fold, stop and
+compare `dwire_wire_ms` vs eplb `comm_ms`); then judge §4's prediction
+on total_ms. Update this handoff §4 with the verdict and flip the
+memory entry `dwire-transport-ablation` to COMPLETE.

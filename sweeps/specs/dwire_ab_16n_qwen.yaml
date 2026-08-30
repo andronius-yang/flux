@@ -7,7 +7,9 @@ shape: qwen3
 variants: [ours_l01_s1_pv2_r2, ours_l01_s1_pv2_r2_dwire, eplb_l01]
 families:
   - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
-budgets_mib: [1, 2, 4]
+# full ladder (user 2026-08-30): budget-major cell order => low budgets
+# complete first if the -t 30 backfill window cuts the tail.
+budgets_mib: [1, 2, 4, 16, 64]
 modes: [isolated]
 iters: 10
 warmup_iters: 5
