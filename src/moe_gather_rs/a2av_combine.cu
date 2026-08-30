@@ -82,6 +82,38 @@ template <typename T, bool kHasVecScale>
 __global__ void
 __launch_bounds__(1024, 1) a2av_combine_pack_kernel(A2AVCombinePackArguments args) {
   using Barrier = cutlass::Barrier;
+  // v2 M2b piece relay (fused pack: the GEMM wrote the panel; this kernel
+  // is a pure flag pipeline): per piece, wait the piece's chunk flags, then
+  // flip per (node, piece) flags in production order; the own-node LEGACY
+  // group flag flips at the last piece so the intra ladder is untouched.
+  if (args.n_pieces > 0) {
+    for (int p = 0; p < args.n_pieces; p++) {
+      for (int c = args.piece_first_chunk[p]; c < args.piece_first_chunk[p + 1]; c++) {
+        Barrier::wait_eq(args.barrier, threadIdx.x, c, 1);
+      }
+      __threadfence_system();
+      __syncthreads();
+      if (threadIdx.x == 0) {
+        for (int gi = 0; gi < args.nnodes; gi++) {
+          const int g = args.node_order[gi];
+          const int done =
+              atomicAdd(args.piece_group_counters + g * 8 + p, 1) + 1;
+          if (done == gridDim.x) {
+            atomic_store_release_sys(args.piece_group_flags + g * 8 + p, 1);
+          }
+          if (p == args.n_pieces - 1) {
+            const int done2 =
+                atomicAdd(args.group_counters + g * args.n_split + 0, 1) + 1;
+            if (done2 == gridDim.x) {
+              atomic_store_release_sys(args.group_flags + g * args.n_split + 0, 1);
+            }
+          }
+        }
+      }
+      __syncthreads();
+    }
+    return;
+  }
   // v2 M2a: no-split chunked GEMM — data completeness = ALL chunk flags
   // (chunk completion order is not guaranteed, so wait each one). The
   // per-(tn, piece) gating of M2b replaces this entry wait.
@@ -278,58 +310,78 @@ __launch_bounds__(512, 1) a2av_combine_prereduce_kernel(A2AVCombinePreReduceArgu
       // panel/segment layout stays tn-ascending, only the visit order moves
       const int tn = args.node_order[gi];
       const int seg = tn < args.node_idx ? tn : tn - 1;
-      if (threadIdx.x == 0) {
-        for (int ls = 0; ls < L; ls++) {
-          uint64_t const *sig =
-              args.conv_signals + ((int64_t)ls * NN + tn) * args.n_split + sid;
-          uint64_t spins = 0;
-          while (load_acquire_sys_u64(sig) < args.run_id) {
-            __nanosleep(200);
-            if (args.spin_limit != 0 && ++spins >= args.spin_limit) {
-              printf(
-                  "[a2av-combine] prereduce conv-signal SPIN LIMIT: node %d "
-                  "tn %d ls %d sid %d run_id %llu\n",
-                  args.node_idx, tn, ls, sid,
-                  (unsigned long long)args.run_id);
-              __trap();
+      // v2 M2 pieces: per-(tn, piece) consumption; P == 1 with the legacy
+      // signals reproduces the old whole-segment flow
+      const int P = args.n_pieces > 0 ? args.n_pieces : 1;
+      for (int p = 0; p < P; p++) {
+        if (threadIdx.x == 0) {
+          for (int ls = 0; ls < L; ls++) {
+            uint64_t const *sig =
+                args.n_pieces > 0
+                    ? args.piece_conv_sigs + ((int64_t)ls * NN + tn) * 8 + p
+                    : args.conv_signals + ((int64_t)ls * NN + tn) * args.n_split + sid;
+            uint64_t spins = 0;
+            while (load_acquire_sys_u64(sig) < args.run_id) {
+              __nanosleep(200);
+              if (args.spin_limit != 0 && ++spins >= args.spin_limit) {
+                printf(
+                    "[a2av-combine] prereduce conv-signal SPIN LIMIT: node %d "
+                    "tn %d ls %d sid %d piece %d run_id %llu\n",
+                    args.node_idx, tn, ls, sid, p,
+                    (unsigned long long)args.run_id);
+                __trap();
+              }
             }
           }
         }
-      }
-      __syncthreads();
-      const int64_t w_lo = args.wire_seg_start[seg];
-      const int64_t total = (args.wire_seg_start[seg + 1] - w_lo) * packs_per_row;
-      for (int64_t idx = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; idx < total;
-           idx += (int64_t)gridDim.x * blockDim.x) {
-        const int64_t w = w_lo + idx / packs_per_row;
-        const int64_t col = (idx % packs_per_row) * kElemsPerPack;
-        float acc[kElemsPerPack];
-        CUTLASS_PRAGMA_UNROLL
-        for (int i = 0; i < kElemsPerPack; i++) {
-          acc[i] = 0.0f;
+        __syncthreads();
+        int64_t w_lo = args.wire_seg_start[seg];
+        int64_t w_hi = args.wire_seg_start[seg + 1];
+        if (args.n_pieces > 0) {
+          w_hi = w_lo + args.piece_start[seg * 9 + p + 1];
+          w_lo = w_lo + args.piece_start[seg * 9 + p];
         }
-        for (int32_t k = args.wire_ptr[w]; k < args.wire_ptr[w + 1]; k++) {
-          PackU<T> pk;
-          pk.data = loadPack(conv + (int64_t)args.wire_copy[k] * n_per + col);
+        const int64_t total = (w_hi - w_lo) * packs_per_row;
+        for (int64_t idx = blockIdx.x * (int64_t)blockDim.x + threadIdx.x; idx < total;
+             idx += (int64_t)gridDim.x * blockDim.x) {
+          const int64_t w = w_lo + idx / packs_per_row;
+          const int64_t col = (idx % packs_per_row) * kElemsPerPack;
+          float acc[kElemsPerPack];
           CUTLASS_PRAGMA_UNROLL
           for (int i = 0; i < kElemsPerPack; i++) {
-            acc[i] += elem_to_float<T>(pk.elems[i]);
+            acc[i] = 0.0f;
+          }
+          for (int32_t k = args.wire_ptr[w]; k < args.wire_ptr[w + 1]; k++) {
+            PackU<T> pk;
+            pk.data = loadPack(conv + (int64_t)args.wire_copy[k] * n_per + col);
+            CUTLASS_PRAGMA_UNROLL
+            for (int i = 0; i < kElemsPerPack; i++) {
+              acc[i] += elem_to_float<T>(pk.elems[i]);
+            }
+          }
+          PackU<T> out;
+          CUTLASS_PRAGMA_UNROLL
+          for (int i = 0; i < kElemsPerPack; i++) {
+            out.elems[i] = float_to_elem<T>(acc[i]);
+          }
+          storePack(wire + w * n_per + col, out.data);
+        }
+        __threadfence_system();
+        __syncthreads();
+        if (threadIdx.x == 0) {
+          if (args.n_pieces > 0) {
+            int done = atomicAdd(args.piece_wire_counters + tn * 8 + p, 1) + 1;
+            if (done == gridDim.x) {
+              atomic_store_release_sys(args.piece_wire_flags + tn * 8 + p, 1);
+            }
+          } else {
+            int done = atomicAdd(args.wire_counters + tn * args.n_split + sid, 1) + 1;
+            if (done == gridDim.x) {
+              atomic_store_release_sys(args.wire_flags + tn * args.n_split + sid, 1);
+            }
           }
         }
-        PackU<T> out;
-        CUTLASS_PRAGMA_UNROLL
-        for (int i = 0; i < kElemsPerPack; i++) {
-          out.elems[i] = float_to_elem<T>(acc[i]);
-        }
-        storePack(wire + w * n_per + col, out.data);
-      }
-      __threadfence_system();
-      __syncthreads();
-      if (threadIdx.x == 0) {
-        int done = atomicAdd(args.wire_counters + tn * args.n_split + sid, 1) + 1;
-        if (done == gridDim.x) {
-          atomic_store_release_sys(args.wire_flags + tn * args.n_split + sid, 1);
-        }
+        __syncthreads();
       }
     }
   }

@@ -52,6 +52,9 @@ class TopkReduceScatterOp {
       std::vector<int> const &node_order,
       int n_waves,
       int n_chunk_flags = 0);
+  // v2 M2 pieces: arm the per-iteration piece wire schedule (device
+  // [(NN-1)*(P+1)] per-seg relative wire-row bases; 0 disarms)
+  void set_piece_table(torch::Tensor piece_start, int n_pieces);
   // gen-8c epilogue-fused pack: the send panel the GEMM scatters into
   void *send_panel_ptr();
   int64_t send_panel_rows();

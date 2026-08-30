@@ -266,6 +266,14 @@ struct A2AVCombinePackArguments {
   // (the no-split build fires barrier[0..n) per chunk; wave_of_node stays 0).
   // 0 = legacy wave gating.
   int n_chunk_flags;
+  // v2 M2 piece relay (requires relay_only + msplit): wait each piece's
+  // chunk-flag range, then flip per (node, piece) flags (depth-8 slots);
+  // own-node LEGACY group flag flips at the last piece for the intra ladder.
+  // 0 = off.
+  int n_pieces;
+  int piece_first_chunk[9];   // [p] = first chunk flag of piece p; [P] = end
+  int *piece_group_flags;     // [nnodes * 8]
+  int *piece_group_counters;  // [nnodes * 8]
 };
 
 // gen-8c: invert an int32 permutation-ish map (out[idx[p]] = p) — builds the
@@ -403,6 +411,14 @@ struct A2AVCombinePreReduceArguments {
   int *wire_counters;            // [nnodes * n_split] per-block completion counters
   int node_order[kA2AVMaxNodes];  // schedule step -> remote target node (ring default)
   int64_t wire_seg_start[kA2AVMaxNodes + 1];  // wire-row start per segment (tn asc skip own)
+  // v2 M2 pieces (0 = off): per-(tn, piece) consumption — wait the L conv
+  // piece signals, process the piece's contiguous wire-row range (per-seg
+  // RELATIVE starts, stride 9), flip the per-piece wire flag.
+  int n_pieces = 0;
+  int32_t piece_start[kA2AVMaxNodes * 9] = {};  // [seg * 9 + p], rel rows
+  uint64_t const *piece_conv_sigs = nullptr;    // [(L * NN) * 8]
+  int *piece_wire_flags = nullptr;              // [NN * 8]
+  int *piece_wire_counters = nullptr;           // [NN * 8]
   int64_t conv_rows;             // conv panel row capacity per split
   int64_t wire_rows;             // wire panel row capacity per split
   int n_per;

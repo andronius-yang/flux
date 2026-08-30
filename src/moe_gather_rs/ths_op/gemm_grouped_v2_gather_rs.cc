@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <algorithm>
 #include "moe_gather_rs/ths_op/gemm_grouped_v2_gather_rs.h"
 
 #include <ATen/core/List.h>
@@ -1107,6 +1108,14 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   int msplit_chunk_flags_ = 0;
   int msplit_wave_of_node_[kA2AVMaxNodes] = {};
   int msplit_node_order_[kA2AVMaxNodes] = {};
+  // v2 M2 pieces: per-iteration piece state. piece_n_ == 0 = off. The
+  // device piece-start table ([NN-1, P+1] per-seg relative wire-row
+  // bases) is D2H'd into the pinned mirror at set time; run() syncs
+  // piece_tbl_event_ before enqueueing the piece wire ladder.
+  int piece_n_ = 0;
+  torch::Tensor piece_start_dev_;   // keep-alive for the async D2H
+  torch::Tensor piece_start_host_;  // pinned [kA2AVMaxNodes * 9]
+  cudaEvent_t piece_tbl_event_ = nullptr;
 
   // a2av_hier combine state. Layouts mirror layer0's a2av dispatch exactly:
   // the send panel is (home_rank, expert, copy)-ordered (== layer0's recv
@@ -1150,6 +1159,13 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   torch::Tensor a2av_conv_panel_;       // compress: [n_split, conv_rows, n_per] symmetric
   torch::Tensor a2av_wire_panel_;       // compress: [n_split, wire_rows, n_per] symmetric
   torch::Tensor a2av_recv_signals_;     // uint64 [world_size * n_split], epoch, never reset
+  // v2 M2 pieces: per-piece slots, depth 8 (epoch-SET, never reset)
+  torch::Tensor a2av_piece_conv_sig_;   // uint64 [L * NN * 8]
+  torch::Tensor a2av_piece_recv_sig_;   // uint64 [W * 8]
+  cutlass::DeviceAllocation<int> piece_wire_flags_;     // [NN * 8]
+  cutlass::DeviceAllocation<int> piece_wire_counters_;  // [NN * 8]
+  cutlass::DeviceAllocation<int> piece_group_flags_;    // [NN * 8]
+  cutlass::DeviceAllocation<int> piece_group_counters_; // [NN * 8]
   torch::Tensor a2av_arrival_signals_;  // uint64 [nnodes * n_split], epoch, never reset
   torch::Tensor a2av_conv_signals_;     // compress: uint64 [L * NN * n_split], epoch, never reset
   // compress: pre-reduce kernel -> host wire-ready flags, memset per run under
@@ -1229,6 +1245,36 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
             {(int64_t)this->local_world_size * this->nnodes * this->n_split},
             at::ScalarType::Long,
             true);
+        // v2 M2 pieces: dedicated per-piece slots (fixed depth 8) so the
+        // legacy regions/indexing stay untouched. Epoch semantics: only
+        // ever SET to run_id, zeroed once here (tiny; always allocated
+        // under compress so the collective allocation set is uniform).
+        this->a2av_piece_conv_sig_ = nvshmem_create_tensor(
+            {(int64_t)this->local_world_size * this->nnodes * 8},
+            at::ScalarType::Long,
+            true);
+        this->a2av_piece_recv_sig_ = nvshmem_create_tensor(
+            {(int64_t)this->world_size * 8}, at::ScalarType::Long, true);
+        CUDA_CHECK(cudaMemset(
+            this->a2av_piece_conv_sig_.data_ptr(),
+            0,
+            sizeof(uint64_t) * this->local_world_size * this->nnodes * 8));
+        CUDA_CHECK(cudaMemset(
+            this->a2av_piece_recv_sig_.data_ptr(),
+            0,
+            sizeof(uint64_t) * this->world_size * 8));
+        this->piece_wire_flags_.reset(this->nnodes * 8);
+        this->piece_wire_counters_.reset(this->nnodes * 8);
+        this->piece_group_flags_.reset(this->nnodes * 8);
+        this->piece_group_counters_.reset(this->nnodes * 8);
+        CUDA_CHECK(cudaMemset(
+            this->piece_wire_flags_.get(), 0, sizeof(int) * this->nnodes * 8));
+        CUDA_CHECK(cudaMemset(
+            this->piece_wire_counters_.get(), 0, sizeof(int) * this->nnodes * 8));
+        CUDA_CHECK(cudaMemset(
+            this->piece_group_flags_.get(), 0, sizeof(int) * this->nnodes * 8));
+        CUDA_CHECK(cudaMemset(
+            this->piece_group_counters_.get(), 0, sizeof(int) * this->nnodes * 8));
         this->wire_flags_.reset(this->nnodes * this->n_split);
         this->wire_counters_.reset(this->nnodes * this->n_split);
         CUDA_CHECK(
@@ -1438,6 +1484,41 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       this->msplit_wave_of_node_[i] = wave_of_node[i];
       this->msplit_node_order_[i] = node_order[i];
     }
+  }
+
+  // v2 M2 pieces: arm the per-iteration piece wire schedule. piece_start is
+  // the device [(NN-1) * (n_pieces + 1)] per-seg relative wire-row bases
+  // from the plan; the async D2H into the pinned mirror rides the CURRENT
+  // stream (the derive stream) and run() syncs the event before the wire
+  // ladder reads it. n_pieces == 0 disarms.
+  void
+  set_piece_table(torch::Tensor piece_start, int n_pieces) {
+    if (n_pieces <= 0) {
+      this->piece_n_ = 0;
+      return;
+    }
+    FLUX_CHECK(this->a2av_compress_) << "pieces require the compress combine";
+    FLUX_CHECK_EQ(this->n_split, 1) << "pieces require n_split == 1";
+    FLUX_CHECK_LE(n_pieces, 8);
+    const int64_t want = (int64_t)(this->nnodes - 1) * (n_pieces + 1);
+    FLUX_CHECK_EQ(piece_start.numel(), want);
+    if (!this->piece_start_host_.defined()) {
+      this->piece_start_host_ = torch::empty(
+          {(int64_t)kA2AVMaxNodes * 9},
+          torch::TensorOptions().dtype(torch::kInt).pinned_memory(true));
+      CUDA_CHECK(cudaEventCreateWithFlags(
+          &this->piece_tbl_event_, cudaEventDisableTiming));
+    }
+    this->piece_start_dev_ = piece_start;  // keep alive
+    CUDA_CHECK(cudaMemcpyAsync(
+        this->piece_start_host_.data_ptr<int32_t>(),
+        piece_start.data_ptr<int32_t>(),
+        want * sizeof(int32_t),
+        cudaMemcpyDeviceToHost,
+        c10::cuda::getCurrentCUDAStream()));
+    CUDA_CHECK(cudaEventRecord(
+        this->piece_tbl_event_, c10::cuda::getCurrentCUDAStream()));
+    this->piece_n_ = n_pieces;
   }
 
   TopkReduceScatterOpImpl(
@@ -1905,6 +1986,15 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       // stale 1 from the previous run can never release a wire put early
       CUDA_CHECK(cudaMemsetAsync(this->wire_flags_.get(), 0, flag_bytes, stream_raw));
       CUDA_CHECK(cudaMemsetAsync(this->wire_counters_.get(), 0, flag_bytes, stream_raw));
+      const size_t piece_bytes = sizeof(int) * NN * 8;
+      CUDA_CHECK(
+          cudaMemsetAsync(this->piece_wire_flags_.get(), 0, piece_bytes, stream_raw));
+      CUDA_CHECK(cudaMemsetAsync(
+          this->piece_wire_counters_.get(), 0, piece_bytes, stream_raw));
+      CUDA_CHECK(cudaMemsetAsync(
+          this->piece_group_flags_.get(), 0, piece_bytes, stream_raw));
+      CUDA_CHECK(cudaMemsetAsync(
+          this->piece_group_counters_.get(), 0, piece_bytes, stream_raw));
     }
     CUDA_CHECK(cudaEventRecord(this->staging_reset_event, stream_raw));
     cudaStream_t intra_stream = this->a2av_intra_stream_.value();
@@ -4418,6 +4508,11 @@ TopkReduceScatterOp::set_msplit_waves(
     int n_chunk_flags) {
   FLUX_CHECK(impl_ != nullptr) << "TopkReduceScatterOp is not initialized";
   impl_->set_msplit_waves(wave_of_node, node_order, n_waves, n_chunk_flags);
+}
+void
+TopkReduceScatterOp::set_piece_table(torch::Tensor piece_start, int n_pieces) {
+  FLUX_CHECK(impl_ != nullptr) << "TopkReduceScatterOp is not initialized";
+  impl_->set_piece_table(std::move(piece_start), n_pieces);
 }
 void *
 TopkReduceScatterOp::send_panel_ptr() {
