@@ -1,0 +1,19 @@
+# v2 chunked combine M1 A/B (worktree v2-combine, 2026-08-29): l1 + total
+# vs baselines across budgets, one binary. Arms via CLI:
+# canon (_wa dial ON) / wa0 (waves-always legacy order) / chunk (chunked
+# order, waves always) / msp0 (collapse floor). Isolated only (rule 3).
+platform: perlmutter
+nodes: 8
+shape: k2
+variants: [ours_l01_s1_pv2_r2]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 16, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 3600
+idle_timeout_s: 900
+retries: 1
+notes: "v2chunk M1 A/B 8n k2 b1-64 isolated"

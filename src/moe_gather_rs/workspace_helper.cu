@@ -90,7 +90,8 @@ make_workspace_kernel(
       // layer0 stable scatter order; waves never cross the ring wrap).
       sid = 0;  // no column offset
       gid = 0;  // a2av_hier enforces a single weight group
-      eid = i % args.ep_nexperts;
+      // chunk-ordered lists (FLUX_A2AV_RS_CHUNK_E) carry an explicit map
+      eid = args.prob_eid != nullptr ? args.prob_eid[i] : i % args.ep_nexperts;
       Mi = args.wave_M[i];
       M_acc = (int64_t)(ep_splits_acc[eid] - ep_splits[eid]) + args.wave_off[i];
     } else {

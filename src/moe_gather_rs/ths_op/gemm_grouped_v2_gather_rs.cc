@@ -267,6 +267,27 @@ get_a2av_rs_wave_adapt() {
   static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_WAVE_ADAPT", 48);
   return v;
 }
+// v2 chunked combine (2026-08-29, worktree v2-combine): emit the SAME
+// (wave, expert) msplit sub-problems in expert-chunk-outer / wave-inner
+// order, so one chunk's w2 panels stay in L2 across all its waves and the
+// GEMM streams every panel from HBM ~once (the msplit reread tax gone)
+// while the wave cascade/pack/wire machinery is untouched (wave flags fire
+// near GEMM end -- M1 infrastructure, comm timing ~ collapse until the
+// piece release lands). 0 = OFF (bit-identical legacy order); -1 = auto
+// width floor(L2_eff / panel_bytes) clamped to [1, E]; N > 0 = explicit.
+int
+get_a2av_rs_chunk_e() {
+  (void)bytedance::flux::get_int_from_env("FLUX_A2AV_RS_CHUNK_TAG", 0);
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_CHUNK_E", 0);
+  return v;
+}
+// Effective L2 budget (MiB) for the auto chunk width: A100 has 40; leave
+// headroom for the activation stream + pack/prered/reduce residents.
+int
+get_a2av_rs_chunk_l2_mib() {
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_CHUNK_L2_MIB", 30);
+  return v;
+}
 // OWN_WAVE=first (gen-9 receiver study, 2026-08-24): compute the OWN-node
 // wave FIRST instead of last. Costs ~1/NN of the GEMM in wire-start delay;
 // buys the receiver early own-node contributions, so tokens complete at
@@ -3203,7 +3224,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       FLUX_CHECK_LE(this->nnodes, 128)
           << "msplit wave flags must fit the 128-padded barrier flag region";
       this->msplit_wave_nodes_ = get_a2av_rs_wave_nodes();
-      const int64_t tbl = (int64_t)2 * this->nnodes * this->ep_nexperts + this->nnodes;
+      // wave_M + wave_off + prob_eid + prob_group (v2 chunked) + ne_wave
+      const int64_t tbl = (int64_t)4 * this->nnodes * this->ep_nexperts + this->nnodes;
       this->msplit_host_ = torch::empty(
           {tbl},
           at::TensorOptions(at::kCPU).dtype(at::ScalarType::Int).pinned_memory(true));
@@ -3448,9 +3470,12 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     // bracket, ~NN*E adds), staged through the pinned arena with ONE async H2D
     // on the forward stream (NR-09: a pageable H2D here would hide a sync).
     int msplit_n_waves = 0;
+    int msplit_chunk_E = 0;  // v2 chunked combine: 0 = legacy problem order
     const int32_t *msplit_wave_M_dev = nullptr;
     const int32_t *msplit_wave_off_dev = nullptr;
     const int32_t *msplit_ne_wave_dev = nullptr;
+    const int32_t *msplit_eid_dev = nullptr;
+    const int32_t *msplit_grp_dev = nullptr;
     // Byte-adaptive wave collapse (see get_a2av_rs_wave_adapt): when the
     // (n_waves-1) weight re-read passes outweigh the wire bytes the waves
     // could overlap, run this iteration on the legacy single-gate problem
@@ -3559,10 +3584,45 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       }
       // guard the pinned arena against a still-in-flight previous H2D
       CUDA_CHECK(cudaEventSynchronize(this->msplit_h2d_event_));
+      // v2 chunked combine: problem-order permutation (chunk-outer, wave-
+      // inner). idx_of[(w, e)] = position in the emitted problem list;
+      // chunk_E == 0 keeps the legacy wave-outer linear order bit-exact
+      // (maps not shipped; ws kernel + cascade take their legacy paths).
+      {
+        int ce = get_a2av_rs_chunk_e();
+        if (ce < 0) {
+          const int64_t panel_bytes =
+              (int64_t)N * K * c10::elementSize(input_torch_type);
+          const int64_t l2 = (int64_t)get_a2av_rs_chunk_l2_mib() << 20;
+          ce = (int)std::max<int64_t>(
+              1, l2 / std::max<int64_t>(panel_bytes, 1));
+        }
+        msplit_chunk_E = ce > 0 ? std::min(ce, E) : 0;
+      }
+      const int n_probs = msplit_n_waves * E;
+      std::vector<int32_t> idx_of((size_t)n_probs);
+      if (msplit_chunk_E > 0) {
+        int ip = 0;
+        for (int c0 = 0; c0 < E; c0 += msplit_chunk_E) {
+          const int c1 = std::min(c0 + msplit_chunk_E, E);
+          for (int w = 0; w < msplit_n_waves; w++) {
+            for (int e = c0; e < c1; e++) {
+              idx_of[(size_t)w * E + e] = ip++;
+            }
+          }
+        }
+        FLUX_CHECK_EQ(ip, n_probs);
+      } else {
+        for (int ip = 0; ip < n_probs; ip++) {
+          idx_of[ip] = ip;
+        }
+      }
       int32_t *hp = this->msplit_host_.data_ptr<int32_t>();
       int32_t *h_wave_M = hp;
-      int32_t *h_wave_off = hp + (int64_t)msplit_n_waves * E;
-      int32_t *h_ne = hp + (int64_t)2 * msplit_n_waves * E;
+      int32_t *h_wave_off = hp + (int64_t)n_probs;
+      int32_t *h_eid = hp + (int64_t)2 * n_probs;
+      int32_t *h_grp = hp + (int64_t)3 * n_probs;
+      int32_t *h_ne = hp + (int64_t)4 * n_probs;
       for (int w = 0; w < msplit_n_waves; w++) {
         h_ne[w] = 0;
       }
@@ -3583,14 +3643,17 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
           const int64_t off = node_base[waves[w].first];
           const int64_t rows = node_base[waves[w].second] - off;
           FLUX_CHECK_LE(rows, (int64_t)2147483647);
-          h_wave_M[(int64_t)w * E + e] = (int32_t)rows;
-          h_wave_off[(int64_t)w * E + e] = (int32_t)off;
+          const int32_t ip = idx_of[(size_t)w * E + e];
+          h_wave_M[ip] = (int32_t)rows;
+          h_wave_off[ip] = (int32_t)off;
+          h_eid[ip] = (int32_t)e;
+          h_grp[ip] = (int32_t)w;
           if (rows > 0) {
             h_ne[w] += 1;
           }
         }
       }
-      const int64_t used = (int64_t)2 * msplit_n_waves * E + msplit_n_waves;
+      const int64_t used = (int64_t)4 * n_probs + msplit_n_waves;
       CUDA_CHECK(cudaMemcpyAsync(
           this->msplit_dev_.data_ptr(),
           hp,
@@ -3600,8 +3663,10 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       CUDA_CHECK(cudaEventRecord(this->msplit_h2d_event_, stream));
       const int32_t *dp = this->msplit_dev_.data_ptr<int32_t>();
       msplit_wave_M_dev = dp;
-      msplit_wave_off_dev = dp + (int64_t)msplit_n_waves * E;
-      msplit_ne_wave_dev = dp + (int64_t)2 * msplit_n_waves * E;
+      msplit_wave_off_dev = dp + (int64_t)n_probs;
+      msplit_eid_dev = dp + (int64_t)2 * n_probs;
+      msplit_grp_dev = dp + (int64_t)3 * n_probs;
+      msplit_ne_wave_dev = dp + (int64_t)4 * n_probs;
     }
 
     MoeGatherRSWorkspaceArgs ws_args{
@@ -3628,6 +3693,7 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       ws_args.wave_M = msplit_wave_M_dev;
       ws_args.wave_off = msplit_wave_off_dev;
       ws_args.non_empty_per_wave = msplit_ne_wave_dev;
+      ws_args.prob_eid = msplit_chunk_E > 0 ? msplit_eid_dev : nullptr;
       ws_args.barrier = this->barrier.data_ptr<int>();
     }
     ws_args.iota = this->msplit_iota_.data_ptr<int32_t>();
@@ -3733,6 +3799,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
                                             (this->a2av_compress ? get_a2av_prered_blocks() : 0)
                                       : get_rs_threadblock_count()),
         .non_empty_per_group = msplit_run ? msplit_ne_wave_dev : nullptr,
+        .prob_group_map =
+            (msplit_run && msplit_chunk_E > 0) ? msplit_grp_dev : nullptr,
         .scatter_D_ptr = scatter_D_ptr_ws};
 
     int64_t workspace_size = gemm_op->get_workspace_size(args);

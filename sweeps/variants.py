@@ -2875,6 +2875,27 @@ VARIANTS["ours_l01_s1_pv2_r2_wn3"] = dict(
     env=dict(VARIANTS["ours_l01_s1_pv2_r2"]["env"],
              FLUX_A2AV_RS_WAVE_NODES="3"),
 )
+# ---- v2 chunked combine (worktree v2-combine, 2026-08-29): SAME msplit
+# sub-problems emitted expert-chunk-outer / wave-inner (chunk width auto
+# from L2/panel), killing the per-wave w2 re-read while the wave cascade
+# machinery is untouched. M1 = GEMM-order infra only (wave flags fire near
+# GEMM end => comm timing ~ collapse); the piece release is M2. Chunk arm
+# forces WAVE_ADAPT=0 so the chunked-wave GEMM actually runs at every
+# budget (the adaptive collapse would hide it exactly where we probe it).
+VARIANTS["ours_l01_s1_pv2_r2_chunk"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2"],
+    env=dict(VARIANTS["ours_l01_s1_pv2_r2"]["env"],
+             FLUX_A2AV_RS_CHUNK_E="-1",
+             FLUX_A2AV_RS_WAVE_ADAPT="0"),
+    requires=list(VARIANTS["ours_l01_s1_pv2_r2"].get("requires", []))
+             + ["FLUX_A2AV_RS_CHUNK_TAG"],
+)
+# waves-always twin on the same binary (chunk off): the M1 A/B pair
+VARIANTS["ours_l01_s1_pv2_r2_wa0"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2"],
+    env=dict(VARIANTS["ours_l01_s1_pv2_r2"]["env"],
+             FLUX_A2AV_RS_WAVE_ADAPT="0"),
+)
 VARIANTS["ours_l01_s1_pv2_r2_msp0"] = dict(
     VARIANTS["ours_l01_s1_pv2_r2"],
     env=dict(VARIANTS["ours_l01_s1_pv2_r2"]["env"],

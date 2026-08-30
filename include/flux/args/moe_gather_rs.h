@@ -153,6 +153,10 @@ struct GemmGroupedV2GatherRSArguments {
   // elsewhere, so the uniform division is wrong there). nullptr = legacy
   // uniform per-split division (bit-exact column-split behavior).
   int const *non_empty_per_group = nullptr;
+  // v2 chunked combine (FLUX_A2AV_RS_CHUNK_E): device [problem_count]
+  // problem -> cascade group (wave) map for chunk-ordered problem lists;
+  // nullptr = legacy uniform division.
+  int const *prob_group_map = nullptr;
   // gen-8c epilogue-fused pack: per-problem D scatter-index pointers (built by
   // make_workspace; identity iota when fused pack is off)
   int **scatter_D_ptr = nullptr;

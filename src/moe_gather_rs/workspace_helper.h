@@ -44,6 +44,9 @@ struct MoeGatherRSWorkspaceArgs {
   const int32_t *wave_M = nullptr;              // [n_waves * ep_nexperts] segment rows
   const int32_t *wave_off = nullptr;            // [n_waves * ep_nexperts] rows into the expert block
   const int32_t *non_empty_per_wave = nullptr;  // [n_waves]
+  // v2 chunked combine (FLUX_A2AV_RS_CHUNK_E): explicit problem -> expert map
+  // for chunk-ordered problem lists; nullptr = legacy i % ep_nexperts.
+  const int32_t *prob_eid = nullptr;  // [n_waves * ep_nexperts]
   int *barrier = nullptr;  // preset zero-target wave flags to 1 (no producer exists)
   // gen-8c epilogue-fused pack: the ScatterD indices per problem. Legacy:
   // scatter_D_ptr[i] = iota (relative identity, ptr_D keeps its M_acc base).

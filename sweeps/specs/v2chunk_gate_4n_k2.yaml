@@ -1,0 +1,18 @@
+# v2 chunked combine M1 gate (worktree v2-combine, 2026-08-29): correctness
+# on the chunk-ordered GEMM (CHUNK_E auto, WAVE_ADAPT=0) on the new binary,
+# per-iteration output checks + random payload via the runner's gate path.
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [ours_l01_s1_pv2_r2_chunk]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8]
+modes: [isolated]
+iters: 4
+warmup_iters: 2
+skip_correctness: false
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 0
+notes: "v2chunk M1 gate 4n k2 b8 chunk arm, correctness ON"
