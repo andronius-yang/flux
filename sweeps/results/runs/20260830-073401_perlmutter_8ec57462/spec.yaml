@@ -1,0 +1,30 @@
+G: 384
+H: 7168
+budgets_mib:
+  - 1
+  - 8
+chunk_bytes: 14336
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+ffn_hidden: 2048
+idle_timeout_s: 600
+iters: 4
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 7
+nodes: 4
+notes: "dwire gate 4n k2 b1+b8, correctness ON"
+platform: perlmutter
+profile_iters: 3
+retries: 0
+shape: k2
+skip_correctness: false
+sm_margin: 8
+timeout_s: 2400
+topk: 8
+variants:
+  - ours_l01_s1_pv2_r2_dwire_gate
+warmup_iters: 2
