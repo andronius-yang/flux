@@ -1,0 +1,91 @@
+# Handoff 29 — direct-wire transport ablation: why EPLB owns 16n b1 (2026-08-30)
+
+**One-line:** the 16n low-budget loss of every fused arm is the
+hier_compress/slipstream stage chain's hop-count-scaling fixed cost, not
+planning and not placement; a new ablation arm drives OUR plan lane
+(pv2 + LocCap + r2) over the exact staged All2AllSingle wire the eplb_l01
+arm uses, and at 4n it reproduces EPLB's transport bit-for-bit while
+beating EPLB on plan cost alone.
+
+## 1. Diagnosis (question: why does EPLB crush us at 16n b1?)
+
+Measured ledger, K2 b1 isolated (handoff-18 capsules + 8/29 pv2 regen):
+
+| arm | e2e | l0 | l1 | plan+comm | total |
+|---|---|---|---|---|---|
+| EPLB staged a2av (16n) | 5.53 | 3.33 (wire 2.86) | 2.19 (comb 1.70) | 4.21 | 9.74 |
+| Torch+GEMM (16n) | 6.79 | 2.18 | 4.37 | 0.75 | 7.49 |
+| ours pv2_r2 (16n, 8/29) | 12.01 | 7.07 | 4.93 | 2.08 | 14.11 |
+
+The deficit is entirely the transport chain. The user's "extra jumps"
+hypothesis holds with one refinement: at b1 the extra *copies* are
+microseconds — what costs milliseconds is the extra stages as
+**serialization** (gateway relay put rounds at ~340–450 µs/proxy-put,
+per-stage signal/barrier chains, the combine wave/receiver structure),
+which scales with NN:
+
+| component | 4n → 8n → 16n (K2 b1) |
+|---|---|
+| fused l0 (ours) | 1.65 → 2.67 → 7.07 |
+| fused l1 (ours) | 2.79 → 3.11 → 4.93 |
+| staged direct wire (eplb comm) | 1.52 → 2.05 → 2.86 |
+| staged comb (eplb) | 1.07 → 1.52 → 1.70 |
+
+Direct wire = one staging memcpy + W−1 *concurrent* nbi_block puts + two
+team barriers → NN-flat-ish. Compression/dedup buys bytes that are worth
+nothing at b1 while paying that latency structure. (Handoff 16 already
+flagged the boundary: "b1(–b2 at 16n) belongs to torch".)
+
+## 2. The ablation arm
+
+`--wire direct` on `test_moe_ours_traffic.py` (s1-only):
+- plan lane UNCHANGED: pv2 placement, LocCap routed kernel, fused
+  phys+probs allgather, OursIterPlanner (graphs stay on).
+- wire = `flux/testing/ours_direct.py` (`OursDirectRunner`, driver
+  interface parity): vce → phys → dest-major stable sort →
+  `direct_layout_entries_fast` (the eplb fast-tail layout, one batched
+  pinned D2H, timed in the plan bracket) → pack → `flux.All2AllSingle`
+  NVSHMEM a2av (hidden + fp32 probs) → place → per-segment `GemmOnly`;
+  combine mirrored on the same op pair with swapped splits +
+  deterministic comb_dst home reduce. No signal gating (put+barrier
+  publication — invariant-5 clean); payload randomized per iteration.
+- arms: `ours_l01_s1_pv2_r2_dwire` (+`_gate`), conn pinned 8; heap via
+  the eplb row-sum bound (sweep.py ours-branch override).
+- diagnostic metrics: `dwire_{pack,wire,place,gemm0,gemm2,cpack,comb,acc}_ms`.
+- unit test: `test_ours_direct_plan.py` (CPU, adapter vs brute force).
+
+Gates 4/4 green (4n K2+Qwen b1+b8, per-iter output checks + correctness,
+capsules `20260830-073401_8ec57462` / `-073752_250b7c8b`). Gotcha: gate
+cells' per-iteration reference inflates wire ~2x — never quote gate
+timing (the first gate attempt also crash-taught: the setup audit and
+`emit_info` had fused-only attrs; both now branch on the wire mode).
+
+## 3. 4n A/B verdict (capsules `20260830-082548_d687da8e` K2 / `-083150_3a993069` qwen, one binary, committed)
+
+e2e (total) at 4n:
+
+| arm | K2 b1 | K2 b8 | qwen b1 | qwen b8 |
+|---|---|---|---|---|
+| ours fused | **3.31 (4.13)** | **8.22 (9.12)** | **2.24 (3.04)** | **5.80 (6.88)** |
+| ours dwire | 4.74 (6.18) | 18.48 (20.04) | 3.41 (4.85) | 17.08 (18.71) |
+| eplb_l01 | 4.82 (7.98) | 18.36 (21.59) | 3.38 (6.48) | 17.29 (20.46) |
+
+1. **Port faithful**: dwire e2e ≡ eplb_l01 at every budget/model; wire
+   and comb sub-phases match ±0.03 ms.
+2. **dwire beats EPLB by 1.6–1.8 ms total at every cell — purely plan**
+   (ours 1.1–1.3 + 0.2 vs EPLB 2.7–2.9 + 0.3). This margin is what our
+   placement/routing is worth on EPLB's own transport.
+3. **Fused wins 4n everywhere** (few hops → small stage-chain cost; the
+   un-overlapped wire+GEMM serialization costs dwire ~1.4 ms at b1 and
+   grows with bytes) — consistent with, and predicted by, the diagnosis.
+4. dwire l1 beats fused l1 at K2 b1 (2.09 vs 2.79): single w2 pass per
+   expert, no per-wave re-read (the handoff-26 floor sidestepped).
+
+## 4. 16n (the actual question) — specs ready, run pending
+
+`sweeps/specs/dwire_ab_16n_{k2,qwen}.yaml`: pv2_r2 vs dwire vs eplb_l01,
+b1/2/4, isolated, one capsule per model. Prediction registered before
+the run: dwire ≈ 7.5–8.5 total at K2 b1 (transport ~5.5 e2e + our plan
+~1.5) vs fused 14.1 and EPLB 9.7 — i.e. dwire takes the 16n low-budget
+crown and the crossover vs fused sits between 8n and 16n. Allocation was
+pending in gpu_regular (-N 16 -t 45, m5350_g) at write time.

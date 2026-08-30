@@ -2881,6 +2881,30 @@ for _base in ("ours_l01_s2", "ours_l01_s2_stale", "ours_l01_s2_gate",
         test_args=VARIANTS[_base]["test_args"]
                   + ["--place_solver", "pv2", "--redundant_per_rank", "2"],
     )
+# ---- direct-wire transport ablation (2026-08-30, 16n low-budget
+# diagnosis): SAME plan lane (pv2 placement + LocCap routing + r2
+# replicas — the canon pv2_r2 arm) but the wire is the eplb_l01 staged
+# All2AllSingle path (flux/testing/ours_direct.py): pack -> NVSHMEM
+# one-sided a2av (hidden + fp32 probs) -> place -> per-segment GemmOnly,
+# combine mirrored on the same op pair with swapped splits. The transport
+# class that owns 16n b1/b2 in the handoff-18 ledger, driven by OUR
+# placement/routing plan. No fused ops => the slipstream env knobs are
+# inert; conn pinned to 8 (the eplb wire's canonical pin — the 21-stream
+# conn=32 rationale is fused-only). DIAGNOSTIC/ablation arm — never a
+# headline cell without a user ruling.
+VARIANTS["ours_l01_s1_pv2_r2_dwire"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2"],
+    comm_pattern="ours_l01_dwire",
+    test_args=VARIANTS["ours_l01_s1_pv2_r2"]["test_args"]
+              + ["--wire", "direct"],
+    env=dict(VARIANTS["ours_l01_s1_pv2_r2"]["env"],
+             CUDA_DEVICE_MAX_CONNECTIONS="8"),
+)
+VARIANTS["ours_l01_s1_pv2_r2_dwire_gate"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2_dwire"],
+    test_args=VARIANTS["ours_l01_s1_pv2_r2_dwire"]["test_args"]
+              + ["--check_iters", "1"],
+)
 # ---- step-0 combine-floor ablations (2026-08-29 low-budget diagnosis):
 # the l1 msplit dest-node row-split re-reads EVERY expert's w2 panel from
 # HBM once per wave (make_workspace_kernel builds n_waves x E full-N

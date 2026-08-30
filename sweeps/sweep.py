@@ -1042,6 +1042,7 @@ def build_cell_env(spec, plat, cell, staging, matrix):
         # one heap, no All2AllSingle staging, no probs side-wire. Row-sum
         # basis x6 covers send + recv(union regions) + stage/relay + the
         # combine conv/wire panels at locality-heavy placement.
+        ta_ours = v.get("test_args") or []
         with open(matrix_path) as f:
             toks = f.read().split()
         w = int(toks[0])
@@ -1054,7 +1055,6 @@ def build_cell_env(spec, plat, cell, staging, matrix):
         # forced-slack cushions dominate; floor stays 6G, platform cap
         # applies (skipped_capacity via _A2AV_SYM_G_REQUIRED).
         need = 24 * max_row_bytes + (1 << 30)
-        ta_ours = v.get("test_args") or []
         if "s2" in ta_ours:
             # s2 sizes recv/panels at the PLACEMENT-INDEPENDENT provable
             # ceilings (top-nlp demand sum; adopted-placement safety,
@@ -1081,6 +1081,15 @@ def build_cell_env(spec, plat, cell, staging, matrix):
         if sym_max and sym_g > int(sym_max):
             sym_g = int(sym_max)
         env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_g}G"
+        if "--wire" in ta_ours and "direct" in ta_ours:
+            # direct-wire ablation (2026-08-30): no fused ops, no union/
+            # stage/relay regions — the heap holds only the All2AllSingle
+            # staging pair, so the eplb staged-arm row-sum bound applies
+            # verbatim (override the fused-composition prior above)
+            env.pop("_A2AV_SYM_G_REQUIRED", None)
+            env.pop("_A2AV_SYM_G_AT_CAP", None)
+            env["NVSHMEM_SYMMETRIC_SIZE"] = eplb_sym_size(
+                matrix_path, plat, spec)
     elif v.get("driver", "flux") == "moonep_l1":
         # virtual-space layer1 cells: the driver computes the EXACT
         # FLUX_A2AV_RS_MAX_* knobs from the plan (setdefault -- never

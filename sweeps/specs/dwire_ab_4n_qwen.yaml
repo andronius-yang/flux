@@ -1,0 +1,18 @@
+# direct-wire ablation A/B at 4n (2026-08-30): topology control for the
+# 16n diagnosis — the fused arm is predicted to WIN at 4n low-b (few
+# hops => small fixed cost), dwire/eplb to lose. One capsule, one binary.
+platform: perlmutter
+nodes: 4
+shape: qwen3
+variants: [ours_l01_s1_pv2_r2, ours_l01_s1_pv2_r2_dwire, eplb_l01]
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 8]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 1
+notes: "dwire A/B 4n qwen b1-8: pv2_r2 vs dwire vs eplb_l01"

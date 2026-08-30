@@ -224,6 +224,10 @@ def parse_args():
                         " the pair max load by at least this many rows"
                         " (movement-cost threshold). A huge value gives"
                         " the decide-but-never-swap comparator arm.")
+    p.add_argument("--wire", choices=["fused", "direct"], default="fused",
+                   help="l0/l1 transport: fused = the canonical Slipstream"
+                   " ops; direct = the eplb_l01 staged All2AllSingle wire"
+                   " (transport ablation, s1 only — same plan lane)")
     p.add_argument("--seed", type=int, default=1234)
     return p.parse_args()
 
@@ -702,6 +706,12 @@ def main():
               + (f", provable_recv {pll_bounds['recv_cap']}"
                  if args.scenario == "s2" else ""))
 
+    if args.wire == "direct":
+        # transport ablation (2026-08-30): no fused ops, no combine-meta
+        # derive — the plan-overlap machinery has nothing to overlap
+        assert args.scenario == "s1", "--wire direct is s1-only"
+        args.plan_overlap = 0
+
     # late plan-overlap byte gate (canon-regen 8/29 bisect: mode 2 is
     # SAFE and winning at <= b16-class budgets but SIGABRTs/stalls b32+
     # cells at 4n AND 8n — an unexplained interaction with heavy wire
@@ -718,11 +728,32 @@ def main():
             args.plan_overlap = 0
 
     # ---- runner + planner (+ s2 movement lane) ----
-    runner = OursRunner(
-        TP_GROUP, EP_GROUP, DIST_ENV.NNODES, L, cfg, args.ffn_hidden_size,
-        input_dtype, l0_recv_rows, sm_margin=args.sm_margin,
-        plan_overlap=int(args.plan_overlap))
-    _st("runner (fused ops) constructed")
+    if args.wire == "direct":
+        from flux.testing.ours_direct import OursDirectRunner
+        # All2AllSingle max_split: reference realized per-pair max vs the
+        # provable SL pair cap, + the shared drift cushion (the runner
+        # asserts the realized pair rows against it every iteration)
+        _dest_ref = phys_ref.view(-1).long() // cfg.nlp
+        _src_ref = torch.arange(W, dtype=torch.int64).repeat_interleave(
+            S * args.topk)
+        _pair_ref = int(torch.bincount(
+            _src_ref * W + _dest_ref, minlength=W * W).max())
+        dwire_max_split = (max(_pair_ref, int(pll_bounds["pair_cap"]))
+                           + cushion)
+        runner = OursDirectRunner(
+            TP_GROUP, rank, L, cfg, args.ffn_hidden_size, input_dtype,
+            recv_cap, dwire_max_split,
+            probs_all_setup[rank * S:(rank + 1) * S])
+        RECORDER.emit_info(ours_wire="direct",
+                           dwire_max_split=int(dwire_max_split),
+                           dwire_pair_ref=_pair_ref)
+        _st("runner (direct wire) constructed")
+    else:
+        runner = OursRunner(
+            TP_GROUP, EP_GROUP, DIST_ENV.NNODES, L, cfg,
+            args.ffn_hidden_size, input_dtype, l0_recv_rows,
+            sm_margin=args.sm_margin, plan_overlap=int(args.plan_overlap))
+        _st("runner (fused ops) constructed")
     lane = None
     store = None
     swap_lane = None
@@ -895,26 +926,47 @@ def main():
     ip_ref = planner.derive_reference()
     assert torch.equal(ip_ref.vce.long(), vce_ref.cuda()), "vce recipe drift"
     runner.plan_meta(ip_ref)
-    assert torch.equal(runner._sd.long().cpu(), sp_ref.long().cpu()), (
-        "derive splits != python_meta_from_vce")
-    assert torch.equal(runner._sps.cpu(), sps_ref.cpu().int()), (
-        "derive sps != python_meta_from_vce")
-    assert torch.equal(runner._uc.cpu(), uc_ref.cpu().int()), (
-        "derive uc != python_meta_from_vce")
+    if args.wire == "direct":
+        # direct-wire edition: the adapter's splits/segments against the
+        # same python recipe (sps_ref [W, E_virt] rows per (src, vslot))
+        _sps = sps_ref.cpu().long().view(W, W, gpe)
+        assert torch.equal(runner._in_splits.long().cpu(),
+                           _sps[rank].sum(1)), (
+            "direct in_splits != python_meta_from_vce")
+        assert torch.equal(runner._out_splits.long().cpu(),
+                           _sps[:, rank].sum(1)), (
+            "direct out_splits != python_meta_from_vce")
+        assert runner.n_recv == int(_sps[:, rank].sum()), (
+            "direct n_recv != python_meta_from_vce")
+        _seg_ref = _sps[:, rank].sum(0)  # per-vslot recv (pad-first)
+        assert int(_seg_ref[0]) == 0, "rows in the pad slot"
+        for _p, _s, _e in runner._segments:
+            assert _e - _s == int(_seg_ref[1 + _p]), (
+                f"direct segment rows drift at local slot {_p}")
+        _m_ref = runner.n_recv
+    else:
+        assert torch.equal(runner._sd.long().cpu(), sp_ref.long().cpu()), (
+            "derive splits != python_meta_from_vce")
+        assert torch.equal(runner._sps.cpu(), sps_ref.cpu().int()), (
+            "derive sps != python_meta_from_vce")
+        assert torch.equal(runner._uc.cpu(), uc_ref.cpu().int()), (
+            "derive uc != python_meta_from_vce")
+        _m_ref = runner._m_this
     if rank == 0:
         print(f"setup audit OK: E_virt {E_virt} gpe {gpe} m_ref "
-              f"{runner._m_this}; placement basis {oracle_basis} "
+              f"{_m_ref}; placement basis {oracle_basis} "
               f"drift {_drift} ppm; solver {place_solver_ms:.1f} ms")
     _st("setup audit ok")
 
     RECORDER.emit_info(
-        ours_fusion="slipstream_v2",
+        ours_fusion=("direct_a2av" if args.wire == "direct"
+                     else "slipstream_v2"),
         ours_plan_overlap=int(bool(args.plan_overlap)),
         # plan-lane cost knobs (ours.py module header; all default OFF)
         ours_plan_xchg_narrow=planner.xchg_narrow,
         ours_plan_prealloc=int(planner.plan_prealloc),
         ours_plan_graph=int(planner.plan_graph),
-        ours_plan_scale_graph=int(runner.scale_graph),
+        ours_plan_scale_graph=int(getattr(runner, "scale_graph", 0)),
         ours_sizing=args.sizing,
         ours_recv_cap=int(recv_cap),
         ours_l0_recv_rows=int(l0_recv_rows),
@@ -1379,6 +1431,10 @@ def main():
         return ", ".join(f"{k[:-3]} {sum(v) / max(len(v), 1):.3f} ms"
                          for k, v in times.items())
 
+    if args.wire == "direct":
+        # diagnostic sub-phase metrics (must run BEFORE the final
+        # deterministic iteration appends events past the timed loop)
+        iter_times.update(runner.sub_times(args.warmup_iters))
     flux.exec_in_rank_order(
         TP_GROUP, lambda: print(f"ours #{rank}: {fmt(iter_times)}"))
     RECORDER.emit_iters("ours", iter_times)

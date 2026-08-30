@@ -1,0 +1,18 @@
+# direct-wire ablation A/B (2026-08-30, 16n low-budget diagnosis): the
+# canon pv2_r2 arm vs its direct-wire twin vs the staged EPLB arm the
+# handoff-18 16n b1/b2 win came from — one capsule, one binary (rule 4).
+platform: perlmutter
+nodes: 16
+shape: k2
+variants: [ours_l01_s1_pv2_r2, ours_l01_s1_pv2_r2_dwire, eplb_l01]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+notes: "dwire A/B 16n k2 b1-4: pv2_r2 vs dwire vs eplb_l01"
