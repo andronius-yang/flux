@@ -90,7 +90,8 @@ make_workspace_kernel(
       // layer0 stable scatter order; waves never cross the ring wrap).
       sid = 0;  // no column offset
       gid = 0;  // a2av_hier enforces a single weight group
-      eid = i % args.ep_nexperts;
+      // chunk-ordered lists (FLUX_A2AV_RS_CHUNK_E) carry an explicit map
+      eid = args.prob_eid != nullptr ? args.prob_eid[i] : i % args.ep_nexperts;
       Mi = args.wave_M[i];
       M_acc = (int64_t)(ep_splits_acc[eid] - ep_splits[eid]) + args.wave_off[i];
     } else {
@@ -137,7 +138,8 @@ make_workspace_kernel(
     // their ready flags so the pack kernel's wave gate never waits on them.
     // (The GEMM's per-group targets come from non_empty_per_wave; the legacy
     // *non_empty_problem_count is never read in msplit mode.)
-    for (int w = threadIdx.x; w < args.n_waves; w += blockDim.x) {
+    const int nf = args.n_flags > 0 ? args.n_flags : args.n_waves;
+    for (int w = threadIdx.x; w < nf; w += blockDim.x) {
       if (args.non_empty_per_wave[w] == 0) {
         args.barrier[w] = 1;
       }

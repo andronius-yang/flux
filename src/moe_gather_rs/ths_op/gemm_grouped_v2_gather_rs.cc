@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <algorithm>
 #include "moe_gather_rs/ths_op/gemm_grouped_v2_gather_rs.h"
 
 #include <ATen/core/List.h>
@@ -265,6 +266,40 @@ get_a2av_rs_wave_adapt() {
   // Explicit env wins; =0 restores the pre-8/29 waves-always behavior
   // (never-byte-compare boundary vs pre-flip binaries).
   static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_WAVE_ADAPT", 48);
+  return v;
+}
+// v2 chunked combine (2026-08-29, worktree v2-combine): emit the SAME
+// (wave, expert) msplit sub-problems in expert-chunk-outer / wave-inner
+// order, so one chunk's w2 panels stay in L2 across all its waves and the
+// GEMM streams every panel from HBM ~once (the msplit reread tax gone)
+// while the wave cascade/pack/wire machinery is untouched (wave flags fire
+// near GEMM end -- M1 infrastructure, comm timing ~ collapse until the
+// piece release lands). 0 = OFF (bit-identical legacy order); -1 = auto
+// width floor(L2_eff / panel_bytes) clamped to [1, E]; N > 0 = explicit.
+int
+get_a2av_rs_chunk_e() {
+  (void)bytedance::flux::get_int_from_env("FLUX_A2AV_RS_CHUNK_TAG", 0);
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_CHUNK_E", 0);
+  return v;
+}
+// Effective L2 budget (MiB) for the auto chunk width: A100 has 40; leave
+// headroom for the activation stream + pack/prered/reduce residents.
+int
+get_a2av_rs_chunk_l2_mib() {
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_CHUNK_L2_MIB", 30);
+  return v;
+}
+// v2 M2 piece release (worktree v2-combine, 2026-08-30): NO-SPLIT problem
+// structure (one full-row problem per expert — no wave padding) with
+// per-expert-chunk cascade flags (prob_group_map = chunk_of; the existing
+// per-problem cascade is the producer). M2a: the pack gates on ALL chunk
+// flags (comm = collapse timing; scaffolding + gate arm). The (tn, piece)
+// flush chain lands on top (M2b). 0 = OFF; >0 = armed (max pieces/dest,
+// M2b); -1 = armed with auto piece count.
+int
+get_a2av_rs_pieces() {
+  (void)bytedance::flux::get_int_from_env("FLUX_A2AV_RS_PIECES_TAG", 0);
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_PIECES", 0);
   return v;
 }
 // OWN_WAVE=first (gen-9 receiver study, 2026-08-24): compute the OWN-node
@@ -772,6 +807,51 @@ namespace {
   }
 
   // Sort-free compress-plan builder (2026-08-21): identical outputs to
+  // v2 M2 pieces: deterministic piece config — a pure function of
+  // (env, E_loc), identical on every rank and between derive and forward.
+  // Requires an EXPLICIT FLUX_A2AV_RS_CHUNK_E (the auto width needs panel
+  // bytes, which derive does not have). Even chunk->piece index merge;
+  // byte-floor refinement is a later dial.
+  struct A2AVPieceConfig {
+    int n_pieces = 0;   // 0 = pieces off
+    int chunk_e = 0;
+    int n_chunks = 0;
+    std::vector<int32_t> piece_of_chunk;
+  };
+  static A2AVPieceConfig
+  a2av_piece_config(int64_t e_loc) {
+    A2AVPieceConfig cfg;
+    const int want = get_a2av_rs_pieces();
+    if (want == 0 || e_loc <= 0) {
+      return cfg;
+    }
+    const int ce = get_a2av_rs_chunk_e();
+    FLUX_CHECK_GT(ce, 0)
+        << "FLUX_A2AV_RS_PIECES requires an explicit FLUX_A2AV_RS_CHUNK_E > 0 "
+           "(derive has no panel bytes for the auto width)";
+    cfg.chunk_e = std::min<int64_t>(ce, e_loc);
+    cfg.n_chunks = (int)((e_loc + cfg.chunk_e - 1) / cfg.chunk_e);
+    const int cap = want > 0 ? want : 4;
+    cfg.n_pieces = std::max(1, std::min({cap, cfg.n_chunks, 8}));
+    cfg.piece_of_chunk.resize(cfg.n_chunks);
+    for (int c = 0; c < cfg.n_chunks; c++) {
+      cfg.piece_of_chunk[c] =
+          (int32_t)(((int64_t)c * cfg.n_pieces) / cfg.n_chunks);
+    }
+    return cfg;
+  }
+  // piece lookup over GLOBAL expert ids (pinned -> device, async)
+  static torch::Tensor
+  a2av_piece_lookup_dev(A2AVPieceConfig const &cfg, int64_t nex, int64_t e_loc) {
+    torch::Tensor h = torch::empty(
+        {nex}, torch::TensorOptions().dtype(torch::kInt).pinned_memory(true));
+    int32_t *hp = h.data_ptr<int32_t>();
+    for (int64_t e = 0; e < nex; e++) {
+      hp[e] = cfg.piece_of_chunk[(int)((e % e_loc) / cfg.chunk_e)];
+    }
+    return h.to(torch::kCUDA, /*non_blocking=*/true);
+  }
+
   // build_a2av_compress_indices above, but every ordering is arithmetic on
   // the layer0 stable scatter_index + host cnt/U prefix tables — 4 kernels
   // (a2av_compress_plan), no radix sorts, deterministic. The sort-based
@@ -789,7 +869,11 @@ namespace {
       int rank,
       int64_t total_num_experts,
       int64_t ep_nexperts,
-      int topk) {
+      int topk,
+      // v2 M2 pieces (defaults = off, bit-identical order)
+      torch::Tensor const *piece_of_e_dev = nullptr,
+      int n_pieces = 0,
+      torch::Tensor *wire_piece_start_out = nullptr) {
     const int W = world_size;
     const int NN = nnodes;
     const int L = local_world_size;
@@ -908,7 +992,16 @@ namespace {
     auto t64_dev = t64.to(torch::kCUDA, /*non_blocking=*/true);
     auto t32_dev = t32.to(torch::kCUDA, /*non_blocking=*/true);
     const int64_t seg_tokens = (int64_t)(NN - 1) * tpr;
-    auto scratch = torch::empty({2 * seg_tokens + 2 * tpr * NN}, opt_i32);
+    const bool pieces_on = piece_of_e_dev != nullptr && n_pieces > 0;
+    auto scratch = torch::empty(
+        {(pieces_on ? 3 : 2) * seg_tokens + 2 * tpr * NN}, opt_i32);
+    torch::Tensor piece_start;
+    if (pieces_on) {
+      piece_start = torch::empty({(int64_t)(NN - 1) * (n_pieces + 1)}, opt_i32);
+      if (wire_piece_start_out != nullptr) {
+        *wire_piece_start_out = piece_start;
+      }
+    }
     auto wire_ptr = torch::empty({wire_total + 1}, opt_i32);
     auto wire_copy = torch::empty({conv_total}, opt_i32);
     auto red_ptr = torch::empty({ntok_local + 1}, opt_i32);
@@ -934,6 +1027,11 @@ namespace {
         .wire_copy = wire_copy.data_ptr<int32_t>(),
         .red_ptr = red_ptr.data_ptr<int32_t>(),
         .red_row = red_row.data_ptr<int32_t>(),
+        .piece_of_e = pieces_on ? piece_of_e_dev->data_ptr<int32_t>() : nullptr,
+        .n_pieces = pieces_on ? n_pieces : 0,
+        .wire_piece = pieces_on ? scr + 2 * seg_tokens + 2 * tpr * NN : nullptr,
+        .wire_piece_start =
+            pieces_on ? piece_start.data_ptr<int32_t>() : nullptr,
         .m_full = m_full,
         .topk = topk,
         .world_size = W,
@@ -1005,8 +1103,19 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   // M-split waves (Slipstream v2): per-iteration pack-gate state, armed by
   // set_msplit_waves() before each run(); 0 = legacy single-split gate
   int msplit_n_waves_ = 0;
+  // v2 M2 pieces: per-expert-chunk cascade flag count the pack must wait at
+  // entry (no-split build); 0 = legacy wave gating
+  int msplit_chunk_flags_ = 0;
   int msplit_wave_of_node_[kA2AVMaxNodes] = {};
   int msplit_node_order_[kA2AVMaxNodes] = {};
+  // v2 M2 pieces: per-iteration piece state. piece_n_ == 0 = off. The
+  // device piece-start table ([NN-1, P+1] per-seg relative wire-row
+  // bases) is D2H'd into the pinned mirror at set time; run() syncs
+  // piece_tbl_event_ before enqueueing the piece wire ladder.
+  int piece_n_ = 0;
+  torch::Tensor piece_start_dev_;   // keep-alive for the async D2H
+  torch::Tensor piece_start_host_;  // pinned [kA2AVMaxNodes * 9]
+  cudaEvent_t piece_tbl_event_ = nullptr;
 
   // a2av_hier combine state. Layouts mirror layer0's a2av dispatch exactly:
   // the send panel is (home_rank, expert, copy)-ordered (== layer0's recv
@@ -1050,6 +1159,13 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   torch::Tensor a2av_conv_panel_;       // compress: [n_split, conv_rows, n_per] symmetric
   torch::Tensor a2av_wire_panel_;       // compress: [n_split, wire_rows, n_per] symmetric
   torch::Tensor a2av_recv_signals_;     // uint64 [world_size * n_split], epoch, never reset
+  // v2 M2 pieces: per-piece slots, depth 8 (epoch-SET, never reset)
+  torch::Tensor a2av_piece_conv_sig_;   // uint64 [L * NN * 8]
+  torch::Tensor a2av_piece_recv_sig_;   // uint64 [W * 8]
+  cutlass::DeviceAllocation<int> piece_wire_flags_;     // [NN * 8]
+  cutlass::DeviceAllocation<int> piece_wire_counters_;  // [NN * 8]
+  cutlass::DeviceAllocation<int> piece_group_flags_;    // [NN * 8]
+  cutlass::DeviceAllocation<int> piece_group_counters_; // [NN * 8]
   torch::Tensor a2av_arrival_signals_;  // uint64 [nnodes * n_split], epoch, never reset
   torch::Tensor a2av_conv_signals_;     // compress: uint64 [L * NN * n_split], epoch, never reset
   // compress: pre-reduce kernel -> host wire-ready flags, memset per run under
@@ -1129,6 +1245,36 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
             {(int64_t)this->local_world_size * this->nnodes * this->n_split},
             at::ScalarType::Long,
             true);
+        // v2 M2 pieces: dedicated per-piece slots (fixed depth 8) so the
+        // legacy regions/indexing stay untouched. Epoch semantics: only
+        // ever SET to run_id, zeroed once here (tiny; always allocated
+        // under compress so the collective allocation set is uniform).
+        this->a2av_piece_conv_sig_ = nvshmem_create_tensor(
+            {(int64_t)this->local_world_size * this->nnodes * 8},
+            at::ScalarType::Long,
+            true);
+        this->a2av_piece_recv_sig_ = nvshmem_create_tensor(
+            {(int64_t)this->world_size * 8}, at::ScalarType::Long, true);
+        CUDA_CHECK(cudaMemset(
+            this->a2av_piece_conv_sig_.data_ptr(),
+            0,
+            sizeof(uint64_t) * this->local_world_size * this->nnodes * 8));
+        CUDA_CHECK(cudaMemset(
+            this->a2av_piece_recv_sig_.data_ptr(),
+            0,
+            sizeof(uint64_t) * this->world_size * 8));
+        this->piece_wire_flags_.reset(this->nnodes * 8);
+        this->piece_wire_counters_.reset(this->nnodes * 8);
+        this->piece_group_flags_.reset(this->nnodes * 8);
+        this->piece_group_counters_.reset(this->nnodes * 8);
+        CUDA_CHECK(cudaMemset(
+            this->piece_wire_flags_.get(), 0, sizeof(int) * this->nnodes * 8));
+        CUDA_CHECK(cudaMemset(
+            this->piece_wire_counters_.get(), 0, sizeof(int) * this->nnodes * 8));
+        CUDA_CHECK(cudaMemset(
+            this->piece_group_flags_.get(), 0, sizeof(int) * this->nnodes * 8));
+        CUDA_CHECK(cudaMemset(
+            this->piece_group_counters_.get(), 0, sizeof(int) * this->nnodes * 8));
         this->wire_flags_.reset(this->nnodes * this->n_split);
         this->wire_counters_.reset(this->nnodes * this->n_split);
         CUDA_CHECK(
@@ -1314,7 +1460,11 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
 
   void
   set_msplit_waves(
-      std::vector<int> const &wave_of_node, std::vector<int> const &node_order, int n_waves) {
+      std::vector<int> const &wave_of_node,
+      std::vector<int> const &node_order,
+      int n_waves,
+      int n_chunk_flags = 0) {
+    this->msplit_chunk_flags_ = n_chunk_flags > 0 ? n_chunk_flags : 0;
     if (n_waves <= 0) {
       this->msplit_n_waves_ = 0;
       return;
@@ -1334,6 +1484,41 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       this->msplit_wave_of_node_[i] = wave_of_node[i];
       this->msplit_node_order_[i] = node_order[i];
     }
+  }
+
+  // v2 M2 pieces: arm the per-iteration piece wire schedule. piece_start is
+  // the device [(NN-1) * (n_pieces + 1)] per-seg relative wire-row bases
+  // from the plan; the async D2H into the pinned mirror rides the CURRENT
+  // stream (the derive stream) and run() syncs the event before the wire
+  // ladder reads it. n_pieces == 0 disarms.
+  void
+  set_piece_table(torch::Tensor piece_start, int n_pieces) {
+    if (n_pieces <= 0) {
+      this->piece_n_ = 0;
+      return;
+    }
+    FLUX_CHECK(this->a2av_compress_) << "pieces require the compress combine";
+    FLUX_CHECK_EQ(this->n_split, 1) << "pieces require n_split == 1";
+    FLUX_CHECK_LE(n_pieces, 8);
+    const int64_t want = (int64_t)(this->nnodes - 1) * (n_pieces + 1);
+    FLUX_CHECK_EQ(piece_start.numel(), want);
+    if (!this->piece_start_host_.defined()) {
+      this->piece_start_host_ = torch::empty(
+          {(int64_t)kA2AVMaxNodes * 9},
+          torch::TensorOptions().dtype(torch::kInt).pinned_memory(true));
+      CUDA_CHECK(cudaEventCreateWithFlags(
+          &this->piece_tbl_event_, cudaEventDisableTiming));
+    }
+    this->piece_start_dev_ = piece_start;  // keep alive
+    CUDA_CHECK(cudaMemcpyAsync(
+        this->piece_start_host_.data_ptr<int32_t>(),
+        piece_start.data_ptr<int32_t>(),
+        want * sizeof(int32_t),
+        cudaMemcpyDeviceToHost,
+        c10::cuda::getCurrentCUDAStream()));
+    CUDA_CHECK(cudaEventRecord(
+        this->piece_tbl_event_, c10::cuda::getCurrentCUDAStream()));
+    this->piece_n_ = n_pieces;
   }
 
   TopkReduceScatterOpImpl(
@@ -1801,6 +1986,15 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       // stale 1 from the previous run can never release a wire put early
       CUDA_CHECK(cudaMemsetAsync(this->wire_flags_.get(), 0, flag_bytes, stream_raw));
       CUDA_CHECK(cudaMemsetAsync(this->wire_counters_.get(), 0, flag_bytes, stream_raw));
+      const size_t piece_bytes = sizeof(int) * NN * 8;
+      CUDA_CHECK(
+          cudaMemsetAsync(this->piece_wire_flags_.get(), 0, piece_bytes, stream_raw));
+      CUDA_CHECK(cudaMemsetAsync(
+          this->piece_wire_counters_.get(), 0, piece_bytes, stream_raw));
+      CUDA_CHECK(cudaMemsetAsync(
+          this->piece_group_flags_.get(), 0, piece_bytes, stream_raw));
+      CUDA_CHECK(cudaMemsetAsync(
+          this->piece_group_counters_.get(), 0, piece_bytes, stream_raw));
     }
     CUDA_CHECK(cudaEventRecord(this->staging_reset_event, stream_raw));
     cudaStream_t intra_stream = this->a2av_intra_stream_.value();
@@ -1824,6 +2018,40 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
     // fused pack (gen-8c): the GEMM already scattered the panel with the
     // coefficients pre-folded — the pack is a flag relay, scale must be null
     const bool fused_relay = this->a2av_fused_pack_ && this->msplit_n_waves_ > 0;
+    // ---- v2 M2 pieces: guards + host piece tables --------------------------
+    const bool pieces_on = this->piece_n_ > 0;
+    A2AVPieceConfig piece_cfg;
+    std::vector<int64_t> send_piece_off;  // [(W) * (P + 1)] exclusive rows
+    if (pieces_on) {
+      FLUX_CHECK(this->a2av_compress_) << "pieces require compress";
+      FLUX_CHECK(fused_relay) << "pieces require the fused-pack relay";
+      FLUX_CHECK(this->a2av_bucket_ && !this->a2av_recv_dyn_ && !this->a2av_lane_chain_)
+          << "pieces v1 requires the bucket receiver";
+      FLUX_CHECK_EQ(this->n_split, 1);
+      piece_cfg = a2av_piece_config(E_loc);
+      FLUX_CHECK_EQ(piece_cfg.n_pieces, this->piece_n_)
+          << "piece config drifted between derive and run";
+      // the wire ladder + prereduce read the pinned piece-start table
+      CUDA_CHECK(cudaEventSynchronize(this->piece_tbl_event_));
+      // per-(dest rank, piece) prefixes of MY send rows: piece slices of the
+      // (expert, token)-ordered per-dest panel blocks (contiguous prefixes)
+      const int P = this->piece_n_;
+      send_piece_off.assign((size_t)W * (P + 1), 0);
+      for (int d = 0; d < W; d++) {
+        std::vector<int64_t> rows_p((size_t)P, 0);
+        for (int64_t el = 0; el < E_loc; el++) {
+          const int pc = piece_cfg.piece_of_chunk[(int)(el / piece_cfg.chunk_e)];
+          rows_p[pc] += cnt[(int64_t)d * nex_total + (int64_t)this->rank * E_loc + el];
+        }
+        int64_t acc = 0;
+        for (int pc = 0; pc < P; pc++) {
+          send_piece_off[(size_t)d * (P + 1) + pc] = acc;
+          acc += rows_p[pc];
+        }
+        send_piece_off[(size_t)d * (P + 1) + P] = acc;
+        FLUX_CHECK_EQ(acc, chunk_at(this->rank, d));
+      }
+    }
     A2AVCombinePackArguments pack_args{
         .gemm_out = gemm_out.data_ptr(),
         .vec_scale = (!fused_relay && output_vec_scales.has_value())
@@ -1848,6 +2076,24 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
     pack_args.node_row_start[NN] = M_this_ep;
     // M-split waves: gate the pack per schedule step on the wave's cascade flag
     pack_args.relay_only = fused_relay ? 1 : 0;
+    pack_args.n_chunk_flags = this->msplit_chunk_flags_;
+    pack_args.n_pieces = pieces_on ? this->piece_n_ : 0;
+    if (pieces_on) {
+      FLUX_CHECK_GT(this->msplit_chunk_flags_, 0)
+          << "pieces require the no-split per-chunk cascade";
+      int cflag = 0;
+      for (int pc = 0; pc < this->piece_n_; pc++) {
+        pack_args.piece_first_chunk[pc] = cflag;
+        while (cflag < piece_cfg.n_chunks &&
+               piece_cfg.piece_of_chunk[cflag] == pc) {
+          cflag++;
+        }
+      }
+      pack_args.piece_first_chunk[this->piece_n_] = piece_cfg.n_chunks;
+      FLUX_CHECK_EQ(cflag, piece_cfg.n_chunks);
+      pack_args.piece_group_flags = this->piece_group_flags_.get();
+      pack_args.piece_group_counters = this->piece_group_counters_.get();
+    }
     pack_args.msplit = this->msplit_n_waves_ > 0 ? 1 : 0;
     if (pack_args.msplit) {
       FLUX_CHECK_EQ(this->n_split, 1);
@@ -1946,6 +2192,20 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       // ALWAYS be filled: the kernel visits args.node_order unconditionally
       for (int gi = 0; gi < NN - 1; gi++) {
         prered_args.node_order[gi] = sched_remote[gi];
+      }
+      if (pieces_on) {
+        prered_args.n_pieces = this->piece_n_;
+        prered_args.piece_conv_sigs =
+            (uint64_t const *)this->a2av_piece_conv_sig_.data_ptr();
+        prered_args.piece_wire_flags = this->piece_wire_flags_.get();
+        prered_args.piece_wire_counters = this->piece_wire_counters_.get();
+        const int32_t *pt = this->piece_start_host_.data_ptr<int32_t>();
+        for (int seg = 0; seg < NN - 1; seg++) {
+          for (int pc = 0; pc <= this->piece_n_; pc++) {
+            prered_args.piece_start[seg * 9 + pc] =
+                pt[seg * (this->piece_n_ + 1) + pc];
+          }
+        }
       }
       a2av_combine_prereduce(prered_args, flux_dtype, this->a2av_prered_stream_.value());
     }
@@ -2103,7 +2363,59 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         // conv panel, peers get one contiguous putmem_signal each (NVLink CE).
         // Every (peer, tn) pair signals every split, payload or not.
         cudaStream_t conv_stream = this->a2av_conv_stream_.value();
-        for (int gi = 0; gi < NN - 1; gi++) {
+        // v2 M2 pieces: PIECE-OUTER enqueue — the conv stream is single, so
+        // (tn-outer, piece-inner) would park tn1's piece 0 behind tn0's LAST
+        // piece flag (~GEMM end); piece flags fire piece-major globally
+        if (pieces_on) {
+          const int P = this->piece_n_;
+          for (int pc = 0; pc < P; pc++) {
+            for (int gi = 0; gi < NN - 1; gi++) {
+              int tn = sched_remote[gi];
+              CU_CHECK(CUStreamWaitValue(
+                  conv_stream,
+                  (CUdeviceptr)(this->piece_group_flags_.get() + tn * 8 + pc),
+                  1,
+                  CU_STREAM_WAIT_VALUE_GEQ));
+              for (int di = 0; di < L; di++) {
+                int dl = (my_lr + di) % L;
+                int d = tn * L + dl;
+                int gw = my_node * L + dl;
+                const int64_t p_lo = send_piece_off[(size_t)d * (P + 1) + pc];
+                const int64_t rows =
+                    send_piece_off[(size_t)d * (P + 1) + pc + 1] - p_lo;
+                int64_t coff = conv_off(dl, tn, my_lr) + p_lo;
+                uint64_t *slot = (uint64_t *)this->a2av_piece_conv_sig_.data_ptr() +
+                                 ((int64_t)my_lr * NN + tn) * 8 + pc;
+                if (gw == this->rank) {
+                  if (rows > 0) {
+                    CUDA_CHECK(cudaMemcpyAsync(
+                        conv_ptr(sid, coff),
+                        send_ptr(sid, send_off[d] + p_lo),
+                        rows * row_bytes,
+                        cudaMemcpyDeviceToDevice,
+                        conv_stream));
+                  }
+                  nvshmemx_signal_op_on_stream(
+                      slot, this->run_id_, NVSHMEM_SIGNAL_SET, gw, conv_stream);
+                } else if (rows > 0) {
+                  flux_rs_put_signal(
+                      conv_ptr(sid, coff),
+                      send_ptr(sid, send_off[d] + p_lo),
+                      rows * row_bytes,
+                      slot,
+                      this->run_id_,
+                      NVSHMEM_SIGNAL_SET,
+                      gw,
+                      conv_stream, this->local_world_size, this->node_idx);
+                } else {
+                  nvshmemx_signal_op_on_stream(
+                      slot, this->run_id_, NVSHMEM_SIGNAL_SET, gw, conv_stream);
+                }
+              }
+            }
+          }
+        }
+        for (int gi = 0; !pieces_on && gi < NN - 1; gi++) {
           int tn = sched_remote[gi];  // production schedule (ring / size-sorted)
           CU_CHECK(CUStreamWaitValue(
               conv_stream,
@@ -2169,6 +2481,44 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           cudaStream_t wstream =
               (wire_lane > 0) ? (cudaStream_t)this->internode_streams2_[wire_lane - 1]
                               : (cudaStream_t)this->internode_stream;
+          if (pieces_on) {
+            // v2 M2: per-piece blocking puts of the (piece, token)-ordered
+            // wire rows into the dest C' lane at the SAME piece bases (the
+            // two-sided plan renumbering makes sender/dest bases equal);
+            // one epoch-SET signal per (lane, piece) slot
+            const int P = this->piece_n_;
+            const int seg2 = tn < my_node ? tn : tn - 1;
+            const int32_t *pt = this->piece_start_host_.data_ptr<int32_t>();
+            uint64_t *psig = (uint64_t *)this->a2av_piece_recv_sig_.data_ptr();
+            for (int pc = 0; pc < P; pc++) {
+              CU_CHECK(CUStreamWaitValue(
+                  wstream,
+                  (CUdeviceptr)(this->piece_wire_flags_.get() + tn * 8 + pc),
+                  1,
+                  CU_STREAM_WAIT_VALUE_GEQ));
+              const int64_t p_lo = pt[seg2 * (P + 1) + pc];
+              const int64_t rows_p = pt[seg2 * (P + 1) + pc + 1] - p_lo;
+              if (rows_p > 0) {
+                flux_rs_put_signal(
+                    recv_ptr(sid, recv_off_cp(this->rank, d) + p_lo),
+                    wire_ptr_at(sid, wire_seg_off(tn) + p_lo),
+                    rows_p * row_bytes,
+                    psig + (int64_t)this->rank * 8 + pc,
+                    this->run_id_,
+                    NVSHMEM_SIGNAL_SET,
+                    d,
+                    wstream, this->local_world_size, this->node_idx);
+              } else {
+                nvshmemx_signal_op_on_stream(
+                    psig + (int64_t)this->rank * 8 + pc,
+                    this->run_id_,
+                    NVSHMEM_SIGNAL_SET,
+                    d,
+                    wstream);
+              }
+            }
+            continue;
+          }
           CU_CHECK(CUStreamWaitValue(
               wstream,
               (CUdeviceptr)(this->wire_flags_.get() + tn * this->n_split + sid),
@@ -2500,11 +2850,23 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           if (chunk_cp(s2, this->rank) <= 0) {
             continue;  // zero-row lane: still signals, but its bucket is empty
           }
+          if (pieces_on && s2 / L != my_node) {
+            // v2 M2: remote lanes arrive as P per-piece epoch-SET slots
+            uint64_t *psig = (uint64_t *)this->a2av_piece_recv_sig_.data_ptr();
+            for (int pc = 0; pc < this->piece_n_; pc++) {
+              CU_CHECK(CUStreamWaitValue64(
+                  reduce_stream,
+                  (CUdeviceptr)(psig + (int64_t)s2 * 8 + pc),
+                  this->run_id_,
+                  CU_STREAM_WAIT_VALUE_GEQ));
+            }
+          } else {
           CU_CHECK(CUStreamWaitValue64(
               reduce_stream,
               (CUdeviceptr)(recv_sig + s2 * this->n_split + sid),
               this->run_id_,
               CU_STREAM_WAIT_VALUE_GEQ));
+          }
           a2av_combine_bucket_reduce(
               A2AVBucketReduceArguments{
                   this->a2av_recv_panel_.data_ptr(),
@@ -2934,7 +3296,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
   bool msplit_ = false;
   bool fused_pack_ = false;    // gen-8c: GEMM scatters the send panel directly
   int msplit_wave_nodes_ = 1;
-  torch::Tensor msplit_host_;  // pinned int32 [2 * NN * E + NN]
+  torch::Tensor msplit_host_;  // pinned int32 [4 * NN * E + NN] (v2 chunked)
+  int msplit_piece_flags_ = 0;  // v2 M2: per-chunk cascade flag count (0 = waves)
   torch::Tensor msplit_dev_;   // device int32, same capacity
   torch::Tensor msplit_iota_;      // int32 [max_m] shared identity indices
   torch::Tensor msplit_inv_pack_;  // int32 [max_m] gemm row -> panel row
@@ -3022,6 +3385,15 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       FLUX_CHECK(a2av_unique_counts.has_value())
           << "a2av_hier_compress derive requires a2av_unique_counts ([W, nnodes] int32 CPU)";
       // sort-free path (2026-08-21): scd-arithmetic kernels, no radix sorts
+      // v2 M2 pieces: deterministic config from env + E_loc; the piece-start
+      // table is handed to the reduce op (D2H + event) for the wire ladder
+      const auto piece_cfg = a2av_piece_config(this->ep_nexperts);
+      torch::Tensor piece_lookup;
+      torch::Tensor piece_start;
+      if (piece_cfg.n_pieces > 0) {
+        piece_lookup =
+            a2av_piece_lookup_dev(piece_cfg, this->total_num_experts, this->ep_nexperts);
+      }
       auto [wp, wc, rp, rr] = build_a2av_compress_indices_fast(
           routing_idx,
           splits_gpu,
@@ -3034,10 +3406,26 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
           this->rank,
           this->total_num_experts,
           this->ep_nexperts,
-          this->topk);
+          this->topk,
+          piece_cfg.n_pieces > 0 ? &piece_lookup : nullptr,
+          piece_cfg.n_pieces,
+          piece_cfg.n_pieces > 0 ? &piece_start : nullptr);
+      if (piece_cfg.n_pieces > 0) {
+        this->topk_reduce_scatter_op->set_piece_table(
+            piece_start, piece_cfg.n_pieces);
+      }
       static const bool kCheckIdentity =
           get_int_from_env("FLUX_A2AV_RS_CHECK_IDENTITY", 0) != 0;
-      if (kCheckIdentity) {
+      if (kCheckIdentity && piece_cfg.n_pieces > 0) {
+        static bool warned = false;
+        if (!warned && this->rank == 0) {
+          fprintf(
+              stderr,
+              "[flux] CHECK_IDENTITY: sort-reference compare SKIPPED under "
+              "FLUX_A2AV_RS_PIECES (piece keys not in the reference yet)\n");
+          warned = true;
+        }
+      } else if (kCheckIdentity) {
         auto [wp_ref, wc_ref, rp_ref, rr_ref] = build_a2av_compress_indices(
             routing_idx,
             splits_gpu,
@@ -3203,7 +3591,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       FLUX_CHECK_LE(this->nnodes, 128)
           << "msplit wave flags must fit the 128-padded barrier flag region";
       this->msplit_wave_nodes_ = get_a2av_rs_wave_nodes();
-      const int64_t tbl = (int64_t)2 * this->nnodes * this->ep_nexperts + this->nnodes;
+      // wave_M + wave_off + prob_eid + prob_group (v2 chunked) + ne_wave
+      const int64_t tbl = (int64_t)4 * this->nnodes * this->ep_nexperts + this->nnodes;
       this->msplit_host_ = torch::empty(
           {tbl},
           at::TensorOptions(at::kCPU).dtype(at::ScalarType::Int).pinned_memory(true));
@@ -3448,16 +3837,21 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     // bracket, ~NN*E adds), staged through the pinned arena with ONE async H2D
     // on the forward stream (NR-09: a pageable H2D here would hide a sync).
     int msplit_n_waves = 0;
+    int msplit_chunk_E = 0;  // v2 chunked combine: 0 = legacy problem order
     const int32_t *msplit_wave_M_dev = nullptr;
     const int32_t *msplit_wave_off_dev = nullptr;
     const int32_t *msplit_ne_wave_dev = nullptr;
+    const int32_t *msplit_eid_dev = nullptr;
+    const int32_t *msplit_grp_dev = nullptr;
     // Byte-adaptive wave collapse (see get_a2av_rs_wave_adapt): when the
     // (n_waves-1) weight re-read passes outweigh the wire bytes the waves
     // could overlap, run this iteration on the legacy single-gate problem
     // structure instead (msplit_run false => ws_args.msplit 0, legacy
     // problem_count, gemm n_split, fused pack off, set_msplit_waves(0)).
     bool msplit_run = this->msplit_;
-    if (this->msplit_ && get_a2av_rs_wave_adapt() > 0) {
+    // pieces mode has ~one weight pass — the wave-adapt reread model does
+    // not apply; never let it collapse the piece schedule
+    if (this->msplit_ && get_a2av_rs_wave_adapt() > 0 && get_a2av_rs_pieces() == 0) {
       FLUX_CHECK(splits_per_source.has_value());
       const int NN = this->nnodes;
       const int E = this->ep_nexperts;
@@ -3487,6 +3881,10 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         msplit_run = false;
       }
     }
+    // v2 M2 pieces: replaces the destination-wave split with the no-split
+    // chunked structure. Mutually exclusive with the wave schedule by
+    // construction (single wave covering every node).
+    const bool pieces_run = msplit_run && get_a2av_rs_pieces() != 0;
     if (msplit_run) {
       FLUX_CHECK(splits_per_source.has_value());
       const int NN = this->nnodes;
@@ -3500,6 +3898,21 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       // home-node ASCENDING — the layer0 stable scatter order — so a wave must
       // be one contiguous ascending node range).
       std::vector<std::pair<int, int>> waves;  // ascending node range [a, b)
+      if (pieces_run) {
+        FLUX_CHECK_EQ(NG, 1) << "FLUX_A2AV_RS_PIECES requires WAVE_NODES == 1";
+        // one wave = every node: E full-row problems (no dest split). The
+        // ladder schedule keeps the ring (own last); every schedule step
+        // gates on flag 0 (pre-satisfied by the pack's all-chunks entry
+        // wait), so wave_of_node stays all-zero.
+        waves.emplace_back(0, NN);
+        msplit_n_waves = 1;
+        for (int gi = 0; gi < NN - 1; gi++) {
+          this->msplit_node_order_[gi] = (my_node + 1 + gi) % NN;
+          this->msplit_wave_of_node_[gi] = 0;
+        }
+        this->msplit_node_order_[NN - 1] = my_node;
+        this->msplit_wave_of_node_[NN - 1] = 0;
+      } else {
       const bool size_order = get_a2av_rs_wave_order() != 0;
       if (size_order) {
         // gen-8a: remote per-node waves ordered by DESCENDING segment size
@@ -3557,13 +3970,65 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         const int own_pos = get_a2av_rs_own_wave_first() != 0 ? 0 : NN - 1;
         FLUX_CHECK_EQ(this->msplit_node_order_[own_pos], my_node);
       }
+      }  // !pieces_run
       // guard the pinned arena against a still-in-flight previous H2D
       CUDA_CHECK(cudaEventSynchronize(this->msplit_h2d_event_));
+      // v2 chunked combine: problem-order permutation (chunk-outer, wave-
+      // inner). idx_of[(w, e)] = position in the emitted problem list;
+      // chunk_E == 0 keeps the legacy wave-outer linear order bit-exact
+      // (maps not shipped; ws kernel + cascade take their legacy paths).
+      {
+        int ce = get_a2av_rs_chunk_e();
+        if (pieces_run) {
+          FLUX_CHECK_GT(ce, 0)
+              << "FLUX_A2AV_RS_PIECES requires an explicit FLUX_A2AV_RS_CHUNK_E "
+                 "(derive/forward width consistency)";
+        }
+        if (ce < 0) {
+          const int64_t panel_bytes =
+              (int64_t)N * K * c10::elementSize(input_torch_type);
+          const int64_t l2 = (int64_t)get_a2av_rs_chunk_l2_mib() << 20;
+          ce = (int)std::max<int64_t>(
+              1, l2 / std::max<int64_t>(panel_bytes, 1));
+        }
+        msplit_chunk_E = ce > 0 ? std::min(ce, E) : 0;
+      }
+      // pieces mode: flags are per expert-chunk, not per wave
+      const int n_chunks =
+          pieces_run ? (E + msplit_chunk_E - 1) / msplit_chunk_E : 0;
+      if (pieces_run) {
+        FLUX_CHECK_LE(n_chunks, 128)
+            << "piece chunk flags must fit the 128-padded barrier region";
+        this->msplit_piece_flags_ = n_chunks;
+      } else {
+        this->msplit_piece_flags_ = 0;
+      }
+      const int n_probs = msplit_n_waves * E;
+      std::vector<int32_t> idx_of((size_t)n_probs);
+      if (msplit_chunk_E > 0) {
+        int ip = 0;
+        for (int c0 = 0; c0 < E; c0 += msplit_chunk_E) {
+          const int c1 = std::min(c0 + msplit_chunk_E, E);
+          for (int w = 0; w < msplit_n_waves; w++) {
+            for (int e = c0; e < c1; e++) {
+              idx_of[(size_t)w * E + e] = ip++;
+            }
+          }
+        }
+        FLUX_CHECK_EQ(ip, n_probs);
+      } else {
+        for (int ip = 0; ip < n_probs; ip++) {
+          idx_of[ip] = ip;
+        }
+      }
       int32_t *hp = this->msplit_host_.data_ptr<int32_t>();
       int32_t *h_wave_M = hp;
-      int32_t *h_wave_off = hp + (int64_t)msplit_n_waves * E;
-      int32_t *h_ne = hp + (int64_t)2 * msplit_n_waves * E;
-      for (int w = 0; w < msplit_n_waves; w++) {
+      int32_t *h_wave_off = hp + (int64_t)n_probs;
+      int32_t *h_eid = hp + (int64_t)2 * n_probs;
+      int32_t *h_grp = hp + (int64_t)3 * n_probs;
+      int32_t *h_ne = hp + (int64_t)4 * n_probs;
+      const int n_flags = pieces_run ? n_chunks : msplit_n_waves;
+      for (int w = 0; w < n_flags; w++) {
         h_ne[w] = 0;
       }
       for (int e = 0; e < E; e++) {
@@ -3583,14 +4048,20 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
           const int64_t off = node_base[waves[w].first];
           const int64_t rows = node_base[waves[w].second] - off;
           FLUX_CHECK_LE(rows, (int64_t)2147483647);
-          h_wave_M[(int64_t)w * E + e] = (int32_t)rows;
-          h_wave_off[(int64_t)w * E + e] = (int32_t)off;
+          const int32_t ip = idx_of[(size_t)w * E + e];
+          h_wave_M[ip] = (int32_t)rows;
+          h_wave_off[ip] = (int32_t)off;
+          h_eid[ip] = (int32_t)e;
+          // pieces: the cascade group is the expert CHUNK; empty-group
+          // credit follows the same axis
+          const int grp = pieces_run ? (e / msplit_chunk_E) : w;
+          h_grp[ip] = (int32_t)grp;
           if (rows > 0) {
-            h_ne[w] += 1;
+            h_ne[grp] += 1;
           }
         }
       }
-      const int64_t used = (int64_t)2 * msplit_n_waves * E + msplit_n_waves;
+      const int64_t used = (int64_t)4 * n_probs + n_flags;
       CUDA_CHECK(cudaMemcpyAsync(
           this->msplit_dev_.data_ptr(),
           hp,
@@ -3600,8 +4071,10 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       CUDA_CHECK(cudaEventRecord(this->msplit_h2d_event_, stream));
       const int32_t *dp = this->msplit_dev_.data_ptr<int32_t>();
       msplit_wave_M_dev = dp;
-      msplit_wave_off_dev = dp + (int64_t)msplit_n_waves * E;
-      msplit_ne_wave_dev = dp + (int64_t)2 * msplit_n_waves * E;
+      msplit_wave_off_dev = dp + (int64_t)n_probs;
+      msplit_eid_dev = dp + (int64_t)2 * n_probs;
+      msplit_grp_dev = dp + (int64_t)3 * n_probs;
+      msplit_ne_wave_dev = dp + (int64_t)4 * n_probs;
     }
 
     MoeGatherRSWorkspaceArgs ws_args{
@@ -3628,6 +4101,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       ws_args.wave_M = msplit_wave_M_dev;
       ws_args.wave_off = msplit_wave_off_dev;
       ws_args.non_empty_per_wave = msplit_ne_wave_dev;
+      ws_args.n_flags = this->msplit_piece_flags_;  // 0 = per-wave flags
+      ws_args.prob_eid = msplit_chunk_E > 0 ? msplit_eid_dev : nullptr;
       ws_args.barrier = this->barrier.data_ptr<int>();
     }
     ws_args.iota = this->msplit_iota_.data_ptr<int32_t>();
@@ -3727,12 +4202,19 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         .routing_idx = routing_idx.data_ptr<int32_t>(),
         // msplit: the cascade's group axis is the WAVE (n_split stays 1 for
         // panels/columns — full-N sub-problems)
-        .n_split = msplit_run ? msplit_n_waves : n_split,
+        .n_split = msplit_run
+                       ? (this->msplit_piece_flags_ > 0 ? this->msplit_piece_flags_
+                                                        : msplit_n_waves)
+                       : n_split,
         .sm_margin = sm_margin + (this->a2av_hier
                                       ? get_a2av_pack_blocks() + get_a2av_reduce_blocks() +
                                             (this->a2av_compress ? get_a2av_prered_blocks() : 0)
                                       : get_rs_threadblock_count()),
         .non_empty_per_group = msplit_run ? msplit_ne_wave_dev : nullptr,
+        .prob_group_map =
+            (msplit_run && (msplit_chunk_E > 0 || this->msplit_piece_flags_ > 0))
+                ? msplit_grp_dev
+                : nullptr,
         .scatter_D_ptr = scatter_D_ptr_ws};
 
     int64_t workspace_size = gemm_op->get_workspace_size(args);
@@ -3752,7 +4234,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     topk_reduce_scatter_op->set_msplit_waves(
         this->msplit_wave_of_node_,
         this->msplit_node_order_,
-        msplit_run ? msplit_n_waves : 0);
+        msplit_run ? msplit_n_waves : 0,
+        msplit_run ? this->msplit_piece_flags_ : 0);
     output = topk_reduce_scatter_op->run(
         gemm_outs,
         output,
@@ -4193,9 +4676,17 @@ TopkReduceScatterOp::TopkReduceScatterOp(
 TopkReduceScatterOp::~TopkReduceScatterOp() { delete impl_; }
 void
 TopkReduceScatterOp::set_msplit_waves(
-    std::vector<int> const &wave_of_node, std::vector<int> const &node_order, int n_waves) {
+    std::vector<int> const &wave_of_node,
+    std::vector<int> const &node_order,
+    int n_waves,
+    int n_chunk_flags) {
   FLUX_CHECK(impl_ != nullptr) << "TopkReduceScatterOp is not initialized";
-  impl_->set_msplit_waves(wave_of_node, node_order, n_waves);
+  impl_->set_msplit_waves(wave_of_node, node_order, n_waves, n_chunk_flags);
+}
+void
+TopkReduceScatterOp::set_piece_table(torch::Tensor piece_start, int n_pieces) {
+  FLUX_CHECK(impl_ != nullptr) << "TopkReduceScatterOp is not initialized";
+  impl_->set_piece_table(std::move(piece_start), n_pieces);
 }
 void *
 TopkReduceScatterOp::send_panel_ptr() {

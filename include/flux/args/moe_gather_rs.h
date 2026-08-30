@@ -153,6 +153,10 @@ struct GemmGroupedV2GatherRSArguments {
   // elsewhere, so the uniform division is wrong there). nullptr = legacy
   // uniform per-split division (bit-exact column-split behavior).
   int const *non_empty_per_group = nullptr;
+  // v2 chunked combine (FLUX_A2AV_RS_CHUNK_E): device [problem_count]
+  // problem -> cascade group (wave) map for chunk-ordered problem lists;
+  // nullptr = legacy uniform division.
+  int const *prob_group_map = nullptr;
   // gen-8c epilogue-fused pack: per-problem D scatter-index pointers (built by
   // make_workspace; identity iota when fused pack is off)
   int **scatter_D_ptr = nullptr;
@@ -258,6 +262,18 @@ struct A2AVCombinePackArguments {
   // ScatterD, so the pack degenerates to a pure FLAG RELAY — wait each wave
   // flag and flip the per-node chunk flags, moving no data.
   int relay_only;
+  // v2 M2 pieces: number of per-expert-chunk cascade flags to wait at entry
+  // (the no-split build fires barrier[0..n) per chunk; wave_of_node stays 0).
+  // 0 = legacy wave gating.
+  int n_chunk_flags;
+  // v2 M2 piece relay (requires relay_only + msplit): wait each piece's
+  // chunk-flag range, then flip per (node, piece) flags (depth-8 slots);
+  // own-node LEGACY group flag flips at the last piece for the intra ladder.
+  // 0 = off.
+  int n_pieces;
+  int piece_first_chunk[9];   // [p] = first chunk flag of piece p; [P] = end
+  int *piece_group_flags;     // [nnodes * 8]
+  int *piece_group_counters;  // [nnodes * 8]
 };
 
 // gen-8c: invert an int32 permutation-ish map (out[idx[p]] = p) — builds the
@@ -315,6 +331,17 @@ struct A2AVCompressPlanArguments {
   int32_t *wire_copy;  // [conv_total]
   int32_t *red_ptr;    // [ntok_local + 1]
   int32_t *red_row;    // [own_total + rem_total]
+  // v2 M2 pieces (nullptr / 0 = off, bit-identical legacy order):
+  // deterministic piece of each global expert (shared chunk merge); wire
+  // rows renumber (seg, ready_piece, token) on BOTH sides, where
+  // ready_piece = max contributor piece. red_flags then stores piece+1
+  // (0 = no contribution) instead of 0/1.
+  int32_t const *piece_of_e = nullptr;  // [nexperts] device
+  int n_pieces = 0;
+  int32_t *wire_piece = nullptr;        // scratch [(NN-1) * tokens_per_rank]
+  // out [(NN-1) * (n_pieces + 1)]: per-seg RELATIVE piece row starts
+  // ([seg][P] = seg total) — equal on sender and dest by construction
+  int32_t *wire_piece_start = nullptr;
   // geometry
   int64_t m_full;
   int topk;
@@ -384,6 +411,14 @@ struct A2AVCombinePreReduceArguments {
   int *wire_counters;            // [nnodes * n_split] per-block completion counters
   int node_order[kA2AVMaxNodes];  // schedule step -> remote target node (ring default)
   int64_t wire_seg_start[kA2AVMaxNodes + 1];  // wire-row start per segment (tn asc skip own)
+  // v2 M2 pieces (0 = off): per-(tn, piece) consumption — wait the L conv
+  // piece signals, process the piece's contiguous wire-row range (per-seg
+  // RELATIVE starts, stride 9), flip the per-piece wire flag.
+  int n_pieces = 0;
+  int32_t piece_start[kA2AVMaxNodes * 9] = {};  // [seg * 9 + p], rel rows
+  uint64_t const *piece_conv_sigs = nullptr;    // [(L * NN) * 8]
+  int *piece_wire_flags = nullptr;              // [NN * 8]
+  int *piece_wire_counters = nullptr;           // [NN * 8]
   int64_t conv_rows;             // conv panel row capacity per split
   int64_t wire_rows;             // wire panel row capacity per split
   int n_per;

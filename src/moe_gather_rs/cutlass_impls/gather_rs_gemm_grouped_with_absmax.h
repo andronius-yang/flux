@@ -178,6 +178,8 @@ public:
     // M-split waves (Slipstream v2): per-group non-empty targets; nullptr =
     // legacy uniform division
     int const *non_empty_per_group = nullptr;
+    // v2 chunked combine: problem -> group map for chunk-ordered lists
+    int const *prob_group_map = nullptr;
     // gen-8c epilogue-fused pack: per-problem D scatter indices (identity
     // iota in legacy mode — the ScatterD iterator always reads them)
     int **scatter_D_ptr = nullptr;
@@ -213,7 +215,8 @@ public:
       int *barrier_ptr = nullptr,
       int *non_problem_count = nullptr,
       int const *non_empty_per_group_ = nullptr,
-      int **scatter_D_ptr_ = nullptr
+      int **scatter_D_ptr_ = nullptr,
+      int const *prob_group_map_ = nullptr
     ):
       problem_sizes(problem_sizes),
       problem_count(problem_count),
@@ -236,7 +239,8 @@ public:
       barrier_ptr(barrier_ptr),
       non_empty_problem_count(non_problem_count),
       non_empty_per_group(non_empty_per_group_),
-      scatter_D_ptr(scatter_D_ptr_)
+      scatter_D_ptr(scatter_D_ptr_),
+      prob_group_map(prob_group_map_)
     {
 
     }
@@ -278,6 +282,7 @@ public:
     int *barrier_ptr;
     int const *non_empty_per_group{nullptr};  // M-split waves; nullptr = uniform
     int **scatter_D_ptr{nullptr};             // per-problem D scatter indices
+    int const *prob_group_map{nullptr};       // v2 chunked combine
     //// added by flux to support barrier ptr /////
 
     //
@@ -309,7 +314,8 @@ public:
       non_empty_problem_count(args.non_empty_problem_count),
       barrier_ptr(args.barrier_ptr),
       non_empty_per_group(args.non_empty_per_group),
-      scatter_D_ptr(args.scatter_D_ptr)
+      scatter_D_ptr(args.scatter_D_ptr),
+      prob_group_map(args.prob_group_map)
     {
 
     }
@@ -343,6 +349,7 @@ public:
       non_empty_problem_count = args.non_empty_problem_count;
       non_empty_per_group = args.non_empty_per_group;
       scatter_D_ptr = args.scatter_D_ptr;
+      prob_group_map = args.prob_group_map;
     }
   };
 
@@ -591,7 +598,11 @@ public:
         // ranks leave experts empty), so some split flag never fired and
         // every layer1 arm hung on the cascade (root-caused 2026-08-16).
         int problems_per_split_full = params.problem_visitor.problem_count / params.n_split;
-        int group_idx = problem_idx / problems_per_split_full;
+        // v2 chunked combine: chunk-ordered lists ship an explicit map; the
+        // division is only valid for the legacy wave-outer/expert-inner order
+        int group_idx = params.prob_group_map != nullptr
+                            ? params.prob_group_map[problem_idx]
+                            : problem_idx / problems_per_split_full;
         // M-split waves (Slipstream v2): a wave can lack rows for an expert
         // that is non-empty elsewhere, so the completion target must be
         // per-group. nullptr keeps the legacy uniform division bit-exact.
