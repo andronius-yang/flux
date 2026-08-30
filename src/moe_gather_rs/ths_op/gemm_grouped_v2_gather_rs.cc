@@ -806,6 +806,51 @@ namespace {
   }
 
   // Sort-free compress-plan builder (2026-08-21): identical outputs to
+  // v2 M2 pieces: deterministic piece config — a pure function of
+  // (env, E_loc), identical on every rank and between derive and forward.
+  // Requires an EXPLICIT FLUX_A2AV_RS_CHUNK_E (the auto width needs panel
+  // bytes, which derive does not have). Even chunk->piece index merge;
+  // byte-floor refinement is a later dial.
+  struct A2AVPieceConfig {
+    int n_pieces = 0;   // 0 = pieces off
+    int chunk_e = 0;
+    int n_chunks = 0;
+    std::vector<int32_t> piece_of_chunk;
+  };
+  static A2AVPieceConfig
+  a2av_piece_config(int64_t e_loc) {
+    A2AVPieceConfig cfg;
+    const int want = get_a2av_rs_pieces();
+    if (want == 0 || e_loc <= 0) {
+      return cfg;
+    }
+    const int ce = get_a2av_rs_chunk_e();
+    FLUX_CHECK_GT(ce, 0)
+        << "FLUX_A2AV_RS_PIECES requires an explicit FLUX_A2AV_RS_CHUNK_E > 0 "
+           "(derive has no panel bytes for the auto width)";
+    cfg.chunk_e = std::min<int64_t>(ce, e_loc);
+    cfg.n_chunks = (int)((e_loc + cfg.chunk_e - 1) / cfg.chunk_e);
+    const int cap = want > 0 ? want : 4;
+    cfg.n_pieces = std::max(1, std::min({cap, cfg.n_chunks, 8}));
+    cfg.piece_of_chunk.resize(cfg.n_chunks);
+    for (int c = 0; c < cfg.n_chunks; c++) {
+      cfg.piece_of_chunk[c] =
+          (int32_t)(((int64_t)c * cfg.n_pieces) / cfg.n_chunks);
+    }
+    return cfg;
+  }
+  // piece lookup over GLOBAL expert ids (pinned -> device, async)
+  static torch::Tensor
+  a2av_piece_lookup_dev(A2AVPieceConfig const &cfg, int64_t nex, int64_t e_loc) {
+    torch::Tensor h = torch::empty(
+        {nex}, torch::TensorOptions().dtype(torch::kInt).pinned_memory(true));
+    int32_t *hp = h.data_ptr<int32_t>();
+    for (int64_t e = 0; e < nex; e++) {
+      hp[e] = cfg.piece_of_chunk[(int)((e % e_loc) / cfg.chunk_e)];
+    }
+    return h.to(torch::kCUDA, /*non_blocking=*/true);
+  }
+
   // build_a2av_compress_indices above, but every ordering is arithmetic on
   // the layer0 stable scatter_index + host cnt/U prefix tables — 4 kernels
   // (a2av_compress_plan), no radix sorts, deterministic. The sort-based
@@ -823,7 +868,11 @@ namespace {
       int rank,
       int64_t total_num_experts,
       int64_t ep_nexperts,
-      int topk) {
+      int topk,
+      // v2 M2 pieces (defaults = off, bit-identical order)
+      torch::Tensor const *piece_of_e_dev = nullptr,
+      int n_pieces = 0,
+      torch::Tensor *wire_piece_start_out = nullptr) {
     const int W = world_size;
     const int NN = nnodes;
     const int L = local_world_size;
@@ -942,7 +991,16 @@ namespace {
     auto t64_dev = t64.to(torch::kCUDA, /*non_blocking=*/true);
     auto t32_dev = t32.to(torch::kCUDA, /*non_blocking=*/true);
     const int64_t seg_tokens = (int64_t)(NN - 1) * tpr;
-    auto scratch = torch::empty({2 * seg_tokens + 2 * tpr * NN}, opt_i32);
+    const bool pieces_on = piece_of_e_dev != nullptr && n_pieces > 0;
+    auto scratch = torch::empty(
+        {(pieces_on ? 3 : 2) * seg_tokens + 2 * tpr * NN}, opt_i32);
+    torch::Tensor piece_start;
+    if (pieces_on) {
+      piece_start = torch::empty({(int64_t)(NN - 1) * (n_pieces + 1)}, opt_i32);
+      if (wire_piece_start_out != nullptr) {
+        *wire_piece_start_out = piece_start;
+      }
+    }
     auto wire_ptr = torch::empty({wire_total + 1}, opt_i32);
     auto wire_copy = torch::empty({conv_total}, opt_i32);
     auto red_ptr = torch::empty({ntok_local + 1}, opt_i32);
@@ -968,6 +1026,11 @@ namespace {
         .wire_copy = wire_copy.data_ptr<int32_t>(),
         .red_ptr = red_ptr.data_ptr<int32_t>(),
         .red_row = red_row.data_ptr<int32_t>(),
+        .piece_of_e = pieces_on ? piece_of_e_dev->data_ptr<int32_t>() : nullptr,
+        .n_pieces = pieces_on ? n_pieces : 0,
+        .wire_piece = pieces_on ? scr + 2 * seg_tokens + 2 * tpr * NN : nullptr,
+        .wire_piece_start =
+            pieces_on ? piece_start.data_ptr<int32_t>() : nullptr,
         .m_full = m_full,
         .topk = topk,
         .world_size = W,
@@ -3065,6 +3128,15 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       FLUX_CHECK(a2av_unique_counts.has_value())
           << "a2av_hier_compress derive requires a2av_unique_counts ([W, nnodes] int32 CPU)";
       // sort-free path (2026-08-21): scd-arithmetic kernels, no radix sorts
+      // v2 M2 pieces: deterministic config from env + E_loc; the piece-start
+      // table is handed to the reduce op (D2H + event) for the wire ladder
+      const auto piece_cfg = a2av_piece_config(this->ep_nexperts);
+      torch::Tensor piece_lookup;
+      torch::Tensor piece_start;
+      if (piece_cfg.n_pieces > 0) {
+        piece_lookup =
+            a2av_piece_lookup_dev(piece_cfg, this->total_num_experts, this->ep_nexperts);
+      }
       auto [wp, wc, rp, rr] = build_a2av_compress_indices_fast(
           routing_idx,
           splits_gpu,
@@ -3077,10 +3149,26 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
           this->rank,
           this->total_num_experts,
           this->ep_nexperts,
-          this->topk);
+          this->topk,
+          piece_cfg.n_pieces > 0 ? &piece_lookup : nullptr,
+          piece_cfg.n_pieces,
+          piece_cfg.n_pieces > 0 ? &piece_start : nullptr);
+      if (piece_cfg.n_pieces > 0) {
+        this->topk_reduce_scatter_op->set_piece_table(
+            piece_start, piece_cfg.n_pieces);
+      }
       static const bool kCheckIdentity =
           get_int_from_env("FLUX_A2AV_RS_CHECK_IDENTITY", 0) != 0;
-      if (kCheckIdentity) {
+      if (kCheckIdentity && piece_cfg.n_pieces > 0) {
+        static bool warned = false;
+        if (!warned && this->rank == 0) {
+          fprintf(
+              stderr,
+              "[flux] CHECK_IDENTITY: sort-reference compare SKIPPED under "
+              "FLUX_A2AV_RS_PIECES (piece keys not in the reference yet)\n");
+          warned = true;
+        }
+      } else if (kCheckIdentity) {
         auto [wp_ref, wc_ref, rp_ref, rr_ref] = build_a2av_compress_indices(
             routing_idx,
             splits_gpu,
