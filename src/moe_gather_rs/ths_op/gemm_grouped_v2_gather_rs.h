@@ -50,7 +50,8 @@ class TopkReduceScatterOp {
   void set_msplit_waves(
       std::vector<int> const &wave_of_node,
       std::vector<int> const &node_order,
-      int n_waves);
+      int n_waves,
+      int n_chunk_flags = 0);
   // gen-8c epilogue-fused pack: the send panel the GEMM scatters into
   void *send_panel_ptr();
   int64_t send_panel_rows();

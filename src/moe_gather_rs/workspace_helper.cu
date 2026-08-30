@@ -138,7 +138,8 @@ make_workspace_kernel(
     // their ready flags so the pack kernel's wave gate never waits on them.
     // (The GEMM's per-group targets come from non_empty_per_wave; the legacy
     // *non_empty_problem_count is never read in msplit mode.)
-    for (int w = threadIdx.x; w < args.n_waves; w += blockDim.x) {
+    const int nf = args.n_flags > 0 ? args.n_flags : args.n_waves;
+    for (int w = threadIdx.x; w < nf; w += blockDim.x) {
       if (args.non_empty_per_wave[w] == 0) {
         args.barrier[w] = 1;
       }

@@ -82,6 +82,14 @@ template <typename T, bool kHasVecScale>
 __global__ void
 __launch_bounds__(1024, 1) a2av_combine_pack_kernel(A2AVCombinePackArguments args) {
   using Barrier = cutlass::Barrier;
+  // v2 M2a: no-split chunked GEMM — data completeness = ALL chunk flags
+  // (chunk completion order is not guaranteed, so wait each one). The
+  // per-(tn, piece) gating of M2b replaces this entry wait.
+  if (args.n_chunk_flags > 0) {
+    for (int c = 0; c < args.n_chunk_flags; c++) {
+      Barrier::wait_eq(args.barrier, threadIdx.x, c, 1);
+    }
+  }
   constexpr int kElemsPerPack = PackU<T>::kElemsPerPack;
   const int64_t n_per = args.n_per;
   const int64_t packs_per_row = n_per / kElemsPerPack;

@@ -288,6 +288,19 @@ get_a2av_rs_chunk_l2_mib() {
   static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_CHUNK_L2_MIB", 30);
   return v;
 }
+// v2 M2 piece release (worktree v2-combine, 2026-08-30): NO-SPLIT problem
+// structure (one full-row problem per expert — no wave padding) with
+// per-expert-chunk cascade flags (prob_group_map = chunk_of; the existing
+// per-problem cascade is the producer). M2a: the pack gates on ALL chunk
+// flags (comm = collapse timing; scaffolding + gate arm). The (tn, piece)
+// flush chain lands on top (M2b). 0 = OFF; >0 = armed (max pieces/dest,
+// M2b); -1 = armed with auto piece count.
+int
+get_a2av_rs_pieces() {
+  (void)bytedance::flux::get_int_from_env("FLUX_A2AV_RS_PIECES_TAG", 0);
+  static int v = bytedance::flux::get_int_from_env("FLUX_A2AV_RS_PIECES", 0);
+  return v;
+}
 // OWN_WAVE=first (gen-9 receiver study, 2026-08-24): compute the OWN-node
 // wave FIRST instead of last. Costs ~1/NN of the GEMM in wire-start delay;
 // buys the receiver early own-node contributions, so tokens complete at
@@ -1026,6 +1039,9 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
   // M-split waves (Slipstream v2): per-iteration pack-gate state, armed by
   // set_msplit_waves() before each run(); 0 = legacy single-split gate
   int msplit_n_waves_ = 0;
+  // v2 M2 pieces: per-expert-chunk cascade flag count the pack must wait at
+  // entry (no-split build); 0 = legacy wave gating
+  int msplit_chunk_flags_ = 0;
   int msplit_wave_of_node_[kA2AVMaxNodes] = {};
   int msplit_node_order_[kA2AVMaxNodes] = {};
 
@@ -1335,7 +1351,11 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
 
   void
   set_msplit_waves(
-      std::vector<int> const &wave_of_node, std::vector<int> const &node_order, int n_waves) {
+      std::vector<int> const &wave_of_node,
+      std::vector<int> const &node_order,
+      int n_waves,
+      int n_chunk_flags = 0) {
+    this->msplit_chunk_flags_ = n_chunk_flags > 0 ? n_chunk_flags : 0;
     if (n_waves <= 0) {
       this->msplit_n_waves_ = 0;
       return;
@@ -1869,6 +1889,7 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
     pack_args.node_row_start[NN] = M_this_ep;
     // M-split waves: gate the pack per schedule step on the wave's cascade flag
     pack_args.relay_only = fused_relay ? 1 : 0;
+    pack_args.n_chunk_flags = this->msplit_chunk_flags_;
     pack_args.msplit = this->msplit_n_waves_ > 0 ? 1 : 0;
     if (pack_args.msplit) {
       FLUX_CHECK_EQ(this->n_split, 1);
@@ -2956,6 +2977,7 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
   bool fused_pack_ = false;    // gen-8c: GEMM scatters the send panel directly
   int msplit_wave_nodes_ = 1;
   torch::Tensor msplit_host_;  // pinned int32 [4 * NN * E + NN] (v2 chunked)
+  int msplit_piece_flags_ = 0;  // v2 M2: per-chunk cascade flag count (0 = waves)
   torch::Tensor msplit_dev_;   // device int32, same capacity
   torch::Tensor msplit_iota_;      // int32 [max_m] shared identity indices
   torch::Tensor msplit_inv_pack_;  // int32 [max_m] gemm row -> panel row
@@ -3512,6 +3534,10 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         msplit_run = false;
       }
     }
+    // v2 M2 pieces: replaces the destination-wave split with the no-split
+    // chunked structure. Mutually exclusive with the wave schedule by
+    // construction (single wave covering every node).
+    const bool pieces_run = msplit_run && get_a2av_rs_pieces() != 0;
     if (msplit_run) {
       FLUX_CHECK(splits_per_source.has_value());
       const int NN = this->nnodes;
@@ -3525,6 +3551,21 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       // home-node ASCENDING — the layer0 stable scatter order — so a wave must
       // be one contiguous ascending node range).
       std::vector<std::pair<int, int>> waves;  // ascending node range [a, b)
+      if (pieces_run) {
+        FLUX_CHECK_EQ(NG, 1) << "FLUX_A2AV_RS_PIECES requires WAVE_NODES == 1";
+        // one wave = every node: E full-row problems (no dest split). The
+        // ladder schedule keeps the ring (own last); every schedule step
+        // gates on flag 0 (pre-satisfied by the pack's all-chunks entry
+        // wait), so wave_of_node stays all-zero.
+        waves.emplace_back(0, NN);
+        msplit_n_waves = 1;
+        for (int gi = 0; gi < NN - 1; gi++) {
+          this->msplit_node_order_[gi] = (my_node + 1 + gi) % NN;
+          this->msplit_wave_of_node_[gi] = 0;
+        }
+        this->msplit_node_order_[NN - 1] = my_node;
+        this->msplit_wave_of_node_[NN - 1] = 0;
+      } else {
       const bool size_order = get_a2av_rs_wave_order() != 0;
       if (size_order) {
         // gen-8a: remote per-node waves ordered by DESCENDING segment size
@@ -3582,6 +3623,7 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         const int own_pos = get_a2av_rs_own_wave_first() != 0 ? 0 : NN - 1;
         FLUX_CHECK_EQ(this->msplit_node_order_[own_pos], my_node);
       }
+      }  // !pieces_run
       // guard the pinned arena against a still-in-flight previous H2D
       CUDA_CHECK(cudaEventSynchronize(this->msplit_h2d_event_));
       // v2 chunked combine: problem-order permutation (chunk-outer, wave-
@@ -3590,7 +3632,7 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       // (maps not shipped; ws kernel + cascade take their legacy paths).
       {
         int ce = get_a2av_rs_chunk_e();
-        if (ce < 0) {
+        if (ce < 0 || (pieces_run && ce == 0)) {
           const int64_t panel_bytes =
               (int64_t)N * K * c10::elementSize(input_torch_type);
           const int64_t l2 = (int64_t)get_a2av_rs_chunk_l2_mib() << 20;
@@ -3598,6 +3640,16 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
               1, l2 / std::max<int64_t>(panel_bytes, 1));
         }
         msplit_chunk_E = ce > 0 ? std::min(ce, E) : 0;
+      }
+      // pieces mode: flags are per expert-chunk, not per wave
+      const int n_chunks =
+          pieces_run ? (E + msplit_chunk_E - 1) / msplit_chunk_E : 0;
+      if (pieces_run) {
+        FLUX_CHECK_LE(n_chunks, 128)
+            << "piece chunk flags must fit the 128-padded barrier region";
+        this->msplit_piece_flags_ = n_chunks;
+      } else {
+        this->msplit_piece_flags_ = 0;
       }
       const int n_probs = msplit_n_waves * E;
       std::vector<int32_t> idx_of((size_t)n_probs);
@@ -3623,7 +3675,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       int32_t *h_eid = hp + (int64_t)2 * n_probs;
       int32_t *h_grp = hp + (int64_t)3 * n_probs;
       int32_t *h_ne = hp + (int64_t)4 * n_probs;
-      for (int w = 0; w < msplit_n_waves; w++) {
+      const int n_flags = pieces_run ? n_chunks : msplit_n_waves;
+      for (int w = 0; w < n_flags; w++) {
         h_ne[w] = 0;
       }
       for (int e = 0; e < E; e++) {
@@ -3647,13 +3700,16 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
           h_wave_M[ip] = (int32_t)rows;
           h_wave_off[ip] = (int32_t)off;
           h_eid[ip] = (int32_t)e;
-          h_grp[ip] = (int32_t)w;
+          // pieces: the cascade group is the expert CHUNK; empty-group
+          // credit follows the same axis
+          const int grp = pieces_run ? (e / msplit_chunk_E) : w;
+          h_grp[ip] = (int32_t)grp;
           if (rows > 0) {
-            h_ne[w] += 1;
+            h_ne[grp] += 1;
           }
         }
       }
-      const int64_t used = (int64_t)4 * n_probs + msplit_n_waves;
+      const int64_t used = (int64_t)4 * n_probs + n_flags;
       CUDA_CHECK(cudaMemcpyAsync(
           this->msplit_dev_.data_ptr(),
           hp,
@@ -3693,6 +3749,7 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       ws_args.wave_M = msplit_wave_M_dev;
       ws_args.wave_off = msplit_wave_off_dev;
       ws_args.non_empty_per_wave = msplit_ne_wave_dev;
+      ws_args.n_flags = this->msplit_piece_flags_;  // 0 = per-wave flags
       ws_args.prob_eid = msplit_chunk_E > 0 ? msplit_eid_dev : nullptr;
       ws_args.barrier = this->barrier.data_ptr<int>();
     }
@@ -3793,14 +3850,19 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         .routing_idx = routing_idx.data_ptr<int32_t>(),
         // msplit: the cascade's group axis is the WAVE (n_split stays 1 for
         // panels/columns — full-N sub-problems)
-        .n_split = msplit_run ? msplit_n_waves : n_split,
+        .n_split = msplit_run
+                       ? (this->msplit_piece_flags_ > 0 ? this->msplit_piece_flags_
+                                                        : msplit_n_waves)
+                       : n_split,
         .sm_margin = sm_margin + (this->a2av_hier
                                       ? get_a2av_pack_blocks() + get_a2av_reduce_blocks() +
                                             (this->a2av_compress ? get_a2av_prered_blocks() : 0)
                                       : get_rs_threadblock_count()),
         .non_empty_per_group = msplit_run ? msplit_ne_wave_dev : nullptr,
         .prob_group_map =
-            (msplit_run && msplit_chunk_E > 0) ? msplit_grp_dev : nullptr,
+            (msplit_run && (msplit_chunk_E > 0 || this->msplit_piece_flags_ > 0))
+                ? msplit_grp_dev
+                : nullptr,
         .scatter_D_ptr = scatter_D_ptr_ws};
 
     int64_t workspace_size = gemm_op->get_workspace_size(args);
@@ -3820,7 +3882,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     topk_reduce_scatter_op->set_msplit_waves(
         this->msplit_wave_of_node_,
         this->msplit_node_order_,
-        msplit_run ? msplit_n_waves : 0);
+        msplit_run ? msplit_n_waves : 0,
+        msplit_run ? this->msplit_piece_flags_ : 0);
     output = topk_reduce_scatter_op->run(
         gemm_outs,
         output,
@@ -4261,9 +4324,12 @@ TopkReduceScatterOp::TopkReduceScatterOp(
 TopkReduceScatterOp::~TopkReduceScatterOp() { delete impl_; }
 void
 TopkReduceScatterOp::set_msplit_waves(
-    std::vector<int> const &wave_of_node, std::vector<int> const &node_order, int n_waves) {
+    std::vector<int> const &wave_of_node,
+    std::vector<int> const &node_order,
+    int n_waves,
+    int n_chunk_flags) {
   FLUX_CHECK(impl_ != nullptr) << "TopkReduceScatterOp is not initialized";
-  impl_->set_msplit_waves(wave_of_node, node_order, n_waves);
+  impl_->set_msplit_waves(wave_of_node, node_order, n_waves, n_chunk_flags);
 }
 void *
 TopkReduceScatterOp::send_panel_ptr() {

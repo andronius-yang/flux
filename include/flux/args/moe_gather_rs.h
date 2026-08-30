@@ -262,6 +262,10 @@ struct A2AVCombinePackArguments {
   // ScatterD, so the pack degenerates to a pure FLAG RELAY — wait each wave
   // flag and flip the per-node chunk flags, moving no data.
   int relay_only;
+  // v2 M2 pieces: number of per-expert-chunk cascade flags to wait at entry
+  // (the no-split build fires barrier[0..n) per chunk; wave_of_node stays 0).
+  // 0 = legacy wave gating.
+  int n_chunk_flags;
 };
 
 // gen-8c: invert an int32 permutation-ish map (out[idx[p]] = p) — builds the
