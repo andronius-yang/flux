@@ -2898,6 +2898,30 @@ VARIANTS["ours_l01_s1_pv2_r2_chunk_gate"] = dict(
     test_args=VARIANTS["ours_l01_s1_pv2_r2_chunk"]["test_args"]
               + ["--check_iters", "1"],
 )
+# ---- v2 M2 pieces (worktree v2-combine, 8/30): NO-SPLIT chunked GEMM
+# (one problem per expert — no wave padding, ~1 weight pass) + progressive
+# per-(dest node, piece) wire release (two-sided ready-piece plan order,
+# epoch-SET per-(lane,piece) slots). CHUNK_E must be EXPLICIT (derive/
+# forward width consistency); wave-adapt is bypassed under pieces.
+VARIANTS["ours_l01_s1_pv2_r2_pieces"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2"],
+    env=dict(VARIANTS["ours_l01_s1_pv2_r2"]["env"],
+             FLUX_A2AV_RS_PIECES="4",
+             FLUX_A2AV_RS_CHUNK_E="1"),
+    requires=list(VARIANTS["ours_l01_s1_pv2_r2"].get("requires", []))
+             + ["FLUX_A2AV_RS_PIECES_TAG"],
+)
+VARIANTS["ours_l01_s1_pv2_r2_pieces_gate"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2_pieces"],
+    test_args=VARIANTS["ours_l01_s1_pv2_r2_pieces"]["test_args"]
+              + ["--check_iters", "1"],
+)
+# P=2 twin (put-constant dial)
+VARIANTS["ours_l01_s1_pv2_r2_pieces2"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2_pieces"],
+    env=dict(VARIANTS["ours_l01_s1_pv2_r2_pieces"]["env"],
+             FLUX_A2AV_RS_PIECES="2"),
+)
 # waves-always twin on the same binary (chunk off): the M1 A/B pair
 VARIANTS["ours_l01_s1_pv2_r2_wa0"] = dict(
     VARIANTS["ours_l01_s1_pv2_r2"],

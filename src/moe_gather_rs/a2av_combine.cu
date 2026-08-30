@@ -305,15 +305,17 @@ __launch_bounds__(512, 1) a2av_combine_prereduce_kernel(A2AVCombinePreReduceArgu
   for (int sid = 0; sid < args.n_split; sid++) {
     T const *conv = (T const *)args.conv_panel + (int64_t)sid * args.conv_rows * n_per;
     T *wire = (T *)args.wire_panel + (int64_t)sid * args.wire_rows * n_per;
-    for (int gi = 0; gi < NN - 1; gi++) {
-      // host-built schedule (ring by default; size-sorted under gen-8a) —
-      // panel/segment layout stays tn-ascending, only the visit order moves
-      const int tn = args.node_order[gi];
-      const int seg = tn < args.node_idx ? tn : tn - 1;
-      // v2 M2 pieces: per-(tn, piece) consumption; P == 1 with the legacy
-      // signals reproduces the old whole-segment flow
-      const int P = args.n_pieces > 0 ? args.n_pieces : 1;
-      for (int p = 0; p < P; p++) {
+    // v2 M2 pieces: PIECE-OUTER visit order — the kernel drains (tn, piece)
+    // cells serially, and piece flags fire piece-major globally; tn-outer
+    // would park every later tn's early pieces behind the first tn's last
+    // piece (~GEMM end). P == 1 with legacy signals == the old flow.
+    const int P = args.n_pieces > 0 ? args.n_pieces : 1;
+    for (int p = 0; p < P; p++) {
+      for (int gi = 0; gi < NN - 1; gi++) {
+        // host-built schedule (ring by default; size-sorted under gen-8a) —
+        // panel/segment layout stays tn-ascending, only the visit order moves
+        const int tn = args.node_order[gi];
+        const int seg = tn < args.node_idx ? tn : tn - 1;
         if (threadIdx.x == 0) {
           for (int ls = 0; ls < L; ls++) {
             uint64_t const *sig =

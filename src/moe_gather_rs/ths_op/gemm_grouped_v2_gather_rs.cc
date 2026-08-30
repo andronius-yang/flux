@@ -2363,14 +2363,14 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         // conv panel, peers get one contiguous putmem_signal each (NVLink CE).
         // Every (peer, tn) pair signals every split, payload or not.
         cudaStream_t conv_stream = this->a2av_conv_stream_.value();
-        for (int gi = 0; gi < NN - 1; gi++) {
-          int tn = sched_remote[gi];  // production schedule (ring / size-sorted)
-          if (pieces_on) {
-            // v2 M2: per-piece slices — gate on the pack's (tn, piece) flag,
-            // put each dest lane's contiguous piece prefix, signal the
-            // per-(lane, tn, piece) slot at the gateway
-            const int P = this->piece_n_;
-            for (int pc = 0; pc < P; pc++) {
+        // v2 M2 pieces: PIECE-OUTER enqueue — the conv stream is single, so
+        // (tn-outer, piece-inner) would park tn1's piece 0 behind tn0's LAST
+        // piece flag (~GEMM end); piece flags fire piece-major globally
+        if (pieces_on) {
+          const int P = this->piece_n_;
+          for (int pc = 0; pc < P; pc++) {
+            for (int gi = 0; gi < NN - 1; gi++) {
+              int tn = sched_remote[gi];
               CU_CHECK(CUStreamWaitValue(
                   conv_stream,
                   (CUdeviceptr)(this->piece_group_flags_.get() + tn * 8 + pc),
@@ -2413,8 +2413,10 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
                 }
               }
             }
-            continue;
           }
+        }
+        for (int gi = 0; !pieces_on && gi < NN - 1; gi++) {
+          int tn = sched_remote[gi];  // production schedule (ring / size-sorted)
           CU_CHECK(CUStreamWaitValue(
               conv_stream,
               (CUdeviceptr)(this->group_flags.get() + tn * this->n_split + sid),
@@ -3847,7 +3849,9 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     // structure instead (msplit_run false => ws_args.msplit 0, legacy
     // problem_count, gemm n_split, fused pack off, set_msplit_waves(0)).
     bool msplit_run = this->msplit_;
-    if (this->msplit_ && get_a2av_rs_wave_adapt() > 0) {
+    // pieces mode has ~one weight pass — the wave-adapt reread model does
+    // not apply; never let it collapse the piece schedule
+    if (this->msplit_ && get_a2av_rs_wave_adapt() > 0 && get_a2av_rs_pieces() == 0) {
       FLUX_CHECK(splits_per_source.has_value());
       const int NN = this->nnodes;
       const int E = this->ep_nexperts;
