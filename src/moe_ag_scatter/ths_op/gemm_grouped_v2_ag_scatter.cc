@@ -4479,8 +4479,24 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     } else if (nnodes == 1) {
       CUDA_CHECK(cudaStreamWaitEvent(stream, ag_op->get_local_prepare_event()));
     } else {
-      // do not start the (SM-occupying) GEMM before the remote fetches are issued
-      CUDA_CHECK(cudaStreamWaitEvent(stream, this->fetch_remote_event));
+      // do not start the (SM-occupying) GEMM before the remote fetches are
+      // issued. NOTE (handoff 30 provenance audit): fetch_remote_event is
+      // stream-ordered after getmem_on_stream + the TEAM_NODE barrier, so this
+      // wait is COMPLETION of all inter-node data, not issue — inherited
+      // verbatim from the upstream sm90/V3 gate.
+      // FLUX_A2AV_DENSE_NO_GEMM_GATE=1 (DEBUG-ONLY ablation, never default):
+      // skip the wait; tiles then gate on the per-source barrier flags, which
+      // the per-iteration memset above (main stream, pre-allgather) keeps
+      // epoch-correct. Under the launcher's CUDA_DEVICE_MAX_CONNECTIONS=1 the
+      // comm ops were all ENQUEUED before the GEMM, so queue order still
+      // launches them ahead of it; real overlap is only expected at conn>1
+      // (ablation arm _c8).
+      (void)get_int_from_env("FLUX_A2AV_DENSE_NO_GEMM_GATE_TAG", 0);
+      static const bool kDenseNoGate =
+          get_int_from_env("FLUX_A2AV_DENSE_NO_GEMM_GATE", 0) != 0;
+      if (!kDenseNoGate) {
+        CUDA_CHECK(cudaStreamWaitEvent(stream, this->fetch_remote_event));
+      }
     }
     if (M_this_ep > 0) {
       int64_t workspace_size = op->get_workspace_size(args);

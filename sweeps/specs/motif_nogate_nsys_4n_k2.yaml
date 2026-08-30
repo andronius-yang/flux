@@ -1,0 +1,21 @@
+# Dense no-gate ablation, nsys + tile-trace: arrival stamps + in-GEMM spin
+# under the dropped gate (instrumented — never latency).
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [l01_allgather_dense, l01_allgather_dense_nogate, l01_allgather_dense_nogate_c8]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [32]
+modes: [nsys]
+extra_env:
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+  FLUX_A2AV_NVTX_PROXY: "1"
+  FLUX_A2AV_TILE_TRACE_DENSE: "1"
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 0
+notes: "motif nogate nsys/trace b32: tile-fire + overlap picture without the gate"

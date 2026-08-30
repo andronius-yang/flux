@@ -1549,6 +1549,44 @@ VARIANTS = {
         requires=["FLUX_A2AV_RS_MAX_SEND_ROWS"],
         l1_pattern="dense",
     ),
+    # DEBUG-ONLY dense gate ablation (2026-08-30, motif figure lane, handoff
+    # 30): answers the reviewer question "could COMET just drop its
+    # completion gate?". Never headline; instrumented/diagnostic use only.
+    # _nogate keeps the launcher's CUDA_DEVICE_MAX_CONNECTIONS=1 (queue order
+    # still serializes comm ahead of the GEMM); _c8 raises connections so the
+    # ungated GEMM can actually run concurrently with the fetch stream.
+    "l01_allgather_dense_nogate": dict(
+        comm_pattern="l01_allgather_dense_nogate",
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "allgather",
+            "--l1_comm_pattern", "dense",
+            "--n_split", "2",
+        ],
+        env={"FLUX_RS_BLOCKS": "20", "FLUX_A2AV_DENSE_NO_GEMM_GATE": "1"},
+        requires=["FLUX_A2AV_RS_MAX_SEND_ROWS", "FLUX_A2AV_DENSE_NO_GEMM_GATE_TAG"],
+        l1_pattern="dense",
+    ),
+    "l01_allgather_dense_nogate_c8": dict(
+        comm_pattern="l01_allgather_dense_nogate_c8",
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "allgather",
+            "--l1_comm_pattern", "dense",
+            "--n_split", "2",
+        ],
+        env={
+            "FLUX_RS_BLOCKS": "20",
+            "FLUX_A2AV_DENSE_NO_GEMM_GATE": "1",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "8",
+        },
+        requires=["FLUX_A2AV_RS_MAX_SEND_ROWS", "FLUX_A2AV_DENSE_NO_GEMM_GATE_TAG"],
+        l1_pattern="dense",
+    ),
     # CORRECTED best pairing (2026-08-16 ablation, 2n b8): l1 EAGER OFF —
     # the eager persistent reduce is both a standalone l1 loss (15-35% vs
     # legacy hier on trace) AND the entire l01 composition penalty (+18%

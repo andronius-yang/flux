@@ -1,0 +1,19 @@
+# Dense no-gate ablation GATES: correctness ON (runner auto-adds
+# FLUX_RANDOM_PAYLOAD per wire rule) — validates that dropping the pre-GEMM
+# completion wait leaves the per-source barrier-flag gating correct, at
+# conn=1 and conn=8. DEBUG arms, never headline.
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [l01_allgather_dense, l01_allgather_dense_nogate, l01_allgather_dense_nogate_c8]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [8]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: false
+timeout_s: 1500
+idle_timeout_s: 600
+retries: 0
+notes: "motif nogate gates: correctness+random payload, 3 arms, b8"
