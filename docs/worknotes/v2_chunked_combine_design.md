@@ -142,3 +142,22 @@ N=max pieces/dest, -1=auto); requires msplit+fused_pack+bucket+ns1+NG1.
 - Auto rule: engage pieces only when waves would run (reuse the
   wave-adapt byte rule) AND wire_bytes/(NN-1) >= floor; P shrinks
   with NN (put constants), P=1 == collapse fixed point.
+
+## M2 4n K2 RESULTS (8/30, capsule 20260830-023028, gates green both
+## models incl. per-iter reference checks — first-execution green)
+
+l1_ms K2 4n:  b1: canon 1.61 / msp0 1.67 / P2 1.75 / P4 2.15 / wa0 2.82
+             b16: wa0 7.06 / canon 7.19 / P2 7.35 / P4 7.44 / msp0 8.15
+             b64: wa0 24.53 / canon 25.05 / P4 25.40 / P2 26.45 / msp0 29.87
+- Pieces = best non-reread schedule: beats collapse by 0.8 (b16) /
+  4.5 (b64) — 70-84% of the wave overlap recovered at ~1 weight pass,
+  no padding. Piece-machinery rent at b1: +0.08 (P2) / +0.48 (P4).
+- But waves still win b16/b64 by 0.3-0.9: the LAST-CONTRIBUTOR SKEW
+  (P(row ready by chunk c) ~ (c/n_chunks)^k_node, k~4) leaves the wire
+  tail exposed; that costs more than the reread+padding tax waves pay
+  at 4n. Canon dial keeps the record at every budget.
+- P direction flips with budget (P2 best at b16, P4 at b64) — put
+  constants vs piece mass, as modeled.
+- FOLLOW-UPS: skew-aware piece boundaries (cut chunk index at
+  n_chunks*(p/P)^(1/4) to balance wire mass); 8n regime (tax/overlap
+  ratio shifts); placement-aware chunking (cluster contributors).
