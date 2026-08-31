@@ -1,0 +1,22 @@
+# direct-OVERLAP ablation A/B at 16n (2026-08-31, branch dov): the 16n
+# question — does the tile-spin overlap add anything ON TOP of the
+# direct wire where the direct wire already owns b1/b2 (handoff 29 SS6)?
+# W=64 = the flat dynamic claimer's multi-source-mask cap (boundary
+# topology). b32/b64 excluded: dwire 16n b32 = wedge-class kill, b64 =
+# heap wall (handoff 30); dov's heap sizer sums fused+eplb and caps at
+# 16G. Budget-major order so low budgets land first on a cut window.
+platform: perlmutter
+nodes: 16
+shape: k2
+variants: [ours_l01_s1_pv2_r2, ours_l01_s1_pv2_r2_dwire, ours_l01_s1_pv2_r2_dov]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 16]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+notes: "dov A/B 16n k2 b1-16: pv2_r2 vs dwire vs dov"
