@@ -1111,6 +1111,19 @@ def build_cell_env(spec, plat, cell, staging, matrix):
             env.pop("_A2AV_SYM_G_AT_CAP", None)
             env["NVSHMEM_SYMMETRIC_SIZE"] = eplb_sym_size(
                 matrix_path, plat, spec)
+        elif "--wire" in ta_ours and "dov" in ta_ours:
+            # direct-OVERLAP ablation (2026-08-30, branch dov): ONE heap
+            # holds the flat-mode fused op's send/recv (covered by the
+            # fused-composition prior above — flat allocates strictly
+            # less than the compress composition) PLUS the combine
+            # All2AllSingle staging pair (the eplb row-sum bound). Sum
+            # the two sizers; the platform cap still applies and the
+            # prior's _A2AV_SYM_G_REQUIRED marker (a lower bound) stays.
+            eplb_g = int(eplb_sym_size(matrix_path, plat, spec)[:-1])
+            dov_g = sym_g + eplb_g
+            if sym_max:
+                dov_g = min(dov_g, int(sym_max))
+            env["NVSHMEM_SYMMETRIC_SIZE"] = f"{dov_g}G"
     elif v.get("driver", "flux") == "moonep_l1":
         # virtual-space layer1 cells: the driver computes the EXACT
         # FLUX_A2AV_RS_MAX_* knobs from the plan (setdefault -- never

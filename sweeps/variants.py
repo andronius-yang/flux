@@ -2939,6 +2939,39 @@ VARIANTS["ours_l01_s1_pv2_r2_dwire_gate"] = dict(
     test_args=VARIANTS["ours_l01_s1_pv2_r2_dwire"]["test_args"]
               + ["--check_iters", "1"],
 )
+# ---- direct-OVERLAP transport ablation (2026-08-30, branch dov): same
+# plan lane and the same one-hop direct wire byte pattern as the dwire
+# arm, but layer0 = flat-mode GemmGroupedV2AGScatterOp — pack -> ring-
+# ordered direct puts (rank+1 first) with per-source signals -> grouped
+# GEMM launched immediately, tiles claimed as sources land (the dynamic-
+# claimer tile spin). Wire-ordering rule 6 is honored via
+# FLUX_A2AV_FLAT_FENCED_SIG (remote data = concurrent nbi puts, ONE PE
+# quiet, THEN the ring-ordered signal ops; intra-node keeps nbi
+# put_signal over NVLink). Combine identical to dwire (reverse
+# All2AllSingle + deterministic home reduce); probs scale comes from the
+# planner's fused allgather instead of a probs side-wire. The A/B
+# against ours_l01_s1_pv2_r2_dwire isolates wire+GEMM overlap alone;
+# conn=8 (the direct family pin). The runner forces LB_UNION=0 /
+# FLAT_FENCED_SIG=1 / EARLY_LAUNCH=1 before the collective ctor; env
+# here mirrors them so the capsule env_json tells the truth.
+VARIANTS["ours_l01_s1_pv2_r2_dov"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2"],
+    comm_pattern="ours_l01_dov",
+    test_args=VARIANTS["ours_l01_s1_pv2_r2"]["test_args"]
+              + ["--wire", "dov"],
+    env=dict(VARIANTS["ours_l01_s1_pv2_r2"]["env"],
+             CUDA_DEVICE_MAX_CONNECTIONS="8",
+             FLUX_A2AV_LB_UNION="0",
+             FLUX_A2AV_FLAT_FENCED_SIG="1",
+             FLUX_A2AV_EARLY_LAUNCH="1"),
+    requires=list(VARIANTS["ours_l01_s1_pv2_r2"].get("requires", []))
+             + ["FLUX_A2AV_FLAT_FENCED_SIG"],
+)
+VARIANTS["ours_l01_s1_pv2_r2_dov_gate"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2_dov"],
+    test_args=VARIANTS["ours_l01_s1_pv2_r2_dov"]["test_args"]
+              + ["--check_iters", "1"],
+)
 # ---- step-0 combine-floor ablations (2026-08-29 low-budget diagnosis):
 # the l1 msplit dest-node row-split re-reads EVERY expert's w2 panel from
 # HBM once per wave (make_workspace_kernel builds n_waves x E full-N
