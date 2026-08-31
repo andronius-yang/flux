@@ -354,6 +354,21 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   const bool relay_blocking_pull_;
   const bool epoch_quiet_;
   const bool wire_sig_fence_;
+  // FLUX_A2AV_FLAT_FENCED_SIG=1 (2026-08-30 dov ablation; FLAT a2av mode
+  // only): the remote fan-out becomes ring-ordered CONCURRENT
+  // putmem_nbi data puts + ONE PE-wide quiet + ring-ordered signal ops —
+  // the F2 quiet-then-signal pattern (wire-ordering HARD RULE: a consumer
+  // gates on these signals, so they must never ride an nbi put_signal on
+  // the CXI wire; the shipped flat alternative is the per-put BLOCKING
+  // put_signal, which serializes W-L proxy puts on one stream). Intra-node
+  // destinations keep the fused nbi put_signal (NVLink P2P store order,
+  // the audited intra configuration) for true per-source release; remote
+  // sources release together after the quiet, in ring order. Requires
+  // FLUX_A2AV_EARLY_LAUNCH=1 (ctor-checked): without it the flat GEMM
+  // gate waits fetch_remote_event, which now sits BEHIND the quiet —
+  // i.e. behind full wire drain — and the overlap this knob exists for
+  // is structurally impossible.
+  const bool flat_fenced_sig_;
   // FLUX_A2AV_RELAY_PULL_STREAM=1 (2026-08-23 M4-C5): relay phase-1 pulls
   // move to a dedicated stream and phase-2's round-dn wire put waits ONLY
   // round dn's pull event. The shipped single-stream order serializes
@@ -729,6 +744,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         relay_blocking_pull_(get_int_from_env("FLUX_A2AV_RELAY_BLOCKING_PULL", 0) != 0),
         epoch_quiet_(get_int_from_env("FLUX_A2AV_EPOCH_QUIET", 0) != 0),
         wire_sig_fence_(get_int_from_env("FLUX_A2AV_WIRE_SIGNAL_FENCE", 0) != 0),
+        flat_fenced_sig_(get_int_from_env("FLUX_A2AV_FLAT_FENCED_SIG", 0) != 0),
         relay_pull_stream_(get_int_from_env("FLUX_A2AV_RELAY_PULL_STREAM", 0) != 0),
         wait_flush_(get_int_from_env("FLUX_A2AV_WAIT_FLUSH", 0) != 0),
         nvshmem_wait_(get_int_from_env("FLUX_A2AV_NVSHMEM_WAIT", 0) != 0),
@@ -801,6 +817,15 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       }
       FLUX_CHECK(!(this->early_launch_ && this->pack_overlap_))
           << "FLUX_A2AV_EARLY_LAUNCH + FLUX_A2AV_PACK_OVERLAP is untested; unset one";
+      if (this->flat_fenced_sig_) {
+        FLUX_CHECK(!(a2av_ring || a2av_hier || a2av_hier_compress))
+            << "FLUX_A2AV_FLAT_FENCED_SIG applies to the FLAT a2av mode only";
+        FLUX_CHECK(this->early_launch_ || get_int_from_env("FLUX_A2AV_NO_GEMM_GATE", 0) != 0)
+            << "FLUX_A2AV_FLAT_FENCED_SIG requires FLUX_A2AV_EARLY_LAUNCH=1 (or "
+               "FLUX_A2AV_NO_GEMM_GATE=1): the flat GEMM gate otherwise waits "
+               "fetch_remote_event, which the fenced wire records behind the "
+               "PE quiet — the launch would serialize behind full wire drain";
+      }
       if (this->early_launch_ && a2av_hier_compress &&
           !(this->relay_identity_ && this->union_bcast_) && nnodes > 1) {
         // the gather/relay tails are issued inline (pack stream) behind
@@ -3498,9 +3523,70 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         }
       }
     } else if (!a2av_ring_) {
-      // remote puts, ring order starting at rank+1 to avoid incast
-      for (int i = 1; i < W; i++) {
-        issue_put((rank + i) % W, this->cp_stream_inter_node);
+      if (this->flat_fenced_sig_) {
+        // dov fenced flat wire (2026-08-30): the remote data puts are
+        // CONCURRENT nbi (the NIC pipelines the whole ring fan-out, the
+        // eplb staged-wire property) issued in ring order starting at
+        // rank+1; their per-source signals are ordered behind ONE PE-wide
+        // quiet and emitted in the same ring order (F2 quiet-then-signal —
+        // never an nbi put_signal gate on the CXI wire). Intra-node
+        // destinations keep the fused nbi put_signal (NVLink P2P store
+        // order, the audited intra configuration): those sources release
+        // their tiles per-source as soon as their copy lands, while the
+        // GEMM — launched ungated under the ctor-enforced EARLY_LAUNCH —
+        // spins tile-by-tile on the signal buffer.
+        std::vector<int> quiet_sig_targets;
+        quiet_sig_targets.reserve(W);
+        for (int i = 1; i < W; i++) {
+          int d = (rank + i) % W;
+          int64_t bytes = chunk_at(rank, d) * row_bytes;
+          const bool intra = d / dist_env.local_world_size == dist_env.node_idx;
+          if (bytes == 0) {
+            // zero-payload destination: nothing to order the signal behind
+            nvshmemx_signal_op_on_stream(
+                signal_base + rank,
+                this->run_id_,
+                NVSHMEM_SIGNAL_SET,
+                d,
+                this->cp_stream_inter_node);
+            continue;
+          }
+          if (intra) {
+            nvshmemx_putmem_signal_nbi_on_stream(
+                recv_base + recv_off[d] * row_bytes,
+                send_base + send_off[d] * row_bytes,
+                bytes,
+                signal_base + rank,
+                this->run_id_,
+                NVSHMEM_SIGNAL_SET,
+                d,
+                this->cp_stream_inter_node);
+          } else {
+            nvshmemx_putmem_nbi_on_stream(
+                recv_base + recv_off[d] * row_bytes,
+                send_base + send_off[d] * row_bytes,
+                bytes,
+                d,
+                this->cp_stream_inter_node);
+            quiet_sig_targets.push_back(d);
+          }
+        }
+        if (!quiet_sig_targets.empty()) {
+          nvshmemx_quiet_on_stream(this->cp_stream_inter_node);
+          for (int d : quiet_sig_targets) {
+            nvshmemx_signal_op_on_stream(
+                signal_base + rank,
+                this->run_id_,
+                NVSHMEM_SIGNAL_SET,
+                d,
+                this->cp_stream_inter_node);
+          }
+        }
+      } else {
+        // remote puts, ring order starting at rank+1 to avoid incast
+        for (int i = 1; i < W; i++) {
+          issue_put((rank + i) % W, this->cp_stream_inter_node);
+        }
       }
     } else {
       // scheduled mode: reverse hierarchical ring — the mirror of the receivers'

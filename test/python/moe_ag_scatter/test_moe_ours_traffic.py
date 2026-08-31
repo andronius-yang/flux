@@ -224,10 +224,15 @@ def parse_args():
                         " the pair max load by at least this many rows"
                         " (movement-cost threshold). A huge value gives"
                         " the decide-but-never-swap comparator arm.")
-    p.add_argument("--wire", choices=["fused", "direct"], default="fused",
+    p.add_argument("--wire", choices=["fused", "direct", "dov"],
+                   default="fused",
                    help="l0/l1 transport: fused = the canonical Slipstream"
                    " ops; direct = the eplb_l01 staged All2AllSingle wire"
-                   " (transport ablation, s1 only — same plan lane)")
+                   " (transport ablation, s1 only — same plan lane);"
+                   " dov = direct-overlap: the same direct one-hop wire"
+                   " but l0 = flat-mode GemmGroupedV2AGScatterOp (ring-"
+                   "order puts + tile-spin GEMM overlap), combine as"
+                   " direct (s1 only)")
     p.add_argument("--seed", type=int, default=1234)
     return p.parse_args()
 
@@ -706,10 +711,10 @@ def main():
               + (f", provable_recv {pll_bounds['recv_cap']}"
                  if args.scenario == "s2" else ""))
 
-    if args.wire == "direct":
-        # transport ablation (2026-08-30): no fused ops, no combine-meta
-        # derive — the plan-overlap machinery has nothing to overlap
-        assert args.scenario == "s1", "--wire direct is s1-only"
+    if args.wire in ("direct", "dov"):
+        # transport ablation (2026-08-30): no fused combine-meta derive —
+        # the plan-overlap machinery has nothing to overlap
+        assert args.scenario == "s1", f"--wire {args.wire} is s1-only"
         args.plan_overlap = 0
 
     # late plan-overlap byte gate (canon-regen 8/29 bisect: mode 2 is
@@ -728,8 +733,9 @@ def main():
             args.plan_overlap = 0
 
     # ---- runner + planner (+ s2 movement lane) ----
-    if args.wire == "direct":
-        from flux.testing.ours_direct import OursDirectRunner
+    if args.wire in ("direct", "dov"):
+        from flux.testing.ours_direct import (OursDirectRunner,
+                                              OursDirectOverlapRunner)
         # All2AllSingle max_split: reference realized per-pair max vs the
         # provable SL pair cap, + the shared drift cushion (the runner
         # asserts the realized pair rows against it every iteration)
@@ -740,14 +746,34 @@ def main():
             _src_ref * W + _dest_ref, minlength=W * W).max())
         dwire_max_split = (max(_pair_ref, int(pll_bounds["pair_cap"]))
                            + cushion)
-        runner = OursDirectRunner(
-            TP_GROUP, rank, L, cfg, args.ffn_hidden_size, input_dtype,
-            recv_cap, dwire_max_split,
-            probs_all_setup[rank * S:(rank + 1) * S])
-        RECORDER.emit_info(ours_wire="direct",
-                           dwire_max_split=int(dwire_max_split),
-                           dwire_pair_ref=_pair_ref)
-        _st("runner (direct wire) constructed")
+        if args.wire == "dov":
+            # overlapped edition: the fused op's recv capacity is the
+            # already-all-reduced l0_recv_rows (FLUX_A2AV_MAX_RECV_NTOKENS
+            # exported above); the combine wire keeps the dwire staging
+            # width. The runner forces the flat-mode ctor env (LB_UNION=0,
+            # FLAT_FENCED_SIG=1, EARLY_LAUNCH=1) on every rank.
+            runner = OursDirectOverlapRunner(
+                TP_GROUP, EP_GROUP, DIST_ENV.NNODES, rank, L, cfg,
+                args.ffn_hidden_size, input_dtype,
+                l0_recv_rows, dwire_max_split, sm_margin=args.sm_margin)
+            RECORDER.emit_info(
+                ours_wire="dov",
+                dwire_max_split=int(dwire_max_split),
+                dwire_pair_ref=_pair_ref,
+                dov_flat_fenced_sig=int(os.environ.get(
+                    "FLUX_A2AV_FLAT_FENCED_SIG", "0")),
+                dov_early_launch=int(os.environ.get(
+                    "FLUX_A2AV_EARLY_LAUNCH", "0")))
+            _st("runner (direct-overlap wire) constructed")
+        else:
+            runner = OursDirectRunner(
+                TP_GROUP, rank, L, cfg, args.ffn_hidden_size, input_dtype,
+                recv_cap, dwire_max_split,
+                probs_all_setup[rank * S:(rank + 1) * S])
+            RECORDER.emit_info(ours_wire="direct",
+                               dwire_max_split=int(dwire_max_split),
+                               dwire_pair_ref=_pair_ref)
+            _st("runner (direct wire) constructed")
     else:
         runner = OursRunner(
             TP_GROUP, EP_GROUP, DIST_ENV.NNODES, L, cfg,
@@ -944,6 +970,37 @@ def main():
             assert _e - _s == int(_seg_ref[1 + _p]), (
                 f"direct segment rows drift at local slot {_p}")
         _m_ref = runner.n_recv
+    elif args.wire == "dov":
+        # direct-overlap edition: the op derive AND the combine metadata
+        # against the python recipe — including the stable scatter index
+        # (the OUT layout the combine permutation assumes) bitwise
+        assert torch.equal(runner._sd.long().cpu(), sp_ref.long().cpu()), (
+            "dov derive splits != python_meta_from_vce")
+        assert torch.equal(runner._scd.cpu(), sc_ref.cpu().int()), (
+            "dov derive scatter_index != python argsort(stable).argsort()")
+        assert torch.equal(runner._sps.cpu(), sps_ref.cpu().int()), (
+            "dov derive sps != python_meta_from_vce")
+        _sps = sps_ref.cpu().long().view(W, W, gpe)
+        assert torch.equal(runner._in_splits.long().cpu(),
+                           _sps[rank].sum(1)), (
+            "dov in_splits != python_meta_from_vce")
+        assert torch.equal(runner._out_splits.long().cpu(),
+                           _sps[:, rank].sum(1)), (
+            "dov out_splits != python_meta_from_vce")
+        assert runner.n_recv == int(_sps[:, rank].sum()), (
+            "dov n_recv != python_meta_from_vce")
+        _seg_ref = _sps[:, rank].sum(0)  # per-vslot recv (pad-first)
+        assert int(_seg_ref[0]) == 0, "rows in the pad slot"
+        for _p, _s, _e in runner._segments:
+            assert _e - _s == int(_seg_ref[_p]), (
+                f"dov segment rows drift at vslot {_p}")
+        # the arrival->out permutation must be a permutation of [0, n)
+        _ps = runner._place_slots.cpu()
+        assert _ps.numel() == runner.n_recv
+        assert torch.equal(torch.sort(_ps).values,
+                           torch.arange(runner.n_recv)), (
+            "dov place_slots is not a permutation")
+        _m_ref = runner.n_recv
     else:
         assert torch.equal(runner._sd.long().cpu(), sp_ref.long().cpu()), (
             "derive splits != python_meta_from_vce")
@@ -960,6 +1017,7 @@ def main():
 
     RECORDER.emit_info(
         ours_fusion=("direct_a2av" if args.wire == "direct"
+                     else "direct_overlap_a2av" if args.wire == "dov"
                      else "slipstream_v2"),
         ours_plan_overlap=int(bool(args.plan_overlap)),
         # plan-lane cost knobs (ours.py module header; all default OFF)
@@ -1431,7 +1489,7 @@ def main():
         return ", ".join(f"{k[:-3]} {sum(v) / max(len(v), 1):.3f} ms"
                          for k, v in times.items())
 
-    if args.wire == "direct":
+    if args.wire in ("direct", "dov"):
         # diagnostic sub-phase metrics (must run BEFORE the final
         # deterministic iteration appends events past the timed loop)
         iter_times.update(runner.sub_times(args.warmup_iters))

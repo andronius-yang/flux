@@ -1,0 +1,21 @@
+# direct-OVERLAP ablation A/B at 4n (2026-08-30, branch dov): the
+# canon pv2_r2 fused arm vs the un-overlapped direct-wire twin vs the
+# overlapped direct wire (flat-mode fused op: ring-order puts + dynamic-
+# claimer tile spin). One capsule, one binary (rule 4). The dov-vs-dwire
+# delta is pure wire+GEMM overlap; dov-vs-fused is transport class at
+# equal overlap discipline.
+platform: perlmutter
+nodes: 4
+shape: qwen3
+variants: [ours_l01_s1_pv2_r2, ours_l01_s1_pv2_r2_dwire, ours_l01_s1_pv2_r2_dov]
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 8, 16]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 1
+notes: "dov A/B 4n qwen b1-16: pv2_r2 vs dwire vs dov"
