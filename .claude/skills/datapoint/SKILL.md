@@ -16,7 +16,7 @@ front/back, no extra knobs.
 
 | Report name | variant key | note |
 |---|---|---|
-| Torch+GEMM | `l01_torch` | anchor arm |
+| Torch+GEMM | `l01_nvshmem` | anchor arm — **2026-08-31 reference flip (user ruling): the "Torch+GEMM" row now RUNS the primitive NVSHMEM blocking-put ring baseline `l01_nvshmem`** (legacy report name kept). `l01_torch` is the historical twin (run only if explicitly asked); `l01_nccl` (grouped-P2P) is the sibling primitive |
 | COMET | `l01_allgather_dense` | dense l1 ns=2 (canon 8/24) |
 | Slipstream | `l01_slipstream` | v2 canon; requires FLUX_A2AV_SLIPSTREAM2_TAG |
 | EPLB | `eplb_l01` | |
@@ -44,8 +44,11 @@ FAST is EXCLUDED (broken as of 8/24; do not touch 3rdparty/FAST or its files).
    anything NEW stops the launch.
 3. **Account**: confirm with the user (m5350_g as of 8/24; m4243_g exhausted).
 4. **Known pre-skips** (fill cells as pre-skipped WITH REASON, never attempt):
-   - torch 8n b64, both models (gathered-bytes OOM/kill, datacamp exit 143)
-   - torch 16n b32+b64, both models (gathered-bytes CUDA OOM on 40G)
+   - l01_torch ONLY (not the l01_nvshmem reference): torch 8n b64 both
+     models (gathered-bytes OOM/kill, exit 143); torch 16n b32+b64 both
+     models (gathered-bytes CUDA OOM on 40G). The l01_nvshmem reference ran
+     b64 clean at ALL topologies on 8/31 — no known pre-skips (b8/b32 not
+     yet measured at 8n/16n; expect clean, gate on b4).
    - ~~llc/PLL 16n b64~~ — NO LONGER A PRE-SKIP (2026-08-31): resolved by
      the 8/25-27 fixes (llc_sizing=demand recv sizing + hidden-A2A skip,
      handoff 27); `llc_l01_s1_pv2` 16n b64 ran green 8/29 (fa493d1c/a071f2c5)
@@ -112,10 +115,14 @@ Allocation policy (validated on a 100%-full machine):
   WATCHDOG_HANG on finished logs — key them on the live invocation.
 - No rebuilds, no repo edits, no debugging of failed cells (capture reason,
   tail the cell's srun.log/torchrun rank logs, move on; spec retries=1).
-- Gate-first: first invocation is l01_torch on K2; compare b8 vs the anchor
-  table (+/-25%; MoonEP sanity +/-30% on total_ms) BEFORE fanning out.
-  Anchors (b8, K2/Qwen, e2e_ms): 4n 14.8/12.9, 8n 19.7/19.2, 16n 31.0/32.8
-  (from handoff 18 tidy; torch and moonep are the stable-arm anchors).
+- Gate-first: first invocation is l01_nvshmem on K2; compare **b4** vs the
+  anchor table (+/-25%; MoonEP sanity +/-30% on total_ms) BEFORE fanning out.
+  l01_nvshmem anchors (b4, K2/Qwen, e2e/total ms, 8/31 ladder capsules
+  20260831-05*/06*): 4n 10.61/11.58 & 10.90/12.07; 8n 15.49/16.57 &
+  16.14/17.51; 16n 29.05/30.70 & 33.02/34.70. (b8 was not in the 8/31
+  ladder except 4n qwen 20.92/22.08 — hence the b4 gate.) LEGACY: the old
+  l01_torch b8 e2e anchors (4n 14.8/12.9, 8n 19.7/19.2, 16n 31.0/32.8,
+  handoff 18) apply only if l01_torch is explicitly requested.
 
 ## Aggregation + reporting (the part users care about — get it right)
 

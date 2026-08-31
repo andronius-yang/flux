@@ -16,7 +16,11 @@ BASELINE = {"l01_torch":"Torch+GEMM","l01_allgather_dense":"COMET",
     "llc_l01_s1_pv2":"PLL","ours_l01_s1_pv2_r2":"OURS-s1",
     "ours_l01_s2_swap_force_p2p_r2":"OURS-s2",
     "ours_l01_s1_pv2_r2_dwire":"OURS-dwire",
-    "ours_l01_s1_pv2_r2_dwire_dps":"OURS-dwire"}
+    "ours_l01_s1_pv2_r2_dwire_dps":"OURS-dwire",
+    # 2026-08-31 reference flip: l01_nvshmem RUNS the legacy "Torch+GEMM"
+    # row (variant column keeps the true key); l01_nccl = sibling primitive
+    "l01_nvshmem":"Torch+GEMM","l01_nccl":"NCCL+GEMM",
+    "ours_l01_s1_pv2_r2_dov":"OURS-dov"}
 # cells.csv comm_pattern label -> variant key is messy; use cell_id prefix
 def variant_of(cell_id):
     for k in sorted(BASELINE, key=len, reverse=True):
