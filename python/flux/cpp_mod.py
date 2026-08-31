@@ -112,6 +112,12 @@ _nvshmem_team_translate_pe = _get_flux_member("_nvshmem_team_translate_pe")
 _nvshmem_team_npes = _get_flux_member("_nvshmem_team_npes")
 _nvshmem_team_my_pe = _get_flux_member("_nvshmem_team_my_pe")
 
+# primitive one-sided wire (l01_nvshmem baseline, 2026-08-30): symmetric
+# tensor + blocking stream put + world barrier, driven from python
+nvshmem_create_tensor = _get_flux_member("nvshmem_create_tensor")
+nvshmem_putmem_on_stream = _get_flux_member("nvshmem_putmem_on_stream")
+nvshmem_barrier_all_on_stream = _get_flux_member("nvshmem_barrier_all_on_stream")
+
 GroupBarrier = flux_mod.GroupBarrier
 
 calc_scatter_index = _get_flux_member("calc_scatter_index")
@@ -208,6 +214,9 @@ __all__ = [
     "bsr_reduce",
     "init_flux_shm",
     "create_tensor_list",
+    "nvshmem_create_tensor",
+    "nvshmem_putmem_on_stream",
+    "nvshmem_barrier_all_on_stream",
     "GroupBarrier",
     "bitwise_check",
     "uniform_initialize",

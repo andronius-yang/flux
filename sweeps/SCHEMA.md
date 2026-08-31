@@ -504,7 +504,7 @@ Highlights (full list = header row):
 - `layer` (appended 2026-08-16) — `l0` (dispatch, the historical default;
   older capsules simply lack the column), `l1` (gather-rs combine,
   driver=gather_rs / fast_gather_rs), `l01` (combined continuous pass,
-  drivers l01 + l01_fast + l01_nccl; RULE-5 CONVERTED 2026-08-21,
+  drivers l01 + l01_fast + l01_nccl + l01_nvshmem; RULE-5 CONVERTED 2026-08-21,
   timing_accounting=per_iter_gpu: one timed window per iteration = routing
   allgather (`plan_comm_ms`) -> ALL routing-derived metadata for BOTH
   layers on GPU (`plan_ms`: the l0 op's fused derive_routed_meta seeding
@@ -542,7 +542,15 @@ Highlights (full list = header row):
   libflash in the process, works single-node; the wire is stream-ordered,
   so the generic perf_combined window applies and e2e/isolated/torchprof/
   nsys modes are all valid (phases excluded like driver l01). Standard
-  l01 metric set only (plan_comm/plan/e2e/l0/act/l1/total). **Reference combined configuration
+  l01 metric set only (plan_comm/plan/e2e/l0/act/l1/total).
+  Driver l01_nvshmem (--impl nvshmem, 2026-08-30): the primitive
+  blocking-put RING baseline — identical chain/index math again, wire =
+  one BLOCKING nvshmemx_putmem_on_stream per destination in ring order
+  ((rank+1..rank+W-1) % W) + ONE nvshmem world barrier per direction
+  (consumer gates on the barrier, never a per-put signal — rule 6a);
+  symmetric send/recv panels (CXI symmetric-source rule), self block a
+  plain device copy. Requires the 2026-08-30 pybind trio in the binary
+  (variant `requires` probes it). Same modes as l01_nccl. **Reference combined configuration
   since 2026-08-16: `l01_lbunion_compress`** — see variants.py for the
   14/14-budget verdict; the standalone-l1 verdict differs at small budgets
   and must never be conflated with the combined one).

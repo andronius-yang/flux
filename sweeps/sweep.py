@@ -633,7 +633,7 @@ def expand_cells(spec, plat):
                             " cell would be an empty perturbed cell"
                         )
                         continue
-                    if driver in ("l01", "l01_nccl") and mode == "phases":
+                    if driver in ("l01", "l01_nccl", "l01_nvshmem") and mode == "phases":
                         print(
                             f"NOTE: {vname} x phases not generated — the combined"
                             " bench reports l0/act/l1 sub-events via the recorder"
@@ -694,6 +694,10 @@ def probe_capabilities(needed):
         # lib/); probe both so the capability check is layout-independent
         + glob.glob(os.path.join(libdir, "lib64", "*.so*"))
         + glob.glob(os.path.join(libdir, "*.so"))
+        # the pybind extension itself (editable layout: one level ABOVE the
+        # package dir, python/flux_ths_pybind.cpython-*.so) — m.def name
+        # literals such as the l01_nvshmem trio live only in this .so
+        + glob.glob(os.path.join(os.path.dirname(libdir), "flux_ths_pybind*.so"))
     )
     if not sos:
         raise SystemExit(f"no shared libraries under {libdir}")
@@ -999,6 +1003,23 @@ def build_cell_env(spec, plat, cell, staging, matrix):
         # initializes flux shm / NVSHMEM and consumes no FLUX_A2AV_* knobs —
         # platform env only, nothing to size, no capacity guard
         pass
+    elif v.get("driver", "flux") == "l01_nvshmem":
+        # primitive ring blocking-put baseline: exact symmetric demand =
+        # send0/recv1 panels (max row sum each) + recv0/send1 panels (max
+        # col sum each) + 1G slack for the flux-shm bootstrap; no FLUX_A2AV_*
+        # knobs. Over the platform cap -> skipped_capacity via the guard.
+        with open(matrix_path) as f:
+            toks = f.read().split()
+        w = int(toks[0])
+        vals = [int(x) for x in toks[1 : 1 + w * w]]
+        max_row = max(sum(vals[r * w : (r + 1) * w]) for r in range(w))
+        max_col = max(sum(vals[r * w + c] for r in range(w)) for c in range(w))
+        sym_g = max(2, math.ceil((2 * (max_row + max_col) + (1 << 30)) / (1 << 30)))
+        env["_A2AV_SYM_G_REQUIRED"] = str(sym_g)
+        sym_max = plat.get("sym_size_max_g")
+        if sym_max and sym_g > int(sym_max):
+            sym_g = int(sym_max)
+        env["NVSHMEM_SYMMETRIC_SIZE"] = f"{sym_g}G"
     elif v.get("driver", "flux") == "gather_rs":
         # layer1 flux cells: exact FLUX_A2AV_RS_MAX_*_ROWS + heap from the
         # collective FLUX_CHECK expressions (dispatch-orientation inputs;
@@ -1302,7 +1323,7 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         if spec["skip_correctness"]:
             test_args.append("--skip_correctness")
         return srun_prefix + ["./launch_fast.sh"] + test_args, sm_margin, iters, warmup
-    if v.get("driver", "flux") in ("l01", "l01_fast", "l01_nccl"):
+    if v.get("driver", "flux") in ("l01", "l01_fast", "l01_nccl", "l01_nvshmem"):
         # combined layer0+1 continuous bench: full argv built here and
         # returned early (layer1-style single-dash dims; l0/l1 patterns and
         # --impl ride the variant's test_args). driver l01_fast (2026-08-21)

@@ -1442,6 +1442,27 @@ VARIANTS = {
         env={},
         requires=[],
     ),
+    # Primitive NVSHMEM blocking-put RING baseline (2026-08-30): the same
+    # unfused chain and index math as l01_nccl/l01_fast (shared
+    # derive_fast_l01_meta_gpu, same GemmGroupedV2 ops, same bitwise
+    # correctness ladder), wire = one BLOCKING nvshmemx_putmem_on_stream per
+    # destination in ring order ((rank+1..rank+W-1) % W — the most primitive
+    # incast avoidance) + ONE nvshmem world barrier per direction; self
+    # block is a plain device copy. Symmetric send/recv panels (CXI
+    # symmetric-source rule), consumer gates on the barrier only (rule 6a).
+    # Needs the 2026-08-30 pybind trio (nvshmem_create_tensor /
+    # nvshmem_putmem_on_stream / nvshmem_barrier_all_on_stream) — `requires`
+    # probes the binary so a stale .so skips instead of AttributeError-ing.
+    # Isolated/torchprof/nsys valid (stream-ordered wire); phases excluded
+    # like driver l01. Single-node OK.
+    "l01_nvshmem": dict(
+        comm_pattern="l01_nvshmem_ring",  # cells.csv label only
+        driver="l01_nvshmem",
+        layer="l01",
+        test_args=["--impl", "nvshmem"],
+        env={},
+        requires=["nvshmem_putmem_on_stream"],
+    ),
     "l01_torch": dict(
         comm_pattern="l01_torch_unfused",  # cells.csv label only
         driver="l01",
@@ -2899,6 +2920,19 @@ VARIANTS["ours_l01_s1_pv2_r2_dwire"] = dict(
               + ["--wire", "direct"],
     env=dict(VARIANTS["ours_l01_s1_pv2_r2"]["env"],
              CUDA_DEVICE_MAX_CONNECTIONS="8"),
+)
+# demand pair-sizing twin (2026-08-30, handoff 30 SS5 fix): identical arm
+# except the All2AllSingle staging width is sized from the realized pair
+# reference (+ cushion) instead of the provable pair-cap floor — the floor
+# alone exceeds the 16G symmetric heap at 16n b32/b64 (ctor NVSHMEM_MALLOC,
+# both models; the b32 "wedge" was the same death with survivors blocked in
+# the collective ctor). Alloc-only knob (max_split is never read by a timed
+# path; overflow stays loud via the per-iteration pair assert) — used to
+# gather the 16n b32/b64 cells the capacity twin cannot allocate.
+VARIANTS["ours_l01_s1_pv2_r2_dwire_dps"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2_dwire"],
+    test_args=VARIANTS["ours_l01_s1_pv2_r2_dwire"]["test_args"]
+              + ["--dwire_pair_sizing", "demand"],
 )
 VARIANTS["ours_l01_s1_pv2_r2_dwire_gate"] = dict(
     VARIANTS["ours_l01_s1_pv2_r2_dwire"],

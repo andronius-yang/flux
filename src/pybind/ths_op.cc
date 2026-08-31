@@ -33,6 +33,7 @@
 #include "gemm_a2a_transpose/ths_op/pre_attn_a2a_types.h"
 #ifdef FLUX_SHM_USE_NVSHMEM
 #include <nvshmem.h>
+#include <nvshmemx.h>
 #endif
 
 namespace bytedance::flux::ths_op {
@@ -383,6 +384,37 @@ PYBIND11_MODULE(FLUX_TORCH_EXTENSION_NAME, m) {
   m.def("_nvshmem_team_npes", [](int team) { return nvshmem_team_n_pes((nvshmem_team_t)team); });
 
   m.def("_nvshmem_team_my_pe", [](int team) { return nvshmem_team_my_pe((nvshmem_team_t)team); });
+
+  // Primitive one-sided wire bindings (2026-08-30, l01_nvshmem baseline):
+  // symmetric-heap tensor allocation + the BLOCKING stream put + the world
+  // barrier — enough to drive a painfully-simple ring-order a2av from
+  // python (puts staggered (rank+1..rank+W-1) % W, consumer gated on the
+  // global barrier, never on a per-put signal — wire-ordering rule 6).
+  m.def(
+      "nvshmem_create_tensor",
+      [](const std::vector<int64_t> &shape, c10::ScalarType dtype) {
+        return nvshmem_create_tensor(shape, dtype);
+      },
+      py::arg("shape"),
+      py::arg("dtype"));
+  m.def(
+      "nvshmem_putmem_on_stream",
+      [](intptr_t dest_ptr, intptr_t src_ptr, int64_t nbytes, int64_t pe, intptr_t stream) {
+        nvshmemx_putmem_on_stream(
+            reinterpret_cast<void *>(dest_ptr),
+            reinterpret_cast<const void *>(src_ptr),
+            static_cast<size_t>(nbytes),
+            static_cast<int>(pe),
+            reinterpret_cast<cudaStream_t>(stream));
+      },
+      py::arg("dest_ptr"),
+      py::arg("src_ptr"),
+      py::arg("nbytes"),
+      py::arg("pe"),
+      py::arg("stream"));
+  m.def("nvshmem_barrier_all_on_stream", [](intptr_t stream) {
+    nvshmemx_barrier_all_on_stream(reinterpret_cast<cudaStream_t>(stream));
+  });
 
 #endif
 

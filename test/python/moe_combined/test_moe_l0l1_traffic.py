@@ -83,6 +83,12 @@ Arms (--impl):
   torch.distributed.all_to_all_single per direction (NCCL lowers it to
   ncclGroupStart + per-peer ncclSend/ncclRecv). No NVSHMEM/libflash in the
   process; single-node OK; stream-ordered wire, so isolated mode works.
+- nvshmem : primitive blocking-put ring baseline (2026-08-30) — the same
+  unfused chain and index math again, wire = per-destination BLOCKING
+  nvshmemx_putmem_on_stream issued in RING ORDER ((rank+1..rank+W-1) % W,
+  the most primitive incast avoidance) + ONE nvshmem world barrier per
+  direction; the self block is a plain device copy. Symmetric-heap panels
+  (CXI symmetric-source rule); consumers gate on the barrier only.
 
 Correctness (skippable via --skip_correctness): the flux arm's final
 RS-sharded output is compared against ONE untimed run of the torch two-layer
@@ -349,10 +355,11 @@ def parse_args():
     parser.add_argument(
         "--impl",
         default="flux",
-        choices=["torch", "flux", "fast", "nccl"],
+        choices=["torch", "flux", "fast", "nccl", "nvshmem"],
         help="timed arm: flux (fused pairing), torch (unfused two-layer reference,"
         " same window discipline), fast (FAST+FAST combined baseline), nccl"
-        " (primitive NCCL grouped-p2p alltoallv baseline, same chain as fast)",
+        " (primitive NCCL grouped-p2p alltoallv baseline, same chain as fast),"
+        " nvshmem (primitive blocking-put ring baseline, same chain again)",
     )
     parser.add_argument(
         "--routing_file",
@@ -415,10 +422,11 @@ if __name__ == "__main__":
     RANK, WORLD_SIZE, NNODES = TP_GROUP.rank(), TP_GROUP.size(), flux.testing.NNODES()
     LOCAL_WORLD_SIZE = DIST_ENV.LOCAL_WORLD_SIZE
 
-    if args.impl in ("flux", "torch"):
+    if args.impl in ("flux", "torch", "nvshmem"):
         # --impl fast skips flux shm: FAST owns the only NVSHMEM init in the
         # process (same contract as the layer0 fast test). --impl nccl skips
         # it too — pure NCCL baseline, no NVSHMEM anywhere in the process.
+        # --impl nvshmem NEEDS it (symmetric heap + teams for the ring wire).
         print("before flux_shm initialization")
         flux.init_flux_shm(TP_GROUP)
         torch.cuda.synchronize()
@@ -689,7 +697,7 @@ if __name__ == "__main__":
             a2av_hier=is_flux and (args.l0_comm_pattern == "a2av_hier"),
             a2av_hier_compress=is_flux and (args.l0_comm_pattern == "a2av_hier_compress"),
         )
-    if args.impl in ("fast", "nccl"):
+    if args.impl in ("fast", "nccl", "nvshmem"):
         g_sd = g_scd = g_sps = g_uc = None
     else:
         g_sd, g_scd, g_sps, g_uc = l0_op.derive_routed_meta(topk_gather_buf)
@@ -1102,6 +1110,162 @@ if __name__ == "__main__":
             )
         # feed the shared fast/nccl correctness block below
         fast_out1, fast_gemm_in0 = _nccl_last["out1"], _nccl_last["gemm_in0"]
+    elif args.impl == "nvshmem":  # primitive blocking-put ring baseline (2026-08-30)
+        # The simplest one-sided implementation of them all: pack into a
+        # symmetric send panel -> one BLOCKING nvshmemx_putmem_on_stream per
+        # destination in RING ORDER ((RANK+1 .. RANK+W-1) % W — incast
+        # avoided at the most painfully simple level; the self block is a
+        # plain device copy) -> ONE world nvshmem barrier -> unpack ->
+        # un-overlapped grouped GEMM0 -> GELU -> GEMM1 -> the same ring back
+        # on the transposed splits -> barrier -> home topk-reduce. Index
+        # math + GemmGroupedV2 ops IDENTICAL to --impl fast/nccl (shared
+        # derive_fast_l01_meta_gpu; recv layout is source-major exactly like
+        # those wires, so unpack/pack_order transfer verbatim). Consumers
+        # gate on the global barrier, never a per-put signal (wire-ordering
+        # rule 6a: blocking puts only); every put SOURCE is symmetric heap
+        # (CXI proxy rule). Panels are setup-scope collective allocations
+        # sized from the harness matrix; offsets/splits re-derive per
+        # iteration inside the plan bracket (host ints off the honest D2H).
+        sys.path.insert(
+            0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "moe_ag_scatter")
+        )
+        from fast_baseline_utils import (  # noqa: E402
+            build_pack_index,
+            build_unpack_index,
+            derive_fast_l01_meta_gpu,
+        )
+
+        def derive_fn(buf):
+            return derive_fast_l01_meta_gpu(
+                buf, RANK, args.G, WORLD_SIZE, tokens_per_rank, args.chunk_bytes
+            )
+
+        # drift guard (untimed, once): same reference identities as fast/nccl
+        gm = derive_fn(topk_gather_buf)
+        ce_local = choosed_experts[RANK * tokens_per_rank : (RANK + 1) * tokens_per_rank]
+        pack_ref = build_pack_index(ce_local, args.topk).cuda()
+        unpack_ref, split_ref = build_unpack_index(
+            splits_per_source_cpu, RANK, args.G, WORLD_SIZE
+        )
+        assert torch.equal(gm["pack_index"], pack_ref), "derived pack_index drift"
+        assert torch.equal(gm["unpack_index"], unpack_ref.cuda()), "derived unpack_index drift"
+        assert torch.equal(gm["split_cpu"], split_ref), "derived gemm splits drift"
+        assert torch.equal(gm["matrix_cpu"], matrix.long()), "derived wire matrix drift"
+
+        moe_ctx.output_scale[0].fill_(1.0)
+        gemm0_op = flux.GemmGroupedV2(
+            moe_ctx.weights[0], n_experts_per_rank, input_dtype, output_dtype
+        )
+        gemm1_op = flux.GemmGroupedV2(l1_weight, n_experts_per_rank, input_dtype, output_dtype)
+        l1_scale_const = (l1_weight_scale * l1_input_scale).float()  # [epr]
+
+        # symmetric panels (collective alloc — same capacity on every PE):
+        # send0/recv1 rows = tokens_per_rank*topk EXACTLY on every rank (the
+        # budget invariant fixes each row sum); recv0/send1 rows = the max
+        # column sum (max per-rank gemm rows), one size fits all ranks
+        rows_home = tokens_per_rank * args.topk
+        rows_ep_max = int((matrix.sum(dim=0) // args.chunk_bytes).max())
+        row_bytes = H * input_dtype.itemsize
+        send0_sym = flux.nvshmem_create_tensor([rows_home, H], input_dtype)
+        recv0_sym = flux.nvshmem_create_tensor([rows_ep_max, H], input_dtype)
+        send1_sym = flux.nvshmem_create_tensor([rows_ep_max, H], input_dtype)
+        recv1_sym = flux.nvshmem_create_tensor([rows_home, H], input_dtype)
+        if RANK == 0:
+            mib = (2 * (rows_home + rows_ep_max) * row_bytes) >> 20
+            print(f"nvshmem ring baseline: {mib} MiB symmetric wire panels/rank")
+
+        _nv_last = {}  # bitwise-correctness taps from the final window
+
+        def nv_prep():
+            pass  # stateless: no resets, no signals — the barrier is the fence
+
+        def nv_plan():
+            # rule 5: everything re-derives per iteration; the ring needs,
+            # per direction, my send-block offsets (exclusive cumsum of my
+            # matrix row) and my write offset at every destination (sum of
+            # the sources before me in its column) — host ints from the
+            # honest matrix D2H the derive already paid
+            m = derive_fn(topk_gather_buf)
+            rows = m["matrix_cpu"] // args.chunk_bytes  # [W, W] in rows
+            d_cnt = rows[RANK]
+            d_soff = torch.cumsum(d_cnt, 0) - d_cnt
+            d_doff = torch.cumsum(rows, 0)[RANK] - d_cnt
+            rows_t = rows.t().contiguous()
+            c_cnt = rows_t[RANK]
+            c_soff = torch.cumsum(c_cnt, 0) - c_cnt
+            c_doff = torch.cumsum(rows_t, 0)[RANK] - c_cnt
+            return {
+                "m": m,
+                "d_cnt": d_cnt.tolist(),
+                "d_soff": d_soff.tolist(),
+                "d_doff": d_doff.tolist(),
+                "c_cnt": c_cnt.tolist(),
+                "c_soff": c_soff.tolist(),
+                "c_doff": c_doff.tolist(),
+                "nrecv0": int(rows[:, RANK].sum()),
+            }
+
+        def nv_ring(send_sym, recv_sym, cnt, soff, doff, stream):
+            for off in range(1, WORLD_SIZE):
+                d = (RANK + off) % WORLD_SIZE
+                if cnt[d]:
+                    flux.nvshmem_putmem_on_stream(
+                        recv_sym.data_ptr() + doff[d] * row_bytes,
+                        send_sym.data_ptr() + soff[d] * row_bytes,
+                        cnt[d] * row_bytes,
+                        d,
+                        stream,
+                    )
+            if cnt[RANK]:  # self block: plain stream-ordered device copy
+                recv_sym[doff[RANK] : doff[RANK] + cnt[RANK]].copy_(
+                    send_sym[soff[RANK] : soff[RANK] + cnt[RANK]]
+                )
+            flux.nvshmem_barrier_all_on_stream(stream)
+
+        def nv_l0(plan):
+            m = plan["m"]
+            torch.index_select(moe_ctx.inputs_shard, 0, m["pack_index"], out=send0_sym)
+            stream = torch.cuda.current_stream().cuda_stream
+            nv_ring(send0_sym, recv0_sym, plan["d_cnt"], plan["d_soff"], plan["d_doff"], stream)
+            gemm_in0 = torch.index_select(recv0_sym[: plan["nrecv0"]], 0, m["unpack_index"])
+            _nv_last["gemm_in0"] = gemm_in0
+            return gemm0_op.forward(gemm_in0, m["split_cpu"], sm_margin=args.sm_margin)
+
+        def nv_l1(plan, intermediate):
+            m = plan["m"]
+            out1 = gemm1_op.forward(intermediate, m["split_cpu"], sm_margin=args.sm_margin)
+            row_scale = torch.repeat_interleave(
+                l1_scale_const, m["split_cpu"].to("cuda", non_blocking=True).long()
+            )
+            out1.mul_(row_scale.unsqueeze(1))
+            out1.mul_(l1_output_vec_scale.unsqueeze(1))
+            _nv_last["out1"] = out1
+            torch.index_select(out1, 0, m["inv_unpack"], out=send1_sym[: out1.size(0)])
+            stream = torch.cuda.current_stream().cuda_stream
+            nv_ring(send1_sym, recv1_sym, plan["c_cnt"], plan["c_soff"], plan["c_doff"], stream)
+            # home side: recv arrives in this rank's own dispatch pack order
+            full = torch.empty_like(recv1_sym)
+            full.index_copy_(0, m["pack_order"], recv1_sym)
+            return full.view(tokens_per_rank, args.topk, H).float().sum(1).to(input_dtype)
+
+        with flux.group_profile(
+            name="moe_ag_scatter_traffic_" + os.environ.get("TORCHELASTIC_RUN_ID", "l01"),
+            do_prof=args.profile,
+            group=TP_GROUP,
+        ):
+            perf_result = perf_combined(
+                f"nvshmem #{RANK}",
+                args.iters,
+                args.warmup_iters,
+                nv_prep,
+                plan_comm_fn,
+                nv_plan,
+                nv_l0,
+                nv_l1,
+                probe=PayloadProbe(moe_ctx.inputs_shard, RANK, keep_ledger=False),
+            )
+        # feed the shared fast/nccl/nvshmem correctness block below
+        fast_out1, fast_gemm_in0 = _nv_last["out1"], _nv_last["gemm_in0"]
     else:  # --impl fast (2026-08-21): FAST+FAST combined — the authoritative
         # unfused paper baseline on REAL routing: trace-driven dispatch
         # alltoallv -> grouped GEMM0 -> GELU -> grouped GEMM1 -> combine
@@ -1346,7 +1510,7 @@ if __name__ == "__main__":
         flux.exec_in_rank_order(TP_GROUP, check_result)
         RECORDER.emit_correctness(bitwise=False, allclose=True)
 
-    if args.impl in ("fast", "nccl") and not args.skip_correctness:
+    if args.impl in ("fast", "nccl", "nvshmem") and not args.skip_correctness:
         torch_output = run_torch_two_layer()
         # (a) bitwise: the dispatch wire + unpack must reproduce the reference
         # scatter block (local_scatter: scatter_inputs IS the local EP block)
