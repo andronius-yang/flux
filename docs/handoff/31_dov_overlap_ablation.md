@@ -92,10 +92,61 @@ total_ms medians (l0 in parens):
    savings beat any overlap of full-byte transport — consistent with
    handoff 29 §3).
 
-## 4. 8n A/B
+## 4. 8n A/B (capsules `20260831-033502_24b72e20` K2 / `-034121_e3ec33ba` qwen, one binary, 30/30 ok)
 
-(see §4 results below — filled after the 8n run; spec
-`dov_ab_8n_{k2,qwen}.yaml`, same three arms, b1–b16.)
+total_ms medians (l0 in parens):
+
+| b | K2 fused | K2 dwire | K2 dov | qwen fused | qwen dwire | qwen dov |
+|---|---|---|---|---|---|---|
+| 1 | 5.87 (2.70) | **5.98 (2.60)** | 6.37 (2.64) | 5.34 (2.42) | **5.63 (2.39)** | 5.76 (2.42) |
+| 2 | 6.38 (3.00) | 8.16 (3.66) | 8.21 (3.27) | 6.16 (2.61) | 7.98 (3.58) | **7.84 (3.12)** |
+| 4 | 8.39 (3.65) | 13.22 (6.09) | **12.52 (5.02)** | 7.18 (3.11) | 12.80 (5.99) | **11.90 (4.65)** |
+| 8 | 12.33 (4.93) | 23.15 (11.19) | **21.17 (8.75)** | 10.46 (4.33) | 23.39 (11.16) | **20.39 (8.18)** |
+| 16 | 18.72 (8.14) | 43.27 (20.95) | **38.07 (14.97)** | 17.75 (7.64) | 44.20 (21.77) | **37.68 (14.91)** |
+
+(bold = dov-vs-dwire winner within the direct family)
+
+**The 8n crossover:** at b1 the direct wire is latency-dominated — 28
+remote destinations, tiny payloads, and the dov wire's ~60 host-issued
+stream ops give it no l0 advantage over the eplb device-kernel fan-out
+(l0 2.64 vs 2.60 K2) — so dov's plan (+0.20) and combine-skew (+0.13)
+make it a net LOSS (K2 +6.5%, qwen +2.3%). From b2 (qwen) / b4 (K2) the
+overlap wins and grows: −5.3→−12.0% (K2), −7.0→−14.8% (qwen) at b4–b16,
+with the l0 leg −18..−29%. Same shape as 4n, shifted one budget notch up
+by the doubled hop count.
+
+## 4b. 16n A/B (capsules `20260831-062119_8e5d79c3` K2 / `-062614_c3dcad9c` qwen, one binary, 24/24 ok; user-requested extension)
+
+W = 64 = the flat dynamic claimer's multi-source-mask cap — ran clean at
+the boundary. total_ms medians (l0 in parens):
+
+| b | K2 fused | K2 dwire | K2 dov | qwen fused | qwen dwire | qwen dov |
+|---|---|---|---|---|---|---|
+| 1 | 12.74 (6.85) | **6.92 (3.23)** | 8.08 (3.90) | 12.40 (6.63) | **6.68 (3.09)** | 7.86 (3.74) |
+| 2 | 13.55 (7.14) | **9.80 (4.74)** | 10.50 (4.82) | 12.99 (6.82) | **9.92 (4.82)** | 10.49 (4.73) |
+| 4 | 15.81 (7.89) | 15.90 (7.98) | **15.74 (7.02)** | 14.44 (7.39) | 16.00 (7.81) | **15.40 (7.04)** |
+| 16 | 27.86 (13.03) | 52.55 (27.36) | **47.63 (21.58)** | (355.7†) | 53.22 (26.63) | **47.59 (21.38)** |
+
+† the fused qwen 16n b16 cell hit the KNOWN intermittent ~350 ms l1
+stall (handoff 30 open issue) — reproduced here on this binary too;
+unrelated to the direct family.
+
+**16n verdict:** the overall frontier is UNCHANGED — dwire keeps its
+b1/b2 crown (dov +17% / +6-7% there), the fused arm keeps b4+ overall.
+Within the direct family dov crosses over at b4 (−1..−4%) and wins b16
+(−9.4% K2, −10.6% qwen; l0 leg −19..−21%). At b1 the dov l0 is WORSE
+than un-overlapped (3.90 vs 3.23): 63 destinations mean ~130
+host-issued stream ops (puts + quiet + signal ops) against the eplb
+wire's single device-kernel fan-out, and the b1 GEMM is too small to
+repay it; plan also grows ~+0.5 with W (derive + [W,gpe] algebra).
+
+**Overlap-win region summary (dov vs dwire, total_ms):** 4n = every
+budget (−5.5..−18.5%); 8n = b2/b4 up (−1.8..−14.8%), b1 loses; 16n =
+b4 up (−1..−10.6%), b1/b2 lose. The gain is ∝ wire bytes ×
+GEMM-to-latency ratio; the fixed per-dest issue cost is ∝ W. If dov's
+low-b cells ever matter, the candidate fix is moving the fenced fan-out
+into a device kernel (concurrent nbi_block puts + quiet + signal from
+one block, eplb-style) instead of host-issued stream ops.
 
 ## 5. Limits / notes
 
