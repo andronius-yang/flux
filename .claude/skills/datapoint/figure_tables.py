@@ -25,7 +25,9 @@ ORDER = [("Torch + GEMM", "Torch+GEMM"),
          ("EPIC", "EPIC"),
          ("1 Ours(Token Comm)", "Slipstream"),
          ("2 Ours(expert balance + Routing)", "PLL"),
-         ("1+2", None),                       # combined arm: not yet measured
+         ("1+2", "OURS-s1"),                  # measured: handoff 30
+         ("1+2 s2 (always-solve+swap)", "OURS-s2"),
+         ("1+2 (direct wire)", "OURS-dwire"),
          ("1+2 + expert dispatch overlap", None)]
 BLOCKS = [("Qwen", "Qwen 3", 4), ("K2", "Kimi K2", 4),
           ("Qwen", "Qwen 3", 8), ("K2", "Kimi K2", 8),

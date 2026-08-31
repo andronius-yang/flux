@@ -148,3 +148,15 @@ identity — if it drifts, something is wrong with the fold, stop and
 compare `dwire_wire_ms` vs eplb `comm_ms`); then judge §4's prediction
 on total_ms. Update this handoff §4 with the verdict and flip the
 memory entry `dwire-transport-ablation` to COMPLETE.
+
+## 6. 16n VERDICT (2026-08-30, campaign handoff 30, binary 1b5593d4)
+
+§4 prediction **CONFIRMED on both models**. K2: dwire b1 total 7.488 (predicted
+7.5-8.5), EPLB 9.989 (predicted 9.5-10, exact), fused ours 12.625 (predicted ~14);
+**flip vs EPLB b1 -25.0%, b2 -21.4%**; fused reclaims from b4+ (b8 20.5 vs 27.9).
+Qwen: identity tight (-0.4..-5.0%), dwire wins b1 -18.2% / b2 -13.9%. Wire legs
+identical (K2 b8 13.134 vs 13.171); dwire overall e2e 7-10% faster than eplb at
+b4-b16 — the delta sits outside the wire leg (recorded, not debugged). Falsifiers
+did not fire. New: dwire 16n b32 = wedge-class kill (exit 143, both tries, both
+models); b64 = NVSHMEM_MALLOC heap wall as §5 priced (~75-80% confidence borne out).
+Full dataset: handoff 30.

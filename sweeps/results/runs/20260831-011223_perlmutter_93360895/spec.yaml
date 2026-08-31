@@ -1,0 +1,29 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 64
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+ffn_hidden: 1536
+idle_timeout_s: 900
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 4
+nodes: 16
+notes: "datacamp 8.23: Qwen3-235B 16n b1-b64 isolated, s1 canon (dslots 64:32, oracle g=0)"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+shape: qwen3
+skip_correctness: true
+sm_margin: 8
+timeout_s: 2400
+topk: 8
+variants:
+  - ours_l01_s1_pv2_r2_dwire_dps
+warmup_iters: 5

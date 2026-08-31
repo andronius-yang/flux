@@ -228,6 +228,16 @@ def parse_args():
                    help="l0/l1 transport: fused = the canonical Slipstream"
                    " ops; direct = the eplb_l01 staged All2AllSingle wire"
                    " (transport ablation, s1 only — same plan lane)")
+    p.add_argument("--dwire_pair_sizing", choices=["capacity", "demand"],
+                   default="capacity",
+                   help="direct-wire All2AllSingle staging width: capacity ="
+                   " max(realized pair ref, provable SL pair cap) + cushion"
+                   " (the 8/30 default — blows the 16G symmetric heap at 16n"
+                   " b32/b64 in the ctor, both models); demand = realized"
+                   " pair ref + cushion only (the eplb arm's own sizing"
+                   " philosophy; the per-iteration pair_max assert keeps"
+                   " overflow loud). Alloc-only knob: max_split is not read"
+                   " by any timed path.")
     p.add_argument("--seed", type=int, default=1234)
     return p.parse_args()
 
@@ -738,15 +748,37 @@ def main():
             S * args.topk)
         _pair_ref = int(torch.bincount(
             _src_ref * W + _dest_ref, minlength=W * W).max())
-        dwire_max_split = (max(_pair_ref, int(pll_bounds["pair_cap"]))
-                           + cushion)
+        if args.dwire_pair_sizing == "demand":
+            # 2026-08-30 16n b32/b64 fix: the provable pair_cap floor alone
+            # needs >16G of All2AllSingle staging (ctor NVSHMEM_MALLOC death,
+            # handoff 30 SS5); realized-ref sizing mirrors llc_sizing=demand
+            # (recv side, 8/25) and eplb's own max_split convention. The
+            # cushion must be PAIR-LEVEL: the shared `cushion` is the
+            # recv-side per-destination SUM (fp_slack + 8W ~ 9k rows at K2
+            # 16n) and inflates the staging ~9x over the realized pair —
+            # the first demand attempt still died in the ctor on it. Per-
+            # pair drift is bounded by the largest single forced_pair
+            # entry. Loud contract preserved: the runner asserts realized
+            # pair rows against max_split every iteration.
+            _fp_pair = int(pll_aux["forced_pair"].max())
+            dwire_max_split = _pair_ref + _fp_pair + 64
+            if rank == 0:
+                print(f"dwire_pair_sizing=demand: max_split "
+                      f"{dwire_max_split} (pair_ref {_pair_ref}, fp_pair "
+                      f"{_fp_pair}) vs capacity "
+                      f"{max(_pair_ref, int(pll_bounds['pair_cap'])) + cushion}",
+                      flush=True)
+        else:
+            dwire_max_split = (max(_pair_ref, int(pll_bounds["pair_cap"]))
+                               + cushion)
         runner = OursDirectRunner(
             TP_GROUP, rank, L, cfg, args.ffn_hidden_size, input_dtype,
             recv_cap, dwire_max_split,
             probs_all_setup[rank * S:(rank + 1) * S])
         RECORDER.emit_info(ours_wire="direct",
                            dwire_max_split=int(dwire_max_split),
-                           dwire_pair_ref=_pair_ref)
+                           dwire_pair_ref=_pair_ref,
+                           dwire_pair_sizing=args.dwire_pair_sizing)
         _st("runner (direct wire) constructed")
     else:
         runner = OursRunner(

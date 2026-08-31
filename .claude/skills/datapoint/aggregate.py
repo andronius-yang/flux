@@ -11,7 +11,12 @@ from collections import defaultdict
 RUNS = "sweeps/results/runs"
 BASELINE = {"l01_torch":"Torch+GEMM","l01_allgather_dense":"COMET",
     "l01_slipstream":"Slipstream","eplb_l01":"EPLB","epic_l01_hc_m1":"EPIC",
-    "llc_l01_s1":"PLL","moonep_l01_nvshmem_getmem":"MoonEP"}
+    "llc_l01_s1":"PLL","moonep_l01_nvshmem_getmem":"MoonEP",
+    # 2026-08-31 (handoff 30): pv2-canon PLL lane + OURS-family arms
+    "llc_l01_s1_pv2":"PLL","ours_l01_s1_pv2_r2":"OURS-s1",
+    "ours_l01_s2_swap_force_p2p_r2":"OURS-s2",
+    "ours_l01_s1_pv2_r2_dwire":"OURS-dwire",
+    "ours_l01_s1_pv2_r2_dwire_dps":"OURS-dwire"}
 # cells.csv comm_pattern label -> variant key is messy; use cell_id prefix
 def variant_of(cell_id):
     for k in sorted(BASELINE, key=len, reverse=True):

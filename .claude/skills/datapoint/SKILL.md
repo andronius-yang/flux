@@ -46,10 +46,31 @@ FAST is EXCLUDED (broken as of 8/24; do not touch 3rdparty/FAST or its files).
 4. **Known pre-skips** (fill cells as pre-skipped WITH REASON, never attempt):
    - torch 8n b64, both models (gathered-bytes OOM/kill, datacamp exit 143)
    - torch 16n b32+b64, both models (gathered-bytes CUDA OOM on 40G)
-   - llc/PLL 16n b64, both models (authentic >16G symmetric-heap, hc ctor)
+   - ~~llc/PLL 16n b64~~ — NO LONGER A PRE-SKIP (2026-08-31): resolved by
+     the 8/25-27 fixes (llc_sizing=demand recv sizing + hidden-A2A skip,
+     handoff 27); `llc_l01_s1_pv2` 16n b64 ran green 8/29 (fa493d1c/a071f2c5)
+     and 8/30 (3f853021/27069afe, K2 102.1 / qwen 92.9 total). Run it.
    - eplb 16n qwen b64 (planner [E,129] int64 OOM, non-authentic — fix is a
      rule-4 USER decision; default = pre-skip)
    Implement via `--budgets-mib` subsets per invocation.
+
+### OURS-family arms (targeted campaigns; handoff 30 = reference dataset)
+
+When a campaign includes the OURS arms (`ours_l01_s1_pv2_r2`,
+`ours_l01_s2_swap_force_p2p_r2`, dwire), aggregate.py/figure_tables.py in
+this skill dir already map them. Direct-wire MEMORY SIZING (2026-08-31,
+handoff 30 §8): the capacity-mode dwire arm CANNOT allocate 16n b32/b64 —
+its All2AllSingle staging (provable pair-cap floor x W) exceeds the 16G
+symmetric heap and dies in the ctor (the "wedge" signature = surviving
+ranks blocked in the collective ctor until watch-kill). ALWAYS use the
+demand pair-sizing twin `ours_l01_s1_pv2_r2_dwire_dps`
+(`--dwire_pair_sizing demand`: max_split = realized pair ref +
+forced_pair.max() + 64 — a PAIR-level cushion; never reuse the recv-side
+fp_slack+8W sum, it is ~9x oversize) for 16n b32+; it is alloc-only
+(latency-identical, per-iteration pair assert keeps overflow loud).
+Known open flag: qwen 16n ours-s1 b16 has an intermittent ~350-450 ms
+op-bracket stall (reproduced across runs; median valid only when <5/10
+iters stall — check e2e_max and rerun the cell if the median is poisoned).
 
 ## Execution format (handoff 15 §3 + the 8/24 corrections)
 
