@@ -681,18 +681,33 @@ def ensure_oracle_sidecars(
     # oracle plans for topic A, the batch is topic B). Folds into the matrix
     # identity via params, so eval matrices/sidecars never alias homog ones.
     opool = params.get("opool")
-    if opool:
-        bench, subject = opool.split("/", 1)
+    # opool may also be a '+'-joined pool list (2026-08-31, hetero-oracle
+    # multi-homog scenario): the placement basis is the EQUAL-WEIGHT mix of
+    # the listed pools' same-layer same-window rows (each pool contributes
+    # min-pool-len rows, round-robin interleaved so every contiguous W-block
+    # of the driver's (W,-1,topk) reshape sees the same topic mixture),
+    # while the eval batch stays on the cell's single `pools` topic. Folds
+    # into the matrix identity via params like the single-pool form.
+    ospecs = parse_pool_specs(opool) if opool else [specs[0]]
+    opools_rows = []
+    for bench, subject in ospecs:
+        sdir = os.path.join(traces_root, MODEL_PREFIXES[params["model"]], bench, subject)
+        opools_rows.append(
+            load_layer_pool(sdir, int(params["layer"]), params["pool"], slots=(ostart, oend))
+        )
+    if len(ospecs) == 1:
+        bench, subject = ospecs[0]
+        orows = opools_rows[0]
     else:
-        bench, subject = specs[0]
-    sdir = os.path.join(traces_root, MODEL_PREFIXES[params["model"]], bench, subject)
-    orows = load_layer_pool(sdir, int(params["layer"]), params["pool"], slots=(ostart, oend))
+        n = min(len(p) for p in opools_rows)
+        orows = [p[i] for i in range(n) for p in opools_rows]
     trimmed = len(orows) % W
     if trimmed:
         orows = orows[: len(orows) - trimmed]
     if not orows:
         raise SystemExit(
-            f"oracle window [{ostart}, {oend}) has < W rows for {bench}/{subject}"
+            f"oracle window [{ostart}, {oend}) has < W rows for opool basis"
+            f" {'+'.join(f'{b}/{s}' for b, s in ospecs)}"
         )
 
     orpath = os.path.join(out_root, f"{mid}.oracle_routing.txt")
@@ -706,7 +721,9 @@ def ensure_oracle_sidecars(
         "version": ORACLE_LOAD_VERSION,
         "G": nexperts,
         "basis": f"scenario1_oracle_window_slots_{ostart}_{oend}"
-                 + (f"_opool_{bench}_{subject}" if opool else ""),
+                 + (("" if not opool
+                     else f"_opool_{bench}_{subject}" if len(ospecs) == 1
+                     else f"_opool_mix{len(ospecs)}")),
         "source": os.path.basename(orpath),
         "matrix_id": mid,
         "model": params["model"],
@@ -722,7 +739,8 @@ def ensure_oracle_sidecars(
     if opool:
         # extra key ONLY for topic-shift cells: homog sidecar bodies must
         # stay byte-identical to their pre-opool regeneration (content guard)
-        olblob["oracle_pool"] = f"{bench}/{subject}"
+        olblob["oracle_pool"] = (f"{bench}/{subject}" if len(ospecs) == 1
+                                 else "+".join(f"{b}/{s}" for b, s in ospecs))
     olbody = json.dumps(olblob, indent=1, sort_keys=True) + "\n"
     olpath = os.path.join(out_root, f"{mid}.oracle_load.json")
 

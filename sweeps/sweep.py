@@ -1518,7 +1518,12 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
                 or (
                     v["driver"] == "epic"
                     and any(
-                        a in ("placelambda_fast", "placelambda_gpu")
+                        # "pv2" added 2026-08-31: the llc_*_pv2 arms lost the
+                        # oracle file at the 8/27 placelambda_fast->pv2 token
+                        # swap and silently ran self-oracle (basis=self in
+                        # their rank logs) — rule-10 gap, fixed for the
+                        # hetero-oracle campaign onward
+                        a in ("placelambda_fast", "placelambda_gpu", "pv2")
                         for a in (v.get("test_args") or [])
                     )
                 )
