@@ -1,0 +1,22 @@
+# 2026-08-31 hetero-oracle multi-homog ablation campaign — Qwen lane.
+# Same design as hetoracle_k2_4n.yaml; Qwen has 6 captured topic pools, so
+# the mix is all 6 (equal weight). See the K2 spec header for the scenario.
+platform: perlmutter
+nodes: 4
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/college_mathematics+mmlu/high_school_world_history+mmlu/philosophy+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history"
+  - "trace:model=Qwen3-235B;pools=mmlu/college_mathematics;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/college_mathematics+mmlu/high_school_world_history+mmlu/philosophy+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history"
+  - "trace:model=Qwen3-235B;pools=mmlu/high_school_world_history;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/college_mathematics+mmlu/high_school_world_history+mmlu/philosophy+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history"
+  - "trace:model=Qwen3-235B;pools=mmlu/philosophy;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/college_mathematics+mmlu/high_school_world_history+mmlu/philosophy+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history"
+  - "trace:model=Qwen3-235B;pools=mmlu_ZH_CN/college_mathematics;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/college_mathematics+mmlu/high_school_world_history+mmlu/philosophy+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history"
+  - "trace:model=Qwen3-235B;pools=mmlu_ZH_CN/high_school_world_history;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/college_mathematics+mmlu/high_school_world_history+mmlu/philosophy+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history"
+budgets_mib: [1, 2, 4, 8, 16, 32, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+notes: "hetoracle 8.31: Qwen 4n b1-b64 isolated, mixed 6-topic oracle (opool mix6), per-topic homog eval, mean-over-topics scenario"

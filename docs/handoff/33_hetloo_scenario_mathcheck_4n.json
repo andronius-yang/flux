@@ -1,0 +1,374 @@
+{
+ "Kimi-K2": {
+  "anchor": {
+   "matched": {
+    "imb": 1.067,
+    "rmax": 2527.6,
+    "inter": 11454.8
+   },
+   "static": {
+    "imb": 1.183,
+    "rmax": 2800.6,
+    "inter": 12152.6
+   },
+   "swap": {
+    "imb": 1.086,
+    "rmax": 2572.8,
+    "inter": 11974.5
+   },
+   "resolve": {
+    "imb": 1.064,
+    "rmax": 2519.2,
+    "inter": 10878.0
+   },
+   "swap_rounds": 3.5
+  },
+  "mix2tv": {
+   "matched": {
+    "imb": 1.082,
+    "rmax": 2562.5,
+    "inter": 11340.2
+   },
+   "static": {
+    "imb": 1.103,
+    "rmax": 2612.5,
+    "inter": 11812.2
+   },
+   "swap": {
+    "imb": 1.062,
+    "rmax": 2516.0,
+    "inter": 11459.8
+   },
+   "resolve": {
+    "imb": 1.073,
+    "rmax": 2539.8,
+    "inter": 10673.8
+   },
+   "swap_rounds": 2.5
+  },
+  "advperm": {
+   "matched": {
+    "imb": 1.062,
+    "rmax": 2516.0,
+    "inter": 11246.5
+   },
+   "static": {
+    "imb": 1.177,
+    "rmax": 2787.5,
+    "inter": 11763.2
+   },
+   "swap": {
+    "imb": 1.066,
+    "rmax": 2524.0,
+    "inter": 11361.5
+   },
+   "resolve": {
+    "imb": 1.083,
+    "rmax": 2564.5,
+    "inter": 10610.2
+   },
+   "swap_rounds": 3.75
+  },
+  "loo": {
+   "matched": {
+    "imb": 1.067,
+    "rmax": 2527.6,
+    "inter": 11454.8
+   },
+   "static": {
+    "imb": 1.414,
+    "rmax": 3347.9,
+    "inter": 12240.6
+   },
+   "swap": {
+    "imb": 1.138,
+    "rmax": 2695.6,
+    "inter": 12097.7
+   },
+   "resolve": {
+    "imb": 1.064,
+    "rmax": 2519.2,
+    "inter": 10878.0
+   },
+   "swap_rounds": 5.4375
+  },
+  "minority": {
+   "matched": {
+    "imb": 1.067,
+    "rmax": 2527.6,
+    "inter": 11454.8
+   },
+   "static": {
+    "imb": 1.279,
+    "rmax": 3029.6,
+    "inter": 12176.4
+   },
+   "swap": {
+    "imb": 1.089,
+    "rmax": 2578.1,
+    "inter": 11993.1
+   },
+   "resolve": {
+    "imb": 1.064,
+    "rmax": 2519.2,
+    "inter": 10878.0
+   },
+   "swap_rounds": 4.3125
+  },
+  "burst_b4": {
+   "matched": {
+    "imb": 1.063,
+    "rmax": 2517.2,
+    "inter": 11413.9
+   },
+   "static": {
+    "imb": 1.258,
+    "rmax": 2978.0,
+    "inter": 12136.9
+   },
+   "swap": {
+    "imb": 1.087,
+    "rmax": 2573.8,
+    "inter": 11925.4
+   },
+   "resolve": {
+    "imb": 1.062,
+    "rmax": 2515.7,
+    "inter": 10660.6
+   },
+   "swap_rounds": 3.3125
+  },
+  "burst_b1": {
+   "matched": {
+    "imb": 1.068,
+    "rmax": 615.1,
+    "inter": 2785.2
+   },
+   "static": {
+    "imb": 1.224,
+    "rmax": 704.9,
+    "inter": 2952.8
+   },
+   "swap": {
+    "imb": 1.096,
+    "rmax": 631.1,
+    "inter": 2901.8
+   },
+   "resolve": {
+    "imb": 1.062,
+    "rmax": 611.9,
+    "inter": 2434.6
+   },
+   "swap_rounds": 3.75
+  },
+  "iid_b1": {
+   "matched": {
+    "imb": 1.062,
+    "rmax": 612.0,
+    "inter": 2778.6
+   },
+   "static": {
+    "imb": 1.249,
+    "rmax": 719.2,
+    "inter": 2959.0
+   },
+   "swap": {
+    "imb": 1.082,
+    "rmax": 623.4,
+    "inter": 2899.9
+   },
+   "resolve": {
+    "imb": 1.062,
+    "rmax": 611.9,
+    "inter": 2532.5
+   },
+   "swap_rounds": 3.5
+  }
+ },
+ "Qwen3-235B": {
+  "anchor": {
+   "matched": {
+    "imb": 1.071,
+    "rmax": 4388.2,
+    "inter": 16615.9
+   },
+   "static": {
+    "imb": 1.255,
+    "rmax": 5141.1,
+    "inter": 19768.5
+   },
+   "swap": {
+    "imb": 1.1,
+    "rmax": 4506.9,
+    "inter": 18313.4
+   },
+   "resolve": {
+    "imb": 1.062,
+    "rmax": 4352.0,
+    "inter": 15777.2
+   },
+   "swap_rounds": 4.916666666666667
+  },
+  "mix2tv": {
+   "matched": {
+    "imb": 1.062,
+    "rmax": 4352.0,
+    "inter": 16551.0
+   },
+   "static": {
+    "imb": 1.201,
+    "rmax": 4918.5,
+    "inter": 19861.5
+   },
+   "swap": {
+    "imb": 1.082,
+    "rmax": 4430.5,
+    "inter": 19258.2
+   },
+   "resolve": {
+    "imb": 1.062,
+    "rmax": 4352.0,
+    "inter": 15653.8
+   },
+   "swap_rounds": 4.75
+  },
+  "advperm": {
+   "matched": {
+    "imb": 1.062,
+    "rmax": 4352.0,
+    "inter": 15774.5
+   },
+   "static": {
+    "imb": 1.319,
+    "rmax": 5403.5,
+    "inter": 20196.8
+   },
+   "swap": {
+    "imb": 1.098,
+    "rmax": 4498.5,
+    "inter": 18951.8
+   },
+   "resolve": {
+    "imb": 1.062,
+    "rmax": 4352.0,
+    "inter": 15277.8
+   },
+   "swap_rounds": 5.5
+  },
+  "loo": {
+   "matched": {
+    "imb": 1.071,
+    "rmax": 4388.2,
+    "inter": 16615.9
+   },
+   "static": {
+    "imb": 1.435,
+    "rmax": 5879.8,
+    "inter": 20167.0
+   },
+   "swap": {
+    "imb": 1.138,
+    "rmax": 4662.4,
+    "inter": 19492.1
+   },
+   "resolve": {
+    "imb": 1.062,
+    "rmax": 4352.0,
+    "inter": 15777.2
+   },
+   "swap_rounds": 5.333333333333333
+  },
+  "minority": {
+   "matched": {
+    "imb": 1.071,
+    "rmax": 4388.2,
+    "inter": 16615.9
+   },
+   "static": {
+    "imb": 1.339,
+    "rmax": 5483.7,
+    "inter": 20435.8
+   },
+   "swap": {
+    "imb": 1.112,
+    "rmax": 4554.6,
+    "inter": 19184.3
+   },
+   "resolve": {
+    "imb": 1.062,
+    "rmax": 4352.0,
+    "inter": 15777.2
+   },
+   "swap_rounds": 5.333333333333333
+  },
+  "burst_b4": {
+   "matched": {
+    "imb": 1.087,
+    "rmax": 4453.8,
+    "inter": 17055.2
+   },
+   "static": {
+    "imb": 1.218,
+    "rmax": 4988.1,
+    "inter": 19905.5
+   },
+   "swap": {
+    "imb": 1.117,
+    "rmax": 4573.8,
+    "inter": 18311.9
+   },
+   "resolve": {
+    "imb": 1.062,
+    "rmax": 4352.0,
+    "inter": 15226.4
+   },
+   "swap_rounds": 5.0
+  },
+  "burst_b1": {
+   "matched": {
+    "imb": 1.072,
+    "rmax": 1098.1,
+    "inter": 4291.8
+   },
+   "static": {
+    "imb": 1.25,
+    "rmax": 1280.4,
+    "inter": 4857.8
+   },
+   "swap": {
+    "imb": 1.085,
+    "rmax": 1110.8,
+    "inter": 4457.8
+   },
+   "resolve": {
+    "imb": 1.062,
+    "rmax": 1088.0,
+    "inter": 3641.5
+   },
+   "swap_rounds": 4.583333333333333
+  },
+  "iid_b1": {
+   "matched": {
+    "imb": 1.077,
+    "rmax": 1102.6,
+    "inter": 4182.4
+   },
+   "static": {
+    "imb": 1.248,
+    "rmax": 1277.7,
+    "inter": 4933.8
+   },
+   "swap": {
+    "imb": 1.101,
+    "rmax": 1127.6,
+    "inter": 4524.9
+   },
+   "resolve": {
+    "imb": 1.062,
+    "rmax": 1088.0,
+    "inter": 3838.8
+   },
+   "swap_rounds": 4.333333333333333
+  }
+ }
+}

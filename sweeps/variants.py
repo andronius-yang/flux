@@ -3313,3 +3313,95 @@ VARIANTS["ours_l01_s2_gate_swap_p2p_t1_r2"] = dict(
     test_args=_SWAP_P2P + ["--swap_issue", "early", "--swap_tau_rows", "1",
                            "--check_iters", "1"],
 )
+
+# =========================================================================
+# ABLATION-ONLY arms (2026-09-01, hetero LOO swap-OVERLAP ablation —
+# handoff 33 follow-up; user directive). NEVER quote these as headline
+# arms: they exist solely to isolate the swap-movement overlap (the
+# EXPERT-dispatch analogue of token-dispatch overlap).
+#   *_noov_*  : --swap_overlap 0 — the exchange COMPLETES before anything
+#               downstream is enqueued (swap first, THEN dispatch;
+#               requires --swap_issue early). Exposed exchange lands in
+#               the place bracket: total_ms carries it, e2e does not.
+#   *_pr_*    : "placement/routing + swap WITHOUT the slipstream comm
+#               canon" — legacy comm env (wave-adapt / combine-idx /
+#               plan-graphs OFF) + plan_overlap 0, from the
+#               ours_l01_s1_pv2_r2_legacy twin.
+_ABL_SWAP_BASE = VARIANTS["ours_l01_s2_swap_force_p2p_r2"]
+_ABL_SWAP_LEG_ENV = dict(VARIANTS["ours_l01_s1_pv2_r2_legacy"]["env"])
+
+
+def _abl_pr_args(extra):
+    args = list(_ABL_SWAP_BASE["test_args"])
+    args[args.index("--plan_overlap") + 1] = "0"
+    return args + extra
+
+
+VARIANTS["ablation_l01_s2_swap_noov_p2p_r2"] = dict(
+    _ABL_SWAP_BASE,
+    test_args=list(_ABL_SWAP_BASE["test_args"]) + ["--swap_overlap", "0"],
+)
+VARIANTS["ablation_l01_pr_swap_p2p_r2"] = dict(
+    _ABL_SWAP_BASE,
+    env=_ABL_SWAP_LEG_ENV,
+    test_args=_abl_pr_args([]),
+)
+VARIANTS["ablation_l01_pr_swap_noov_p2p_r2"] = dict(
+    _ABL_SWAP_BASE,
+    env=_ABL_SWAP_LEG_ENV,
+    test_args=_abl_pr_args(["--swap_overlap", "0"]),
+)
+
+# swapall ablation pair (2026-09-01, user-directed): reset the placement
+# to the oracle basis before EVERY timed iteration and execute the FULL
+# capped tau=1 orbit as one composed multi-slot exchange (cap 8 slots/rank
+# staging) — every timed iteration measures the complete drift-event
+# rebalance, overlapped vs sequential. ABLATION-ONLY, never headline.
+_ABL_SWAPALL_ARGS = [
+    a for a in _ABL_SWAP_BASE["test_args"]] 
+_ABL_SWAPALL_ARGS[_ABL_SWAPALL_ARGS.index("--swap_tau_rows") + 1] = "1"
+_ABL_SWAPALL_ARGS += ["--swap_rounds", "all", "--swap_reset", "every",
+                      "--swap_max_moves", "8"]
+VARIANTS["ablation_l01_s2_swapall_p2p_r2"] = dict(
+    _ABL_SWAP_BASE, test_args=list(_ABL_SWAPALL_ARGS),
+)
+VARIANTS["ablation_l01_s2_swapall_noov_p2p_r2"] = dict(
+    _ABL_SWAP_BASE,
+    test_args=list(_ABL_SWAPALL_ARGS) + ["--swap_overlap", "0"],
+)
+
+# postwarmup-reset ablation rungs (2026-09-01): one reset at the warmup ->
+# timed transition; the FIRST timed iteration carries the drift-event swap
+# (report it separately), the remaining iterations run on the rebalanced
+# placement. force_pw = canon one-swap-per-iteration convergence under the
+# same reset; swapall_pw = full capped orbit in the first iteration.
+_ABL_PW = ["--swap_reset", "postwarmup"]
+VARIANTS["ablation_l01_s2_swap_force_pw_p2p_r2"] = dict(
+    _ABL_SWAP_BASE,
+    test_args=list(_ABL_SWAP_BASE["test_args"]) + _ABL_PW,
+)
+_ABL_SWAPALL_PW = [a for a in _ABL_SWAPALL_ARGS]
+_ABL_SWAPALL_PW[_ABL_SWAPALL_PW.index("--swap_reset") + 1] = "postwarmup"
+VARIANTS["ablation_l01_s2_swapall_pw_p2p_r2"] = dict(
+    _ABL_SWAP_BASE, test_args=list(_ABL_SWAPALL_PW),
+)
+VARIANTS["ablation_l01_s2_swapall_pw_noov_p2p_r2"] = dict(
+    _ABL_SWAP_BASE,
+    test_args=list(_ABL_SWAPALL_PW) + ["--swap_overlap", "0"],
+)
+
+# the clean-ablation missing rung (2026-09-01): placement/routing + ONE
+# up-front sequential swapall, on the LEGACY comm bracket (no slipstream
+# canon, no plan graphs, plan_overlap 0) — isolates the unoverlapped
+# expert placement/routing/swap decision with no comm/comp overlap
+# machinery. ABLATION-ONLY. (NOT the epic-driver llc transport: same ours
+# driver, legacy env — the composable proxy.)
+VARIANTS["ablation_l01_pr_swapall_pw_noov_p2p_r2"] = dict(
+    _ABL_SWAP_BASE,
+    env=dict(_ABL_SWAP_LEG_ENV),
+    test_args=_abl_pr_args(
+        ["--swap_rounds", "all", "--swap_reset", "postwarmup",
+         "--swap_max_moves", "8", "--swap_overlap", "0"]),
+)
+_v = VARIANTS["ablation_l01_pr_swapall_pw_noov_p2p_r2"]
+_v["test_args"][_v["test_args"].index("--swap_tau_rows") + 1] = "1"

@@ -1,0 +1,50 @@
+{
+ "Qwen3-235B": {
+  "anchor": {
+   "matched": {
+    "imb": 1.062,
+    "rmax": 4352.0,
+    "inter": 46839.5
+   },
+   "static": {
+    "imb": 1.34,
+    "rmax": 5488.2,
+    "inter": 62277.7
+   },
+   "swap": {
+    "imb": 1.169,
+    "rmax": 4787.5,
+    "inter": 55886.0
+   },
+   "resolve": {
+    "imb": 1.062,
+    "rmax": 4352.0,
+    "inter": 43764.2
+   },
+   "swap_rounds": 4.666666666666667
+  },
+  "loo": {
+   "matched": {
+    "imb": 1.062,
+    "rmax": 4352.0,
+    "inter": 46839.5
+   },
+   "static": {
+    "imb": 1.938,
+    "rmax": 7937.5,
+    "inter": 62281.3
+   },
+   "swap": {
+    "imb": 1.346,
+    "rmax": 5511.3,
+    "inter": 58823.0
+   },
+   "resolve": {
+    "imb": 1.062,
+    "rmax": 4352.0,
+    "inter": 43764.2
+   },
+   "swap_rounds": 5.5
+  }
+ }
+}

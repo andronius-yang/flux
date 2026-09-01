@@ -1,0 +1,29 @@
+G: 384
+H: 7168
+budgets_mib:
+  - 4
+chunk_bytes: 14336
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy"
+ffn_hidden: 2048
+idle_timeout_s: 600
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 7
+nodes: 4
+notes: "hetloo 9.1: K2 4n LOO oracle (7-pool mix excl. professional_law), homog professional_law eval, s1-static vs s2-always-swap severity A/B"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+shape: k2
+skip_correctness: true
+sm_margin: 8
+timeout_s: 1200
+topk: 8
+variants:
+  - l01_nvshmem
+warmup_iters: 5

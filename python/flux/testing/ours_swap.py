@@ -74,14 +74,25 @@ def swap_plan(load_g, p2l, lcnts, L, nlp, tau_rows):
     p2l_np = np.asarray(p2l.numpy(), dtype=np.int64)
     lg = np.asarray(load_g.numpy(), dtype=np.int64)
     lc = np.maximum(np.asarray(lcnts.numpy(), dtype=np.int64), 1)
+    swaps, L_r = _swap_plan_np(p2l_np, lg, lc, L, nlp, tau_rows)
+    return swaps, torch.from_numpy(L_r)
+
+
+def _swap_plan_np(p2l_np, lg, lc, L, nlp, tau_rows, w_slot=None,
+                  L_r=None):
+    """Numpy core of swap_plan (single-conversion fastpath entry): inputs
+    already int64 numpy (lc pre-clamped >= 1). Same output, no torch.
+    w_slot/L_r may be passed precomputed (orbit fastpath maintains them
+    incrementally across rounds)."""
     R = p2l_np.shape[0] // nlp
     NN = R // L
     G = lg.shape[0]
     force = tau_rows < 0
-    valid = p2l_np >= 0
-    e_all = np.where(valid, p2l_np, 0)
-    w_slot = np.where(valid, lg[e_all] // lc[e_all], 0)          # [R*nlp]
-    L_r = w_slot.reshape(R, nlp).sum(1)                             # [R]
+    if w_slot is None:
+        valid = p2l_np >= 0
+        e_all = np.where(valid, p2l_np, 0)
+        w_slot = np.where(valid, lg[e_all] // lc[e_all], 0)      # [R*nlp]
+        L_r = w_slot.reshape(R, nlp).sum(1)                         # [R]
     lr = L_r.reshape(NN, L)
     # per-node rank order by (-load, rank): distinct ranks -> one int key
     key = (-lr) * L + np.arange(L)[None, :]
@@ -130,7 +141,7 @@ def swap_plan(load_g, p2l, lcnts, L, nlp, tau_rows):
     for q in np.nonzero(has)[0]:
         swaps.append((int(H[q]), int(hs8[q, a[q]]), int(eh8[q, a[q]]),
                       int(Lo[q]), int(ls8[q, b[q]]), int(el8[q, b[q]])))
-    return swaps, torch.from_numpy(L_r)
+    return swaps, L_r
 
 
 def apply_swaps(p2l, l2p, swaps):
@@ -515,6 +526,257 @@ class OursSwapLane:
     def l1_wait(self):
         """w2 landing gate: the current stream waits the movement-stream
         exchange (zero-cost when nothing was issued this iteration)."""
+        if self._issued:
+            torch.cuda.current_stream().wait_event(self.ev_done)
+
+    def movement_ms(self):
+        if not self._issued:
+            return 0.0
+        self.ev_end.synchronize()
+        return self.ev_start.elapsed_time(self.ev_end)
+
+
+# ==========================================================================
+# ABLATION-ONLY machinery (2026-09-01, handoff 33 §2f follow-up): capped
+# multi-round orbit at decision time + the COMPOSED net permutation
+# executed as ONE multi-slot exchange phase. Never part of a headline arm.
+# ==========================================================================
+
+def swap_orbit_capped(load_g, p2l, l2p, lcnts, L, nlp, cap, max_rounds=32):
+    """Lean runtime orbit FASTPATH (2026-09-01): ONE torch->numpy
+    conversion, all tau=1 rounds in numpy (the vectorized _swap_plan_np
+    core + 2-element array writes per swap), l2p rebuilt once at the end
+    (canonical ascending-phys column order). Round-granular cap
+    truncation as before. tau=1 strictly reduces a pair's max per
+    accepted swap -> terminates. Returns (p2l_f, l2p_f, rounds); when no
+    round applies, the INPUT tensors are returned unchanged."""
+    R = p2l.numel() // nlp
+    a0 = np.asarray(p2l.numpy(), dtype=np.int64)
+    lg = np.asarray(load_g.numpy(), dtype=np.int64)
+    lc = np.maximum(np.asarray(lcnts.numpy(), dtype=np.int64), 1)
+    cur = a0.copy()
+    rounds = 0
+    valid = cur >= 0
+    e_all = np.where(valid, cur, 0)
+    w_slot = np.where(valid, lg[e_all] // lc[e_all], 0)
+    L_r = w_slot.reshape(R, nlp).sum(1)
+    for _ in range(max_rounds):
+        swaps, _ = _swap_plan_np(cur, lg, lc, L, nlp, 1,
+                                 w_slot=w_slot, L_r=L_r)
+        if not swaps:
+            break
+        nxt = cur.copy()
+        for (_rh, sh, eh, _rl, sl, el) in swaps:
+            nxt[sh] = el
+            nxt[sl] = eh
+        if int((nxt != a0).reshape(R, nlp).sum(1).max()) > cap:
+            break
+        cur = nxt
+        rounds += 1
+        # incremental w_slot/L_r maintenance (lg, lc fixed)
+        for (rh, sh, _eh, rl, sl, _el) in swaps:
+            for sx in (sh, sl):
+                e = cur[sx]
+                w_new = lg[e] // lc[e] if e >= 0 else 0
+                r_ = sx // nlp
+                L_r[r_] += w_new - w_slot[sx]
+                w_slot[sx] = w_new
+    if rounds == 0:
+        return p2l, l2p, 0
+    p2l_f = torch.from_numpy(cur.astype(np.int32))
+    l2p_f = torch.full_like(l2p, -1)
+    ncols = np.zeros(lg.shape[0], dtype=np.int64)
+    l2p_np = l2p_f.numpy()
+    for phys, e in enumerate(cur.tolist()):
+        if e >= 0:
+            l2p_np[e, ncols[e]] = phys
+            ncols[e] += 1
+    return p2l_f, l2p_f, rounds
+
+
+def net_moves(p2l0, p2l_f, L, nlp):
+    """Composed intra-node permutation as per-rank pull lists:
+    moves[r] = sorted [(dst_slot_local, src_rank, src_slot_local, e)].
+    Every changed dst slot pulls its new expert's weights from the rank
+    holding that expert in the START placement on the same node (unique:
+    pv2 hosts <= 1 instance of an expert per node, preserved by swaps).
+    A changed slot is always both outgoing and incoming (permutation)."""
+    R = p2l0.numel() // nlp
+    a0, af = p2l0.tolist(), p2l_f.tolist()
+    loc0 = {}
+    for phys, e in enumerate(a0):
+        if e >= 0:
+            r = phys // nlp
+            loc0[(r // L, e)] = (r, phys % nlp)
+    moves = [[] for _ in range(R)]
+    for phys, e in enumerate(af):
+        if e >= 0 and a0[phys] != e:
+            r = phys // nlp
+            sr, ss = loc0[(r // L, e)]
+            moves[r].append((phys % nlp, sr, ss, e))
+    for m in moves:
+        m.sort()
+    return moves
+
+
+class OursSwapAllLane:
+    """ABLATION-ONLY multi-slot exchange lane (p2p, issue=early only):
+    executes the composed intra-node permutation in ONE phase per
+    iteration on the movement stream. Per rank: (1) push every OUTGOING
+    slot into its destination's staging index over NVLink and store the
+    destination's per-(index,mat) landed signal; (2) wait each of MY
+    incoming signals, copy staging -> slot, raise the slot's dispatch
+    gate. All pushes precede all pulls in stream order, so a slot that is
+    both outgoing and incoming is read before it is overwritten; pushes
+    never block on peers (deadlock-free). The composed permutation writes
+    every dst slot exactly once, so the post-landing gate raise is final.
+    Epoch/gate protocol identical to OursSwapLane."""
+
+    def __init__(self, lane, rank, L, nlp, ffn, H, dtype, cap, pg):
+        import flux
+        self.lane = lane
+        self.rank = rank
+        self.L = L
+        self.nlp = nlp
+        self.cap = cap
+        self.ffn = ffn
+        self.H = H
+        self.local_rank = rank % L
+        self.epoch = int(lane.op_w1.epoch())
+        self.w_stream = lane.w_stream
+        self.ev_start = torch.cuda.Event(enable_timing=True)
+        self.ev_end = torch.cuda.Event(enable_timing=True)
+        self.ev_done = torch.cuda.Event()
+        self.ev_pre = torch.cuda.Event()
+        self._idx_all = torch.arange(1, nlp + 1, device="cuda")
+        self._slot_idx = [torch.tensor([1 + j], device="cuda")
+                          for j in range(nlp)]
+        self.swaps_this_iter = 0
+        self.move_bytes_this_iter = 0
+        self._issued = False
+        self._in = []                    # my (dst_slot, src_rank, src_slot)
+        self._out = []                   # my (src_slot, dst_rank, dst_idx)
+        self._w_waited = False
+        self._stag_w1_all = flux.create_tensor_list([cap * ffn, H], dtype,
+                                                    pg)
+        self._stag_w2_all = flux.create_tensor_list([cap * H, ffn], dtype,
+                                                    pg)
+        self._xsig_all = flux.create_tensor_list([2 * cap], torch.int64,
+                                                 pg, False, True)
+        assert len(self._stag_w1_all) == L, (
+            f"node-local view count {len(self._stag_w1_all)} != L {L}")
+        self._xsig = self._xsig_all[self.local_rank]
+        self._cu_wait, self._cu_write = _libcuda()
+        self._wait_flags = CU_STREAM_WAIT_VALUE_GEQ | CU_STREAM_WAIT_VALUE_FLUSH
+        if self._cu_wait(torch.cuda.current_stream().cuda_stream,
+                         self._xsig.data_ptr(), 0, self._wait_flags) != 0:
+            self._wait_flags = CU_STREAM_WAIT_VALUE_GEQ
+        cs = torch.cuda.current_stream().cuda_stream
+        peer_probe = self._xsig_all[(self.local_rank + 1) % L]
+        self._write_ok = (
+            self._cu_write(cs, self._xsig.data_ptr(), 0, 0) == 0
+            and self._cu_write(cs, peer_probe.data_ptr(), 0, 0) == 0)
+        torch.cuda.synchronize()
+
+    def _stag(self, mat, local_rank, idx):
+        if mat == 0:
+            t = self._stag_w1_all[local_rank]
+            return t.view(self.cap, self.ffn, self.H)[idx]
+        t = self._stag_w2_all[local_rank]
+        return t.view(self.cap, self.H, self.ffn)[idx]
+
+    def prepare(self, all_moves):
+        """all_moves = net_moves output (replicated on every rank)."""
+        self._in = list(all_moves[self.rank])
+        assert len(self._in) <= self.cap, (
+            f"incoming {len(self._in)} > staging cap {self.cap}")
+        self._out = []
+        for r, lst in enumerate(all_moves):
+            if r // self.L != self.rank // self.L:
+                continue
+            for idx, (dj, sr, ss, _e) in enumerate(lst):
+                if sr == self.rank:
+                    self._out.append((ss, r, idx))
+        self.swaps_this_iter = sum(len(m) for m in all_moves) // 2
+        self.move_bytes_this_iter = 0
+        self._issued = False
+        self._w_waited = False
+        self.epoch += 1
+        cur = torch.cuda.current_stream()
+        self.ev_pre.record(cur)
+        sig1 = self.lane.op_w1.signals()
+        sig2 = self.lane.op_w2.signals()
+        changed = {dj for (dj, _sr, _ss, _e) in self._in}
+        if changed:
+            keep = torch.tensor(
+                [1 + j for j in range(self.nlp) if j not in changed],
+                dtype=torch.int64, device="cuda")
+        else:
+            keep = self._idx_all
+        sig1.index_fill_(0, keep, self.epoch)
+        sig2.index_fill_(0, keep, self.epoch)
+
+    def issue_early(self):
+        if not self._in and not self._out:
+            return
+        import torch as _t
+        with _t.cuda.stream(self.w_stream):
+            if not self._w_waited:
+                self.w_stream.wait_event(self.ev_pre)
+                self.ev_start.record()
+                self._w_waited = True
+            ws = self.w_stream.cuda_stream
+            for k in (0, 1):
+                op = self.lane.op_w1 if k == 0 else self.lane.op_w2
+                slots = op.prefetch_slots()
+                # phase 1: push all outgoing
+                for (ss, dr, idx) in self._out:
+                    dst_local = dr % self.L
+                    self._stag(k, dst_local, idx).copy_(slots[1 + ss])
+                    peer_sig = self._xsig_all[dst_local]
+                    if self._write_ok:
+                        rc = self._cu_write(ws, peer_sig.data_ptr()
+                                            + 8 * (2 * idx + k),
+                                            self.epoch, 0)
+                        assert rc == 0, f"cuStreamWriteValue64 rc={rc}"
+                    else:
+                        peer_sig[2 * idx + k:2 * idx + k + 1].fill_(
+                            self.epoch)
+            for k in (0, 1):
+                op = self.lane.op_w1 if k == 0 else self.lane.op_w2
+                slots = op.prefetch_slots()
+                # phase 2: pull all incoming, raise gates on landing
+                for idx, (dj, _sr, _ss, _e) in enumerate(self._in):
+                    rc = self._cu_wait(ws, self._xsig.data_ptr()
+                                       + 8 * (2 * idx + k),
+                                       self.epoch, self._wait_flags)
+                    assert rc == 0, f"cuStreamWaitValue64 rc={rc}"
+                    slot = slots[1 + dj]
+                    slot.copy_(self._stag(k, self.local_rank, idx))
+                    if self._write_ok:
+                        rc = self._cu_write(ws, op.signals().data_ptr()
+                                            + 8 * (1 + dj), self.epoch, 0)
+                        assert rc == 0, f"cuStreamWriteValue64 rc={rc}"
+                    else:
+                        op.signals().index_fill_(0, self._slot_idx[dj],
+                                                 self.epoch)
+                    self.move_bytes_this_iter += (
+                        2 * slot.numel() * slot.element_size())
+            self.ev_end.record()
+            self.ev_done.record()
+            self._issued = True
+
+    def issue_late(self):
+        pass                              # all-lane is issue=early only
+
+    def gate_kwargs(self):
+        return dict(
+            weight_signal=self.lane.op_w1.signals()[1:],
+            weight_signal_epoch=self.epoch,
+            weight_gate_group_start=1,
+        )
+
+    def l1_wait(self):
         if self._issued:
             torch.cuda.current_stream().wait_event(self.ev_done)
 

@@ -1,0 +1,32 @@
+# 2026-08-31 hetero-oracle multi-homog ablation campaign (user-directed;
+# postdoc scenario). Placement oracle = EQUAL-WEIGHT MIX of 8 topic pools'
+# previous decode window ([32,64), g=0) via the multi-pool opool basis
+# (gen_trace_routing 8/31); eval batches stay SINGLE-TOPIC homog on the
+# canon window [64,96) — one family per topic, headline = mean over topics.
+# 4n only, budgets b1-b64, isolated, s1-canon inputs otherwise (SCHEMA
+# rule 10). Arms per invocation via --variants (one arm per capsule):
+# moonep_l01_nvshmem_getmem / l01_allgather_dense / l01_slipstream /
+# llc_l01_s1_pv2 / ours_l01_s1_pv2_r2 / ours_l01_s2_swap_force_p2p_r2.
+# NOTE: requires the 8/31 sweep.py fix passing --oracle_routing_file to
+# epic-driver pv2 arms (pre-fix llc_*_pv2 capsules ran basis=self).
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy+mmlu/professional_law"
+  - "trace:model=Kimi-K2;pools=mmlu/clinical_knowledge;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy+mmlu/professional_law"
+  - "trace:model=Kimi-K2;pools=mmlu/college_mathematics;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy+mmlu/professional_law"
+  - "trace:model=Kimi-K2;pools=mmlu/electrical_engineering;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy+mmlu/professional_law"
+  - "trace:model=Kimi-K2;pools=mmlu/high_school_psychology;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy+mmlu/professional_law"
+  - "trace:model=Kimi-K2;pools=mmlu/high_school_world_history;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy+mmlu/professional_law"
+  - "trace:model=Kimi-K2;pools=mmlu/philosophy;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy+mmlu/professional_law"
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy+mmlu/professional_law"
+budgets_mib: [1, 2, 4, 8, 16, 32, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+notes: "hetoracle 8.31: K2 4n b1-b64 isolated, mixed 8-topic oracle (opool mix8), per-topic homog eval, mean-over-topics scenario"
