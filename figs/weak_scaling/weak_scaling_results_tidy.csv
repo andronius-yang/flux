@@ -1,0 +1,44 @@
+baseline,variant,model,nodes,budget_mib,status,capsule,cell_id,e2e_ms,l0_ms,act_ms,l1_ms,plan_ms,plan_comm_ms,total_ms,e2e_min,e2e_max,fail_reason
+COMET,l01_allgather_dense,K2,2,1,ok,20260901-101958_perlmutter_03919f49,l01_allgather_dense_trace-610042_b1_k8_isolated,3.469,1.733,0.009,1.727,0.25,0.142,3.873,3.395,3.548,
+COMET,l01_allgather_dense,K2,2,2,ok,20260901-101958_perlmutter_03919f49,l01_allgather_dense_trace-610042_b2_k8_isolated,3.85,1.877,0.012,1.961,0.249,0.119,4.229,3.82,3.885,
+COMET,l01_allgather_dense,K2,2,4,ok,20260901-101958_perlmutter_03919f49,l01_allgather_dense_trace-610042_b4_k8_isolated,4.714,2.267,0.018,2.428,0.254,0.127,5.106,4.649,4.78,
+COMET,l01_allgather_dense,K2,2,8,ok,20260901-101958_perlmutter_03919f49,l01_allgather_dense_trace-610042_b8_k8_isolated,6.31,3.043,0.031,3.236,0.268,0.149,6.739,6.146,6.502,
+COMET,l01_allgather_dense,K2,2,16,ok,20260901-101958_perlmutter_03919f49,l01_allgather_dense_trace-610042_b16_k8_isolated,10.321,4.864,0.059,5.398,0.291,0.144,10.768,10.155,10.573,
+COMET,l01_allgather_dense,K2,2,64,ok,20260901-101958_perlmutter_03919f49,l01_allgather_dense_trace-610042_b64_k8_isolated,35.78,17.5,0.231,18.048,0.45,0.262,36.503,34.512,36.478,
+COMET,l01_allgather_dense,K2,32,1,failed,20260901-075429_perlmutter_04875008,l01_allgather_dense_trace-610042_b1_k8_isolated,,,,,,,,,,"CUDA illegal memory access in COMET dense-gather (failed) / wedge (stuck,timeout)"
+COMET,l01_allgather_dense,K2,32,2,failed,20260901-075429_perlmutter_04875008,l01_allgather_dense_trace-610042_b2_k8_isolated,,,,,,,,,,"CUDA illegal memory access in COMET dense-gather (failed) / wedge (stuck,timeout)"
+COMET,l01_allgather_dense,K2,32,4,failed,20260901-075429_perlmutter_04875008,l01_allgather_dense_trace-610042_b4_k8_isolated,,,,,,,,,,"CUDA illegal memory access in COMET dense-gather (failed) / wedge (stuck,timeout)"
+COMET,l01_allgather_dense,K2,32,8,stuck,20260901-075429_perlmutter_04875008,l01_allgather_dense_trace-610042_b8_k8_isolated,,,,,,,,,,"CUDA illegal memory access in COMET dense-gather (failed) / wedge (stuck,timeout)"
+COMET,l01_allgather_dense,K2,32,16,timeout,20260901-075429_perlmutter_04875008,l01_allgather_dense_trace-610042_b16_k8_isolated,,,,,,,,,,"CUDA illegal memory access in COMET dense-gather (failed) / wedge (stuck,timeout)"
+COMET,l01_allgather_dense,K2,32,64,failed,20260901-075429_perlmutter_04875008,l01_allgather_dense_trace-610042_b64_k8_isolated,,,,,,,,,,"CUDA illegal memory access in COMET dense-gather (failed) / wedge (stuck,timeout)"
+NVSHMEM ring,l01_nvshmem,K2,32,1,ok,20260901-075429_perlmutter_5433d58e,l01_nvshmem_trace-610042_b1_k8_isolated,78.121,37.789,0.01,40.322,1.005,0.874,80.014,76.794,79.742,
+NVSHMEM ring,l01_nvshmem,K2,32,2,ok,20260901-075429_perlmutter_5433d58e,l01_nvshmem_trace-610042_b2_k8_isolated,81.662,39.778,0.013,41.871,1.003,0.96,83.638,79.772,82.452,
+NVSHMEM ring,l01_nvshmem,K2,32,4,ok,20260901-075429_perlmutter_5433d58e,l01_nvshmem_trace-610042_b4_k8_isolated,90.024,41.791,0.019,48.214,1.018,1.162,92.217,88.092,91.762,
+NVSHMEM ring,l01_nvshmem,K2,32,8,ok,20260901-075429_perlmutter_5433d58e,l01_nvshmem_trace-610042_b8_k8_isolated,106.001,44.633,0.033,61.336,1.121,1.237,108.373,103.185,108.543,
+NVSHMEM ring,l01_nvshmem,K2,32,16,ok,20260901-075429_perlmutter_5433d58e,l01_nvshmem_trace-610042_b16_k8_isolated,125.646,50.551,0.061,75.035,1.185,1.49,128.335,122.902,129.802,
+NVSHMEM ring,l01_nvshmem,K2,32,64,ok,20260901-075429_perlmutter_5433d58e,l01_nvshmem_trace-610042_b64_k8_isolated,362.583,131.435,0.232,230.916,1.824,4.214,368.636,356.418,366.868,
+OURS s1,ours_l01_s1_pv2_r2,K2,2,1,ok,20260901-101958_perlmutter_03919f49,ours_l01_s1_pv2_r2_trace-610042_b1_k8_isolated,3.505,1.711,0.011,1.783,0.58,0.12,4.224,3.427,3.593,
+OURS s1,ours_l01_s1_pv2_r2,K2,2,2,ok,20260901-101958_perlmutter_03919f49,ours_l01_s1_pv2_r2_trace-610042_b2_k8_isolated,3.939,1.851,0.014,2.074,0.591,0.12,4.67,3.881,3.99,
+OURS s1,ours_l01_s1_pv2_r2,K2,2,4,ok,20260901-101958_perlmutter_03919f49,ours_l01_s1_pv2_r2_trace-610042_b4_k8_isolated,4.858,2.122,0.02,2.716,0.612,0.127,5.613,4.754,4.935,
+OURS s1,ours_l01_s1_pv2_r2,K2,2,8,ok,20260901-101958_perlmutter_03919f49,ours_l01_s1_pv2_r2_trace-610042_b8_k8_isolated,6.965,2.886,0.033,4.046,0.636,0.155,7.772,6.82,7.071,
+OURS s1,ours_l01_s1_pv2_r2,K2,2,16,ok,20260901-101958_perlmutter_03919f49,ours_l01_s1_pv2_r2_trace-610042_b16_k8_isolated,10.868,4.572,0.062,6.235,0.671,0.187,11.742,10.665,11.241,
+OURS s1,ours_l01_s1_pv2_r2,K2,2,64,ok,20260901-101958_perlmutter_03919f49,ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated,34.355,13.126,0.233,20.995,1.584,0.146,36.092,33.668,34.979,
+OURS s1,ours_l01_s1_pv2_r2,K2,4,1,ok,20260901-021249_perlmutter_b288fb0a,ours_l01_s1_pv2_r2_trace-610042_b1_k8_isolated,3.292,1.647,0.012,1.633,0.659,0.188,4.153,3.224,3.455,
+OURS s1,ours_l01_s1_pv2_r2,K2,4,2,ok,20260901-021249_perlmutter_b288fb0a,ours_l01_s1_pv2_r2_trace-610042_b2_k8_isolated,3.791,1.913,0.014,1.864,0.628,0.154,4.586,3.718,3.903,
+OURS s1,ours_l01_s1_pv2_r2,K2,4,4,ok,20260901-021249_perlmutter_b288fb0a,ours_l01_s1_pv2_r2_trace-610042_b4_k8_isolated,5.042,2.357,0.02,2.664,0.664,0.148,5.868,4.936,5.159,
+OURS s1,ours_l01_s1_pv2_r2,K2,4,16,ok,20260901-021249_perlmutter_b288fb0a,ours_l01_s1_pv2_r2_trace-610042_b16_k8_isolated,13.338,6.126,0.062,7.15,0.8,0.254,14.404,12.855,13.819,
+OURS s1,ours_l01_s1_pv2_r2,K2,4,64,ok,20260901-021249_perlmutter_b288fb0a,ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated,44.709,19.603,0.234,24.873,1.887,0.373,46.975,41.99,46.732,
+OURS s1,ours_l01_s1_pv2_r2,K2,32,1,ok,20260901-024555_perlmutter_ffb6e32d,ours_l01_s1_pv2_r2_trace-610042_b1_k8_isolated,35.71,22.523,0.015,13.172,1.515,1.165,38.403,34.819,37.485,
+OURS s1,ours_l01_s1_pv2_r2,K2,32,2,ok,20260901-024555_perlmutter_ffb6e32d,ours_l01_s1_pv2_r2_trace-610042_b2_k8_isolated,36.167,22.725,0.016,13.426,1.76,1.03,38.969,35.548,37.137,
+OURS s1,ours_l01_s1_pv2_r2,K2,32,4,ok,20260901-024555_perlmutter_ffb6e32d,ours_l01_s1_pv2_r2_trace-610042_b4_k8_isolated,38.138,23.387,0.025,14.726,2.006,0.848,41.004,37.553,38.892,
+OURS s1,ours_l01_s1_pv2_r2,K2,32,8,ok,20260901-024555_perlmutter_ffb6e32d,ours_l01_s1_pv2_r2_trace-610042_b8_k8_isolated,41.841,25.121,0.037,16.683,2.501,0.734,45.088,40.611,43.854,
+OURS s1,ours_l01_s1_pv2_r2,K2,32,16,ok,20260901-024555_perlmutter_ffb6e32d,ours_l01_s1_pv2_r2_trace-610042_b16_k8_isolated,49.27,28.365,0.068,20.838,3.253,1.148,53.684,48.18,51.457,
+OURS s1,ours_l01_s1_pv2_r2,K2,32,64,ok,20260901-024555_perlmutter_ffb6e32d,ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated,108.947,55.769,0.238,52.939,10.158,1.063,120.173,103.813,115.676,
+OURS s1 (gate),ours_l01_s1_pv2_r2,K2,32,1,failed,20260831-145745_perlmutter_9ac4adef,ours_l01_s1_pv2_r2_trace-610042_b1_k8_isolated,,,,,,,,,,kA2AVMaxNodes=16 cap (l1 ctor)
+OURS s1 (gate),ours_l01_s1_pv2_r2,K2,32,1,failed,20260831-153615_perlmutter_ac34e504,ours_l01_s1_pv2_r2_trace-610042_b1_k8_isolated,,,,,,,,,,l0 owner bitmask u64 cap (world_size<=64)
+OURS s1 (gate),ours_l01_s1_pv2_r2,K2,32,1,failed,20260831-220426_perlmutter_43acc85d,ours_l01_s1_pv2_r2_trace-610042_b1_k8_isolated,,,,,,,,,,a2av_stage1 smem > 48KB launch invalid argument
+OURS s1 (gate),ours_l01_s1_pv2_r2,K2,32,1,ok,20260901-015222_perlmutter_fc16711c,ours_l01_s1_pv2_r2_trace-610042_b1_k8_isolated,36.304,22.79,0.015,13.5,1.934,5.49,43.741,34.455,38.456,
+OURS s1 (gate),ours_l01_s1_pv2_r2,K2,32,64,failed,20260831-145745_perlmutter_9ac4adef,ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated,,,,,,,,,,kA2AVMaxNodes=16 cap (l1 ctor)
+OURS s1 (gate),ours_l01_s1_pv2_r2,K2,32,64,failed,20260831-153615_perlmutter_ac34e504,ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated,,,,,,,,,,l0 owner bitmask u64 cap (world_size<=64)
+OURS s1 (gate),ours_l01_s1_pv2_r2,K2,32,64,failed,20260831-220426_perlmutter_43acc85d,ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated,,,,,,,,,,a2av_stage1 smem > 48KB launch invalid argument
+OURS s1 (gate),ours_l01_s1_pv2_r2,K2,32,64,ok,20260901-015222_perlmutter_fc16711c,ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated,108.14,56.093,0.238,51.809,11.143,1.161,120.449,104.442,114.98,
