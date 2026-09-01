@@ -74,14 +74,25 @@ def swap_plan(load_g, p2l, lcnts, L, nlp, tau_rows):
     p2l_np = np.asarray(p2l.numpy(), dtype=np.int64)
     lg = np.asarray(load_g.numpy(), dtype=np.int64)
     lc = np.maximum(np.asarray(lcnts.numpy(), dtype=np.int64), 1)
+    swaps, L_r = _swap_plan_np(p2l_np, lg, lc, L, nlp, tau_rows)
+    return swaps, torch.from_numpy(L_r)
+
+
+def _swap_plan_np(p2l_np, lg, lc, L, nlp, tau_rows, w_slot=None,
+                  L_r=None):
+    """Numpy core of swap_plan (single-conversion fastpath entry): inputs
+    already int64 numpy (lc pre-clamped >= 1). Same output, no torch.
+    w_slot/L_r may be passed precomputed (orbit fastpath maintains them
+    incrementally across rounds)."""
     R = p2l_np.shape[0] // nlp
     NN = R // L
     G = lg.shape[0]
     force = tau_rows < 0
-    valid = p2l_np >= 0
-    e_all = np.where(valid, p2l_np, 0)
-    w_slot = np.where(valid, lg[e_all] // lc[e_all], 0)          # [R*nlp]
-    L_r = w_slot.reshape(R, nlp).sum(1)                             # [R]
+    if w_slot is None:
+        valid = p2l_np >= 0
+        e_all = np.where(valid, p2l_np, 0)
+        w_slot = np.where(valid, lg[e_all] // lc[e_all], 0)      # [R*nlp]
+        L_r = w_slot.reshape(R, nlp).sum(1)                         # [R]
     lr = L_r.reshape(NN, L)
     # per-node rank order by (-load, rank): distinct ranks -> one int key
     key = (-lr) * L + np.arange(L)[None, :]
@@ -130,7 +141,7 @@ def swap_plan(load_g, p2l, lcnts, L, nlp, tau_rows):
     for q in np.nonzero(has)[0]:
         swaps.append((int(H[q]), int(hs8[q, a[q]]), int(eh8[q, a[q]]),
                       int(Lo[q]), int(ls8[q, b[q]]), int(el8[q, b[q]])))
-    return swaps, torch.from_numpy(L_r)
+    return swaps, L_r
 
 
 def apply_swaps(p2l, l2p, swaps):
@@ -532,25 +543,55 @@ class OursSwapLane:
 # ==========================================================================
 
 def swap_orbit_capped(load_g, p2l, l2p, lcnts, L, nlp, cap, max_rounds=32):
-    """Lean runtime orbit: tau=1 rounds applied while the CUMULATIVE
-    per-rank changed-slot count (vs the start placement) stays <= cap —
-    round-granular truncation, so tables and weights remain consistent.
-    tau=1 strictly reduces a pair's max per accepted swap -> terminates;
-    no cycle bookkeeping needed. Returns (p2l_f, l2p_f, rounds)."""
-    p2l0 = p2l
+    """Lean runtime orbit FASTPATH (2026-09-01): ONE torch->numpy
+    conversion, all tau=1 rounds in numpy (the vectorized _swap_plan_np
+    core + 2-element array writes per swap), l2p rebuilt once at the end
+    (canonical ascending-phys column order). Round-granular cap
+    truncation as before. tau=1 strictly reduces a pair's max per
+    accepted swap -> terminates. Returns (p2l_f, l2p_f, rounds); when no
+    round applies, the INPUT tensors are returned unchanged."""
     R = p2l.numel() // nlp
-    cur_p2l, cur_l2p = p2l, l2p
+    a0 = np.asarray(p2l.numpy(), dtype=np.int64)
+    lg = np.asarray(load_g.numpy(), dtype=np.int64)
+    lc = np.maximum(np.asarray(lcnts.numpy(), dtype=np.int64), 1)
+    cur = a0.copy()
     rounds = 0
+    valid = cur >= 0
+    e_all = np.where(valid, cur, 0)
+    w_slot = np.where(valid, lg[e_all] // lc[e_all], 0)
+    L_r = w_slot.reshape(R, nlp).sum(1)
     for _ in range(max_rounds):
-        swaps, _ = swap_plan(load_g, cur_p2l, lcnts, L, nlp, 1)
+        swaps, _ = _swap_plan_np(cur, lg, lc, L, nlp, 1,
+                                 w_slot=w_slot, L_r=L_r)
         if not swaps:
             break
-        n_p2l, n_l2p = apply_swaps(cur_p2l, cur_l2p, swaps)
-        if int((n_p2l != p2l0).view(R, nlp).sum(1).max()) > cap:
+        nxt = cur.copy()
+        for (_rh, sh, eh, _rl, sl, el) in swaps:
+            nxt[sh] = el
+            nxt[sl] = eh
+        if int((nxt != a0).reshape(R, nlp).sum(1).max()) > cap:
             break
-        cur_p2l, cur_l2p = n_p2l, n_l2p
+        cur = nxt
         rounds += 1
-    return cur_p2l, cur_l2p, rounds
+        # incremental w_slot/L_r maintenance (lg, lc fixed)
+        for (rh, sh, _eh, rl, sl, _el) in swaps:
+            for sx in (sh, sl):
+                e = cur[sx]
+                w_new = lg[e] // lc[e] if e >= 0 else 0
+                r_ = sx // nlp
+                L_r[r_] += w_new - w_slot[sx]
+                w_slot[sx] = w_new
+    if rounds == 0:
+        return p2l, l2p, 0
+    p2l_f = torch.from_numpy(cur.astype(np.int32))
+    l2p_f = torch.full_like(l2p, -1)
+    ncols = np.zeros(lg.shape[0], dtype=np.int64)
+    l2p_np = l2p_f.numpy()
+    for phys, e in enumerate(cur.tolist()):
+        if e >= 0:
+            l2p_np[e, ncols[e]] = phys
+            ncols[e] += 1
+    return p2l_f, l2p_f, rounds
 
 
 def net_moves(p2l0, p2l_f, L, nlp):

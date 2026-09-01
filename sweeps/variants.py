@@ -3369,3 +3369,23 @@ VARIANTS["ablation_l01_s2_swapall_noov_p2p_r2"] = dict(
     _ABL_SWAP_BASE,
     test_args=list(_ABL_SWAPALL_ARGS) + ["--swap_overlap", "0"],
 )
+
+# postwarmup-reset ablation rungs (2026-09-01): one reset at the warmup ->
+# timed transition; the FIRST timed iteration carries the drift-event swap
+# (report it separately), the remaining iterations run on the rebalanced
+# placement. force_pw = canon one-swap-per-iteration convergence under the
+# same reset; swapall_pw = full capped orbit in the first iteration.
+_ABL_PW = ["--swap_reset", "postwarmup"]
+VARIANTS["ablation_l01_s2_swap_force_pw_p2p_r2"] = dict(
+    _ABL_SWAP_BASE,
+    test_args=list(_ABL_SWAP_BASE["test_args"]) + _ABL_PW,
+)
+_ABL_SWAPALL_PW = [a for a in _ABL_SWAPALL_ARGS]
+_ABL_SWAPALL_PW[_ABL_SWAPALL_PW.index("--swap_reset") + 1] = "postwarmup"
+VARIANTS["ablation_l01_s2_swapall_pw_p2p_r2"] = dict(
+    _ABL_SWAP_BASE, test_args=list(_ABL_SWAPALL_PW),
+)
+VARIANTS["ablation_l01_s2_swapall_pw_noov_p2p_r2"] = dict(
+    _ABL_SWAP_BASE,
+    test_args=list(_ABL_SWAPALL_PW) + ["--swap_overlap", "0"],
+)
