@@ -211,6 +211,41 @@ assignment (majority of ranks on one topic) — shifts the global histogram
 continuously toward the minority/LOO regime while keeping per-rank
 single-topic realism.
 
+## 2f. Swap-OVERLAP ablation (9/1, user-directed port) — expert-dispatch overlap isolated
+
+New ABLATION-ONLY machinery (commit on this branch; python-only, no .so
+rebuild): `--swap_overlap 0` on the ours driver makes the current stream
+wait the swap lane's ev_done right after issue_early — the exchange LANDS
+before anything downstream is enqueued (swap first, THEN dispatch;
+requires issue=early; exposed exchange sits in the place bracket:
+total_ms sees it, e2e does not). Three ablation_-prefixed arms in
+variants.py (never headline): ablation_l01_s2_swap_noov_p2p_r2 (canon
+comm, sequential swap), ablation_l01_pr_swap_p2p_r2 /
+_noov (legacy comm bracket — wave-adapt/combine-idx/plan-graphs OFF,
+plan_overlap 0 — with overlapped / sequential swap).
+
+Capsules (4 arms each, one capsule, LOO cells as §2b): K2
+**20260901-061332_c20b66a6** (24/24), Qwen **20260901-063110_df91c5c7**
+(24/24). Serialization cost (noov - ovl, total_ms, s2 stack):
+
+| model | b1 | b2 | b4 | b8 | b16 | b64 |
+|---|---|---|---|---|---|---|
+| K2 | +0.53 | +0.55 | +0.17 | +0.68 | +0.72 | +0.46 |
+| Qwen | +0.18 | +0.09 | +0.15 | +0.02 | +0.08 | +0.19 |
+
+Findings: (1) the overlap hides essentially the ENTIRE per-iteration
+exchange — the overlapped arm shows no residual spin penalty; (2) the
+exposed cost is BUDGET-FLAT and scales with EXPERT BYTES (K2 ~59 MB pair
+-> ~0.5-0.7 ms; Qwen ~25 MB -> ~0.1-0.2 ms), i.e. large relative at small
+budgets (K2 b1: ~10% of total) and negligible at b64 (<1%); (3) the pr
+(legacy-comm) twins show the same magnitudes — expert-dispatch overlap is
+INDEPENDENT of the slipstream token-side comm canon (separable
+mechanisms). Design note: per iteration each rank exchanges at most ONE
+expert pair (up to L/2 swaps/node); convergence accumulates across
+iterations, so the hidden amount is bounded by per-iter movement — a
+rounds-per-iteration extension would scale both the movement and the
+ablation gap.
+
 ## 3. Verdict
 
 1. **The severe case exists and is 4n LOO**: s2 always-swap crosses at b16
