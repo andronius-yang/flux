@@ -38,11 +38,12 @@ CONFIG = dict(
     },
     LEGEND_NCOL=7,                            # 7 = single row; 4 -> 4+3 rows
     LEGEND_COLSPACING=0.9,                    # matplotlib columnspacing
-    # ---- colors (validated 2026-09-01, SPEC 5 -- revalidate on change) ----
+    # ---- colors (muted academic set, validated 2026-09-01 -- SPEC 5;
+    #      revalidate on ANY change: display-adjacent CVD dE 16.1, normal 18.6) ----
     COLORS={
-        "fast_gemm": "#eb6834", "nvshmem_gemm": "#1baf7a",
-        "moonep": "#eda100", "eplb": "#e87ba4", "epic": "#008300",
-        "comet": "#4a3aa7", "OURS": "#2a78d6",
+        "fast_gemm": "#c0653f", "nvshmem_gemm": "#ddaa33",
+        "moonep": "#2f7a4d", "eplb": "#44bb99", "epic": "#9d4a4a",
+        "comet": "#999933", "OURS": "#4878b0",
     },
     INK=dict(primary="#0b0b0b", secondary="#52514e", muted="#898781",
              grid="#e1e0d9", axis="#c3c2b7"),
@@ -69,7 +70,7 @@ CONFIG = dict(
     ANNOTATE_SPEEDUP=False,                   # "x.yx" over the Ours bar
     # ---- layout ----
     FIG_W=7.0, FIG_H=3.6,                     # inches (NSDI \textwidth)
-    MARGINS=dict(left=0.062, right=0.972, top=0.83, bottom=0.075),
+    MARGINS=dict(left=0.058, right=0.972, top=0.83, bottom=0.075),
     WSPACE=0.14, HSPACE=0.16,
     COL_TITLES={"4": "4 nodes", "16": "16 nodes"},
     COL_TITLE_PAD=11,                         # pt above axes; clears trunc labels
@@ -78,7 +79,8 @@ CONFIG = dict(
     ROW_TAG_STYLE="right",                    # "right" rotated edge label,
                                               # or "inside" top-left in-axes
     GROUP_LABELS={1: "1 MiB", 4: "4 MiB", 16: "16 MiB"},
-    Y_LABEL="Total latency (ms)",
+    X_LABEL=None,          # axis-level x title; None = budgets defined in caption
+    Y_LABEL="Latency (ms)",   # single shared label on the figure's left edge
     N_YTICKS=4,
     # ---- typography ----
     FONT_FAMILY=["Helvetica", "Arial", "DejaVu Sans"],
@@ -227,9 +229,11 @@ def plot(data, cfg):
                 ax.tick_params(axis="x", length=0)
             else:
                 ax.set_xticks([])
-            if ci == 0:
-                ax.set_ylabel(cfg["Y_LABEL"],
-                              fontsize=cfg["FONT_SIZES"]["ylabel"])
+
+    fig.supylabel(cfg["Y_LABEL"], x=0.012, fontsize=cfg["FONT_SIZES"]["ylabel"])
+    if cfg["X_LABEL"]:
+        fig.supxlabel(cfg["X_LABEL"], y=0.005,
+                      fontsize=cfg["FONT_SIZES"]["ylabel"])
 
     handles = [Patch(facecolor=cfg["COLORS"][s], hatch=cfg["HATCHES"][s],
                      edgecolor=cfg["INK"]["primary"], linewidth=cfg["EDGE_LW"],

@@ -105,8 +105,14 @@ FAST at 16n (183–227 ms) would flatten every other bar. Mechanism
   y tick labels.
 - X: three group positions labeled `1 MiB / 4 MiB / 16 MiB` **[knob:
   GROUP_LABELS]**, bottom row only; no x tick marks (`length=0`).
-- Y axis label "Total latency (ms)" **[knob: Y_LABEL]** once per row, on the
-  left axes.
+- Y axis label: **one** shared "Latency (ms)" **[knob: Y_LABEL]** on the
+  figure's left edge (`fig.supylabel`), vertically centered over both rows
+  (user ruling 2026-09-01: a single left-side label).
+- X axis label: none by default **[knob: X_LABEL = None]** — the group tick
+  labels are self-describing ("1 MiB" ...), and the *meaning* of the budget
+  axis (per-rank pre-topk send budget) is the caption's job, per the usual
+  systems-paper convention. Setting X_LABEL to a string draws a shared
+  `fig.supxlabel`.
 
 ## 4. Marks (bars)
 
@@ -131,27 +137,31 @@ FAST at 16n (183–227 ms) would flatten every other bar. Mechanism
 ## 5. Color
 
 Categorical palette in **display order** (color follows the system, fixed
-everywhere) **[knob: COLORS]** — validated 2026-09-01 with the dataviz
-six-checks validator (Python twin; math identical: OKLab dE x 100, Machado
-severity-1.0 CVD) against white `#ffffff`:
+everywhere) **[knob: COLORS]**. USER RULING 2026-09-01: muted/academic
+tones, no pink and no light purple — the original vibrant reference palette
+was replaced by this muted set, chosen by enumerating orderings of a muted
+candidate pool with the dataviz six-checks validator (Python twin; math
+identical: OKLab dE x 100, Machado severity-1.0 CVD) against white
+`#ffffff` and taking the best-margin passing order:
 
 | pos | system | hex | note |
 |---|---|---|---|
-| 1 | FAST+GEMM | `#eb6834` | orange |
-| 2 | NVSHMEM A2AV+GEMM | `#1baf7a` | aqua |
-| 3 | MoonEP | `#eda100` | yellow |
-| 4 | EPLB | `#e87ba4` | magenta |
-| 5 | EPIC | `#008300` | green |
-| 6 | COMET | `#4a3aa7` | violet |
-| 7 | **Ours** | `#2a78d6` | blue — the strongest slot, rightmost |
+| 1 | FAST+GEMM | `#c0653f` | terracotta |
+| 2 | NVSHMEM A2AV+GEMM | `#ddaa33` | sand |
+| 3 | MoonEP | `#2f7a4d` | deep green |
+| 4 | EPLB | `#44bb99` | teal |
+| 5 | EPIC | `#9d4a4a` | wine |
+| 6 | COMET | `#999933` | olive |
+| 7 | **Ours** | `#4878b0` | steel blue, rightmost |
 
 Validation results (adjacent pairs = the on-page bar adjacency): lightness
-band PASS, chroma floor PASS, **CVD separation worst 9.1 (protan, >= 8
-target) PASS**, **normal-vision floor worst 16.3 (violet-blue, >= 15) PASS**,
-contrast WARN on aqua/yellow/magenta vs white — relieved by the mandatory
-0.5 pt edge stroke + hatch channel (§4). Re-run the validator after ANY color
-change; the palette hexes are from the validated reference palette and may be
-re-ordered but not re-tuned ad hoc.
+band PASS, chroma floor PASS, **CVD separation worst 16.1 (>= 8 target)
+PASS**, **normal-vision floor worst 18.6 (>= 15) PASS**, contrast WARN on
+sand/teal vs white — relieved by the mandatory 0.5 pt edge stroke + hatch
+channel (§4). Cautionary datum: the "keep old hue families" assignment
+(wine beside deep green) measured **dE 1.1 under deuteranopia** — muted
+red-green neighbors at matched lightness are invisible to dichromats, so
+re-run the validator after ANY color change; never re-order by eye.
 
 Chrome ink **[knob: INK]**: primary `#0b0b0b` (edges, tick labels, axis
 labels), secondary `#52514e` (in-axes model tags), muted `#898781`
