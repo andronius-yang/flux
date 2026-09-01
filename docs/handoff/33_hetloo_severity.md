@@ -144,8 +144,17 @@ yet the GPU 8n A/B shows s2 >= s1 everywhere. Conclusion: the 8n collapse
 is pure TRANSLATION failure — the wire share dominates the bracket at 8n
 and the swap recovers zero wire (inter rows unchanged, ~62k) — not a
 shortage of recoverable imbalance. (K2 8n anchor partial datum before the
-login-node kill: 1.291 static, swap -14.4% — same direction.) 16n run
-pending at write time. Login-node NOTE: three pure-background attempts of
+login-node kill: 1.291 static, swap -14.4% — same direction.)
+
+**16n (landed 9/1, 33_hetloo_scenario_mathcheck_16n_qwen.json)** completes
+the scaling law: LOO static imb 1.435 -> 1.938 -> **2.105** at 4/8/16n
+(anchor 1.255 -> 1.340 -> 1.444), while the swap's share of the resolve
+gap collapses **80% -> 68% -> 25%** (swap -12.3% vs resolve -49.5% at
+16n). With 2 experts/GPU and 8/node at Qwen 16n the residual is almost
+entirely BETWEEN nodes — structurally unreachable by any intra-node
+mechanism. This is the quantitative form of the verdict-3 handover:
+drift-time imbalance grows with scale, but past the island size it can
+only be addressed by node-level placement (the movement/wire regime). Login-node NOTE: three pure-background attempts of
 this script were externally killed minutes in (same unidentified-killer
 signature as handoff 32's moonep incident); the foreground-migrated
 invocation survived.
