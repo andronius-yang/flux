@@ -452,6 +452,57 @@ capsule across ALL arms (COMET 64.4 vs 64.8, floors 47.3 vs 45.8-46.8)
 — cross-allocation offsets are real; only within-capsule and
 within-protocol comparisons are quotable.
 
+## 2l. ABLATION FIGURE SOURCE TABLES (9/1, FINAL — generate figures from THESE)
+
+K2 4n, b64, total_ms, per-iteration max-rank. Tables 1-2 = LOO 5-rep
+means (capsules a03516f9/4695b36d/788d611f/d19ddb24/e3c5ff32; MoonEP
+from 5be2f7eb, single run, same binary). Table 3 = matched 5-rep means
++- sd (capsules 52a6d193/00036d63/0ab47b02/7832276b/65017077; MoonEP
+from a25828a5 — oracle-insensitive arm, ce939eb9 binary, annotate).
+These SUPERSEDE the single-rep §2k table for figure generation. Only
+within-protocol comparisons are quotable (~1.4 ms cross-allocation
+ambient offsets exist).
+
+**Table 1 — hetero mismatch (LOO), drift-event iteration (it0):**
+
+| arm | total_ms |
+|---|---|
+| MoonEP | 129.74 |
+| COMET | 64.57 |
+| slipstream (comm only) | 59.24 |
+| placement + swap, sequential | 74.91 |
+| full stack, sequential | 68.92 |
+| full stack, overlapped | **61.37** |
+
+**Table 2 — hetero mismatch (LOO), post-event mean (it1-9):**
+
+| arm | total_ms |
+|---|---|
+| MoonEP | 130.91 |
+| COMET | 64.33 |
+| slipstream (comm only) | 58.60 |
+| placement + swap, sequential | 57.82 |
+| full stack, sequential | 56.92 |
+| full stack, overlapped | **56.66** |
+
+**Table 3 — standard (matched) oracle, 5-rep (+- sd over reps):**
+
+| arm | it0 | it1-9 mean |
+|---|---|---|
+| MoonEP | 129.19 | 125.67 |
+| COMET | 64.38 +- 1.95 | 64.36 +- 0.99 |
+| slipstream (comm only) | 58.65 +- 1.17 | 58.95 +- 0.52 |
+| placement + swap, sequential | 52.90 +- 1.89 | 47.32 +- 0.40 |
+| full stack, sequential | 53.01 +- 2.36 | **47.26 +- 0.29** |
+| full stack, overlapped | **50.78 +- 1.49** | 47.41 +- 0.18 |
+
+Figure narrative anchors: (1) drift event — only the overlapped full
+stack keeps the event below COMET-class cost (T1); (2) drift steady —
+full stack leads, swap makes placement viable (T2); (3) matched — the
+placement arms share a 47.3 floor -27% below COMET, ovl best at the
+event (-2.2 = hidden movement), comm-canon marginal ~0 at matched b64;
+(4) MoonEP 2x off in every regime.
+
 ## 3. Verdict
 
 1. **The severe case exists and is 4n LOO**: s2 always-swap crosses at b16
