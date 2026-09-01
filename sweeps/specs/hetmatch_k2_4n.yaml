@@ -1,0 +1,21 @@
+# 2026-09-01 ablation study 2: MATCHED conditions (no drift). Same eval
+# topic as study 1 (professional_law homog [64,96)) but the oracle is the
+# SAME topic's previous window [32,64) — no opool, the rule-10 canon
+# basis. Under matched oracle the tau=1 swap orbit should fire ~no swaps;
+# the expected gains come from comm+placement combination alone, and the
+# study-1 inequality (COMET > singles > combined) should hold with
+# ovl ~= seq. One rep, b64, 4n (user directive).
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 8, 16, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 1200
+idle_timeout_s: 600
+retries: 1
+notes: "hetmatch 9.1: K2 4n matched oracle (same-topic prev window), professional_law eval — ablation study 2 (no-drift control)"
