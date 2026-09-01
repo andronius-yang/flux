@@ -100,6 +100,41 @@ budget. K2's larger H (7168, chunk 14336) makes each recovered row worth
 more milliseconds, and professional_law's 1.97 LOO residual is the deepest
 realistic imbalance found.
 
+## 2b-full. K2 4n LOO 6-arm ladder (added 9/1, user-directed)
+
+Full ablation roster in ONE capsule (**20260901-042235_f7603e26**, 33/36
+ok, alloc 57804409 TIMEOUT 30:09 ~2 nh): moonep (always-balance incl.
+cross-node) / COMET dense / slipstream (comm only) / llc-pv2 (placement+
+routing only) / s1 (placement+routing+comm, static) / s2 (+ per-iter
+intra-node force-swap). total_ms (per-iter max-rank, median):
+
+| arm | b1 | b2 | b4 | b8 | b16 | b64 |
+|---|---|---|---|---|---|---|
+| moonep | 14.93 | 16.34 | 22.37 | 32.44 | 47.16 | 129.66 |
+| comet | 4.05 | 4.89 | 6.51 | 9.74 | 17.27 | 63.51 |
+| slipstream | 4.14 | 4.82 | 7.78 | 10.14 | 17.39 | 58.19 |
+| llc-pv2 | 6.76 | 8.20 | 11.24 | 17.57 | 31.32 | stuck |
+| s1 | 4.30 | 5.17 | 7.88 | 11.14 | 19.08 | 72.20* |
+| s2 | 5.20 | 6.12 | 8.14 | 11.30 | **17.34** | **55.19*** |
+
+\* s1/s2 b64 from the same-binary same-matrix 2-arm capsule 1d60b9d8: the
+llc b64 cell went STUCK for 654 s (heap sizing clamped at the 16G platform
+cap — the handoff-17 llc/PLL b64 class, first seen at 4n here) and burned
+the allocation; the three trailing b64 cells failed at 0 s on the expired
+allocation. Not a code failure — 1d60b9d8 ran both cells green.
+
+**The ladder reframes the story**: under LOO drift the static placement is
+FRAGILE — s1 loses to plain COMET from b4 up (b64: 72.20 vs 63.51, s1
++13.7% WORSE than no placement), because a placement solved on the wrong
+basis concentrates load worse than the neutral contiguous layout. The
+always-swap arm rescues exactly that fragility: s2 b64 beats slipstream
+(-5.2%) and COMET (-13.1%), and at b16 matches the best baselines while
+s1 trails ~10%. b64 ranking: **s2 > slip > comet >> s1 >> moonep**; llc
+never pays anywhere (and moonep is 3-4x off at every budget). So the
+honest ablation claim is not "swap improves our stack" but "**runtime
+intra-node rebalancing is what makes placement SAFE under drift** — and
+then best-in-field."
+
 ## 2c. CPU decomposition of the 8n collapse (Qwen, anchor+loo, 1 seed)
 
 het_scenarios_8n.json (job scratch; NODES=8 W=32): anchor 1.340->1.169
