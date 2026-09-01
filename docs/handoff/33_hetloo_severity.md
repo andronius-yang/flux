@@ -325,6 +325,53 @@ Findings:
    rather than force-oscillate — strictly better steady state in this
    trace.
 
+## 2i. CLEAN ABLATION DATASET (9/1, user-directed): K2 4n LOO, b4/16/64
+
+Capsule **20260901-091051_5be2f7eb** (18/18, one binary, one allocation).
+Six arms forming the full ablation ladder; the three swapall arms use the
+postwarmup reset (drift event fires in timed iter 0). Arm 4 note: the
+"placement/routing+swap only" rung is the legacy-comm PROXY on the ours
+driver (wave-adapt/combine-idx/plan-graphs OFF, plan_overlap 0), not the
+epic-driver llc transport.
+
+Medians (per-iter max-rank, 10 timed iters — steady-state dominated):
+
+| arm | b4 | b16 | b64 |
+|---|---|---|---|
+| moonep | 22.29 | 46.60 | 130.58 |
+| comet | 6.56 | 16.94 | 63.24 |
+| slipstream (comm only) | 7.52 | 17.15 | 58.26 |
+| pr + swapall, sequential | 9.10 | 18.08 | 56.85 |
+| full + swapall, sequential | 7.26 | 16.99 | **55.43** |
+| full + swapall, overlapped | 7.59 | 17.32 | 57.25 |
+
+Drift-event iteration (it0) vs post-event mean (it1-9):
+
+| arm | b4 ev/rest | b16 ev/rest | b64 ev/rest |
+|---|---|---|---|
+| pr + swap, seq | 22.70 / 9.73 | 25.36 / 18.64 | 68.46 / 57.96 |
+| full + swap, seq | 21.07 / 7.95 | 25.14 / 17.82 | 68.78 / 56.52 |
+| full + swap, ovl | 20.28 / 7.96 | **20.75** / 17.59 | **64.01** / 57.18 |
+
+Readings:
+1. **Expert-overlap prices the event**: ovl vs seq event iteration =
+   -0.8 / **-4.4** / **-4.8** ms at b4/16/64; at b64 the overlapped
+   event lands at COMET PARITY (64.01 vs 63.24), so even a
+   one-iteration topic residency does no worse than COMET while every
+   further iteration gains ~-6 ms.
+2. **Token-comm contribution under identical placement+swap** (pr vs
+   full, seq): steady-state -1.8 / -0.8 / -1.4 ms.
+3. **Placement+swap contribution on top of comm-only** (slip vs
+   full-ovl steady): +0.4 / +0.4 / -1..-3 ms — placement pays at b64,
+   costs slightly at small budgets (plan bracket).
+4. Steady-state ovl-vs-seq medians agree within run noise (+-2%) — the
+   twins share the same converged placement; ALL the overlap value is in
+   the event iteration, which is exactly the ablation claim.
+5. Event iterations at b4/b16 carry a fixed ~8-12 ms cost beyond the
+   NVLink bytes (orbit 2 ms + apply/refresh + gate stalls where
+   dispatch+GEMM is too short to hide movement) — the known
+   small-budget limit from §2f/§2h.
+
 ## 3. Verdict
 
 1. **The severe case exists and is 4n LOO**: s2 always-swap crosses at b16
