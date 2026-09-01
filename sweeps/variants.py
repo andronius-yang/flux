@@ -3389,3 +3389,19 @@ VARIANTS["ablation_l01_s2_swapall_pw_noov_p2p_r2"] = dict(
     _ABL_SWAP_BASE,
     test_args=list(_ABL_SWAPALL_PW) + ["--swap_overlap", "0"],
 )
+
+# the clean-ablation missing rung (2026-09-01): placement/routing + ONE
+# up-front sequential swapall, on the LEGACY comm bracket (no slipstream
+# canon, no plan graphs, plan_overlap 0) — isolates the unoverlapped
+# expert placement/routing/swap decision with no comm/comp overlap
+# machinery. ABLATION-ONLY. (NOT the epic-driver llc transport: same ours
+# driver, legacy env — the composable proxy.)
+VARIANTS["ablation_l01_pr_swapall_pw_noov_p2p_r2"] = dict(
+    _ABL_SWAP_BASE,
+    env=dict(_ABL_SWAP_LEG_ENV),
+    test_args=_abl_pr_args(
+        ["--swap_rounds", "all", "--swap_reset", "postwarmup",
+         "--swap_max_moves", "8", "--swap_overlap", "0"]),
+)
+_v = VARIANTS["ablation_l01_pr_swapall_pw_noov_p2p_r2"]
+_v["test_args"][_v["test_args"].index("--swap_tau_rows") + 1] = "1"
