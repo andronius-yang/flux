@@ -1,0 +1,26 @@
+# 2026-08-31 hetero LEAVE-ONE-OUT severity lane (user-directed follow-up to
+# handoff 32). Offline math check (het_scenarios, same-code pv2_solve +
+# swap_orbit + LocCap simulate_arm) ranked oracle scenarios by intra-node-
+# swap-recoverable imbalance: LOO (oracle mix EXCLUDES the eval topic) is
+# the peak on both models (Qwen static imb 1.435 mean, swap tau=1 -20.7%
+# rmax; per-topic picker: college_mathematics steepest at 1.770). This spec
+# = the extreme-but-realistic case: real traces only, oracle = equal mix of
+# the OTHER 5 Qwen pools' [32,64), eval = homog college_mathematics [64,96).
+# A/B: ours_l01_s1_pv2_r2 (static LOO-basis placement) vs
+# ours_l01_s2_swap_force_p2p_r2 (always intra-node swap on tk_dev) in ONE
+# capsule; gate = l01_nvshmem b4 vs the 8/31 anchors. Budgets per user ask
+# (b32 deliberately absent). Binary = ce939eb91073d55b (no rebuild).
+platform: perlmutter
+nodes: 8
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=mmlu/college_mathematics;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/high_school_world_history+mmlu/philosophy+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history"
+budgets_mib: [1, 2, 4, 8, 16, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 1200
+idle_timeout_s: 600
+retries: 1
+notes: "hetloo 8.31: Qwen 8n LOO oracle (5-pool mix excl. college_mathematics), homog college_mathematics eval, s1-static vs s2-always-swap severity A/B"
