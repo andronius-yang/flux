@@ -75,6 +75,46 @@ swap). Isolated mode, 10 iters, deterministic=0. Per-iter max-rank, median.
 | s2 vs s1 | +19.8% | +19.5% | +13.5% | +13.1% | +11.0% | +2.4% |
 | e2e delta | +3.4% | -3.1% | 0.0% | -0.3% | +2.5% | +1.1% |
 
+## 2b. K2 4n GPU A/B (added 9/1, user-directed)
+
+Spec `hetloo_k2_4n.yaml`: LOO oracle = 7 K2 pools excl. professional_law,
+eval = homog professional_law (per-topic picker: static imb **1.970**, the
+runaway steepest across both models; next K2 topic 1.469). Gate capsule
+1ae41cf5: 12.944 total vs the 8/31 execution-family anchor 11.584 =
+**+11.7% — a TOPIC-LOAD CONFOUND, not drift** (the gate family follows the
+spec's eval topic; professional_law is K2's most expensive topic — handoff
+32 §4.1; true build drift is bounded 1-4% by the same-binary Qwen gates).
+Arms capsule **20260901-040925_1d60b9d8**, 12/12 ok, alloc 57804191
+(~10 min, ~0.7 nh):
+
+| total_ms | b1 | b2 | b4 | b8 | b16 | b64 |
+|---|---|---|---|---|---|---|
+| s1 | 4.35 | 5.09 | 7.98 | 11.25 | 18.88 | 72.20 |
+| s2 | 5.22 | 6.16 | **7.78** | 11.54 | **17.38** | **55.19** |
+| s2 vs s1 | +20.0% | +21.0% | **-2.5%** | +2.6% | **-7.9%** | **-23.6%** |
+| e2e delta | -1.1% | -0.2% | -15.7% | -9.3% | -14.5% | **-25.7%** |
+
+**The strongest severity result of the campaign**: -17.0 ms total at b64
+(-23.6%), e2e -18.0 ms (-25.7%), total crossover at b4, e2e wins at every
+budget. K2's larger H (7168, chunk 14336) makes each recovered row worth
+more milliseconds, and professional_law's 1.97 LOO residual is the deepest
+realistic imbalance found.
+
+## 2c. CPU decomposition of the 8n collapse (Qwen, anchor+loo, 1 seed)
+
+het_scenarios_8n.json (job scratch; NODES=8 W=32): anchor 1.340->1.169
+(swap -12.8% rmax), **loo 1.938->1.346 (swap -30.6%, resolve -45.2%)** —
+the LOO residual EXPLODES at 8n and the swap's offline recovery GROWS,
+yet the GPU 8n A/B shows s2 >= s1 everywhere. Conclusion: the 8n collapse
+is pure TRANSLATION failure — the wire share dominates the bracket at 8n
+and the swap recovers zero wire (inter rows unchanged, ~62k) — not a
+shortage of recoverable imbalance. (K2 8n anchor partial datum before the
+login-node kill: 1.291 static, swap -14.4% — same direction.) 16n run
+pending at write time. Login-node NOTE: three pure-background attempts of
+this script were externally killed minutes in (same unidentified-killer
+signature as handoff 32's moonep incident); the foreground-migrated
+invocation survived.
+
 ## 3. Verdict
 
 1. **The severe case exists and is 4n LOO**: s2 always-swap crosses at b16
