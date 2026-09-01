@@ -3351,3 +3351,21 @@ VARIANTS["ablation_l01_pr_swap_noov_p2p_r2"] = dict(
     env=_ABL_SWAP_LEG_ENV,
     test_args=_abl_pr_args(["--swap_overlap", "0"]),
 )
+
+# swapall ablation pair (2026-09-01, user-directed): reset the placement
+# to the oracle basis before EVERY timed iteration and execute the FULL
+# capped tau=1 orbit as one composed multi-slot exchange (cap 8 slots/rank
+# staging) — every timed iteration measures the complete drift-event
+# rebalance, overlapped vs sequential. ABLATION-ONLY, never headline.
+_ABL_SWAPALL_ARGS = [
+    a for a in _ABL_SWAP_BASE["test_args"]] 
+_ABL_SWAPALL_ARGS[_ABL_SWAPALL_ARGS.index("--swap_tau_rows") + 1] = "1"
+_ABL_SWAPALL_ARGS += ["--swap_rounds", "all", "--swap_reset", "every",
+                      "--swap_max_moves", "8"]
+VARIANTS["ablation_l01_s2_swapall_p2p_r2"] = dict(
+    _ABL_SWAP_BASE, test_args=list(_ABL_SWAPALL_ARGS),
+)
+VARIANTS["ablation_l01_s2_swapall_noov_p2p_r2"] = dict(
+    _ABL_SWAP_BASE,
+    test_args=list(_ABL_SWAPALL_ARGS) + ["--swap_overlap", "0"],
+)

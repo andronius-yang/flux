@@ -217,6 +217,26 @@ def parse_args():
                         " requires --swap_issue early). The exposed"
                         " exchange lands in the place bracket: total_ms"
                         " sees it, e2e does not.")
+    p.add_argument("--swap_reset", choices=("off", "every", "postwarmup"),
+                   default="off",
+                   help="ABLATION-ONLY: restore the ORACLE-BASIS placement"
+                        " (tables + physical slot weights) in the untimed"
+                        " gap — 'every' before each timed iteration (every"
+                        " timed iter measures the full drift-event"
+                        " response), 'postwarmup' once at the warmup ->"
+                        " timed transition, 'off' (default) never.")
+    p.add_argument("--swap_rounds", choices=("1", "all"), default="1",
+                   help="ABLATION-ONLY: '1' (default) = canon single"
+                        " greedy round per iteration (<=1 exchanged slot"
+                        " per rank); 'all' = capped tau=1 orbit to"
+                        " fixpoint at decision time, executed as the"
+                        " COMPOSED multi-slot exchange in one phase"
+                        " (p2p + issue early only).")
+    p.add_argument("--swap_max_moves", type=int, default=8,
+                   help="staging cap for --swap_rounds all: max exchanged"
+                        " slots per rank per iteration (round-granular"
+                        " orbit truncation; also sizes the symmetric"
+                        " staging = cap*(w1+w2) per rank).")
     p.add_argument("--swap_tables", choices=("upload", "device"),
                    default="device",
                    help="how a fired swap reaches the planner's device"
@@ -470,6 +490,11 @@ def main():
             assert args.s2_stale == "0", "--s2_swap excludes stale probes"
             assert args.swap_overlap or args.swap_issue == "early", (
                 "--swap_overlap 0 (sequential ablation) requires"
+                " --swap_issue early")
+            assert args.swap_rounds == "1" or (
+                args.swap_xport == "p2p"
+                and args.swap_issue == "early"), (
+                "--swap_rounds all needs --swap_xport p2p and"
                 " --swap_issue early")
             from flux.testing import ours_swap as oswap
             _load_g = torch.bincount(tk_dev.reshape(-1),
@@ -874,14 +899,41 @@ def main():
             torch.distributed.all_reduce(
                 torch.zeros(1, device="cuda"), group=_my_ng)
             torch.cuda.synchronize()
-            swap_lane = OursSwapLane(lane, _my_ng, rank, L, cfg.nlp,
-                                     args.ffn_hidden_size, args.H,
-                                     input_dtype, xport=args.swap_xport,
-                                     issue=args.swap_issue, pg=TP_GROUP)
+            if args.swap_rounds == "all":
+                # ABLATION-ONLY: composed multi-slot exchange lane
+                from flux.testing.ours_swap import OursSwapAllLane
+                swap_lane = OursSwapAllLane(lane, rank, L, cfg.nlp,
+                                            args.ffn_hidden_size, args.H,
+                                            input_dtype,
+                                            args.swap_max_moves,
+                                            TP_GROUP)
+            else:
+                swap_lane = OursSwapLane(lane, _my_ng, rank, L, cfg.nlp,
+                                         args.ffn_hidden_size, args.H,
+                                         input_dtype,
+                                         xport=args.swap_xport,
+                                         issue=args.swap_issue,
+                                         pg=TP_GROUP)
             swap_sync = None
             if args.swap_tables == "device":
                 from flux.testing.ours_swap import SwapTableSync
                 swap_sync = SwapTableSync(plan, torch.device("cuda"))
+            swap_reset_snap = None
+            if args.swap_reset != "off":
+                # ABLATION-ONLY: pristine copies for the placement reset —
+                # tables AND the physical slot weights (the exchange moves
+                # real weights; a table-only reset would desynchronize).
+                _s1 = lane.op_w1.prefetch_slots()
+                _s2 = lane.op_w2.prefetch_slots()
+                swap_reset_snap = {
+                    "p2l": plan.p2l.clone(),
+                    "l2p": plan.l2p.clone(),
+                    "lcnts": plan.lcnts.clone(),
+                    "w1": torch.stack([_s1[1 + j].clone()
+                                       for j in range(cfg.nlp)]),
+                    "w2": torch.stack([_s2[1 + j].clone()
+                                       for j in range(cfg.nlp)]),
+                }
     planner = OursIterPlanner(plan, rank, torch.device("cuda"), topk_all,
                               probs_all_setup, L, args.eps, args.pll_f_cap,
                               TP_GROUP, route_global=bool(args.route_global))
@@ -1180,6 +1232,31 @@ def main():
             lane.resident_p2l = oracle_snap["p2l"].long().clone()
             planner.refresh_placement()
             torch.cuda.synchronize()
+        if (lane is not None and args.s2_swap
+                and args.swap_reset != "off"
+                and (i >= args.warmup_iters
+                     if args.swap_reset == "every"
+                     else i == args.warmup_iters)):
+            # ABLATION-ONLY placement reset (untimed gap — enqueued
+            # before iter_start.record, completed by the isolated sync):
+            # restore the oracle-basis tables AND the physical slot
+            # weights, so the timed iteration re-executes the full
+            # drift-event swap + movement instead of the warmup-converged
+            # fixpoint.
+            plan.p2l = swap_reset_snap["p2l"].clone()
+            plan.l2p = swap_reset_snap["l2p"].clone()
+            plan.lcnts = swap_reset_snap["lcnts"].clone()
+            _s1 = lane.op_w1.prefetch_slots()
+            _s2 = lane.op_w2.prefetch_slots()
+            for _j in range(cfg.nlp):
+                _s1[1 + _j].copy_(swap_reset_snap["w1"][_j])
+                _s2[1 + _j].copy_(swap_reset_snap["w2"][_j])
+            if swap_sync is not None:
+                swap_sync.apply(planner, plan)
+            else:
+                planner.refresh_placement()
+            lane.resident_p2l = swap_reset_snap["p2l"].long().clone()
+            torch.cuda.synchronize()
         if isolated:
             t_iso = time.perf_counter()
             torch.cuda.synchronize()
@@ -1208,18 +1285,37 @@ def main():
                 d_host = d_gather_buf.cpu()   # blocks on the in-flight
                 _ptd = time.perf_counter()    # allgather: d2h span below
                 load_g = d_host.long().sum(0)
-                swaps, _Lr = oswap_rt.swap_plan(
-                    load_g, plan.p2l, plan.lcnts, L, cfg.nlp,
-                    args.swap_tau_rows)
-                _pt1 = time.perf_counter()
-                if swaps:
-                    plan.p2l, plan.l2p = oswap_rt.apply_swaps(
-                        plan.p2l, plan.l2p, swaps)
-                    if swap_sync is not None:
-                        swap_sync.apply(planner, plan)
-                    else:
-                        planner.refresh_placement()
-                swap_lane.prepare(swaps)
+                if args.swap_rounds == "all":
+                    # ABLATION-ONLY: capped tau=1 orbit to fixpoint at
+                    # decision time; the COMPOSED net intra-node
+                    # permutation executes as one multi-slot phase.
+                    _p2l_f, _l2p_f, _nr = oswap_rt.swap_orbit_capped(
+                        load_g, plan.p2l, plan.l2p, plan.lcnts, L,
+                        cfg.nlp, args.swap_max_moves)
+                    all_moves = oswap_rt.net_moves(plan.p2l, _p2l_f, L,
+                                                   cfg.nlp)
+                    swaps = [mv for lst in all_moves for mv in lst]
+                    _pt1 = time.perf_counter()
+                    if swaps:
+                        plan.p2l, plan.l2p = _p2l_f, _l2p_f
+                        if swap_sync is not None:
+                            swap_sync.apply(planner, plan)
+                        else:
+                            planner.refresh_placement()
+                    swap_lane.prepare(all_moves)
+                else:
+                    swaps, _Lr = oswap_rt.swap_plan(
+                        load_g, plan.p2l, plan.lcnts, L, cfg.nlp,
+                        args.swap_tau_rows)
+                    _pt1 = time.perf_counter()
+                    if swaps:
+                        plan.p2l, plan.l2p = oswap_rt.apply_swaps(
+                            plan.p2l, plan.l2p, swaps)
+                        if swap_sync is not None:
+                            swap_sync.apply(planner, plan)
+                        else:
+                            planner.refresh_placement()
+                    swap_lane.prepare(swaps)
                 swap_lane.issue_early()
                 if not args.swap_overlap and swap_lane._issued:
                     # ABLATION-ONLY sequential mode: the exchange must
