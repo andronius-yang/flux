@@ -1,0 +1,40 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 1
+  - 2
+  - 4
+  - 8
+  - 16
+  - 32
+  - 64
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/college_mathematics+mmlu/high_school_world_history+mmlu/philosophy+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history"
+  - "trace:model=Qwen3-235B;pools=mmlu/college_mathematics;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/college_mathematics+mmlu/high_school_world_history+mmlu/philosophy+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history"
+  - "trace:model=Qwen3-235B;pools=mmlu/high_school_world_history;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/college_mathematics+mmlu/high_school_world_history+mmlu/philosophy+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history"
+  - "trace:model=Qwen3-235B;pools=mmlu/philosophy;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/college_mathematics+mmlu/high_school_world_history+mmlu/philosophy+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history"
+  - "trace:model=Qwen3-235B;pools=mmlu_ZH_CN/college_mathematics;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/college_mathematics+mmlu/high_school_world_history+mmlu/philosophy+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history"
+  - "trace:model=Qwen3-235B;pools=mmlu_ZH_CN/high_school_world_history;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/college_mathematics+mmlu/high_school_world_history+mmlu/philosophy+mmlu_ZH_CN/college_mathematics+mmlu_ZH_CN/high_school_world_history"
+ffn_hidden: 1536
+idle_timeout_s: 900
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 4
+nodes: 4
+notes: "hetoracle 8.31: Qwen 4n b1-b64 isolated, mixed 6-topic oracle (opool mix6), per-topic homog eval, mean-over-topics scenario"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+shape: qwen3
+skip_correctness: true
+sm_margin: 8
+timeout_s: 2400
+topk: 8
+variants:
+  - moonep_l01_nvshmem_getmem
+warmup_iters: 5
