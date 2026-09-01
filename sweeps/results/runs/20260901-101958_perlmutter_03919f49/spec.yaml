@@ -1,0 +1,35 @@
+G: 384
+H: 7168
+budgets_mib:
+  - 1
+  - 2
+  - 4
+  - 8
+  - 16
+  - 64
+chunk_bytes: 14336
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+ffn_hidden: 2048
+idle_timeout_s: 180
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 7
+nodes: 2
+notes: "2n weak-scaling endpoint: COMET vs ours s1, one capsule, W<=128 binary"
+platform: perlmutter
+profile_iters: 3
+retries: 0
+shape: k2
+skip_correctness: true
+sm_margin: 8
+timeout_s: 240
+topk: 8
+variants:
+  - l01_allgather_dense
+  - ours_l01_s1_pv2_r2
+warmup_iters: 5
