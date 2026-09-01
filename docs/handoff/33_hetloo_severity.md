@@ -435,6 +435,23 @@ Readings:
    LOO drift residual costs ~10.6 ms at b64 even WITH the swap (the
    wire-side share intra-node swaps cannot reach; §1 structural).
 
+### 2k-reps. Matched study, 5-rep resolution (9/1; capsules 52a6d193/00036d63/0ab47b02/7832276b/65017077)
+
+The single-rep it0 "inversion" (full-seq 52.63 > pr-seq 50.78) RESOLVED as
+noise: over 5 reps, it0 full-seq 53.01+-2.36 vs pr-seq 52.90+-1.89 —
+per-rep delta bounces -5.1..+5.1, mean +0.10. At the matched event the
+two sequential arms are statistically IDENTICAL (the exposed swap
+dominates both; the comm canon does not differentiate the event), and
+full-OVL is best at it0 (50.78+-1.49, ~-2.2 = the hidden movement).
+Steady state: pr 47.32+-0.40, full-seq 47.26+-0.29, full-ovl 47.41+-0.18
+— all equal within noise: at matched b64 the comm canon's marginal value
+over the legacy bracket is ~0 (its ~1 ms in the single rep was also
+noise; its measured value lives at drift and at smaller budgets).
+NOTE ambient shift: this allocation ran ~1.4 ms above the single-rep
+capsule across ALL arms (COMET 64.4 vs 64.8, floors 47.3 vs 45.8-46.8)
+— cross-allocation offsets are real; only within-capsule and
+within-protocol comparisons are quotable.
+
 ## 3. Verdict
 
 1. **The severe case exists and is 4n LOO**: s2 always-swap crosses at b16
