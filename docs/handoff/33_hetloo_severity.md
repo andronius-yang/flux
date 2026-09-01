@@ -135,6 +135,40 @@ honest ablation claim is not "swap improves our stack" but "**runtime
 intra-node rebalancing is what makes placement SAFE under drift** — and
 then best-in-field."
 
+## 2b-qwen. Qwen 4n LOO 6-arm ladder (added 9/1) — BOTH PREMISES HOLD
+
+Capsule **20260901-045411_3062cc8a**, 36/36 ok, alloc 57805035 (~1.3 nh).
+total_ms:
+
+| arm | b1 | b2 | b4 | b8 | b16 | b64 |
+|---|---|---|---|---|---|---|
+| moonep | 8.36 | 11.03 | 13.52 | 20.26 | 33.73 | 119.33 |
+| comet | 4.24 | 4.72 | 5.58 | 8.15 | 14.09 | 49.23 |
+| slipstream | **3.09** | 3.67 | 5.40 | 8.48 | 14.48 | 54.20 |
+| llc-pv2 | 5.47 | 6.77 | 8.97 | 14.05 | 23.95 | 91.42 |
+| s1 | **3.09** | **3.68** | **4.85** | **7.70** | **13.22** | 49.12 |
+| s2 | 4.08 | 4.67 | 5.54 | 8.28 | 13.51 | **44.12** |
+
+Unlike K2, **s1 beats COMET at EVERY budget** under LOO (b1 -27%, b4 -13%,
+b16 -6%, b64 tie) and beats slipstream from b4 up — Qwen's deep structural
+expert skew means even a wrong-basis placement+routing outperforms the
+contiguous layout. And s2 still wins the money column: b64 -10.2% vs s1,
+-10.4% vs COMET, best arm outright. Note the margin EROSION: s1's lead
+over COMET shrinks to ~0 at b64 — drift burns the static margin exactly
+where bytes are largest, and the swap restores a clear -10%. The
+two-premise scenario (all optims >= COMET, s2 >> s1) therefore EXISTS
+as-is on Qwen 4n LOO; K2 professional_law LOO is the over-rotated corner.
+
+**K2 dial (offline, dial_sweep_k2.py, single seed):** COMET-contiguous
+rmax for the professional_law eval batch is 5219 (imb 2.204) — WORSE than
+even the LOO pv2 static (4789): the K2 GPU flip is NOT raw GEMM balance
+but the wire/overlap side (COMET's dense allgather is drift-immune while
+a wrong-basis sparse dispatch concentrates hot lanes). Minority-weight
+dial: at w = 1/2-of-equal share (~6.7% of the blend) static rmax is
+still -28% vs contiguous while the swap gain rises to -28.3% (vs -11.8%
+at equal blend) — the candidate K2 two-premise cell if one is wanted on
+K2 as well (one 6-arm capsule at that weight would confirm).
+
 ## 2c. CPU decomposition of the 8n collapse (Qwen, anchor+loo, 1 seed)
 
 het_scenarios_8n.json (job scratch; NODES=8 W=32): anchor 1.340->1.169
