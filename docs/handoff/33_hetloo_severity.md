@@ -372,6 +372,34 @@ Readings:
    dispatch+GEMM is too short to hide movement) — the known
    small-budget limit from §2f/§2h.
 
+## 2j. THE four-tier ablation data point (9/1): K2 4n LOO b64, 5 repetitions
+
+User ask: one data point showing COMET > {comm-only, placement-only} >
+combined-unoverlapped > combined-overlapped. Structurally b64-only (at
+b4/b16 COMET is FASTEST — dense allgather is cheap when bytes are small)
+and window-mean-over-the-drift-event (postwarmup, 1 event + 9 steady):
+the only cut where combined-seq amortizes below the singles while still
+differing from combined-ovl. Single-run steady noise (~+-0.7) had flipped
+the last rung; 5 same-allocation repetitions resolve it. Capsules
+a03516f9 / 4695b36d / 788d611f / d19ddb24 / e3c5ff32 (25/25).
+
+| tier | arm | window mean +- sd |
+|---|---|---|
+| 1 (worst) | COMET | 64.35 +- 0.44 |
+| 2 | pr placement+swap, seq | 59.53 +- 1.59 |
+| 2 | slipstream (comm only) | 58.66 +- 0.80 |
+| 3 | full stack, swap UNoverlapped | 58.12 +- 0.52 |
+| 4 (best) | full stack, swap OVERLAPPED | **57.13 +- 0.22** |
+
+seq - ovl window delta: +0.99 +- 0.24 (sem), POSITIVE IN ALL 5 REPS
+(+0.41..+1.53); event-iteration delta +7.55 mean (all reps +5.9..+9.2).
+Softest boundary: slip (58.66) vs full-seq (58.12) — 0.54 margin, 3/5
+reps cleanly ordered, correct in expectation. The ladder as a claim:
+each mechanism contributes — comm overlap and placement+swap each beat
+COMET alone, combining them beats either, and overlapping the expert
+movement is a further, statistically solid -1.0 ms on the window (-7.5
+ms at the drift event itself).
+
 ## 3. Verdict
 
 1. **The severe case exists and is 4n LOO**: s2 always-swap crosses at b16
