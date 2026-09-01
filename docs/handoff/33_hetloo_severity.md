@@ -246,6 +246,43 @@ iterations, so the hidden amount is bounded by per-iter movement — a
 rounds-per-iteration extension would scale both the movement and the
 ablation gap.
 
+## 2g. Swapall ablation: reset-every + full-orbit composed exchange (9/1)
+
+New ABLATION-ONLY machinery (committed this branch, python-only):
+`--swap_reset {off,every,postwarmup}` restores the oracle-basis placement
+— tables AND physical slot weights from pristine device copies — in the
+untimed inter-iteration gap, so timed iterations re-execute the full
+drift-event rebalance instead of the warmup-converged fixpoint.
+`--swap_rounds all` + `--swap_max_moves 8`: capped tau=1 orbit at
+decision time (round-granular truncation; K2 LOO: 8 rounds, 52
+slot-moves, max 8/rank) executed by OursSwapAllLane as the COMPOSED
+intra-node permutation in one push/signal/pull phase (pushes precede
+pulls in stream order; deadlock-free; per-slot final-write gates).
+
+Capsules (canon force ref [NO reset — continuity anchor, NOT
+apples-to-apples vs the reset arms] + swapall ovl + swapall noov):
+K2 **20260901-070601_bf186315**, Qwen **20260901-071849_403cd4bf**,
+18/18 each. total_ms; the measurement = swapall noov - ovl:
+
+| model | b1 | b2 | b4 | b8 | b16 | b64 |
+|---|---|---|---|---|---|---|
+| K2 overlap saving | +1.61 | +1.37 | +1.17 | +1.74 | +1.91 | +4.61 |
+| Qwen overlap saving | +1.35 | +1.25 | +1.58 | +0.95 | +1.45 | +1.07 |
+
+Findings: (1) with real per-iteration movement (~5-8 slots/rank, up to
+~470 MB on the hottest K2 rank) the overlap recovers 1-2 ms/iter flat
+and 4.6 ms at K2 b64 — the concrete overlapped-expert-dispatch number;
+(2) at small budgets even the overlapped twin cannot fully hide 8
+slots/rank (dispatch+GEMM span < exchange time), so the ovl-noov delta
+UNDERSTATES total movement there; (3) the swapall arms carry a large
+timed premium vs canon force (K2 ~+13 ms at b1): the per-iteration
+capped-orbit host path costs ~5 ms (above the sub-ms target — numpy
+single-conversion rewrite identified as the fix, ~0.5-1 ms reachable)
+plus the un-hideable movement. Both swapall arms run the FULL slipstream
+comm canon; only --swap_overlap differs. OPEN (user decision): reset-
+every single-swap reference rung; legacy-comm swapall pair (2x2 cross);
+numpy fast path.
+
 ## 3. Verdict
 
 1. **The severe case exists and is 4n LOO**: s2 always-swap crosses at b16
