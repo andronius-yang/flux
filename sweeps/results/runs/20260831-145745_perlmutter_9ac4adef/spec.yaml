@@ -1,0 +1,30 @@
+G: 384
+H: 7168
+budgets_mib:
+  - 1
+  - 64
+chunk_bytes: 14336
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+ffn_hidden: 2048
+idle_timeout_s: 300
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 7
+nodes: 32
+notes: "32n weak-scaling smoke: ours_l01_s1_pv2_r2 K2 b1+b64 isolated, correctness ON"
+platform: perlmutter
+profile_iters: 3
+retries: 0
+shape: k2
+skip_correctness: false
+sm_margin: 8
+timeout_s: 420
+topk: 8
+variants:
+  - ours_l01_s1_pv2_r2
+warmup_iters: 5

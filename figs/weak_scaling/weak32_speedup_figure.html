@@ -1,0 +1,294 @@
+<title>K2 Weak-Scaling Speedups</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    color-scheme: light;
+    --surface: #fbfbfa;
+    --panel: #ffffff;
+    --ink: #16181d;
+    --ink-2: #4e5560;
+    --ink-3: #8a919c;
+    --rule: #e3e5e9;
+    --grid: #eceef1;
+    --parity: #b3b9c2;
+    --fail-band: rgba(190, 60, 50, 0.06);
+    --fail-ink: #9d2b23;
+    --s-b1: #2a78d6;
+    --s-b4: #eb6834;
+    --s-b16: #1baf7a;
+    --s-b64: #eda100;
+    --tip-bg: #16181d;
+    --tip-ink: #fbfbfa;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface: #17181b;
+      --panel: #1e2024;
+      --ink: #f2f3f5;
+      --ink-2: #b9bec7;
+      --ink-3: #7d838d;
+      --rule: #34373d;
+      --grid: #292c31;
+      --parity: #5a5f68;
+      --fail-band: rgba(226, 96, 84, 0.10);
+      --fail-ink: #e2938b;
+      --s-b1: #3987e5;
+      --s-b4: #d95926;
+      --s-b16: #199e70;
+      --s-b64: #c98500;
+      --tip-bg: #f2f3f5;
+      --tip-ink: #17181b;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface: #17181b;
+    --panel: #1e2024;
+    --ink: #f2f3f5;
+    --ink-2: #b9bec7;
+    --ink-3: #7d838d;
+    --rule: #34373d;
+    --grid: #292c31;
+    --parity: #5a5f68;
+    --fail-band: rgba(226, 96, 84, 0.10);
+    --fail-ink: #e2938b;
+    --s-b1: #3987e5;
+    --s-b4: #d95926;
+    --s-b16: #199e70;
+    --s-b64: #c98500;
+    --tip-bg: #f2f3f5;
+    --tip-ink: #17181b;
+  }
+  body {
+    background: var(--surface);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+    line-height: 1.45;
+    margin: 0;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 40px 28px 56px; }
+  header h1 {
+    font-size: 25px; font-weight: 600; letter-spacing: -0.01em;
+    margin: 0 0 6px; text-wrap: balance;
+  }
+  header p.thesis { color: var(--ink-2); font-size: 15px; max-width: 68ch; margin: 0; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--ink-3); margin-bottom: 10px;
+  }
+  .legend {
+    display: flex; gap: 22px; align-items: center; flex-wrap: wrap;
+    margin: 26px 0 8px; font-size: 13px; color: var(--ink-2);
+  }
+  .legend .key { display: flex; gap: 8px; align-items: center; }
+  .legend .swatch { width: 18px; height: 3px; border-radius: 2px; }
+  .legend .sw-b1 { background: var(--s-b1); }
+  .legend .sw-b4 { background: var(--s-b4); }
+  .legend .sw-b16 { background: var(--s-b16); }
+  .legend .sw-b64 { background: var(--s-b64); }
+  .legend .note { margin-left: auto; color: var(--ink-3); font-size: 12.5px; }
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 820px) { .panels { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 6px;
+    padding: 16px 14px 8px; position: relative;
+  }
+  .panel h2 { font-size: 14px; font-weight: 600; margin: 0 0 2px; }
+  .panel .sub { font-size: 12px; color: var(--ink-3); margin: 0 0 8px; }
+  svg text {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; fill: var(--ink-3);
+  }
+  svg .dlabel { font-size: 11.5px; font-weight: 500; }
+  svg .failnote { fill: var(--fail-ink); font-size: 11px; font-family: "IBM Plex Sans", sans-serif; }
+  .tip {
+    position: absolute; pointer-events: none; background: var(--tip-bg); color: var(--tip-ink);
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; padding: 6px 9px;
+    border-radius: 4px; white-space: pre; display: none; z-index: 3; line-height: 1.5;
+  }
+  section.tbl { margin-top: 38px; }
+  section.tbl h2, section.notes h2 { font-size: 15px; font-weight: 600; margin: 0 0 10px; }
+  .scroller { overflow-x: auto; }
+  table {
+    border-collapse: collapse; font-size: 13px; min-width: 640px;
+    font-variant-numeric: tabular-nums;
+  }
+  th, td { padding: 5px 14px 5px 0; text-align: right; }
+  th { color: var(--ink-3); font-weight: 500; border-bottom: 1px solid var(--rule); }
+  td:first-child, th:first-child { text-align: left; font-family: "IBM Plex Mono", monospace; }
+  tbody tr:nth-child(4n) td { border-bottom: 1px solid var(--grid); }
+  td.fail { color: var(--fail-ink); }
+  section.notes { margin-top: 34px; }
+  section.notes ol { margin: 0; padding-left: 20px; color: var(--ink-2); font-size: 13.5px; max-width: 78ch; }
+  section.notes li { margin-bottom: 7px; }
+  code { font-family: "IBM Plex Mono", monospace; font-size: 0.92em; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Kimi-K2 &middot; 384 experts / topk 8 &middot; real routing traces &middot; isolated per-layer latency</div>
+    <h1>The advantage grows with scale</h1>
+    <p class="thesis">Speedup of the full OURS stack (pv2 placement + LocCap routing + slack&nbsp;r2 + slipstream comm/comp overlap) over each baseline, as node count doubles from 2 to 32 (8&rarr;128 GPUs). Weak scaling: the per-rank pre-topk send budget is held fixed on each line. At 2 nodes COMET wins &mdash; placement and routing have nothing to buy when every token touches both nodes &mdash; and the stack crosses parity by 4n.</p>
+  </header>
+
+  <div class="legend" id="legend">
+    <span class="key"><span class="swatch sw-b1"></span>b1&nbsp;MiB</span>
+    <span class="key"><span class="swatch sw-b4"></span>b4&nbsp;MiB</span>
+    <span class="key"><span class="swatch sw-b16"></span>b16&nbsp;MiB</span>
+    <span class="key"><span class="swatch sw-b64"></span>b64&nbsp;MiB</span>
+    <span class="note">y: speedup&thinsp;&times; = baseline&nbsp;total&nbsp;/&nbsp;OURS&nbsp;total &middot; dashes mark 1.0&times; parity</span>
+  </div>
+
+  <div class="panels">
+    <div class="panel" id="pA">
+      <h2>vs COMET (fused allgather + dense ring)</h2>
+      <p class="sub">the state-of-practice fused system</p>
+    </div>
+    <div class="panel" id="pB">
+      <h2>vs NVSHMEM blocking-put ring</h2>
+      <p class="sub">primitive transport floor (unfused Torch+GEMM chain)</p>
+    </div>
+  </div>
+
+  <section class="tbl">
+    <h2>Data (total_ms, mean over ranks &times; iterations)</h2>
+    <div class="scroller"><table id="dataTable">
+      <thead><tr>
+        <th>budget</th><th>nodes</th><th>OURS s1</th><th>COMET</th><th>speedup</th><th>NVSHMEM ring</th><th>speedup</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+
+  <section class="notes">
+    <h2>Method</h2>
+    <ol>
+      <li><b>Arms.</b> OURS = <code>ours_l01_s1_pv2_r2</code>; COMET = <code>l01_allgather_dense</code> (this repo&rsquo;s fused allgather&nbsp;l0 + dense-ring&nbsp;l1); ring = <code>l01_nvshmem</code> (blocking-put ring, unfused GEMM). All cells: isolated mode, 10 iters / 5 warmup, <code>FLUX_TEST_DETERMINISTIC=0</code>, Kimi-K2 shape on captured routing (livecodebench/execution, layer&nbsp;5), budgets are the strict per-rank pre-topk send budget.</li>
+      <li><b>&#10007; COMET does not run at 128 ranks.</b> At 32n its dense-gather path dies with a CUDA illegal-memory-access (b1&ndash;b4) or wedges until the per-cell watchdog (b8, b16); no budget completes. Capsule <code>20260901-075429&hellip;04875008</code> (walltime-cut, no manifest) and its rank logs record the failures. Its panel therefore ends at 16n. FAST is excluded at all points beyond 16 servers (documented 16-server limit, handoff&nbsp;24).</li>
+      <li><b>Binary identity.</b> 32n cells run the W&le;128 binary (three 32n cap fixes: l1 node cap, l0 owner bitmask, l0 stage-1 smem window &mdash; all statically inert at W&le;64); 4/8/16n cells are the handoff-30 / 8-31 capsules on the pre-fix tree. A 4n re-run on the patched binary reproduced the handoff-30 OURS row within &plusmn;3.6% (capsule <code>20260901-021249</code>), bounding the cross-build error at well below every plotted effect.</li>
+      <li><b>Capsules.</b> OURS 32n: <code>20260901-024555</code>; ring 32n: <code>20260901-075429&hellip;5433d58e</code>; 2n head-to-head (COMET + OURS in ONE capsule, W&le;128 binary): <code>20260901-101958</code>; 4/8/16n: handoff-30 tidy dataset + the 8/31 ring ladder (<code>20260831-051230/052029/063232</code>). The ring was not measured at 2n; ring b8 exists only at 32n; both are omitted from the ring panel.</li>
+    </ol>
+  </section>
+</div>
+
+<script>
+(function () {
+  const BUDGETS = ["b1", "b4", "b16", "b64"];
+  const COLORS = { b1: "--s-b1", b4: "--s-b4", b16: "--s-b16", b64: "--s-b64" };
+
+  // total_ms means; null = not measured / does not run
+  // panel A includes the 2n endpoint (one-capsule head-to-head, 20260901-101958);
+  // the ring was not measured at 2n, so panel B starts at 4n.
+  const NODES_A = [2, 4, 8, 16, 32], NODES_B = [4, 8, 16, 32];
+  const OURS_A = { b1: [4.224, 4.009, 5.684, 12.613, 38.403], b4: [5.613, 5.974, 8.416, 15.626, 41.004],
+                   b16: [11.742, 14.262, 19.428, 27.916, 53.684], b64: [36.092, 46.247, 62.456, 85.785, 120.173] };
+  const OURS_B = { b1: [4.009, 5.684, 12.613, 38.403], b4: [5.974, 8.416, 15.626, 41.004],
+                   b16: [14.262, 19.428, 27.916, 53.684], b64: [46.247, 62.456, 85.785, 120.173] };
+  const COMET = { b1: [3.873, 4.020, 6.801, 15.576, null], b4: [5.106, 6.162, 10.695, 23.502, null],
+                  b16: [10.768, 16.491, 30.338, 63.159, null], b64: [36.503, 59.331, 115.961, 222.263, null] };
+  const RING = { b1: [5.323, 9.192, 24.234, 80.014], b4: [11.638, 16.699, 30.649, 92.217],
+                 b16: [40.021, 44.363, 63.433, 128.335], b64: [139.664, 166.788, 209.457, 368.636] };
+
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+  const W = 470, H = 320, M = { t: 16, r: 58, b: 34, l: 40 };
+  const YMIN = 0.8, YMAX = 3.3;
+  const y = (v) => M.t + (YMAX - v) * (H - M.t - M.b) / (YMAX - YMIN);
+
+  function drawPanel(el, NODES, OURS, base, failAt32) {
+    const x = (i) => M.l + (i * (W - M.l - M.r)) / (NODES.length - 1);
+    const speed = (bb, b, i) => (bb[b][i] == null ? null : bb[b][i] / OURS[b][i]);
+    const NS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.style.width = "100%";
+    const add = (parent, tag, attrs, text) => {
+      const n = document.createElementNS(NS, tag);
+      for (const k in attrs) n.setAttribute(k, attrs[k]);
+      if (text != null) n.textContent = text;
+      parent.appendChild(n); return n;
+    };
+
+    // grid + y axis
+    for (let v = 1.0; v <= 3.01; v += 0.5) {
+      add(svg, "line", { x1: M.l, x2: W - M.r, y1: y(v), y2: y(v),
+        stroke: v === 1.0 ? css("--parity") : css("--grid"),
+        "stroke-width": 1, "stroke-dasharray": v === 1.0 ? "5 4" : "none" });
+      add(svg, "text", { x: M.l - 7, y: y(v) + 4, "text-anchor": "end" }, v.toFixed(1) + "×");
+    }
+    // x ticks
+    NODES.forEach((n, i) => {
+      add(svg, "text", { x: x(i), y: H - M.b + 18, "text-anchor": "middle" }, n + "n");
+    });
+    add(svg, "text", { x: (M.l + W - M.r) / 2, y: H - 2, "text-anchor": "middle" }, "nodes (log2 spacing)");
+
+    // failure band over the last (32n) column
+    if (failAt32) {
+      const li = NODES.length - 1, bx = (x(li - 1) + x(li)) / 2;
+      add(svg, "rect", { x: bx, y: M.t, width: W - M.r - bx,
+        height: H - M.t - M.b, fill: css("--fail-band") });
+      add(svg, "text", { x: x(li), y: M.t + 16, "text-anchor": "middle", class: "failnote" }, "✗ does not run");
+      add(svg, "text", { x: x(li), y: M.t + 30, "text-anchor": "middle", class: "failnote" }, "at 128 ranks");
+    }
+
+    // series
+    const pts = [];
+    BUDGETS.forEach((b) => {
+      const col = css(COLORS[b]);
+      const vals = NODES.map((_, i) => speed(base, b, i));
+      let d = "";
+      vals.forEach((v, i) => { if (v != null) d += (d ? " L" : "M") + x(i) + " " + y(v); });
+      add(svg, "path", { d, fill: "none", stroke: col, "stroke-width": 2,
+        "stroke-linecap": "round", "stroke-linejoin": "round" });
+      vals.forEach((v, i) => {
+        if (v == null) return;
+        add(svg, "circle", { cx: x(i), cy: y(v), r: 4, fill: col,
+          stroke: css("--panel"), "stroke-width": 2 });
+        pts.push({ i, b, v, cx: x(i), cy: y(v) });
+      });
+      const lastI = vals.reduce((a, v, i) => (v != null ? i : a), 0);
+      add(svg, "text", { x: x(lastI) + 9, y: y(vals[lastI]) + 4, fill: col, class: "dlabel" }, b);
+    });
+
+    el.appendChild(svg);
+
+    // hover tooltip: nearest point
+    const tip = document.createElement("div");
+    tip.className = "tip"; el.appendChild(tip);
+    svg.addEventListener("mousemove", (ev) => {
+      const r = svg.getBoundingClientRect();
+      const sx = ((ev.clientX - r.left) / r.width) * W, sy = ((ev.clientY - r.top) / r.height) * H;
+      let best = null, bd = 1e9;
+      pts.forEach(p => { const d = (p.cx - sx) ** 2 + (p.cy - sy) ** 2; if (d < bd) { bd = d; best = p; } });
+      if (!best || bd > 45 ** 2) { tip.style.display = "none"; return; }
+      tip.textContent = `${NODES[best.i]}n  ${best.b}\nOURS ${OURS[best.b][best.i].toFixed(1)} ms  base ${base[best.b][best.i].toFixed(1)} ms\nspeedup ${best.v.toFixed(2)}×`;
+      tip.style.display = "block";
+      tip.style.left = Math.min((best.cx / W) * 100, 72) + "%";
+      tip.style.top = (best.cy / H) * 100 + "%";
+    });
+    svg.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+  }
+
+  drawPanel(document.getElementById("pA"), NODES_A, OURS_A, COMET, true);
+  drawPanel(document.getElementById("pB"), NODES_B, OURS_B, RING, false);
+
+  // table over the union of node counts (ring not measured at 2n)
+  const tb = document.querySelector("#dataTable tbody");
+  const fmt = (v) => (v == null ? "✗" : v.toFixed(2));
+  BUDGETS.forEach((b) => {
+    NODES_A.forEach((n, i) => {
+      const tr = document.createElement("tr");
+      const ri = i - 1; // ring index (starts at 4n)
+      const sC = COMET[b][i] == null ? null : COMET[b][i] / OURS_A[b][i];
+      const rv = ri < 0 ? null : RING[b][ri];
+      const sR = rv == null ? null : rv / OURS_A[b][i];
+      tr.innerHTML =
+        `<td>${i === 0 ? b : ""}</td><td>${n}n</td><td>${OURS_A[b][i].toFixed(2)}</td>` +
+        `<td class="${COMET[b][i] == null ? "fail" : ""}">${fmt(COMET[b][i])}</td>` +
+        `<td class="${sC == null ? "fail" : ""}">${sC == null ? "—" : sC.toFixed(2) + "×"}</td>` +
+        `<td>${rv == null ? "—" : rv.toFixed(2)}</td><td>${sR == null ? "—" : sR.toFixed(2) + "×"}</td>`;
+      tb.appendChild(tr);
+    });
+  });
+})();
+</script>

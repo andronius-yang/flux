@@ -231,7 +231,7 @@ struct A2AVMetaCountsArguments {
   int32_t topk;
   int32_t nexperts;         // E_virt
   int32_t ep_nexperts;      // experts per rank (owner = e / ep_nexperts)
-  int32_t world_size;       // W (<= 64: per-token owner bitmask in u64)
+  int32_t world_size;       // W (<= 128: per-token owner bitmask in 2x u64)
   int32_t nnodes;
   int32_t local_world;
   int64_t tokens_per_rank;

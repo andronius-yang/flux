@@ -1,0 +1,20 @@
+# 2026-09-01 patched-binary sanity check (user-directed): OURS s1 (pv2_r2)
+# K2 4n perf lane on the W<=128 binary, budgets 1/2/4/16/64, to A/B against
+# the handoff-30 s1 4n row (4.01/4.65/5.97/14.26/46.25 total_ms) — verifies
+# the three 32n cap fixes are inert at small scale before quoting 32n cells.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 16, 64]
+variants:
+  - ours_l01_s1_pv2_r2
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 240
+idle_timeout_s: 180
+retries: 0
+notes: "4n s1 sanity on W<=128 binary vs handoff-30 s1 row"
