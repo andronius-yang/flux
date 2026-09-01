@@ -372,7 +372,10 @@ Readings:
    dispatch+GEMM is too short to hide movement) — the known
    small-budget limit from §2f/§2h.
 
-## 2j. THE four-tier ablation data point (9/1): K2 4n LOO b64, 5 repetitions
+## 2j. ABLATION STUDY 1 (topic drift) — the four-tier data point: K2 4n LOO b64, 5 repetitions
+
+**USER RULING 9/1: this section + the 5 rep capsules = the committed
+dataset for the first ablation study (under topic drift).**
 
 User ask: one data point showing COMET > {comm-only, placement-only} >
 combined-unoverlapped > combined-overlapped. Structurally b64-only (at
