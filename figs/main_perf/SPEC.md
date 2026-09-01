@@ -188,7 +188,7 @@ labels), secondary `#52514e` (in-axes model tags), muted `#898781`
 
 ## 7. Data contract (generator input)
 
-- Input: `fig/main_perf/figure_src.csv` (committed, `ec1a3ec`). Filter
+- Input: `figs/main_perf/figure_src.csv` (committed, `ec1a3ec`). Filter
   `budget_mib in {1, 4, 16}`, pivot on (`nodes`, `model`, `row_id`).
 - Plotted value: `total_ms` (the corrected authoritative column — NOT
   `recorded_ms`).
@@ -200,7 +200,7 @@ labels), secondary `#52514e` (in-axes model tags), muted `#898781`
 
 ## 8. Output & workflow
 
-- `python3 fig/main_perf/make_figure.py` -> `main_perf.pdf` (vector, the one
+- `python3 figs/main_perf/make_figure.py` -> `main_perf.pdf` (vector, the one
   used in the paper) + `main_perf.png` at 300 dpi (preview) **[knob: OUTPUTS]**.
   Deterministic: same CSV -> byte-comparable PDF (fixed SOURCE_DATE_EPOCH).
 - Script structure: `CONFIG` dict at top (every knob above) -> `load()` ->
