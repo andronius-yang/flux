@@ -403,6 +403,38 @@ COMET alone, combining them beats either, and overlapping the expert
 movement is a further, statistically solid -1.0 ms on the window (-7.5
 ms at the drift event itself).
 
+## 2k. ABLATION STUDY 2 (matched, no drift): K2 4n b64, one rep
+
+Control for study 1: same eval topic (professional_law homog [64,96)),
+oracle = the SAME topic's previous window [32,64) (no opool — the rule-10
+canon basis; spec hetmatch_k2_4n.yaml). Capsule
+**20260901-101444_32f1081b** (5/5). Window mean / event it0 / rest mean:
+
+| arm | window | it0 | rest |
+|---|---|---|---|
+| COMET | 64.75 | 64.06 | 64.83 |
+| slipstream (comm only) | 58.94 | 60.27 | 58.79 |
+| pr placement(+swap), seq | 47.15 | 50.78 | 46.75 |
+| full stack, seq | 46.47 | 52.63 | 45.79 |
+| full stack, ovl | 46.57 | 48.39 | 46.37 |
+
+Readings:
+1. **The expected inequality holds**: COMET 64.75 > singles (slip 58.94,
+   placement 47.15) > combined ~46.5, with ovl == seq within noise —
+   minimal movement, as predicted for a matched basis.
+2. **Placement is the dominant single mechanism when it is CORRECT**:
+   -20% vs comm-only, -27% vs COMET — the mirror image of study 1 where
+   drift burned the placement margin (combined barely beat slip). The
+   pair of studies is the story: matched -> placement wins big;
+   drifted -> only swap+overlap keeps the stack ahead.
+3. Swaps are minimal but NOT zero: it0 shows a small burst (statistical
+   window-to-window deviation gives tau=1 a few gainful swaps) — seq it0
+   52.63 vs ovl 48.39 (the overlap hides even this small movement), then
+   both flat at the floor.
+4. Cross-study: matched combined ~46.5 vs drift combined-ovl 57.13 — the
+   LOO drift residual costs ~10.6 ms at b64 even WITH the swap (the
+   wire-side share intra-node swaps cannot reach; §1 structural).
+
 ## 3. Verdict
 
 1. **The severe case exists and is 4n LOO**: s2 always-swap crosses at b16
