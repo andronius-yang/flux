@@ -206,6 +206,17 @@ def parse_args():
                         " after the fused l0 forward is enqueued (moved"
                         " slot's tiles spin until landing); split = w1"
                         " early, w2 late")
+    p.add_argument("--swap_overlap", type=int, default=1,
+                   help="ABLATION-ONLY knob (2026-09-01). 1 (default) ="
+                        " canon: the exchange rides the movement stream"
+                        " and dispatch launches immediately, gated per"
+                        " slot (overlapped expert dispatch). 0 = the"
+                        " current stream WAITS for the exchange to land"
+                        " before anything downstream is enqueued — swap"
+                        " completes first, THEN dispatch (sequential;"
+                        " requires --swap_issue early). The exposed"
+                        " exchange lands in the place bracket: total_ms"
+                        " sees it, e2e does not.")
     p.add_argument("--swap_tables", choices=("upload", "device"),
                    default="device",
                    help="how a fired swap reaches the planner's device"
@@ -457,6 +468,9 @@ def main():
             # placement into the sizing envelope, pv2-purity style.
             assert use_pv2, "--s2_swap is defined on the pv2 arm"
             assert args.s2_stale == "0", "--s2_swap excludes stale probes"
+            assert args.swap_overlap or args.swap_issue == "early", (
+                "--swap_overlap 0 (sequential ablation) requires"
+                " --swap_issue early")
             from flux.testing import ours_swap as oswap
             _load_g = torch.bincount(tk_dev.reshape(-1),
                                      minlength=args.G).cpu().long()
@@ -1207,6 +1221,14 @@ def main():
                         planner.refresh_placement()
                 swap_lane.prepare(swaps)
                 swap_lane.issue_early()
+                if not args.swap_overlap and swap_lane._issued:
+                    # ABLATION-ONLY sequential mode: the exchange must
+                    # LAND before anything downstream is enqueued — swap
+                    # first, then dispatch (un-overlapped expert
+                    # dispatch). Timed: the wait sits in the place
+                    # bracket, so total_ms carries the exposed exchange.
+                    torch.cuda.current_stream().wait_event(
+                        swap_lane.ev_done)
                 move_stats.append((int(bool(swaps)), len(swaps),
                                    swap_lane.move_bytes_this_iter, 0))
                 if rank == 0 and args.check_iters:

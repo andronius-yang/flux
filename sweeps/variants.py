@@ -3313,3 +3313,41 @@ VARIANTS["ours_l01_s2_gate_swap_p2p_t1_r2"] = dict(
     test_args=_SWAP_P2P + ["--swap_issue", "early", "--swap_tau_rows", "1",
                            "--check_iters", "1"],
 )
+
+# =========================================================================
+# ABLATION-ONLY arms (2026-09-01, hetero LOO swap-OVERLAP ablation —
+# handoff 33 follow-up; user directive). NEVER quote these as headline
+# arms: they exist solely to isolate the swap-movement overlap (the
+# EXPERT-dispatch analogue of token-dispatch overlap).
+#   *_noov_*  : --swap_overlap 0 — the exchange COMPLETES before anything
+#               downstream is enqueued (swap first, THEN dispatch;
+#               requires --swap_issue early). Exposed exchange lands in
+#               the place bracket: total_ms carries it, e2e does not.
+#   *_pr_*    : "placement/routing + swap WITHOUT the slipstream comm
+#               canon" — legacy comm env (wave-adapt / combine-idx /
+#               plan-graphs OFF) + plan_overlap 0, from the
+#               ours_l01_s1_pv2_r2_legacy twin.
+_ABL_SWAP_BASE = VARIANTS["ours_l01_s2_swap_force_p2p_r2"]
+_ABL_SWAP_LEG_ENV = dict(VARIANTS["ours_l01_s1_pv2_r2_legacy"]["env"])
+
+
+def _abl_pr_args(extra):
+    args = list(_ABL_SWAP_BASE["test_args"])
+    args[args.index("--plan_overlap") + 1] = "0"
+    return args + extra
+
+
+VARIANTS["ablation_l01_s2_swap_noov_p2p_r2"] = dict(
+    _ABL_SWAP_BASE,
+    test_args=list(_ABL_SWAP_BASE["test_args"]) + ["--swap_overlap", "0"],
+)
+VARIANTS["ablation_l01_pr_swap_p2p_r2"] = dict(
+    _ABL_SWAP_BASE,
+    env=_ABL_SWAP_LEG_ENV,
+    test_args=_abl_pr_args([]),
+)
+VARIANTS["ablation_l01_pr_swap_noov_p2p_r2"] = dict(
+    _ABL_SWAP_BASE,
+    env=_ABL_SWAP_LEG_ENV,
+    test_args=_abl_pr_args(["--swap_overlap", "0"]),
+)
