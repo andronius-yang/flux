@@ -1,0 +1,23 @@
+# 2026-09-01 hetero LEAVE-ONE-OUT severity lane, K2 4n (user-directed
+# extension of handoff 33). Per-topic LOO picker (same-code, b4): K2
+# professional_law is the runaway steepest eval topic (static imb 1.970,
+# rmax 4666; next college_mathematics 1.469). Oracle = equal mix of the
+# OTHER 7 K2 pools' [32,64); eval = homog professional_law [64,96).
+# A/B ours_l01_s1_pv2_r2 vs ours_l01_s2_swap_force_p2p_r2 in ONE capsule;
+# gate = l01_nvshmem b4 vs anchors 10.609/11.584 (8/31 ladder 5b301226).
+# Budgets per the severity-lane ask (b32 absent). Binary = current main
+# .so (505e4bed era — never-mix vs the 8/31 ce939eb9 campaign, rule 4).
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy"
+budgets_mib: [1, 2, 4, 8, 16, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 1200
+idle_timeout_s: 600
+retries: 1
+notes: "hetloo 9.1: K2 4n LOO oracle (7-pool mix excl. professional_law), homog professional_law eval, s1-static vs s2-always-swap severity A/B"
