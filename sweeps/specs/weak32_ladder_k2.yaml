@@ -1,0 +1,22 @@
+# 2026-08-31 32n weak-scaling ladder: canon OURS s1 arm (pv2_r2), K2 shape,
+# full budget ladder b1-b64 (per-rank pre-topk send budget fixed per cell =
+# weak scaling in node count against the 4n/8n/16n capsules). Perf lane
+# (skip_correctness; the smoke capsule carries the 32n correctness gates).
+# Queued concurrently with weak32_smoke_k2.yaml under sbatch -t 40; scancel
+# this job if the smoke comes back red.
+platform: perlmutter
+nodes: 32
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 8, 16, 64]
+variants:
+  - ours_l01_s1_pv2_r2
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 240
+idle_timeout_s: 180
+retries: 1
+notes: "32n weak-scaling ladder: ours_l01_s1_pv2_r2 K2 b1-b64 isolated, perf lane"

@@ -1,0 +1,22 @@
+# 2026-08-31 32n weak-scaling bring-up (first-ever 32-node run). Smoke/gate
+# job: canon OURS s1 arm (pv2_r2), K2 shape, budget extremes only (b1 = wire
+# fan-out floor, b64 = heap/OOM ceiling), correctness ON (random payload rides
+# every cell per the wire-ordering hard rule). Runs under sbatch -t 20 so a
+# 32n wedge burns <= 10.7 nh; per-cell timeout keeps one wedged cell from
+# eating the sibling. Ladder job (weak32_ladder_k2.yaml) queued separately.
+platform: perlmutter
+nodes: 32
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 64]
+variants:
+  - ours_l01_s1_pv2_r2
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: false
+timeout_s: 420
+idle_timeout_s: 300
+retries: 0
+notes: "32n weak-scaling smoke: ours_l01_s1_pv2_r2 K2 b1+b64 isolated, correctness ON"

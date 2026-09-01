@@ -225,7 +225,7 @@ struct TopKReduceGatherRSV2Arguments {
 
 // ---- a2av_hier combine (layer1 alltoallv): pack + reduce kernel arguments ----
 
-constexpr int kA2AVMaxNodes = 16;
+constexpr int kA2AVMaxNodes = 32;
 
 // Persistent pack kernel: split-major outer loop gated on the GEMM's per-split
 // ready flag; per split it gathers each outgoing copy's n_per column window from
@@ -383,7 +383,7 @@ struct A2AVCombinePlanArguments {
 
 void a2av_combine_plan(A2AVCombinePlanArguments const &args, cudaStream_t stream);
 
-constexpr int kA2AVMaxWorld = 64;
+constexpr int kA2AVMaxWorld = 128;
 
 // Eager (arrival-order) destination reduce: ONE persistent kernel per forward,
 // launched with no front-end waits. Per output element it keeps a remaining-mask
