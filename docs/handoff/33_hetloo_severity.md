@@ -193,6 +193,24 @@ this script were externally killed minutes in (same unidentified-killer
 signature as handoff 32's moonep incident); the foreground-migrated
 invocation survived.
 
+## 2d. Postdoc scenario check (9/1): per-rank topic alternation — NO capturable imbalance
+
+Proposal: keep the all-inclusive blend oracle, but assign EACH RANK its own
+single in-pool topic (round-robin) instead of homog. Same-code verify
+(33_hetloo_perrank_check.py, 2 seeds): per-rank static imb = **1.062 on
+both models = the LocCap (1+eps) capacity floor**; the swap orbit finds
+ZERO swaps and full re-solve recovers 0.0%. Per-node variant: K2
+anchor-level only (1.11-1.19, swap captures all of it), Qwen at floor.
+Mechanism: grouped-GEMM load is a function of the GLOBAL routed expert
+histogram; summing one-topic batches across ranks reconstructs the blend
+the oracle planned for — per-rank topic identity moves the structure to
+the WIRE (per-source destination patterns), not to row balance. Balanced
+per-rank alternation is therefore a wire scenario, not a balance one.
+Salvageable variant if rank-level heterogeneity is wanted: SKEWED per-rank
+assignment (majority of ranks on one topic) — shifts the global histogram
+continuously toward the minority/LOO regime while keeping per-rank
+single-topic realism.
+
 ## 3. Verdict
 
 1. **The severe case exists and is 4n LOO**: s2 always-swap crosses at b16
