@@ -283,6 +283,48 @@ comm canon; only --swap_overlap differs. OPEN (user decision): reset-
 every single-swap reference rung; legacy-comm swapall pair (2x2 cross);
 numpy fast path.
 
+## 2h. Drift-event payoff: postwarmup reset, iteration-resolved (9/1, K2 4n LOO b64)
+
+Fastpath landed first: swap_orbit_capped rewritten single-conversion
+numpy (~5 -> **2.0 ms** for the full 8-round decision; post-fixpoint
+iterations pay only the ~0.3 ms empty-plan check — under postwarmup the
+decision cost sits once, in the event iteration). True sub-ms for the
+event itself needs numba (env change) or a compiled core (.so rebuild) —
+parked pending user sign-off.
+
+Capsule **20260901-074630_a6e16e81** (5/5): COMET / canon force (no
+reset) / force+postwarmup / swapall+postwarmup ovl / noov. Per-iteration
+max-rank total_ms, timed iters 0-9 (reset fires before iter 0):
+
+| arm | it0 (event) | rest mean | rest median | full mean |
+|---|---|---|---|---|
+| comet | 63.28 | 63.84 | 63.76 | 63.78 |
+| force canon (no reset) | 55.88 | 60.93 | 58.65 | 60.43 |
+| force + pw reset | 71.46 | 60.88 | 56.59 | 61.93 |
+| **swapall + pw, overlapped** | **63.33** | **57.01** | 56.99 | **57.64** |
+| swapall + pw, sequential | 69.33 | 56.86 | 55.91 | 58.11 |
+
+Findings:
+1. **Pre-paying the whole rebalance in ONE overlapped iteration wins.**
+   The drift-event iteration costs 63.33 — COMET PARITY — because the 53
+   slot-moves hide under the b64 dispatch; every following iteration sits
+   at the ~57.0 floor (-11% vs COMET). Window mean 57.64 = -9.6% vs COMET.
+2. **The overlap is worth -6.0 ms in the event iteration** (sequential
+   twin: 69.33) — the concrete "issue and hide the expert transfers
+   first" number.
+3. **Gradual one-swap-per-iteration does NOT converge cleanly under
+   force**: force+pw spikes 70-72 every ~3 iterations (the fixpoint
+   oscillation revisits bad placements) — rest mean 60.88 vs swapall's
+   57.01, so the up-front rebalance beats gradual by ~3.9 ms per
+   steady-state iteration AND kills the spikes. The canon force arm (no
+   reset) shows the same periodic 69-70 spikes — it has been paying
+   oscillation costs at b64 all along.
+4. Design implication (CANDIDATE, user decision): the production s2
+   should be tau=1-converge-then-hold (swapall semantics: solve to
+   fixpoint, move once, then only the ~0.3 ms empty check per iteration)
+   rather than force-oscillate — strictly better steady state in this
+   trace.
+
 ## 3. Verdict
 
 1. **The severe case exists and is 4n LOO**: s2 always-swap crosses at b16
