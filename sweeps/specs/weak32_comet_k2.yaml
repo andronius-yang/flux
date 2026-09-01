@@ -1,0 +1,21 @@
+# 2026-09-01 32n baseline gather (user-directed, speedup-figure campaign):
+# COMET (l01_allgather_dense, allgather l0 + dense ring l1) at 32 nodes,
+# full budget ladder, perf lane. b64 may land skipped_capacity (dense
+# gathered input ~8.6G/rank at W=128 vs the 16G heap cap) — that skip is
+# itself a quotable scaling limit. Same binary as capsule 20260901-024555.
+platform: perlmutter
+nodes: 32
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 8, 16, 64]
+variants:
+  - l01_allgather_dense
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 240
+idle_timeout_s: 180
+retries: 0
+notes: "32n baseline: COMET allgather+dense K2 b1-b64 isolated, perf lane"

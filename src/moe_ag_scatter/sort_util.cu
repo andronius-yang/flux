@@ -614,6 +614,19 @@ a2av_stage1_impl(A2AVStage1Arguments const &args, cudaStream_t stream) {
   int blocks = (int)std::min<int64_t>((args.n_copies + kThreads - 1) / kThreads, 432);
   blocks = std::max(blocks, 1);
   size_t smem = (args.nexperts + args.world_size * args.world_size) * sizeof(int);
+  if (smem > 48 * 1024) {
+    // W = 128 pushes the [W,W] block histogram past the 48KB default dynamic
+    // smem window (W <= 64 fits); sm80 grants up to ~163KB via the explicit
+    // opt-in. Set once per process at the high-water mark.
+    static size_t granted = 0;
+    if (smem > granted) {
+      CUDA_CHECK(cudaFuncSetAttribute(
+          a2av_stage1_kernel,
+          cudaFuncAttributeMaxDynamicSharedMemorySize,
+          (int)smem));
+      granted = smem;
+    }
+  }
   a2av_stage1_kernel<<<blocks, kThreads, smem, stream>>>(args);
   CUDA_CHECK(cudaGetLastError());
 }
@@ -1270,18 +1283,21 @@ a2av_meta_counts_kernel(A2AVMetaCountsArguments args) {
   for (int64_t t = (int64_t)blockIdx.x * blockDim.x + threadIdx.x;
        t < args.ntokens; t += (int64_t)gridDim.x * blockDim.x) {
     const int32_t src = (int32_t)(t / args.tokens_per_rank);
-    uint64_t rank_mask = 0;
+    uint64_t rank_mask[2] = {0, 0};  // W <= 128: one bit per owner rank
     for (int32_t k = 0; k < args.topk; ++k) {
       const int32_t e = args.topk_ids[t * args.topk + k];
       atomicAdd(&args.splits[e], 1);
       atomicAdd(&args.sps[(int64_t)src * args.nexperts + e], 1);
-      rank_mask |= (uint64_t)1 << (e / args.ep_nexperts);
+      const int32_t r = e / args.ep_nexperts;
+      rank_mask[r >> 6] |= (uint64_t)1 << (r & 63);
     }
-    uint64_t node_mask = 0;
-    for (uint64_t m = rank_mask; m != 0; m &= m - 1) {
-      const int32_t d = __ffsll((long long)m) - 1;
-      atomicAdd(&args.uc[(int64_t)src * ucols + d], 1);
-      node_mask |= (uint64_t)1 << (d / args.local_world);
+    uint64_t node_mask = 0;  // nnodes <= 64 (W/L), still a single word
+    for (int32_t w = 0; w < 2; ++w) {
+      for (uint64_t m = rank_mask[w]; m != 0; m &= m - 1) {
+        const int32_t d = (w << 6) + __ffsll((long long)m) - 1;
+        atomicAdd(&args.uc[(int64_t)src * ucols + d], 1);
+        node_mask |= (uint64_t)1 << (d / args.local_world);
+      }
     }
     for (uint64_t m = node_mask; m != 0; m &= m - 1) {
       const int32_t n = __ffsll((long long)m) - 1;
@@ -1361,7 +1377,7 @@ a2av_stable_scatter_pass2_kernel(A2AVStableScatterArguments args) {
 
 void
 a2av_meta_counts_impl(A2AVMetaCountsArguments const &args, cudaStream_t stream) {
-  FLUX_CHECK(args.world_size <= 64) << "owner bitmask is u64";
+  FLUX_CHECK(args.world_size <= 128) << "owner bitmask is 2x u64";
   constexpr int kThreads = 256;
   const int64_t want = (args.ntokens + kThreads - 1) / kThreads;
   const int blocks = (int)std::min<int64_t>(want, 1024);

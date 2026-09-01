@@ -1,0 +1,22 @@
+# 2026-09-01 weak-scaling left endpoint (user-directed): COMET vs OURS s1
+# at 2 nodes, same budget ladder as the 32n campaign, BOTH ARMS IN ONE
+# CAPSULE (rule-4 clean) on the W<=128 binary. Extends the speedup-vs-scale
+# figure leftward: expectation is near-parity at 2n (placement value is
+# minimal at 2 nodes) rising monotonically to the 16n points.
+platform: perlmutter
+nodes: 2
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 8, 16, 64]
+variants:
+  - l01_allgather_dense
+  - ours_l01_s1_pv2_r2
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 240
+idle_timeout_s: 180
+retries: 0
+notes: "2n weak-scaling endpoint: COMET vs ours s1, one capsule, W<=128 binary"
