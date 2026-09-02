@@ -1,0 +1,87 @@
+# Weak-scaling figure — aesthetic & architecture spec
+
+Status: REV 1 (2026-09-02). Data authority: `figure_src.csv` (+
+`figure_src.md`). Generator: `make_figure.py` (matplotlib; one `CONFIG`
+block, every **[knob]** below lives there). Two versions from one script:
+**verA** (latency) and **verB** (throughput).
+
+## 1. Purpose and rulings (user, 2026-09-02)
+
+- Single-column NSDI figure: width = `\columnwidth` = **3.33 in**;
+  figure + caption **<= 1/5 of the 9 in text height** (1.8 in) -> the
+  figure PDF is **1.45 in** tall, leaving ~0.35 in for a caption.
+- X axis = node count **2, 4, 8, 16, 32** (equal spacing, i.e. log2).
+- Left y axis: **verA** total latency (ms); **verB** synthesized MoE-layer
+  throughput (Mtok/s) = pre-topk tokens/rank × ranks ÷ latency.
+- Two lines, COMET vs Ours at the 64 MiB per-rank budget, different colors
+  AND different marker shapes.
+- Right y axis hosts an overlaid **speedup bar chart**: one bar per node
+  count, Ours vs COMET, value printed on top; bars end at 16n because COMET
+  does not run at 32n (§4). Same bars in verA and verB (tokens cancel).
+- Legend on top; the same parameterized-script discipline as
+  `figs/main_perf`.
+- Design note: this is deliberately a dual-axis chart (the one form the
+  viz method flags as easy to misread). Mitigations: bars are recessive
+  gray behind the lines, the right axis label/ticks are gray to match the
+  bars, and the left axis keeps the primary ink.
+
+## 2. Marks
+
+- **Lines** **[knob: SERIES]**: COMET olive `#999933`, square markers;
+  Ours steel blue `#4878b0`, circle markers — the same hues these systems
+  carry in the main figure, so identity is consistent across figures.
+  Line 1.1 pt, marker 3.6 pt with a white edge so markers stay legible over
+  bars and gridlines.
+- **Speedup bars** **[knob: BARS]**: fill `#d9d9d9`, edge `#8f8f8f` 0.4 pt,
+  width 0.55 of the slot, drawn *behind* lines (zorder). Right y-limit =
+  ceil_nice(max speedup × 1.5) **[knob: BAR_HEADROOM]** so bars occupy the
+  lower ~2/3 of the panel and never dominate. Value label
+  `"{:.2f}×"` centered above each bar, 5.8 pt, primary ink **[knob]**.
+- **COMET fails at 32n** **[knob: FAIL_NOTE]**: a dashed gray tail continues
+  COMET's line from its 16n value to the 32n slot, ends in an **✗** in the
+  COMET color, with the note `does not run\n(128 ranks)` (5.5 pt) placed
+  below the ✗ when it sits in the upper half of the panel, above it
+  otherwise (auto). The caption carries the reason (§4).
+
+## 3. Layout & chrome
+
+- Figure 3.33 × 1.45 in **[knob: FIG_W, FIG_H]**; margins left 0.135 /
+  right 0.86 / top 0.80 / bottom 0.21 **[knob: MARGINS]**.
+- Left ylim = ceil_nice(1.12 × max plotted) **[knob: HEADROOM]**;
+  3–4 ticks; light horizontal grid from the left axis only.
+- X ticks `2 4 8 16 32`, axis title "Nodes" **[knob: X_LABEL]**.
+- Left axis label **[knob: Y_LABELS]**: verA "Latency (ms)", verB
+  "Throughput (Mtok/s)". Right axis label "Speedup vs COMET" in gray.
+- Legend: one row of three (COMET, Ours, Speedup vs COMET), 6.5 pt, no
+  frame, flush to the top edge **[knob: LEGEND]**.
+- Typography **[knob: FONT_FAMILY, FONT_SIZES]**: sans (Helvetica/Arial/
+  DejaVu fallback), legend 6.5, axis labels 6.5, ticks 6, bar labels 5.8,
+  fail note 5.5; `pdf.fonttype 42`.
+
+## 4. Data contract
+
+- Reads `figure_src.csv`; verA plots `total_ms`, verB `throughput_mtok_s`;
+  bars use `speedup_vs_comet` where present. Missing COMET cells are
+  rendered as the fail note, never as zero. Asserts every expected
+  (nodes, system) row exists.
+- COMET 32n: **does not run at 128 ranks** — upstream Flux's dense-dispatch
+  sort kernel keeps a statically 64-rank per-source-rank table
+  (`MaxTpRanks = 64`, `sort_util.cu`, unguarded); at 128 ranks it overflows,
+  corrupts the gather indices and the GEMM faults. Full RCA in
+  `figure_src.md`. Caption wording suggestion: *"COMET does not run at 32
+  nodes: its dense dispatch sorts gathered rows through a statically
+  64-rank table (upstream Flux `MaxTpRanks=64`), which overflows at 128
+  ranks."*
+- Caveats: 4/8/16n cells are the handoff-30 same-binary set (differ from
+  the main figure's capsules by up to ~5% for the same nominal cells —
+  user ruling: keep); 2n/32n are the cap-fix binary; NVSHMEM ring omitted
+  (user ruling: bars vs COMET only).
+
+## 5. Output & checks
+
+- `python3 make_figure.py` -> `weak_scaling_verA.{pdf,png}` and
+  `weak_scaling_verB.{pdf,png}` (300 dpi previews), deterministic PDFs.
+- Render checklist: no bar label collides with a marker or the fail note
+  (generator audit with rendered extents); markers legible over bars;
+  grayscale export still separates COMET (square) from Ours (circle);
+  fonts embedded; PDF height 1.45 in.

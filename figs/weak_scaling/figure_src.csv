@@ -1,0 +1,11 @@
+nodes,ranks,system,budget_mib,total_ms,tokens_per_rank,total_tokens,throughput_mtok_s,speedup_vs_comet,status,capsule,cell_id,source_dataset,note
+2,8,ours,64,36.092,4680,37440,1.0373,1.011,ok,20260901-101958_perlmutter_03919f49,ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,
+2,8,comet,64,36.503,4680,37440,1.0257,,ok,20260901-101958_perlmutter_03919f49,l01_allgather_dense_trace-610042_b64_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,
+4,16,ours,64,46.247,4680,74880,1.6191,1.283,ok,20260830-130128_perlmutter_ae736b36,ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated,docs/handoff/30_arms_synthesis_results_tidy.csv,
+4,16,comet,64,59.331,4680,74880,1.2621,,ok,20260830-125320_perlmutter_f1b40b3f,l01_allgather_dense_trace-610042_b64_k8_isolated,docs/handoff/30_arms_synthesis_results_tidy.csv,
+8,32,ours,64,62.456,4680,149760,2.3978,1.857,ok,20260830-131319_perlmutter_e67680e8,ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated,docs/handoff/30_arms_synthesis_results_tidy.csv,
+8,32,comet,64,115.961,4680,149760,1.2915,,ok,20260830-130408_perlmutter_00e156e4,l01_allgather_dense_trace-610042_b64_k8_isolated,docs/handoff/30_arms_synthesis_results_tidy.csv,
+16,64,ours,64,85.785,4680,299520,3.4915,2.591,ok,20260830-180110_perlmutter_e216d851,ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated,docs/handoff/30_arms_synthesis_results_tidy.csv,
+16,64,comet,64,222.263,4680,299520,1.3476,,ok,20260830-174436_perlmutter_3d1c53d9,l01_allgather_dense_trace-610042_b64_k8_isolated,docs/handoff/30_arms_synthesis_results_tidy.csv,
+32,128,ours,64,120.173,4680,599040,4.9848,,ok,20260901-024555_perlmutter_ffb6e32d,ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,
+32,128,comet,64,,4680,599040,,,does_not_run,20260901-075429_perlmutter_04875008,l01_allgather_dense_trace-610042_b64_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,"128 ranks: upstream dense-dispatch sort table is statically 64-rank (MaxTpRanks=64, sort_util.cu) -> illegal access b1-b4 / wedge b8-b16; b64 never launched (walltime)"
