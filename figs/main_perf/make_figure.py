@@ -38,6 +38,7 @@ CONFIG = dict(
     },
     LEGEND_NCOL=7,                            # 7 = single row; 4 -> 4+3 rows
     LEGEND_COLSPACING=0.9,                    # matplotlib columnspacing
+    LEGEND_Y=1.01,                            # anchor (figure fraction)
     # ---- colors (muted academic set, validated 2026-09-01 -- SPEC 5;
     #      revalidate on ANY change: display-adjacent CVD dE 16.1, normal 18.6) ----
     COLORS={
@@ -48,32 +49,51 @@ CONFIG = dict(
     INK=dict(primary="#0b0b0b", secondary="#52514e", muted="#898781",
              grid="#e1e0d9", axis="#c3c2b7"),
     # ---- bars ----
-    GROUP_WIDTH=0.84,                         # fraction of the unit group slot
-    BAR_GAP_FRAC=0.18,                        # gap between bars, frac of bar w
-    EDGE_LW=0.5,                              # bar edge stroke, pt
-    OURS_EDGE_LW=0.8,                         # heavier edge on the Ours bar
+    GROUP_WIDTH=0.90,                         # fraction of the unit group slot
+    BAR_GAP_FRAC=0.10,                        # gap between bars, frac of bar w
+    X_PAD=0.47,                               # half-slot padding at both ends
+    EDGE_LW=0.45,                             # bar edge stroke, pt
+    OURS_EDGE_LW=0.7,                         # heavier edge on the Ours bar
     HATCHES={                                 # print/grayscale channel
         "fast_gemm": "////", "nvshmem_gemm": "--", "moonep": "\\\\\\\\",
         "eplb": "..", "epic": "xx", "comet": None, "OURS": None,
     },
     HATCH_LW=0.4,                             # pt
-    # ---- truncation (SPEC 2.3) ----
+    # ---- ceiling + truncation (SPEC 2.3) ----
     OUTLIER_FACTOR=1.5,   # bar is an outlier if > factor * next system's max
-    HEADROOM=1.12,        # ylim = ceil_nice(headroom * tallest kept bar)
+    HEADROOM=1.03,        # ylim = ceil_nice(headroom * tallest kept bar)
+    NICE_STEPS=[(60, 2), (150, 5), (1e9, 10)],  # ceil_nice: step below bound
     YLIM_OVERRIDE={"4": None, "16": None},    # absolute per-column cap
-    BREAK_MARK=dict(dy_frac=0.035,            # slash rise, frac of ylim
-                    gap_frac=0.030,           # gap between the two slashes
+    BREAK_MARK=dict(dy_frac=0.045,            # slash rise, frac of ylim
+                    gap_frac=0.040,           # gap between the two slashes
                     y_frac=0.90,              # slash center height, frac ylim
                     halfw=0.75,               # slash half-width, frac of bar w
-                    lw=1.4, color="white"),
-    TRUNC_LABEL_FMT="{:.0f}",                 # true value over truncated bars
-    ANNOTATE_SPEEDUP=False,                   # "x.yx" over the Ours bar
+                    lw=1.2, color="white"),
+    TRUNC_LABEL_FMT="{:.0f}",                 # true value, inside truncated bar
+    # ---- speedup annotations (SPEC 2.4) ----
+    SPEEDUP=dict(
+        on=True,
+        ref="nvshmem_gemm",                   # ratio = ref_total / bar_total
+        fmt="{:.2f}×",                   # two decimals + multiplication sign
+        weight="bold",
+        color="#0b0b0b",                      # all systems ...
+        ours_color="#c1121f",                 # ... except Ours, highlighted red
+        placement="auto",                     # auto | inside | above
+        pad_pt=1.2,                           # gap between bar end and text
+        char_w=0.62,                          # est. glyph width, em (bold sans)
+        bbox_mode="bar",     # inside-label backing: "bar" = solid window in the
+                             # bar's own color (text auto white/black), "white"
+        bbox_pad=0.12,       # backing padding, em
+        dark_text_L=0.60,    # OKLCH L below this -> white text on the window
+        skip_ref=True,                        # no "1.00x" on the reference bar
+        skip_truncated=True,                  # truncated bars show value instead
+    ),
     # ---- layout ----
-    FIG_W=7.0, FIG_H=3.6,                     # inches (NSDI \textwidth)
-    MARGINS=dict(left=0.058, right=0.972, top=0.83, bottom=0.075),
-    WSPACE=0.14, HSPACE=0.16,
+    FIG_W=7.0, FIG_H=1.85,     # in; USENIX text block 7x9 -> <=25% incl. caption
+    MARGINS=dict(left=0.052, right=0.968, top=0.80, bottom=0.115),
+    WSPACE=0.10, HSPACE=0.14,
     COL_TITLES={"4": "4 nodes", "16": "16 nodes"},
-    COL_TITLE_PAD=11,                         # pt above axes; clears trunc labels
+    COL_TITLE_PAD=2.5,                        # pt above axes
     COL_TITLE_WEIGHT="bold",
     ROW_TAGS={"K2": "K2", "Qwen": "Qwen"},    # model tag text
     ROW_TAG_STYLE="right",                    # "right" rotated edge label,
@@ -81,11 +101,11 @@ CONFIG = dict(
     GROUP_LABELS={1: "1 MiB", 4: "4 MiB", 16: "16 MiB"},
     X_LABEL=None,          # axis-level x title; None = budgets defined in caption
     Y_LABEL="Latency (ms)",   # single shared label on the figure's left edge
-    N_YTICKS=4,
+    N_YTICKS=3,
     # ---- typography ----
     FONT_FAMILY=["Helvetica", "Arial", "DejaVu Sans"],
-    FONT_SIZES=dict(legend=8, col_title=8.5, row_tag=8, ylabel=8,
-                    tick=7, group_label=7.5, annot=6.5),
+    FONT_SIZES=dict(legend=7, col_title=7.5, row_tag=7, ylabel=7,
+                    tick=6.5, group_label=7, annot=5.8),
     # ---- output ----
     OUTPUTS=[("main_perf.pdf", {}), ("main_perf.png", {"dpi": 300})],
 )
@@ -121,8 +141,8 @@ def load(cfg):
     return data
 
 
-def ceil_nice(v):
-    step = 5 if v < 100 else 10
+def ceil_nice(v, cfg):
+    step = next(s for bound, s in cfg["NICE_STEPS"] if v < bound)
     return step * math.ceil(v / step)
 
 
@@ -135,7 +155,7 @@ def column_ylim(data, cfg, nodes):
     kept = sorted(sys_max.values(), reverse=True)
     while len(kept) > 1 and kept[0] > cfg["OUTLIER_FACTOR"] * kept[1]:
         kept.pop(0)
-    return ceil_nice(cfg["HEADROOM"] * kept[0])
+    return ceil_nice(cfg["HEADROOM"] * kept[0], cfg)
 
 
 def draw_break(ax, x, bar_w, ylim, cfg):
@@ -146,6 +166,61 @@ def draw_break(ax, x, bar_w, ylim, cfg):
         ax.plot([x - hw, x + hw], [y0 + off - dy / 2, y0 + off + dy / 2],
                 color=bm["color"], lw=bm["lw"], solid_capstyle="butt",
                 zorder=4, clip_on=False)
+    return y0 - gap / 2 - dy / 2       # lowest point of the glyph (data units)
+
+
+def oklch_L(hexcolor):
+    """OKLCH lightness of an sRGB hex (for the inside-label text color)."""
+    r, g, b = (int(hexcolor.lstrip("#")[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    lin = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+           for c in (r, g, b)]
+    l = (0.4122214708 * lin[0] + 0.5363325363 * lin[1] + 0.0514459929 * lin[2]) ** (1 / 3)
+    m = (0.2119034982 * lin[0] + 0.6806995451 * lin[1] + 0.1073969566 * lin[2]) ** (1 / 3)
+    s_ = (0.0883024619 * lin[0] + 0.2817188376 * lin[1] + 0.6299787005 * lin[2]) ** (1 / 3)
+    return 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s_
+
+
+def vlabel(ax, x, y_anchor, text, cfg, *, color, weight, where, fontsize,
+           bar_color=None):
+    """Vertical (bottom-to-top) label: where='above' starts at y_anchor and
+    runs upward; where='inside' ends at y_anchor and runs downward, on a
+    solid backing window so hatches never cross the glyphs."""
+    sp = cfg["SPEEDUP"]
+    pad = sp["pad_pt"] * ax._data_per_pt
+    if where == "above":
+        y, va, bbox = y_anchor + pad, "bottom", None
+    else:
+        y, va = y_anchor - pad, "top"
+        if sp["bbox_mode"] == "bar" and bar_color and color != sp["ours_color"]:
+            # window in the bar's own color; text flips to white on dark bars
+            bbox = dict(boxstyle=f"square,pad={sp['bbox_pad']}",
+                        facecolor=bar_color, edgecolor="none")
+            if oklch_L(bar_color) < sp["dark_text_L"]:
+                color = "white"
+        else:   # "white" mode, or a colored (Ours/muted) label: white backing
+            bbox = dict(boxstyle=f"square,pad={sp['bbox_pad']}",
+                        facecolor="white", edgecolor="none", alpha=0.9)
+    ax.text(x, y, text, rotation=90, ha="center", va=va, fontsize=fontsize,
+            fontweight=weight, color=color, zorder=5, bbox=bbox)
+
+
+def label_len_data(ax, text, cfg, fontsize):
+    """Estimated rotated-label length in data units (for placement)."""
+    sp = cfg["SPEEDUP"]
+    pts = len(text) * fontsize * sp["char_w"] + 2 * sp["pad_pt"]
+    return pts * ax._data_per_pt
+
+
+def place_speedup(ax, x, top, text, cfg, ylim, color, bar_color):
+    """auto: above the bar when it fits under the ceiling, else inside."""
+    sp = cfg["SPEEDUP"]
+    fs = cfg["FONT_SIZES"]["annot"]
+    need = label_len_data(ax, text, cfg, fs)
+    mode = sp["placement"]
+    if mode == "auto":
+        mode = "above" if top + need <= ylim else "inside"
+    vlabel(ax, x, top, text, cfg, color=color, weight=sp["weight"],
+           where=mode, fontsize=fs, bar_color=bar_color)
 
 
 def plot(data, cfg):
@@ -166,42 +241,47 @@ def plot(data, cfg):
     slot = cfg["GROUP_WIDTH"] / nbars
     bar_w = slot * (1 - cfg["BAR_GAP_FRAC"])
     ylims = {nodes: column_ylim(data, cfg, nodes) for nodes in cfg["COLS"]}
+    sp = cfg["SPEEDUP"]
 
     for ri, model in enumerate(cfg["ROWS"]):
         for ci, nodes in enumerate(cfg["COLS"]):
             ax = axes[ri][ci]
             ylim = ylims[nodes]
+            ax_h_pt = cfg["FIG_H"] * ax.get_position().height * 72
+            ax._data_per_pt = ylim / ax_h_pt   # data units per point (y)
             for gi, b in enumerate(cfg["BUDGETS"]):
                 cell = data[(nodes, model, b)]
+                ref = cell[sp["ref"]]
                 for si, s in enumerate(cfg["SYSTEMS"]):
                     x = gi + (si - (nbars - 1) / 2) * slot
                     v = cell[s]
                     trunc = v > ylim
-                    ax.bar(x, min(v, ylim), width=bar_w,
+                    top = min(v, ylim)
+                    ax.bar(x, top, width=bar_w,
                            facecolor=cfg["COLORS"][s], hatch=cfg["HATCHES"][s],
                            edgecolor=cfg["INK"]["primary"],
                            linewidth=cfg["OURS_EDGE_LW"] if s == "OURS"
                            else cfg["EDGE_LW"], zorder=3)
                     if trunc:
-                        draw_break(ax, x, bar_w, ylim, cfg)
-                        ax.text(x, ylim * 1.015, cfg["TRUNC_LABEL_FMT"].format(v),
-                                ha="center", va="bottom",
-                                fontsize=cfg["FONT_SIZES"]["annot"],
-                                color=cfg["INK"]["muted"])
-                if cfg["ANNOTATE_SPEEDUP"]:
-                    base = min(cell[s] for s in cfg["SYSTEMS"] if s != "OURS")
-                    x = gi + ((nbars - 1) - (nbars - 1) / 2) * slot
-                    ax.text(x, cell["OURS"] + 0.02 * ylim,
-                            f"{base / cell['OURS']:.1f}x", ha="center",
-                            va="bottom", fontsize=cfg["FONT_SIZES"]["annot"],
-                            color=cfg["INK"]["muted"])
+                        glyph_lo = draw_break(ax, x, bar_w, ylim, cfg)
+                        vlabel(ax, x, glyph_lo, cfg["TRUNC_LABEL_FMT"].format(v),
+                               cfg, color=sp["color"], weight="normal",
+                               where="inside", fontsize=cfg["FONT_SIZES"]["annot"],
+                               bar_color=cfg["COLORS"][s])
+                        if sp["skip_truncated"]:
+                            continue
+                    if not sp["on"] or (sp["skip_ref"] and s == sp["ref"]):
+                        continue
+                    place_speedup(ax, x, top, sp["fmt"].format(ref / v), cfg,
+                                  ylim, sp["ours_color"] if s == "OURS"
+                                  else sp["color"], cfg["COLORS"][s])
 
             ax.set_ylim(0, ylim)
-            ax.set_xlim(-0.5, len(cfg["BUDGETS"]) - 0.5)
+            ax.set_xlim(-cfg["X_PAD"], len(cfg["BUDGETS"]) - 1 + cfg["X_PAD"])
             ax.yaxis.set_major_locator(
                 matplotlib.ticker.MaxNLocator(nbins=cfg["N_YTICKS"]))
             ax.tick_params(axis="y", labelsize=cfg["FONT_SIZES"]["tick"],
-                           length=2, width=0.6)
+                           length=1.5, width=0.6, pad=1.5)
             ax.grid(axis="y", color=cfg["INK"]["grid"], lw=0.4, zorder=0)
             ax.set_axisbelow(True)
             for side in ("top", "right"):
@@ -212,7 +292,7 @@ def plot(data, cfg):
                         fontsize=cfg["FONT_SIZES"]["row_tag"],
                         color=cfg["INK"]["secondary"])
             elif ci == len(cfg["COLS"]) - 1:  # "right": rotated row label
-                ax.text(1.022, 0.5, cfg["ROW_TAGS"][model],
+                ax.text(1.018, 0.5, cfg["ROW_TAGS"][model],
                         transform=ax.transAxes, ha="left", va="center",
                         rotation=270, fontsize=cfg["FONT_SIZES"]["row_tag"],
                         color=cfg["INK"]["secondary"])
@@ -226,11 +306,11 @@ def plot(data, cfg):
                 ax.set_xticklabels([cfg["GROUP_LABELS"][b]
                                     for b in cfg["BUDGETS"]],
                                    fontsize=cfg["FONT_SIZES"]["group_label"])
-                ax.tick_params(axis="x", length=0)
+                ax.tick_params(axis="x", length=0, pad=1.5)
             else:
                 ax.set_xticks([])
 
-    fig.supylabel(cfg["Y_LABEL"], x=0.012, fontsize=cfg["FONT_SIZES"]["ylabel"])
+    fig.supylabel(cfg["Y_LABEL"], x=0.008, fontsize=cfg["FONT_SIZES"]["ylabel"])
     if cfg["X_LABEL"]:
         fig.supxlabel(cfg["X_LABEL"], y=0.005,
                       fontsize=cfg["FONT_SIZES"]["ylabel"])
@@ -238,11 +318,12 @@ def plot(data, cfg):
     handles = [Patch(facecolor=cfg["COLORS"][s], hatch=cfg["HATCHES"][s],
                      edgecolor=cfg["INK"]["primary"], linewidth=cfg["EDGE_LW"],
                      label=cfg["LEGEND_NAMES"][s]) for s in cfg["SYSTEMS"]]
-    fig.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.5, 1.005),
+    fig.legend(handles=handles, loc="upper center",
+               bbox_to_anchor=(0.5, cfg["LEGEND_Y"]),
                ncol=cfg["LEGEND_NCOL"], frameon=False,
                fontsize=cfg["FONT_SIZES"]["legend"],
                columnspacing=cfg["LEGEND_COLSPACING"], handlelength=1.2,
-               handleheight=0.9, handletextpad=0.5)
+               handleheight=0.9, handletextpad=0.5, borderaxespad=0.0)
     return fig
 
 
