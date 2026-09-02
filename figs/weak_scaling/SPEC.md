@@ -1,6 +1,6 @@
 # Weak-scaling figure — aesthetic & architecture spec
 
-Status: REV 1 (2026-09-02). Data authority: `figure_src.csv` (+
+Status: REV 1.1 (2026-09-02; marker/grid fixes after review). Data authority: `figure_src.csv` (+
 `figure_src.md`). Generator: `make_figure.py` (matplotlib; one `CONFIG`
 block, every **[knob]** below lives there). Two versions from one script:
 **verA** (latency) and **verB** (throughput).
@@ -30,8 +30,8 @@ block, every **[knob]** below lives there). Two versions from one script:
 - **Lines** **[knob: SERIES]**: COMET olive `#999933`, square markers;
   Ours steel blue `#4878b0`, circle markers — the same hues these systems
   carry in the main figure, so identity is consistent across figures.
-  Line 1.1 pt, marker 3.6 pt with a white edge so markers stay legible over
-  bars and gridlines.
+  Line 1.1 pt, marker 3.6 pt, **no edge stroke** (REV 1.1: the white
+  marker edge painted over neighbouring elements).
 - **Speedup bars** **[knob: BARS]**: fill `#d9d9d9`, edge `#8f8f8f` 0.4 pt,
   width 0.55 of the slot, drawn *behind* lines (zorder). Right y-limit =
   ceil_nice(max speedup × 1.5) **[knob: BAR_HEADROOM]** so bars occupy the
@@ -48,7 +48,9 @@ block, every **[knob]** below lives there). Two versions from one script:
 - Figure 3.33 × 1.45 in **[knob: FIG_W, FIG_H]**; margins left 0.135 /
   right 0.86 / top 0.80 / bottom 0.21 **[knob: MARGINS]**.
 - Left ylim = ceil_nice(1.12 × max plotted) **[knob: HEADROOM]**;
-  3–4 ticks; light horizontal grid from the left axis only.
+  3–4 ticks; light horizontal gridlines at the left axis's tick positions,
+  drawn on the *lower* (bar) axes so they render beneath the bars and their
+  value labels (REV 1.1 — on the upper axes they crossed the labels).
 - X ticks `2 4 8 16 32`, axis title "Nodes" **[knob: X_LABEL]**.
 - Left axis label **[knob: Y_LABELS]**: verA "Latency (ms)", verB
   "Throughput (Mtok/s)". Right axis label "Speedup vs COMET" in gray.

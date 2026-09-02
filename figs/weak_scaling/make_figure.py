@@ -27,7 +27,7 @@ CONFIG = dict(
         "comet": dict(label="COMET", color="#999933", marker="s"),
         "ours": dict(label="Ours", color="#4878b0", marker="o"),
     },
-    LINE=dict(lw=1.1, ms=3.6, mew=0.6, mec="white"),   # line/marker style
+    LINE=dict(lw=1.1, ms=3.6, mew=0.0, mec=None),      # markers: no edge stroke
     BARS=dict(label="Speedup vs COMET", face="#d9d9d9", edge="#8f8f8f",
               lw=0.4, width=0.55, fmt="{:.2f}×", label_pad_pt=1.5,
               label_pos="auto",   # auto: above the bar unless a line marker
@@ -188,8 +188,11 @@ def plot(data, cfg, version):
     ax.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(cfg["N_YTICKS"]))
     ax.set_xlabel(cfg["X_LABEL"], fontsize=fs["label"], labelpad=1.5)
     ax.set_ylabel(cfg["Y_LABELS"][version], fontsize=fs["label"], labelpad=2)
-    ax.grid(axis="y", color=cfg["INK"]["grid"], lw=0.4, zorder=0)
-    ax.set_axisbelow(True)
+    # gridlines live on the LOWER axes (ax2) so they render beneath the bars
+    # and their value labels; positions follow the left axis's ticks
+    for y in ax.get_yticks():
+        if 0 < y <= ylim:
+            ax2.axhline(y / ylim * rmax, color=cfg["INK"]["grid"], lw=0.4, zorder=0)
     ax.set_zorder(ax2.get_zorder() + 1)   # lines above bars
     ax.patch.set_visible(False)
     for side in ("top", "right"):
