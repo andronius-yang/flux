@@ -1,0 +1,21 @@
+# 2-node smoke of the NVSHMEM one-time placement wire (eplb_l01_nvplace):
+# correctness ON (bitwise slot check proves the puts), tiny budget, isolated.
+platform: perlmutter
+nodes: 2
+shape: k2
+variants: [eplb_l01_nvplace, eplb_l01]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [4]
+modes: [isolated]
+extra_env: {}
+iters: 3
+warmup_iters: 2
+matrix_instance: "001"
+skip_correctness: false
+sm_margin: 8
+n_split_l1: 7
+timeout_s: 900
+idle_timeout_s: 300
+retries: 0
+notes: "smoke: eplb nvshmem placement wire vs nccl twin, 2n K2 b4, correctness on"

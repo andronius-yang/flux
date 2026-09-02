@@ -217,6 +217,11 @@ def fused_capacity_bounds(plan: UltraEPPlan, topk_all: torch.Tensor,
             max(int(recv_max * headroom) + 1, 1))
 
 
+def _flux():
+    import flux  # GPU-side only (module import must stay CPU-clean)
+    return flux
+
+
 def weight_placement_pairs(plan: UltraEPPlan) -> list:
     """One-time weight movement list: (host, local_slot, logical, orig_home)
     for every physical slot whose logical expert's ORIGINAL contiguous home
@@ -572,27 +577,48 @@ class EPLBLayer0Runner(UltraEPLayer0Runner):
 
     def __init__(self, plan: UltraEPPlan, rank: int, group, device,
                  topk_all: torch.Tensor, dtype=torch.bfloat16,
-                 ffn_size_shard: int = 0, place_fc2: bool = True):
+                 ffn_size_shard: int = 0, place_fc2: bool = True,
+                 weight_place_wire: str = "nccl"):
         # ffn_size_shard=0 makes the parent skip out_buf/replica_fc1/
         # replica_fc2; slot-indexed buffers replace them below.
         super().__init__(plan, rank, group, device, topk_all, dtype=dtype,
                          ffn_size_shard=0, sync_fc2=False)
         assert ffn_size_shard > 0
+        assert weight_place_wire in ("nccl", "nvshmem"), weight_place_wire
         self.ffn_size_shard = ffn_size_shard
         self.place_fc2 = place_fc2
+        self.weight_place_wire = weight_place_wire
         cfg = self.cfg
         self.out_buf = torch.zeros(
             max(self.n_recv, 1), ffn_size_shard, dtype=dtype, device=device
         )
-        self.slot_fc1 = torch.zeros(
-            cfg.nlp, ffn_size_shard, cfg.H, dtype=dtype, device=device
-        )
-        if place_fc2:
-            # Layer0 consumes only fc1; fc2 rides along so the one-time
-            # placement bytes are faithful to moving the full expert.
-            self.slot_fc2 = torch.zeros(
-                cfg.nlp, cfg.H, ffn_size_shard, dtype=dtype, device=device
+        if weight_place_wire == "nvshmem":
+            # 2026-09-02 (motivation-figure lane): the one-time placement
+            # rides one-sided NVSHMEM puts, so every put DESTINATION (the
+            # slot panels) and SOURCE (one-expert staging block) must live
+            # on the symmetric heap (CXI proxy rule). Collective alloc —
+            # identical shapes on every PE; requires flux.init_flux_shm
+            # before construction (the nvshmem/fused transports do).
+            import flux  # GPU-side only
+            self.slot_fc1 = flux.nvshmem_create_tensor(
+                [cfg.nlp, ffn_size_shard, cfg.H], dtype)
+            self._stage_fc1 = flux.nvshmem_create_tensor(
+                [ffn_size_shard, cfg.H], dtype)
+            if place_fc2:
+                self.slot_fc2 = flux.nvshmem_create_tensor(
+                    [cfg.nlp, cfg.H, ffn_size_shard], dtype)
+                self._stage_fc2 = flux.nvshmem_create_tensor(
+                    [cfg.H, ffn_size_shard], dtype)
+        else:
+            self.slot_fc1 = torch.zeros(
+                cfg.nlp, ffn_size_shard, cfg.H, dtype=dtype, device=device
             )
+            if place_fc2:
+                # Layer0 consumes only fc1; fc2 rides along so the one-time
+                # placement bytes are faithful to moving the full expert.
+                self.slot_fc2 = torch.zeros(
+                    cfg.nlp, cfg.H, ffn_size_shard, dtype=dtype, device=device
+                )
         self.weight_place_bytes = 0
         self.weight_place_ms = 0.0
         self.layers = "l0"
@@ -636,6 +662,9 @@ class EPLBLayer0Runner(UltraEPLayer0Runner):
                 if self.place_fc2:
                     self.slot_fc2[b].copy_(self.make_canonical_fc2(l))
 
+        if self.weight_place_wire == "nvshmem":
+            return self._place_weights_nvshmem(pairs, group)
+
         dist.barrier(group=group)
         torch.cuda.synchronize()
         t0 = time.perf_counter()
@@ -661,6 +690,71 @@ class EPLBLayer0Runner(UltraEPLayer0Runner):
         if ops:
             for req in dist.batch_isend_irecv(ops):
                 req.wait()
+        torch.cuda.synchronize()
+        self.weight_place_ms = (time.perf_counter() - t0) * 1e3
+        self.weight_place_bytes = recv_bytes
+        return recv_bytes, self.weight_place_ms
+
+    def _place_weights_nvshmem(self, pairs, group):
+        """Same placement, one-sided wire (2026-09-02): the ORIGINAL HOME of
+        every re-homed expert pushes it with one BLOCKING
+        nvshmemx_putmem_on_stream per destination slot (intra-node = CE
+        P2P copy, inter-node = proxy RMA kernel — both visible per put in
+        nsys with their bytes), then one world barrier fences the panels
+        (wire-ordering rule 6a: blocking puts, consumers gate on the
+        barrier, never a per-put signal). Canonical weights are synthesized
+        on the host BEFORE the timed/NVTX bracket (synthesis is a harness
+        artifact and is never quoted); the bracket holds only device
+        staging copies + puts + barrier. Receivers do nothing. Global
+        pair order is walked on every rank, so put issue order is
+        deterministic and identical to the NCCL twin's matching order."""
+        dist = self.dist
+        dev = self.device
+        stream = torch.cuda.current_stream()
+        fc1_bytes = self._stage_fc1.numel() * self._stage_fc1.element_size()
+        fc2_bytes = (self._stage_fc2.numel() * self._stage_fc2.element_size()
+                     if self.place_fc2 else 0)
+        # my sends, in global pair order: (dest_pe, dest_slot, logical)
+        my_sends = [(host, b, l) for host, b, l, home in pairs
+                    if home == self.rank]
+        recv_bytes = sum(fc1_bytes + fc2_bytes for host, _, _, _ in pairs
+                         if host == self.rank)
+        # untimed: host synthesis of every expert this rank pushes (each
+        # logical once, device-resident, ordinary memory — put SOURCE is
+        # the symmetric staging block below)
+        synth = {}
+        for _, _, l in my_sends:
+            if l not in synth:
+                w1 = self.make_canonical_fc1(l).to(dev)
+                w2 = self.make_canonical_fc2(l).to(dev) if self.place_fc2 else None
+                synth[l] = (w1, w2)
+        self.weight_place_sends = [(host, l, fc1_bytes + fc2_bytes)
+                                   for host, _, l in my_sends]
+
+        dist.barrier(group=group)
+        torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        with torch.cuda.nvtx.range("eplb_place_weights"):
+            last_l = None
+            for host, b, l in my_sends:
+                if l != last_l:
+                    # stream-ordered: the previous (blocking) puts from the
+                    # staging block have completed before this overwrite
+                    self._stage_fc1.copy_(synth[l][0])
+                    if self.place_fc2:
+                        self._stage_fc2.copy_(synth[l][1])
+                    last_l = l
+                with torch.cuda.nvtx.range(
+                        f"place_put e{l}->pe{host}.s{b} {fc1_bytes + fc2_bytes}B"):
+                    flux_put = _flux().nvshmem_putmem_on_stream
+                    flux_put(self.slot_fc1[b].data_ptr(),
+                             self._stage_fc1.data_ptr(), fc1_bytes, host,
+                             stream.cuda_stream)
+                    if self.place_fc2:
+                        flux_put(self.slot_fc2[b].data_ptr(),
+                                 self._stage_fc2.data_ptr(), fc2_bytes, host,
+                                 stream.cuda_stream)
+            _flux().nvshmem_barrier_all_on_stream(stream.cuda_stream)
         torch.cuda.synchronize()
         self.weight_place_ms = (time.perf_counter() - t0) * 1e3
         self.weight_place_bytes = recv_bytes

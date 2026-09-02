@@ -475,6 +475,14 @@ def parse_args():
                         help="one-time placement scope: fc1fc2 = faithful "
                         "full-expert bytes (default), fc1 = only what the "
                         "layer0 GEMM consumes (halves setup memory)")
+    parser.add_argument("--weight_place_wire", default="nccl",
+                        choices=["nccl", "nvshmem"],
+                        help="one-time placement wire: nccl = batched"
+                        " isend/irecv (historical), nvshmem = one blocking"
+                        " putmem_on_stream per re-homed slot from the"
+                        " expert's original home + world barrier (per-put"
+                        " spans/bytes visible in nsys; needs --transport"
+                        " nvshmem|fused for the symmetric heap)")
     parser.add_argument("--transport", default="nccl",
                         choices=["nccl", "nvshmem", "fused"],
                         help="dispatch transport: NCCL alltoallv, flux's"
@@ -506,6 +514,10 @@ if __name__ == "__main__":
     if args.replica_select is None:
         args.replica_select = (
             "local_spread" if args.transport == "fused" else "quota")
+    assert not (args.weight_place_wire == "nvshmem"
+                and args.transport == "nccl"), (
+        "--weight_place_wire nvshmem needs the symmetric heap"
+        " (--transport nvshmem|fused)")
     if args.transport in ("nvshmem", "fused"):
         # one-sided NVSHMEM paths need the flux shm heap; world group so
         # pg ranks == NVSHMEM PEs (moonep/ultraep precedent)
@@ -612,6 +624,7 @@ if __name__ == "__main__":
         plan, rank, TP_GROUP, torch.cuda.current_device(), topk_all,
         dtype=input_dtype, ffn_size_shard=moe_ctx.ffn_size_shard,
         place_fc2=(args.weight_place == "fc1fc2"),
+        weight_place_wire=args.weight_place_wire,
     )
     if args.transport == "nvshmem":
         # collective + device-syncing ctor: setup only, never timed
@@ -745,11 +758,16 @@ if __name__ == "__main__":
             eplb_load_sha=load_sha,
             eplb_interleave=not args.no_interleave,
             eplb_weight_place=args.weight_place,
+            eplb_weight_place_wire=args.weight_place_wire,
             eplb_weight_place_ms_oneshot=place_ms,
             eplb_transport=args.transport,
         )
     RECORDER.emit_info(
         eplb_weight_place_bytes=place_bytes,
+        # per-rank SEND ledger of the one-time placement: (dest_pe, logical,
+        # bytes) for every put this rank issues (nvshmem wire only) — the
+        # hot-expert-home "sends to many ranks" bar of the motivation figure
+        eplb_weight_place_sends=getattr(runner, "weight_place_sends", []),
         eplb_dup_rows=runner.dup_rows(),
     )
 

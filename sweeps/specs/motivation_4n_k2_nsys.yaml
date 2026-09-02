@@ -1,0 +1,32 @@
+# Motivation-figure capture (2026-09-02, figs/motivation): the three
+# "imbalance shifts" panels — primitive NVSHMEM blocking-put ring + GEMM,
+# EPLB static placement (placement wire = blocking NVSHMEM puts from each
+# expert's original home, NVTX eplb_place_weights + per-put ranges), and
+# stock COMET dense allgather — ONE capsule, ONE binary (rule 4), nsys mode
+# under isolated discipline (barrier before every window = common
+# per-iteration origin across nodes). Instrumented: NEVER quote latency
+# (SCHEMA rule 3). Deliverable = per-rank phase spans from the per-node
+# sqlite exports (figs/motivation/nsys_rank_phases.py) + matrix-derived
+# rows/bytes per rank. Correctness ON: the eplb bitwise slot check is the
+# proof of the new placement wire.
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [l01_nvshmem, eplb_l01_nvplace, l01_allgather_dense]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [16, 32]
+modes: [nsys]
+extra_env:
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+matrix_instance: "001"
+skip_correctness: false
+sm_margin: 8
+n_split_l1: 7
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 0
+notes: "motivation figure: nvshmem-ring / eplb(nvshmem placement wire) / comet, 4n K2 lcb b16+b32, nsys isolated"

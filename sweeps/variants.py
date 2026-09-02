@@ -542,6 +542,21 @@ VARIANTS = {
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),
+    # 2026-09-02 (motivation-figure lane): eplb_l01 twin whose ONE-TIME
+    # placement rides blocking NVSHMEM puts from each expert's original
+    # home (per-put spans + bytes visible in nsys; NVTX eplb_place_weights)
+    # instead of the batched NCCL isend/irecv. Data plane identical to
+    # eplb_l01; the per-iteration numbers are the same arm. Heap: sweep adds
+    # the symmetric slot panels + staging (eplb_sym_size extra).
+    "eplb_l01_nvplace": dict(
+        comm_pattern="eplb_static_a2av",
+        driver="eplb",
+        layer="l01",
+        test_args=["--transport", "nvshmem", "--layers", "l01",
+                   "--weight_place_wire", "nvshmem"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["nvshmem_putmem_on_stream"],
+    ),
     "eplb": dict(
         comm_pattern="eplb_static_a2av",  # cells.csv label only, never a CLI flag
         driver="eplb",

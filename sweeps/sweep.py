@@ -905,7 +905,27 @@ def moonep_fused_sym_size(matrix_path, plat, spec):
     return f"{sym_g}G"
 
 
-def eplb_sym_size(matrix_path, plat, spec):
+def eplb_place_sym_bytes(w, spec, v):
+    """Extra symmetric bytes when the eplb one-time placement rides NVSHMEM
+    puts (variant test_args --weight_place_wire nvshmem): the slot panels
+    [nlp, ffn, H] + [nlp, H, ffn] and one-expert staging pair, bf16, with
+    nlp = G/W + redundant_per_rank (driver default 2; --redundant_per_rank
+    in test_args overrides). 0 for the NCCL wire."""
+    ta = (v or {}).get("test_args") or []
+    if "--weight_place_wire" not in ta or \
+            ta[ta.index("--weight_place_wire") + 1] != "nvshmem":
+        return 0
+    red = int(ta[ta.index("--redundant_per_rank") + 1]) \
+        if "--redundant_per_rank" in ta else 2
+    nlp = int(spec["G"]) // w + red
+    ffn = int(spec.get("ffn_hidden") or 0)
+    if not ffn:
+        raise SystemExit("eplb nvshmem placement wire needs spec ffn_hidden")
+    per_expert = 2 * 2 * ffn * int(spec["H"])  # fc1 + fc2, bf16
+    return (nlp + 1) * per_expert
+
+
+def eplb_sym_size(matrix_path, plat, spec, v=None):
     """Symmetric-heap sizing for the eplb nvshmem arm. Same two
     All2AllSingle ops as ultraep (no dedup: probs splits == row splits), but
     ultraep's domain-slice bound is UNSAFE here: EPLB's global policy
@@ -925,7 +945,8 @@ def eplb_sym_size(matrix_path, plat, spec):
     chunk = int(spec["chunk_bytes"])
     hidden = 2 * w * max_pair_bytes                   # in+out staging, row bytes
     probs = 2 * w * (max_pair_bytes // chunk) * 4     # one fp32 per row (no dedup)
-    sym_g = max(2, math.ceil(2 * (hidden + probs) / (1 << 30)))
+    place = eplb_place_sym_bytes(w, spec, v)          # nvshmem placement wire only
+    sym_g = max(2, math.ceil((2 * (hidden + probs) + place) / (1 << 30)))
     sym_max = plat.get("sym_size_max_g")
     if sym_max:
         sym_g = min(sym_g, int(sym_max))
@@ -1175,9 +1196,10 @@ def build_cell_env(spec, plat, cell, staging, matrix):
             elif v.get("driver") == "eplb":
                 # the fused wire's symmetric footprint (recv rows + headers
                 # + combine staging + counts/signals) sits inside the same
-                # row-sum envelope the staged bound already covers
+                # row-sum envelope the staged bound already covers; the
+                # nvshmem placement wire adds its slot panels (v-aware)
                 env["NVSHMEM_SYMMETRIC_SIZE"] = eplb_sym_size(
-                    matrix_path, plat, spec
+                    matrix_path, plat, spec, v
                 )
             elif v.get("driver") == "epic":
                 env["NVSHMEM_SYMMETRIC_SIZE"] = epic_sym_size(
