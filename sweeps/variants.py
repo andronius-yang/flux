@@ -557,6 +557,21 @@ VARIANTS = {
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["nvshmem_putmem_on_stream"],
     ),
+    # 2026-09-02 side lane: eplb_l01_nvplace with the dispatch wire EXPOSED —
+    # blocking putmem_on_stream per destination (ring order) + world barrier
+    # instead of the staged a2a kernel. Instrumented (never a latency arm):
+    # its purpose is per-put spans/bytes in nsys. Heap: sweep adds the
+    # symmetric send/recv panels (eplb_sym_size, v-aware).
+    "eplb_l01_nvplace_bwire": dict(
+        comm_pattern="eplb_static_a2av",
+        driver="eplb",
+        layer="l01",
+        test_args=["--transport", "nvshmem", "--layers", "l01",
+                   "--weight_place_wire", "nvshmem",
+                   "--dispatch_wire", "blocking_ring"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["nvshmem_putmem_on_stream"],
+    ),
     "eplb": dict(
         comm_pattern="eplb_static_a2av",  # cells.csv label only, never a CLI flag
         driver="eplb",
@@ -3420,3 +3435,62 @@ VARIANTS["ablation_l01_pr_swapall_pw_noov_p2p_r2"] = dict(
 )
 _v = VARIANTS["ablation_l01_pr_swapall_pw_noov_p2p_r2"]
 _v["test_args"][_v["test_args"].index("--swap_tau_rows") + 1] = "1"
+
+# =========================================================================
+# CYCLING ABLATION arms (2026-09-02, user-approved plan: two scenarios —
+# S-A seen-8 mix oracle / S-B unseen-4 — dwell-1 and dwell-4 topic
+# schedules emulated with --swap_reset every [+ --swap_reset_period 4]).
+# ABLATION-ONLY, never headline.
+#   pr0   : placement/routing ONLY on the OURS driver — the honest "2 alone"
+#           rung: pv2 static placement + LocCap routing + r2, with the
+#           PRE-slipstream comm (msplit / fused-pack / wave-pack / bucket /
+#           wave-adapt / combine-idx OFF, no plan graphs, plan_overlap 0).
+#           The earlier pr_* proxy kept msplit+fp+wp+bucket ON and therefore
+#           equalled 1+2 at matched b64 (handoff 33 §2k-reps).
+#   t1    : one greedy round per iteration, tau=1 (<=1 slot per rank per
+#           iteration); swapall = capped tau=1 orbit (<=8 slots per rank).
+#   rst   : reset to the oracle basis before EVERY timed iteration
+#           (dwell-1 proxy); rp4 = every 4th timed iteration (dwell-4).
+#   noov  : --swap_overlap 0 (sequential expert exchange, token comm still
+#           overlapped).
+_PR0_ENV = dict(_OURS_ENV, **{
+    "FLUX_A2AV_RS_MSPLIT": "0", "FLUX_A2AV_RS_FUSED_PACK": "0",
+    "FLUX_A2AV_WAVE_PACK": "0", "FLUX_A2AV_RS_BUCKET": "0",
+    "FLUX_A2AV_RS_WAVE_ADAPT": "0", "FLUX_A2AV_RS_COMBINE_IDX_KERNEL": "0",
+    "FLUX_OURS_PLAN_GRAPH": "0", "FLUX_OURS_PLAN_SCALE_GRAPH": "0"})
+VARIANTS["ablation_l01_pr0_pv2_r2"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2"], env=dict(_PR0_ENV),
+    test_args=_ours_legacy_args(VARIANTS["ours_l01_s1_pv2_r2"]["test_args"]),
+)
+_T1_ARGS = list(VARIANTS["ours_l01_s2_swap_p2p_t1_r2"]["test_args"])
+for _period, _ptag in ((1, "rst"), (4, "rp4")):
+    _rs = ["--swap_reset", "every", "--swap_reset_period", str(_period)]
+    VARIANTS[f"ablation_l01_s2_swap_t1_{_ptag}_p2p_r2"] = dict(
+        VARIANTS["ours_l01_s1"], test_args=_T1_ARGS + _rs)
+    VARIANTS[f"ablation_l01_s2_swap_t1_{_ptag}_noov_p2p_r2"] = dict(
+        VARIANTS["ours_l01_s1"], test_args=_T1_ARGS + _rs + ["--swap_overlap", "0"])
+# full-orbit dwell-4 twins (dwell-1 = the existing ablation_l01_s2_swapall_p2p_r2
+# / _noov_ pair, which already carry --swap_reset every)
+VARIANTS["ablation_l01_s2_swapall_rp4_p2p_r2"] = dict(
+    _ABL_SWAP_BASE,
+    test_args=list(_ABL_SWAPALL_ARGS) + ["--swap_reset_period", "4"])
+# topic-SCHEDULE harness arms (2026-09-02, phase 2): NO reset — placement
+# carries over between topics; the schedule lives in the family params
+# (sched=...;dwell=N) and the runner passes --routing_sched_files/--routing_dwell.
+VARIANTS["ablation_l01_s2_swap_t1_noov_p2p_r2"] = dict(
+    VARIANTS["ours_l01_s1"], test_args=_T1_ARGS + ["--swap_overlap", "0"])
+_ABL_SWAPALL_NR = [a for a in _ABL_SWAPALL_ARGS]
+_ABL_SWAPALL_NR[_ABL_SWAPALL_NR.index("--swap_reset") + 1] = "off"
+VARIANTS["ablation_l01_s2_swapall_nr_p2p_r2"] = dict(
+    _ABL_SWAP_BASE, test_args=list(_ABL_SWAPALL_NR))
+VARIANTS["ablation_l01_s2_swapall_nr_noov_p2p_r2"] = dict(
+    _ABL_SWAP_BASE, test_args=list(_ABL_SWAPALL_NR) + ["--swap_overlap", "0"])
+# correctness gate twin of pr0 (OURS-driver arms verify via --check_iters,
+# not the flux-driver correct_* columns)
+VARIANTS["ablation_l01_pr0_gate_pv2_r2"] = dict(
+    VARIANTS["ablation_l01_pr0_pv2_r2"],
+    test_args=VARIANTS["ablation_l01_pr0_pv2_r2"]["test_args"] + ["--check_iters", "1"])
+VARIANTS["ablation_l01_s2_swapall_rp4_noov_p2p_r2"] = dict(
+    _ABL_SWAP_BASE,
+    test_args=list(_ABL_SWAPALL_ARGS) + ["--swap_reset_period", "4",
+                                         "--swap_overlap", "0"])

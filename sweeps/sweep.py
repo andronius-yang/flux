@@ -1233,6 +1233,22 @@ def build_cell_env(spec, plat, cell, staging, matrix):
             and env.get("NVSHMEM_SYMMETRIC_SIZE", "").rstrip("G").isdigit()
             and int(env["NVSHMEM_SYMMETRIC_SIZE"].rstrip("G")) >= int(_sym_max)):
         env["_A2AV_SYM_G_AT_CAP"] = "1"
+    if matrix.get("sched_matrices"):
+        # topic-schedule harness: every sizing knob / heap term is the MAX
+        # over the scheduled topics' matrices (each sibling sized exactly
+        # as it would be as its own cell)
+        for _sp in matrix["sched_matrices"][1:]:
+            _sib = {"id": "", "path": _sp, "sha": ""}
+            if matrix.get("routing"):
+                _sib["routing"] = gen_trace_routing.routing_path_of(_sp)
+            _senv = build_cell_env(spec, plat, cell, staging, _sib)
+            for _k, _val in _senv.items():
+                if _k == "NVSHMEM_SYMMETRIC_SIZE":
+                    if _val.rstrip("G").isdigit() and env.get(_k, "0G").rstrip("G").isdigit():
+                        env[_k] = f"{max(int(_val.rstrip('G')), int(env[_k].rstrip('G')))}G"
+                elif (_k.startswith("FLUX_A2AV_") or _k.startswith("_A2AV_SYM_G")) \
+                        and str(_val).lstrip("-").isdigit() and str(env.get(_k, "0")).lstrip("-").isdigit():
+                    env[_k] = str(max(int(_val), int(env.get(_k, "0"))))
     env.update(v["env"])
     if cell["mode"] == "phases":
         env["FLUX_A2AV_TIMING"] = "1"
@@ -1286,8 +1302,17 @@ def cell_launcher(cell, plat, staging):
 
 
 def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=None,
-                   eplb_load_path=None, placement_path=None, oracle_routing_path=None):
+                   eplb_load_path=None, placement_path=None, oracle_routing_path=None,
+                   sched_routing=None, sched_dwell=1):
     v = VARIANTS[cell["variant"]]
+    sched_args = []
+    if sched_routing:
+        if v.get("driver", "flux") not in ("l01", "ours"):
+            raise SystemExit(
+                f"{cell['cell_id']}: topic schedule is implemented for the l01"
+                f" (flux) and ours drivers only, not {v.get('driver')}")
+        sched_args = ["--routing_sched_files", ",".join(sched_routing),
+                      "--routing_dwell", str(sched_dwell)]
     profiling = cell["mode"] in ("torchprof", "nsys")
     iters = spec["profile_iters"] if profiling else spec["iters"]
     warmup = spec["profile_iters"] if profiling else spec["warmup_iters"]
@@ -1326,6 +1351,7 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         # trace to the fast test so matrix AND gemm loads are trace-derived
         if routing_path:
             test_args += ["--routing_file", routing_path]
+            test_args += sched_args
         if spec["skip_correctness"]:
             test_args.append("--skip_correctness")
         return srun_prefix + ["./launch_fast.sh"] + test_args, sm_margin, iters, warmup
@@ -1392,6 +1418,7 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         test_args += list(v.get("test_args") or [])
         if routing_path:
             test_args += ["--routing_file", routing_path]
+            test_args += sched_args
         if spec["skip_correctness"]:
             test_args.append("--skip_correctness")
         if v.get("driver") == "l01_fast":
@@ -1451,6 +1478,7 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         test_args += list(v.get("test_args") or [])
         if routing_path:
             test_args += ["--routing_file", routing_path]
+            test_args += sched_args
         if spec["skip_correctness"]:
             test_args.append("--skip_correctness")
         if cell["mode"] == "torchprof":
@@ -1493,6 +1521,7 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         test_args += list(v.get("test_args") or [])
         if routing_path:
             test_args += ["--routing_file", routing_path]
+            test_args += sched_args
         if spec["skip_correctness"]:
             test_args.append("--skip_correctness")
         if cell["mode"] == "torchprof":
@@ -1555,6 +1584,7 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
             # the PREVIOUS window's rows, never the evaluated batch; the
             # driver records file/basis/drift_ppm as cell facts
             test_args += ["--oracle_routing_file", oracle_routing_path]
+        test_args += sched_args
         if v["driver"] in ("epic", "moonep_fused") and v.get("layer") == "l01":
             # 2026-08-22 (plan eager-juggling-glacier Stage 3): the l01
             # split-N combine depth follows the shape preset (K3 -> 7 ->
@@ -1595,6 +1625,7 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
     ]
     if routing_path:
         test_args += ["--routing_file", routing_path]
+    test_args += sched_args
     if spec["skip_correctness"]:
         test_args.append("--skip_correctness")
     if cell["mode"] == "torchprof":
@@ -1633,6 +1664,8 @@ def run_cell(spec, plat, cell, jobid, matrix, run_dir_staging, dry):
         eplb_load_path=matrix.get("eplb_load"),
         placement_path=matrix.get("placement"),
         oracle_routing_path=matrix.get("oracle_routing"),
+        sched_routing=matrix.get("sched_routing"),
+        sched_dwell=matrix.get("sched_dwell", 1),
     )
     env_delta = build_cell_env(spec, plat, cell, staging, matrix)
     if env_delta.pop("_A2AV_SYM_G_AT_CAP", None):
@@ -2056,7 +2089,11 @@ def cmd_run(spec, jobid_arg, dry):
         for cell in cells:
             # dealer is an arm marker, not a matrix param (same bytes both arms);
             # trace ids are approximate here (poolsha needs the trace files)
-            mparams = {k: v for k, v in cell["family_params"].items() if k != "dealer"}
+            # sched/dwell (topic-schedule harness, 2026-09-02) are CELL params,
+            # not matrix params: the primary matrix/sidecars are the plain
+            # topic-0 files (bit-identical to the per-topic cells)
+            mparams = {k: v for k, v in cell["family_params"].items()
+                       if k not in ("dealer", "sched", "dwell")}
             mid = gen_matrix.matrix_id_of(
                 cell["family"],
                 dict(gen_matrix.FAMILY_DEFAULT_PARAMS[cell["family"]], **mparams),
@@ -2078,7 +2115,11 @@ def cmd_run(spec, jobid_arg, dry):
         # never-overwrite regeneration check (a full re-simulation) runs
         # once per run per sidecar, not once per cell
         for cell in cells:
-            mparams = {k: v for k, v in cell["family_params"].items() if k != "dealer"}
+            # sched/dwell (topic-schedule harness, 2026-09-02) are CELL params,
+            # not matrix params: the primary matrix/sidecars are the plain
+            # topic-0 files (bit-identical to the per-topic cells)
+            mparams = {k: v for k, v in cell["family_params"].items()
+                       if k not in ("dealer", "sched", "dwell")}
             mid, path, sha = gen_matrix.ensure_matrix(
                 cell["family"],
                 mparams,
@@ -2101,6 +2142,32 @@ def cmd_run(spec, jobid_arg, dry):
                 "effective_budget_bytes",
                 mmeta.get("tokens_per_rank", 0) * mmeta.get("chunk_bytes", 0),
             )
+            if cell["family"] == "trace" and cell["family_params"].get("sched"):
+                # topic-schedule harness: one sibling matrix + routing per
+                # scheduled topic (same params, pools=topic); entry 0 must be
+                # the cell's own pools so the primary files ARE topic 0
+                sched = [t for t in str(cell["family_params"]["sched"]).split("+") if t]
+                if sched[0] != mparams.get("pools"):
+                    raise SystemExit(
+                        f"{cell['cell_id']}: sched entry 0 ({sched[0]}) must equal"
+                        f" pools ({mparams.get('pools')})")
+                if cell.get("routing_mode") != "real":
+                    raise SystemExit(f"{cell['cell_id']}: sched needs real routing")
+                s_paths, s_routing = [], []
+                for t in sched:
+                    _mid, _path, _sha = gen_matrix.ensure_matrix(
+                        cell["family"], dict(mparams, pools=t), cell["world_size"],
+                        plat["ranks_per_node"], cell["budget_mib"], spec["topk"],
+                        spec["chunk_bytes"], spec["matrix_instance"],
+                        plat["matrices_root"], nexperts=spec["G"],
+                        traces_root=plat.get("traces_root"),
+                    )
+                    s_paths.append(_path)
+                    s_routing.append(gen_trace_routing.routing_path_of(_path))
+                matrices[cell["cell_id"]].update({
+                    "sched_matrices": s_paths, "sched_routing": s_routing,
+                    "sched_dwell": int(cell["family_params"].get("dwell", 1)),
+                })
             if cell.get("routing_mode") == "real":
                 rpath = path[: -len(".txt")] + ".routing.txt"
                 matrices[cell["cell_id"]].update(

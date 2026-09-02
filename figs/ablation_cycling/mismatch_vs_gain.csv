@@ -1,0 +1,14 @@
+scenario,topic,basis_mismatch_pair_rows,matched_pair_rows,static_ms,best_swap_ms,best_swap_arm,comet_ms,slip_ms,pr0_ms,source
+S-A seen-8,proLaw,8260,6510,53.65,50.87,one-round OVL d4,65.34,58.76,60.63,per-topic cells f3214016 (+gate rep for pr0/static)
+S-A seen-8,hsWorldHist,5161,,49.98,51.12,one-round SEQ d4,56.66,52.22,55.80,per-topic cells f3214016
+S-A seen-8,lcb,5322,,50.78,51.96,one-round OVL d4,60.16,54.78,56.94,per-topic cells f3214016
+S-A seen-8,hsPsych,5014,,50.72,52.10,one-round OVL d4,60.62,54.91,55.97,per-topic cells f3214016
+S-A seen-8,clinical,5184,,50.77,50.94,one-round SEQ d4,59.69,53.49,55.97,per-topic cells f3214016
+S-A seen-8,elecEng,5193,,50.62,49.58,one-round OVL d4,62.16,53.25,55.86,per-topic cells f3214016
+S-A seen-8,colmath,5553,,49.21,49.21,full-orbit OVL d4,63.45,55.62,55.59,per-topic cells f3214016
+S-A seen-8,philosophy,4598,,49.78,49.58,one-round d4,57.24,51.98,55.46,per-topic cells f3214016
+S-B unseen-4,proLaw,12894,6510,66.06,57.04,one-round OVL d4,64.24,58.72,72.47,per-topic cells 9c0756c9 + rep (2 reps)
+S-B unseen-4,hsPsych,5116,,50.86,51.75,one-round OVL d4,57.96,53.73,57.78,per-topic cells (2 reps)
+S-B unseen-4,hsWorldHist,3896,,50.47,51.16,one-round OVL d4,54.84,51.92,56.03,per-topic cells (2 reps)
+S-B unseen-4,philosophy,4387,,51.08,52.16,one-round OVL d1,54.56,52.48,56.78,per-topic cells (2 reps)
+S-C LOO-proLaw (schedule d4 block),proLaw,20198,6510,72.29,56.04,one-round OVL,63.63,58.64,79.76,schedule block means f3ee8e20

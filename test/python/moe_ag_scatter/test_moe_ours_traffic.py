@@ -105,6 +105,18 @@ def parse_args():
     p.add_argument("--traffic_matrix", type=str, required=True)
     p.add_argument("--routing_file", type=str, required=True,
                    help="real trace routing (OURS is defined for trace cells)")
+    p.add_argument("--routing_sched_files", type=str, default="",
+                   help="ABLATION-ONLY topic-schedule harness (2026-09-02):"
+                        " comma-separated extra routing files (same T/W/"
+                        "topk as --routing_file; entry 0 MUST equal"
+                        " --routing_file). Iteration i runs topic"
+                        " ((i - last) // dwell) mod N so the LAST timed"
+                        " iteration is topic 0 (correctness reference);"
+                        " placement/tables carry over between topics (no"
+                        " reset). Sizing envelopes are maxed over topics.")
+    p.add_argument("--routing_dwell", type=int, default=1,
+                   help="topic-schedule dwell: consecutive iterations per"
+                        " topic (1 = a new topic every iteration).")
     p.add_argument("--oracle_routing_file", type=str, default="",
                    help="scenario-1 oracle window rows (placement basis)")
     p.add_argument("--G", type=int, required=True)
@@ -225,6 +237,12 @@ def parse_args():
                         " timed iter measures the full drift-event"
                         " response), 'postwarmup' once at the warmup ->"
                         " timed transition, 'off' (default) never.")
+    p.add_argument("--swap_reset_period", type=int, default=1,
+                   help="ABLATION-ONLY (2026-09-02 cycling ablation): with"
+                        " --swap_reset every, reset only before timed"
+                        " iterations whose index (from the first timed"
+                        " one) is a multiple of this period — the dwell-N"
+                        " topic-schedule proxy (1 event + N-1 quiet iters).")
     p.add_argument("--swap_rounds", choices=("1", "all"), default="1",
                    help="ABLATION-ONLY: '1' (default) = canon single"
                         " greedy round per iteration (<=1 exchanged slot"
@@ -402,6 +420,26 @@ def main():
     )
     topk_all = choosed_experts.reshape(W, S, args.topk).cpu().int()
     tpe = loads_from_topk(cfg, topk_all)
+    # ---- topic-schedule harness (ablation-only; empty list = legacy) ----
+    sched_topk_all = []
+    if args.routing_sched_files:
+        assert not args.route_global, "schedule harness: route_global off"
+        for _sf in args.routing_sched_files.split(","):
+            _ce = load_routing_file(_sf, args.G, args.topk)
+            assert _ce.shape == choosed_experts.shape, (
+                f"schedule file {_sf}: shape {tuple(_ce.shape)} !="
+                f" {tuple(choosed_experts.shape)}")
+            sched_topk_all.append(_ce.reshape(W, S, args.topk).cpu().int())
+        assert torch.equal(sched_topk_all[0], topk_all), (
+            "schedule entry 0 must be the --routing_file topic")
+        # capacity envelope: per-source-rank per-expert loads, elementwise
+        # max over the topic set (plan sizing input)
+        tpe = torch.stack([loads_from_topk(cfg, t) for t in sched_topk_all]
+                          ).max(0).values
+        if rank == 0:
+            print(f"[sched] {len(sched_topk_all)} topics, dwell"
+                  f" {args.routing_dwell}, tpe envelope max"
+                  f" {int(tpe.sum(1).max())} rows/rank", flush=True)
 
     # gate weights (harness gating output; replicated generation)
     gen_p = torch.Generator().manual_seed(777)
@@ -533,6 +571,18 @@ def main():
             for _oi, (_p2l_o, _l2p_o) in enumerate(_fold):
                 s2_size_plans.append(
                     (f"swap{_oi}", _p2l_o, _l2p_o, plan.lcnts))
+            # topic-schedule harness: fold each other topic's orbit from
+            # the resident placement too (the run visits chained
+            # placements; the per-topic orbits from the basis bound them)
+            for _ti, _tk in enumerate(sched_topk_all[1:], start=1):
+                _lg_t = torch.bincount(_tk.reshape(-1).long(),
+                                       minlength=args.G).cpu().long()
+                _orb_t = oswap.swap_orbit(
+                    _lg_t, plan.p2l, plan.l2p, plan.lcnts, L, cfg.nlp,
+                    max(args.swap_tau_rows, 1))
+                for _oi, (_p2l_o, _l2p_o) in enumerate(_orb_t):
+                    s2_size_plans.append(
+                        (f"t{_ti}swap{_oi}", _p2l_o, _l2p_o, plan.lcnts))
         if not use_pv2:
             # warm-solve orbit, mirroring the runtime _solve_kw exactly
             # (seed = the resident the loop starts from / resets to;
@@ -578,6 +628,19 @@ def main():
         cfg.nlp, L, args.eps, return_tables=True)
     pll_bounds = loccap_sl_bounds(pll_aux, W, args.pll_f_cap)
     args.pll_f_cap = pll_bounds["f_cap"]
+    for _ti, _tk in enumerate(sched_topk_all[1:], start=1):
+        # topic-schedule harness: the resident placement's reference
+        # route on every other topic widens the caps (max)
+        _, _aux_t = loccap_route_sl(
+            _tk.long().cpu(), plan.p2l, plan.l2p, plan.lcnts,
+            cfg.nlp, L, args.eps, return_tables=True)
+        _b_t = loccap_sl_bounds(_aux_t, W, -1)
+        args.pll_f_cap = max(args.pll_f_cap, _b_t["f_cap"])
+        for k in ("recv_cap", "pair_cap"):
+            pll_bounds[k] = max(pll_bounds[k], _b_t[k])
+        if rank == 0:
+            print(f"[sched-sizing] topic {_ti}: f_cap {_b_t['f_cap']} recv"
+                  f" {_b_t['recv_cap']} pair {_b_t['pair_cap']}", flush=True)
     if args.route_global:
         # route-global: the deterministic quota route IS both the sizing
         # reference AND the runtime routing (bitwise — same pure function
@@ -610,6 +673,15 @@ def main():
         for k in ("recv_cap", "pair_cap"):
             pll_bounds[k] = max(pll_bounds[k], bounds_x[k])
         s2_refs.append((phys_x, aux_x))
+        for _tk in sched_topk_all[1:]:
+            # topic-schedule harness: every sizing placement x every topic
+            _, _aux_t = loccap_route_sl(
+                _tk.long().cpu(), _p2l_x, _l2p_x, _lc_x,
+                cfg.nlp, L, args.eps, return_tables=True)
+            _b_t = loccap_sl_bounds(_aux_t, W, -1)
+            args.pll_f_cap = max(args.pll_f_cap, _b_t["f_cap"])
+            for k in ("recv_cap", "pair_cap"):
+                pll_bounds[k] = max(pll_bounds[k], _b_t[k])
         if rank == 0:
             print(f"[s2-sizing] {_tag}: f_cap {bounds_x['f_cap']} recv "
                   f"{bounds_x['recv_cap']} pair {bounds_x['pair_cap']}",
@@ -667,6 +739,10 @@ def main():
         # deterministic route: runtime == reference bitwise, realized is
         # exact — the SL provable bound does not bound THIS algorithm
         recv_cap = recv_real + cushion
+    elif args.sizing == "demand" and args.scenario == "s1" and sched_topk_all:
+        # topic-schedule harness: recv_real is topic 0's realized demand;
+        # size at the provable cap maxed over the scheduled topics
+        recv_cap = pll_bounds["recv_cap"]
     elif args.sizing == "demand" and args.scenario == "s1":
         recv_cap = min(pll_bounds["recv_cap"], recv_real + cushion)
     else:
@@ -1212,8 +1288,18 @@ def main():
     iso_sync_times = []
     move_stats = []   # (trigger, moves, bytes, movement_ms, gain_ppm)
     out = None
+    _sched_dev = [t.long().cuda() for t in sched_topk_all]
+    _sched_cur = 0
     for i in range(total_iters):
         runner.prep()
+        if _sched_dev:
+            # topic-schedule harness: pick this iteration's topic OUTSIDE
+            # the window; the last iteration lands on topic 0 (reference)
+            _k = ((i - (total_iters - 1)) // args.routing_dwell) % len(_sched_dev)
+            if _k != _sched_cur:
+                planner.set_own_topk(_sched_dev[_k])
+                _sched_cur = _k
+                torch.cuda.synchronize()
         probe.step(i)
         if lane is not None and args.s2_stale != "0":
             # PROBE: reset the resident placement/tables to the oracle
@@ -1234,7 +1320,8 @@ def main():
             torch.cuda.synchronize()
         if (lane is not None and args.s2_swap
                 and args.swap_reset != "off"
-                and (i >= args.warmup_iters
+                and ((i >= args.warmup_iters
+                      and (i - args.warmup_iters) % args.swap_reset_period == 0)
                      if args.swap_reset == "every"
                      else i == args.warmup_iters)):
             # ABLATION-ONLY placement reset (untimed gap — enqueued

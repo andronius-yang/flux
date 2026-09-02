@@ -262,6 +262,21 @@ class OursIterPlanner:
 
     # -- plan_comm bracket ---------------------------------------------------
 
+    def set_own_topk(self, topk_all_new: torch.Tensor):
+        """Topic-schedule harness (2026-09-02, ablation-only): swap the
+        gating input to another routing sample of the SAME shape between
+        iterations (outside the timed window). Rewrites the own-rank topk
+        staging tensors in place (device buffers, graphs and prealloc tails
+        keep their addresses); the gate weights are the harness's seeded
+        setup draw and stay. No-op for every arm that never calls it."""
+        topk_all_new = topk_all_new.long().to(self.topk_all.device)
+        assert tuple(topk_all_new.shape) == tuple(self.topk_all.shape)
+        self.topk_all = topk_all_new
+        self._topk_own_i32.copy_(topk_all_new[self.rank].int())
+        if getattr(self, "_topk_own_flat_i64", None) is not None:
+            self._topk_own_flat_i64.copy_(
+                self._topk_own_i32.reshape(-1).long())
+
     def local_loads(self) -> torch.Tensor:
         """d[G] for this rank, sync-free (index_add, not bincount)."""
         self._d_own.zero_()

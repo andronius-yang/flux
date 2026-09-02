@@ -200,7 +200,7 @@ class PerfResult:
 
 
 @torch.no_grad()
-def perf_combined(name: str, iters: int, warmup_iters: int, prep_fn, plan_comm_fn, plan_fn, l0_fn, l1_fn, probe=None):
+def perf_combined(name: str, iters: int, warmup_iters: int, prep_fn, plan_comm_fn, plan_fn, l0_fn, l1_fn, probe=None, sched_fn=None):
     """One timed window per iteration (SCHEMA rule 5, converted 2026-08-21):
     plan_comm_fn() [routing allgather] -> plan_fn() [ALL routing-derived
     metadata for BOTH layers, on GPU] -> l0_fn(plan) -> GELU ->
@@ -224,6 +224,11 @@ def perf_combined(name: str, iters: int, warmup_iters: int, prep_fn, plan_comm_f
     output = None
     for i in range(total_iters):
         prep_fn()
+        if sched_fn is not None:
+            # topic-schedule harness (2026-09-02, ablation-only): swap the
+            # own-rank routing shard OUTSIDE the window; None for every
+            # legacy arm
+            sched_fn(i)
         if probe is not None:
             # wire-ordering audit (CLAUDE.md invariant 5): per-iteration payload
             # change OUTSIDE the window; both layers read moe_ctx.inputs_shard /
@@ -326,6 +331,14 @@ def parse_args():
     parser.add_argument("-G", type=int, default=32, help="number of experts")
     parser.add_argument("--topk", type=int, default=4)
     parser.add_argument("--iters", default=10, type=int, help="perf iterations")
+    parser.add_argument("--routing_sched_files", type=str, default="",
+                        help="ABLATION-ONLY topic-schedule harness (2026-09-02):"
+                             " comma-separated extra routing files (entry 0 =="
+                             " --routing_file); iteration i runs topic"
+                             " ((i - last) // dwell) mod N, last timed iteration"
+                             " = topic 0 (correctness reference).")
+    parser.add_argument("--routing_dwell", type=int, default=1,
+                        help="topic-schedule dwell (iterations per topic).")
     parser.add_argument("--warmup_iters", default=5, type=int, help="warmup iterations")
     parser.add_argument("--sm_margin", default=0, type=int, help="sm margin (both layers)")
     parser.add_argument(
@@ -659,6 +672,54 @@ if __name__ == "__main__":
         RANK * tokens_per_rank : (RANK + 1) * tokens_per_rank
     ].contiguous()
     topk_gather_buf = torch.zeros(ntokens, args.topk, dtype=torch.int32, device="cuda")
+    # ---- topic-schedule harness (ablation-only; sched_fn None = legacy) ----
+    sched_fn = None
+    if args.routing_sched_files:
+        _sched_shards, _sched_outs = [], []
+        moe_ctx.outputs = list(moe_ctx.outputs)   # tuple -> swappable
+        _out0 = moe_ctx.outputs[0]
+        for _ti, _sf in enumerate(args.routing_sched_files.split(",")):
+            _ce = load_routing_file(_sf, args.G, args.topk)
+            assert _ce.shape == choosed_experts.shape, (
+                f"schedule file {_sf}: shape {tuple(_ce.shape)} !="
+                f" {tuple(choosed_experts.shape)}")
+            _sched_shards.append(
+                _ce[RANK * tokens_per_rank : (RANK + 1) * tokens_per_rank]
+                .to(topk_shard.dtype).to(topk_shard.device).contiguous())
+            # the l0 op checks outputs_buf.size(0) == this rank's expert
+            # rows EXACTLY -> one output buffer per topic (topic 0 keeps
+            # the ctx's own buffer, which the final reference also uses)
+            _m = int(torch.bincount(_ce.reshape(-1).long().cpu(),
+                                    minlength=args.G)[eid_start:eid_end].sum())
+            if _ti == 0:
+                assert _m == _out0.shape[0], (_m, tuple(_out0.shape))
+                _sched_outs.append((_out0, l1_output_vec_scale))
+            else:
+                # l1's per-ROW output_vec_scale is checked against
+                # M_this_ep too: a same-distribution draw per topic
+                _ovs = (l1_output_vec_scale[:1].repeat(_m)
+                        if l1_output_vec_scale.numel() else l1_output_vec_scale)
+                _sched_outs.append((torch.empty(
+                    (_m,) + tuple(_out0.shape[1:]), dtype=_out0.dtype,
+                    device=_out0.device), _ovs))
+        assert torch.equal(_sched_shards[0], topk_shard), (
+            "schedule entry 0 must be the --routing_file topic")
+        topk_shard = topk_shard.clone()   # never alias choosed_experts
+        _sched_last = args.warmup_iters + args.iters - 1
+        _sched_state = {"cur": 0}
+
+        def sched_fn(i, _shards=_sched_shards, _outs=_sched_outs, _st=_sched_state):
+            global l1_output_vec_scale
+            k = ((i - _sched_last) // args.routing_dwell) % len(_shards)
+            if k != _st["cur"]:
+                topk_shard.copy_(_shards[k])
+                moe_ctx.outputs[0] = _outs[k][0]
+                l1_output_vec_scale = _outs[k][1]
+                _st["cur"] = k
+                torch.cuda.synchronize()
+        if RANK == 0:
+            print(f"[sched] {len(_sched_shards)} topics, dwell"
+                  f" {args.routing_dwell}", flush=True)
 
     def plan_comm_fn():
         torch.distributed.all_gather_into_tensor(topk_gather_buf, topk_shard, group=TP_GROUP)
@@ -911,6 +972,7 @@ if __name__ == "__main__":
                 flux_l0,
                 flux_l1,
                 probe=PayloadProbe(moe_ctx.inputs_shard, RANK, keep_ledger=False),
+                sched_fn=sched_fn,
             )
     elif args.impl == "torch":  # torch arm: same window discipline, unfused impls
         # preallocated derivation scratch (contents re-derived per iteration)
@@ -978,6 +1040,7 @@ if __name__ == "__main__":
                 torch_l0,
                 torch_l1,
                 probe=PayloadProbe(moe_ctx.inputs_shard, RANK, keep_ledger=False),
+                sched_fn=sched_fn,
             )
     elif args.impl == "nccl":  # primitive NCCL grouped-P2P baseline (2026-08-29)
         # The baseline of baselines: dispatch alltoallv -> un-overlapped
@@ -1107,6 +1170,7 @@ if __name__ == "__main__":
                 nccl_l0,
                 nccl_l1,
                 probe=PayloadProbe(moe_ctx.inputs_shard, RANK, keep_ledger=False),
+                sched_fn=sched_fn,
             )
         # feed the shared fast/nccl correctness block below
         fast_out1, fast_gemm_in0 = _nccl_last["out1"], _nccl_last["gemm_in0"]
@@ -1263,6 +1327,7 @@ if __name__ == "__main__":
                 nv_l0,
                 nv_l1,
                 probe=PayloadProbe(moe_ctx.inputs_shard, RANK, keep_ledger=False),
+                sched_fn=sched_fn,
             )
         # feed the shared fast/nccl/nvshmem correctness block below
         fast_out1, fast_gemm_in0 = _nv_last["out1"], _nv_last["gemm_in0"]

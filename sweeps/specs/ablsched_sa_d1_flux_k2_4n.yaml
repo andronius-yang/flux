@@ -1,0 +1,18 @@
+# ablsched S-A dwell1 9.2: K2 4n b64 seen-8 mix oracle, per-iteration topic schedule over 8 topics (2 cycles), placement carried over, 8 arms
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy+mmlu/professional_law;sched=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy+mmlu/professional_law;dwell=1"
+budgets_mib: [64]
+modes: [isolated]
+iters: 16
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+variants:
+  - l01_allgather_dense
+  - l01_slipstream
+notes: "ablsched FLUX-ARMS RECOLLECT (runner l01 branch fix) S-A dwell1 9.2: K2 4n b64 seen-8 mix oracle, per-iteration topic schedule over 8 topics (2 cycles), placement carried over, 8 arms"
