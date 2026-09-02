@@ -67,7 +67,8 @@ CONFIG = dict(
     BREAK_MARK=dict(dy_frac=0.045,            # slash rise, frac of ylim
                     gap_frac=0.040,           # gap between the two slashes
                     y_frac=0.90,              # slash center height, frac ylim
-                    halfw=0.75,               # slash half-width, frac of bar w
+                    halfw=0.52,               # slash half-width, frac of bar w
+                                              # (<0.55 keeps it inside the slot)
                     lw=1.2, color="white"),
     TRUNC_LABEL_FMT="{:.0f}",                 # true value, inside truncated bar
     # ---- speedup annotations (SPEC 2.4) ----
@@ -75,7 +76,9 @@ CONFIG = dict(
         on=True,
         ref="nvshmem_gemm",                   # ratio = ref_total / bar_total
         fmt="{:.2f}×",                   # two decimals + multiplication sign
-        weight="bold",
+        ref_label="1×",                  # mark on the reference bar itself
+        weight="normal",                      # baselines: regular weight ...
+        ours_weight="bold",                   # ... Ours: bold
         color="#0b0b0b",                      # all systems ...
         ours_color="#c1121f",                 # ... except Ours, highlighted red
         placement="auto",                     # auto | inside | above
@@ -84,8 +87,10 @@ CONFIG = dict(
         bbox_mode="bar",     # inside-label backing: "bar" = solid window in the
                              # bar's own color (text auto white/black), "white"
         bbox_pad=0.12,       # backing padding, em
-        dark_text_L=0.60,    # OKLCH L below this -> white text on the window
-        skip_ref=True,                        # no "1.00x" on the reference bar
+        dark_text_L=0.40,    # OKLCH L below this -> white text on the window
+                             # (black otherwise; none of the current fills
+                             # are that dark, so all inside labels are black)
+        skip_ref=False,                       # reference bar carries ref_label
         skip_truncated=True,                  # truncated bars show value instead
     ),
     # ---- layout ----
@@ -165,7 +170,7 @@ def draw_break(ax, x, bar_w, ylim, cfg):
     for off in (-gap / 2, gap / 2):
         ax.plot([x - hw, x + hw], [y0 + off - dy / 2, y0 + off + dy / 2],
                 color=bm["color"], lw=bm["lw"], solid_capstyle="butt",
-                zorder=4, clip_on=False)
+                zorder=4, clip_on=True)
     return y0 - gap / 2 - dy / 2       # lowest point of the glyph (data units)
 
 
@@ -211,7 +216,7 @@ def label_len_data(ax, text, cfg, fontsize):
     return pts * ax._data_per_pt
 
 
-def place_speedup(ax, x, top, text, cfg, ylim, color, bar_color):
+def place_speedup(ax, x, top, text, cfg, ylim, color, bar_color, weight):
     """auto: above the bar when it fits under the ceiling, else inside."""
     sp = cfg["SPEEDUP"]
     fs = cfg["FONT_SIZES"]["annot"]
@@ -219,7 +224,7 @@ def place_speedup(ax, x, top, text, cfg, ylim, color, bar_color):
     mode = sp["placement"]
     if mode == "auto":
         mode = "above" if top + need <= ylim else "inside"
-    vlabel(ax, x, top, text, cfg, color=color, weight=sp["weight"],
+    vlabel(ax, x, top, text, cfg, color=color, weight=weight,
            where=mode, fontsize=fs, bar_color=bar_color)
 
 
@@ -272,9 +277,12 @@ def plot(data, cfg):
                             continue
                     if not sp["on"] or (sp["skip_ref"] and s == sp["ref"]):
                         continue
-                    place_speedup(ax, x, top, sp["fmt"].format(ref / v), cfg,
-                                  ylim, sp["ours_color"] if s == "OURS"
-                                  else sp["color"], cfg["COLORS"][s])
+                    text = (sp["ref_label"] if s == sp["ref"]
+                            else sp["fmt"].format(ref / v))
+                    place_speedup(ax, x, top, text, cfg, ylim,
+                                  sp["ours_color"] if s == "OURS" else sp["color"],
+                                  cfg["COLORS"][s],
+                                  sp["ours_weight"] if s == "OURS" else sp["weight"])
 
             ax.set_ylim(0, ylim)
             ax.set_xlim(-cfg["X_PAD"], len(cfg["BUDGETS"]) - 1 + cfg["X_PAD"])

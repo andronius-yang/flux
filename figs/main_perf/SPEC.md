@@ -1,6 +1,6 @@
 # Main performance figure — aesthetic & architecture spec
 
-Status: REV 2 (2026-09-02, postdoc visual review applied — see §9). Data authority: `figure_src.csv` (+
+Status: REV 2.1 (2026-09-02, postdoc review + label-style rulings — see §9). Data authority: `figure_src.csv` (+
 `figure_src.md` provenance). Generator: `make_figure.py` (matplotlib, to be
 written after this spec is approved). Every value marked **[knob]** is a
 parameter in the generator's single `CONFIG` block — nothing aesthetic is
@@ -85,24 +85,31 @@ FAST at 16n (183–227 ms) would flatten every other bar. Mechanism
 
 ### 2.4 Speedup annotations (REV 2)
 
-Every bar except the reference and truncated bars carries its **speedup vs
-the NVSHMEM A2AV+GEMM baseline** in the same group:
-`ratio = NVSHMEM_total_ms / bar_total_ms` (> 1 = faster than NVSHMEM).
-**[knob: SPEEDUP]**
+Every non-truncated bar carries its **speedup vs the NVSHMEM A2AV+GEMM
+baseline** in the same group: `ratio = NVSHMEM_total_ms / bar_total_ms`
+(> 1 = faster than NVSHMEM). **[knob: SPEEDUP]**
 
-- Text `"{:.2f}×"` (two decimals + multiplication sign), **bold**, rotated 90°
-  reading bottom-to-top, centered on the bar.
-- Color: primary ink for baselines; **Ours in red `#c1121f`**
-  **[knob: SPEEDUP.ours_color]**.
-- Exclusions: the NVSHMEM bar itself (trivially 1.00×, `skip_ref`) and any
-  truncated bar (`skip_truncated`; it shows its true value instead, §2.3).
-  FAST therefore carries a ratio at 4n (not truncated) and none at 16n.
+- Text `"{:.2f}×"` (two decimals + multiplication sign), rotated 90° reading
+  bottom-to-top, centered on the bar.
+- **Weight (REV 2.1)**: regular for baselines, **bold only for Ours** — the
+  postdoc's "reduce strain" ruling **[knob: SPEEDUP.weight, ours_weight]**.
+- **Ink (REV 2.1)**: primary black for every label, including the inside
+  ones on dark fills; **Ours in red `#c1121f`** **[knob: SPEEDUP.ours_color]**.
+  White text on the inside window is reserved for fills darker than OKLCH
+  L 0.40 **[knob: dark_text_L]** — i.e. only when monochrome legibility is
+  genuinely at risk; none of the current fills qualify, so every inside
+  label is black (verified legible on the grayscale proof).
+- **The reference bar carries a "1×" mark (REV 2.1)** **[knob: ref_label]**
+  so readers see which bar the ratios are relative to; it obeys the same
+  placement and weight rules as any baseline label.
+- Exclusion: truncated bars (`skip_truncated`; they show their true value
+  instead, §2.3). FAST therefore carries a ratio at 4n (not truncated) and
+  its true value at 16n.
 - **Placement rule `auto` (above-first)**: the label sits *above* the bar
   when it fits under the y-ceiling; otherwise it sits *inside* the bar,
-  top-anchored, on a solid window in the bar's own color (text flips to
-  white on dark fills, OKLCH L < 0.60). This is what lets the ceiling hug
-  the tallest bar (§3) while short bars still label into the empty space
-  above them. `placement` may be forced to `above` or `inside`.
+  top-anchored, on a solid window in the bar's own color. This is what lets
+  the ceiling hug the tallest bar (§3) while short bars still label into the
+  empty space above them. `placement` may be forced to `above` or `inside`.
 - Fit is decided from an estimated glyph width (0.62 em, bold sans), and the
   generator's audit (§8) then verifies with matplotlib's *rendered* extents
   that no label crosses an axes edge or another label.
@@ -288,3 +295,8 @@ labels), secondary `#52514e` (in-axes model tags), muted `#898781`
      above short bars; the tallest bars host their label on a solid window
      of their own color. Truncated FAST bars show their true value inside
      instead of a ratio.
+- **REV 2.1 (2026-09-02) — label-style rulings after seeing REV 2:**
+  inside labels black (white only below OKLCH L 0.40 — none today); "1×"
+  mark on the NVSHMEM reference bars; speedups regular weight, Ours bold;
+  break glyph confined to its own bar (BREAK_MARK.halfw 0.75 -> 0.52,
+  clipped) — the last is a knob tweak, not a rule.
