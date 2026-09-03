@@ -165,3 +165,9 @@ out-of-basis block; combined with the overlap it leads."
   bars, small group/axis padding, legend on top, verA/verB by chain,
   baseline-left ordering, `w/ feature` naming, vertical speedup labels,
   no error bars, all knobs up front.
+- **REV 0.1 (2026-09-03)** — first render (`make_figure.py`): the 4-entry
+  legend oversets 3.33 in at 6 pt, so it is drawn as 2+2 rows, centered on
+  the page (`LEGEND_X` 0.5, not on the axes), 5.8 pt; axes top margin 0.78.
+  Everything else as REV 0. Rendered values: S-A 65.84 / 58.61 (1.12×) /
+  61.27 (1.07×) / 54.32 (1.21×) / 52.86 (1.25×); S-C 57.61 / 54.77 (1.05×)
+  / 59.01 (0.98×) / 53.56 (1.08×) / 52.24 (1.10×).
