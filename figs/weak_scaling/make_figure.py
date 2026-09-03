@@ -36,9 +36,8 @@ CONFIG = dict(
     BAR_HEADROOM=1.5,                         # right ylim = ceil_nice(max*this)
     HEADROOM=1.12,                            # left ylim = ceil_nice(max*this)
     NICE_STEPS=[(10, 1), (60, 2), (150, 5), (400, 10), (1e9, 50)],
-    FAIL_NOTE=dict(text="does not run\n(128 ranks)", glyph="✗",
-                   tail_color="#8f8f8f", tail_lw=0.8, tail_dash=(2, 1.5),
-                   glyph_size=8, pad_pt=2.5),
+    FAIL_NOTE=dict(text="OOM", glyph="✗", glyph_size=8, pad_pt=2.0,
+                   text_weight="normal"),   # x on the axis baseline + note above
     INK=dict(primary="#0b0b0b", secondary="#52514e", muted="#898781",
              grid="#e1e0d9", axis="#c3c2b7", right="#6f6f6f"),
     # ---- layout ----
@@ -159,25 +158,20 @@ def plot(data, cfg, version):
                      ha="center", va="bottom", fontsize=fs["bar"],
                      color=cfg["INK"]["primary"], zorder=4)
 
-    # ---- COMET fail note at the slots it does not reach ----
+    # ---- COMET fail marker: an x ON the x axis at each slot it lacks, note above ----
     fn = cfg["FAIL_NOTE"]
     ref = cfg["REF"]
-    li, lv = last[ref]
-    missing = [i for i, n in enumerate(cfg["NODES"]) if not data[(n, ref)][metric]]
-    if missing:
-        mi = missing[-1]
-        ax.plot([li, mi], [lv, lv], color=fn["tail_color"], lw=fn["tail_lw"],
-                dashes=fn["tail_dash"], zorder=2)
-        ax.text(mi, lv, fn["glyph"], ha="center", va="center",
-                fontsize=fn["glyph_size"], color=cfg["SERIES"][ref]["color"],
-                fontweight="bold", zorder=4)
-        dpt = ylim / (cfg["FIG_H"] * ax.get_position().height * 72)
-        below = lv > 0.5 * ylim
-        ax.text(mi, lv - (fn["pad_pt"] + fn["glyph_size"] * 0.55) * dpt if below
-                else lv + (fn["pad_pt"] + fn["glyph_size"] * 0.55) * dpt,
-                fn["text"], ha="center", va="top" if below else "bottom",
-                fontsize=fs["note"], color=cfg["INK"]["secondary"],
-                linespacing=1.0, zorder=4)
+    dpt = ylim / (cfg["FIG_H"] * ax.get_position().height * 72)   # data/pt
+    for i, n in enumerate(cfg["NODES"]):
+        if data[(n, ref)][metric]:
+            continue
+        ax.text(i, 0, fn["glyph"], ha="center", va="bottom", fontsize=fn["glyph_size"],
+                color=cfg["SERIES"][ref]["color"], fontweight="bold", zorder=4,
+                clip_on=False)   # seated on the x-axis baseline
+        ax.text(i, (fn["pad_pt"] + fn["glyph_size"] * 1.0) * dpt, fn["text"],
+                ha="center", va="bottom", fontsize=fs["note"],
+                color=cfg["SERIES"][ref]["color"], fontweight=fn["text_weight"],
+                zorder=4)
 
     # ---- chrome ----
     ax.set_xlim(-0.5, len(xs) - 0.5)

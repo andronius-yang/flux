@@ -1,6 +1,6 @@
 # Weak-scaling figure — aesthetic & architecture spec
 
-Status: REV 1.1 (2026-09-02; marker/grid fixes after review). Data authority: `figure_src.csv` (+
+Status: REV 1.2 (2026-09-03; on-axis OOM marker per postdoc). Data authority: `figure_src.csv` (+
 `figure_src.md`). Generator: `make_figure.py` (matplotlib; one `CONFIG`
 block, every **[knob]** below lives there). Two versions from one script:
 **verA** (latency) and **verB** (throughput).
@@ -37,11 +37,11 @@ block, every **[knob]** below lives there). Two versions from one script:
   ceil_nice(max speedup × 1.5) **[knob: BAR_HEADROOM]** so bars occupy the
   lower ~2/3 of the panel and never dominate. Value label
   `"{:.2f}×"` centered above each bar, 5.8 pt, primary ink **[knob]**.
-- **COMET fails at 32n** **[knob: FAIL_NOTE]**: a dashed gray tail continues
-  COMET's line from its 16n value to the 32n slot, ends in an **✗** in the
-  COMET color, with the note `does not run\n(128 ranks)` (5.5 pt) placed
-  below the ✗ when it sits in the upper half of the panel, above it
-  otherwise (auto). The caption carries the reason (§4).
+- **COMET missing at 32n** **[knob: FAIL_NOTE]** (REV 1.2, postdoc): an **✗**
+  in the COMET color sits directly **on the x axis** at the 32n slot, with
+  the short note **OOM** just above it (5.5 pt, COMET color). No dashed
+  tail, nothing floating in the plot area. The caption carries the reason
+  (§4).
 
 ## 3. Layout & chrome
 
@@ -66,14 +66,13 @@ block, every **[knob]** below lives there). Two versions from one script:
   bars use `speedup_vs_comet` where present. Missing COMET cells are
   rendered as the fail note, never as zero. Asserts every expected
   (nodes, system) row exists.
-- COMET 32n: **does not run at 128 ranks** — upstream Flux's dense-dispatch
-  sort kernel keeps a statically 64-rank per-source-rank table
-  (`MaxTpRanks = 64`, `sort_util.cu`, unguarded); at 128 ranks it overflows,
-  corrupts the gather indices and the GEMM faults. Full RCA in
-  `figure_src.md`. Caption wording suggestion: *"COMET does not run at 32
-  nodes: its dense dispatch sorts gathered rows through a statically
-  64-rank table (upstream Flux `MaxTpRanks=64`), which overflows at 128
-  ranks."*
+- COMET 32n at 64 MiB: **OOM on A100-40GB** (verified by session 78f1b4cd,
+  2026-09-03, after the upstream 64-rank sort-table cap was raised — COMET
+  runs at 32n for 1–16 MiB). The dense gathered input is ~8.6 GB/rank at
+  128 ranks; symmetric-heap demand (>17 G) + torch (16.1 GiB) + overhead
+  (6.1 GiB) exceeds 39.5 GB. Full record in `figure_src.md`. Caption
+  wording suggestion: *"COMET's dense all-gather does not fit a 40 GB A100
+  at 32 nodes × 64 MiB (OOM)."*
 - Caveats: 4/8/16n cells are the handoff-30 same-binary set (differ from
   the main figure's capsules by up to ~5% for the same nominal cells —
   user ruling: keep); 2n/32n are the cap-fix binary; NVSHMEM ring omitted

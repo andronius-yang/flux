@@ -29,20 +29,26 @@ per-rank budget, K2 shape (the only model in the weak-scaling campaign).
   capsules for the same nominal 4n/16n cells — ~5% cross-build drift,
   README-bounded ±3.6%).
 
-## COMET at 32 nodes (`does_not_run`)
+## COMET at 32 nodes, 64 MiB (`oom_40gb_a100`)
 
-Root-caused 2026-09-02 from capsule `20260901-075429_perlmutter_04875008`
-and source, no re-run: COMET's dense (all-gather) dispatch sorts each
-expert's gathered rows by source rank in `AgScatterSortOpV2`
-(`src/moe_ag_scatter/sort_util.cu`), whose shared-memory per-source-rank
-counter is statically sized `MaxTpRanks = 64` and unguarded. At 128 ranks
-source ranks 64–127 overflow into the adjacent expert prefix sums, the
-gather indices are corrupted, and the grouped GEMM faults (illegal memory
-access on 2/128 ranks in the first forward; the rest wedge on the dense
-barrier). b1–b4 faulted, b8/b16 wedged to the watchdog, b64 was never
-launched (allocation expired). The constant is inherited from upstream
-ByteDance Flux (MoE release db4ffe0, still 64 on origin/main); 16n = 64
-ranks is exactly the boundary. OURS is unaffected (a2av kernels, caps
-raised to 128 in 4b7d266). The NVSHMEM ring baseline (32n data, no 2n) is
-in the campaign table but not in this figure (USER RULING: bars vs COMET
-only).
+Two-stage story, both verified from capsules (no guesswork):
+
+1. **Original failure (capsule `20260901-075429`, 2026-09-01):** COMET's dense
+   dispatch sorted gathered rows through a statically 64-rank shared-memory
+   table (`MaxTpRanks = 64`, `AgScatterSortOpV2`, `sort_util.cu`, unguarded,
+   inherited from upstream Flux). At 128 ranks it overflowed, corrupted the
+   gather indices, and the GEMM faulted (b1–b4) or wedged (b8/b16). Root-caused
+   2026-09-02 from the rank logs + source.
+2. **After raising the table to 128 (+ a loud guard) — session 78f1b4cd,
+   2026-09-02/03:** COMET **runs at 32n for 1–16 MiB** (capsule
+   `20260902-235755`: 43.3 / 48.6 / 60.0 / 86.4 / 144.2 ms; Ours speedup
+   1.13–2.69×). The **64 MiB cell does not fit an A100-40GB**: the dense
+   gathered input is ~8.6 GB/rank at W=128; NVSHMEM symmetric-heap allocation
+   fails at 13/15/17 G, and at a 24 G heap torch itself OOMs (needs 16.1 GiB +
+   ~6.1 GiB non-torch overhead) — heap >17 + 16.1 + 6.1 > 39.5 GB, so the cell
+   is infeasible on this GPU (probes `20260903-014242`, `20260903-023656`;
+   would fit an 80 GB part). Hence the figure's 32n COMET marker reads
+   **OOM**, not "does not run".
+
+The NVSHMEM ring baseline (32n data, no 2n) is in the campaign table but not
+in this figure (USER RULING: bars vs COMET only).
