@@ -6,8 +6,8 @@ A: seen basis (S-A per-topic),COMET,COMET,COMET,hsPsych,mean over 16 timed iters
 A: seen basis (S-A per-topic),COMET,COMET,COMET,hsWorldHist,mean over 16 timed iters,56.656,,1,f3214016,
 A: seen basis (S-A per-topic),COMET,COMET,COMET,lcb,mean over 16 timed iters,60.155,,1,f3214016,
 A: seen basis (S-A per-topic),COMET,COMET,COMET,philosophy,mean over 16 timed iters,57.235,,1,f3214016,
-A: seen basis (S-A per-topic),COMET,COMET,COMET,proLaw,mean over 16 timed iters,65.336,,1,f3214016,
-A: seen basis (S-A per-topic),COMET,COMET,COMET,ALL,mean over the 8 topics,60.661,2.757,8,f3214016,value = mean of per-topic means; sd = spread over topics
+A: seen basis (S-A per-topic),COMET,COMET,COMET,proLaw,mean over 16 timed iters,65.841,0.320,4,106bd039+62d5f12f+f3214016+f6f23656,
+A: seen basis (S-A per-topic),COMET,COMET,COMET,ALL,mean over the 8 topics,60.724,2.867,8,106bd039+62d5f12f+f3214016+f6f23656,value = mean of per-topic means; sd = spread over topics
 A: seen basis (S-A per-topic),1,1: token-comm overlap,1 token-comm overlap,clinical,mean over 16 timed iters,53.488,,1,f3214016,
 A: seen basis (S-A per-topic),1,1: token-comm overlap,1 token-comm overlap,colmath,mean over 16 timed iters,55.621,,1,f3214016,
 A: seen basis (S-A per-topic),1,1: token-comm overlap,1 token-comm overlap,elecEng,mean over 16 timed iters,53.251,,1,f3214016,
@@ -15,8 +15,8 @@ A: seen basis (S-A per-topic),1,1: token-comm overlap,1 token-comm overlap,hsPsy
 A: seen basis (S-A per-topic),1,1: token-comm overlap,1 token-comm overlap,hsWorldHist,mean over 16 timed iters,52.224,,1,f3214016,
 A: seen basis (S-A per-topic),1,1: token-comm overlap,1 token-comm overlap,lcb,mean over 16 timed iters,54.782,,1,f3214016,
 A: seen basis (S-A per-topic),1,1: token-comm overlap,1 token-comm overlap,philosophy,mean over 16 timed iters,51.984,,1,f3214016,
-A: seen basis (S-A per-topic),1,1: token-comm overlap,1 token-comm overlap,proLaw,mean over 16 timed iters,58.756,,1,f3214016,
-A: seen basis (S-A per-topic),1,1: token-comm overlap,1 token-comm overlap,ALL,mean over the 8 topics,54.377,2.049,8,f3214016,value = mean of per-topic means; sd = spread over topics
+A: seen basis (S-A per-topic),1,1: token-comm overlap,1 token-comm overlap,proLaw,mean over 16 timed iters,58.611,0.277,4,106bd039+62d5f12f+f3214016+f6f23656,
+A: seen basis (S-A per-topic),1,1: token-comm overlap,1 token-comm overlap,ALL,mean over the 8 topics,54.359,2.011,8,106bd039+62d5f12f+f3214016+f6f23656,value = mean of per-topic means; sd = spread over topics
 A: seen basis (S-A per-topic),2,2: placement + routing,2 placement only (pr0),clinical,mean over 16 timed iters,55.971,,1,f3214016,
 A: seen basis (S-A per-topic),2,2: placement + routing,2 placement only (pr0),colmath,mean over 16 timed iters,55.595,,1,f3214016,
 A: seen basis (S-A per-topic),2,2: placement + routing,2 placement only (pr0),elecEng,mean over 16 timed iters,55.856,,1,f3214016,
@@ -24,8 +24,8 @@ A: seen basis (S-A per-topic),2,2: placement + routing,2 placement only (pr0),hs
 A: seen basis (S-A per-topic),2,2: placement + routing,2 placement only (pr0),hsWorldHist,mean over 16 timed iters,55.797,,1,f3214016,
 A: seen basis (S-A per-topic),2,2: placement + routing,2 placement only (pr0),lcb,mean over 16 timed iters,56.940,,1,f3214016,
 A: seen basis (S-A per-topic),2,2: placement + routing,2 placement only (pr0),philosophy,mean over 16 timed iters,55.458,,1,f3214016,
-A: seen basis (S-A per-topic),2,2: placement + routing,2 placement only (pr0),proLaw,mean over 16 timed iters,60.415,,1,f3214016,
-A: seen basis (S-A per-topic),2,2: placement + routing,2 placement only (pr0),ALL,mean over the 8 topics,56.500,1.537,8,f3214016,value = mean of per-topic means; sd = spread over topics
+A: seen basis (S-A per-topic),2,2: placement + routing,2 placement only (pr0),proLaw,mean over 16 timed iters,61.266,0.502,4,106bd039+62d5f12f+f3214016+f6f23656,
+A: seen basis (S-A per-topic),2,2: placement + routing,2 placement only (pr0),ALL,mean over the 8 topics,56.607,1.809,8,106bd039+62d5f12f+f3214016+f6f23656,value = mean of per-topic means; sd = spread over topics
 A: seen basis (S-A per-topic),1+2,1+2 (no expert movement),1+2 static,clinical,mean over 16 timed iters,50.765,,1,f3214016,
 A: seen basis (S-A per-topic),1+2,1+2 (no expert movement),1+2 static,colmath,mean over 16 timed iters,49.211,,1,f3214016,
 A: seen basis (S-A per-topic),1+2,1+2 (no expert movement),1+2 static,elecEng,mean over 16 timed iters,50.622,,1,f3214016,
@@ -33,8 +33,8 @@ A: seen basis (S-A per-topic),1+2,1+2 (no expert movement),1+2 static,hsPsych,me
 A: seen basis (S-A per-topic),1+2,1+2 (no expert movement),1+2 static,hsWorldHist,mean over 16 timed iters,49.979,,1,f3214016,
 A: seen basis (S-A per-topic),1+2,1+2 (no expert movement),1+2 static,lcb,mean over 16 timed iters,50.783,,1,f3214016,
 A: seen basis (S-A per-topic),1+2,1+2 (no expert movement),1+2 static,philosophy,mean over 16 timed iters,49.785,,1,f3214016,
-A: seen basis (S-A per-topic),1+2,1+2 (no expert movement),1+2 static,proLaw,mean over 16 timed iters,53.386,,1,f3214016,
-A: seen basis (S-A per-topic),1+2,1+2 (no expert movement),1+2 static,ALL,mean over the 8 topics,50.657,1.161,8,f3214016,value = mean of per-topic means; sd = spread over topics
+A: seen basis (S-A per-topic),1+2,1+2 (no expert movement),1+2 static,proLaw,mean over 16 timed iters,54.318,0.545,4,106bd039+62d5f12f+f3214016+f6f23656,
+A: seen basis (S-A per-topic),1+2,1+2 (no expert movement),1+2 static,ALL,mean over the 8 topics,50.773,1.442,8,106bd039+62d5f12f+f3214016+f6f23656,value = mean of per-topic means; sd = spread over topics
 A: seen basis (S-A per-topic),1+2+swap seq,"1+2 + expert swap, sequential (reset d4)",1+2 full-orbit swap SEQ d4,clinical,mean over 16 timed iters,51.916,,1,f3214016,
 A: seen basis (S-A per-topic),1+2+swap seq,"1+2 + expert swap, sequential (reset d4)",1+2 full-orbit swap SEQ d4,colmath,mean over 16 timed iters,50.368,,1,f3214016,
 A: seen basis (S-A per-topic),1+2+swap seq,"1+2 + expert swap, sequential (reset d4)",1+2 full-orbit swap SEQ d4,elecEng,mean over 16 timed iters,50.875,,1,f3214016,
@@ -42,8 +42,8 @@ A: seen basis (S-A per-topic),1+2+swap seq,"1+2 + expert swap, sequential (reset
 A: seen basis (S-A per-topic),1+2+swap seq,"1+2 + expert swap, sequential (reset d4)",1+2 full-orbit swap SEQ d4,hsWorldHist,mean over 16 timed iters,51.859,,1,f3214016,
 A: seen basis (S-A per-topic),1+2+swap seq,"1+2 + expert swap, sequential (reset d4)",1+2 full-orbit swap SEQ d4,lcb,mean over 16 timed iters,52.661,,1,f3214016,
 A: seen basis (S-A per-topic),1+2+swap seq,"1+2 + expert swap, sequential (reset d4)",1+2 full-orbit swap SEQ d4,philosophy,mean over 16 timed iters,50.814,,1,f3214016,
-A: seen basis (S-A per-topic),1+2+swap seq,"1+2 + expert swap, sequential (reset d4)",1+2 full-orbit swap SEQ d4,proLaw,mean over 16 timed iters,52.281,,1,f3214016,
-A: seen basis (S-A per-topic),1+2+swap seq,"1+2 + expert swap, sequential (reset d4)",1+2 full-orbit swap SEQ d4,ALL,mean over the 8 topics,51.695,0.847,8,f3214016,value = mean of per-topic means; sd = spread over topics
+A: seen basis (S-A per-topic),1+2+swap seq,"1+2 + expert swap, sequential (reset d4)",1+2 full-orbit swap SEQ d4,proLaw,mean over 16 timed iters,53.391,0.700,4,106bd039+62d5f12f+f3214016+f6f23656,
+A: seen basis (S-A per-topic),1+2+swap seq,"1+2 + expert swap, sequential (reset d4)",1+2 full-orbit swap SEQ d4,ALL,mean over the 8 topics,51.833,1.008,8,106bd039+62d5f12f+f3214016+f6f23656,value = mean of per-topic means; sd = spread over topics
 A: seen basis (S-A per-topic),1+2+swap ovl,"1+2 + expert swap, overlapped (reset d4)",1+2 full-orbit swap OVL d4,clinical,mean over 16 timed iters,51.963,,1,f3214016,
 A: seen basis (S-A per-topic),1+2+swap ovl,"1+2 + expert swap, overlapped (reset d4)",1+2 full-orbit swap OVL d4,colmath,mean over 16 timed iters,49.208,,1,f3214016,
 A: seen basis (S-A per-topic),1+2+swap ovl,"1+2 + expert swap, overlapped (reset d4)",1+2 full-orbit swap OVL d4,elecEng,mean over 16 timed iters,50.190,,1,f3214016,
@@ -51,8 +51,8 @@ A: seen basis (S-A per-topic),1+2+swap ovl,"1+2 + expert swap, overlapped (reset
 A: seen basis (S-A per-topic),1+2+swap ovl,"1+2 + expert swap, overlapped (reset d4)",1+2 full-orbit swap OVL d4,hsWorldHist,mean over 16 timed iters,51.194,,1,f3214016,
 A: seen basis (S-A per-topic),1+2+swap ovl,"1+2 + expert swap, overlapped (reset d4)",1+2 full-orbit swap OVL d4,lcb,mean over 16 timed iters,53.098,,1,f3214016,
 A: seen basis (S-A per-topic),1+2+swap ovl,"1+2 + expert swap, overlapped (reset d4)",1+2 full-orbit swap OVL d4,philosophy,mean over 16 timed iters,49.978,,1,f3214016,
-A: seen basis (S-A per-topic),1+2+swap ovl,"1+2 + expert swap, overlapped (reset d4)",1+2 full-orbit swap OVL d4,proLaw,mean over 16 timed iters,51.969,,1,f3214016,
-A: seen basis (S-A per-topic),1+2+swap ovl,"1+2 + expert swap, overlapped (reset d4)",1+2 full-orbit swap OVL d4,ALL,mean over the 8 topics,51.216,1.231,8,f3214016,value = mean of per-topic means; sd = spread over topics
+A: seen basis (S-A per-topic),1+2+swap ovl,"1+2 + expert swap, overlapped (reset d4)",1+2 full-orbit swap OVL d4,proLaw,mean over 16 timed iters,52.863,0.523,4,106bd039+62d5f12f+f3214016+f6f23656,
+A: seen basis (S-A per-topic),1+2+swap ovl,"1+2 + expert swap, overlapped (reset d4)",1+2 full-orbit swap OVL d4,ALL,mean over the 8 topics,51.328,1.330,8,106bd039+62d5f12f+f3214016+f6f23656,value = mean of per-topic means; sd = spread over topics
 A: seen basis (S-A per-topic),1+2+swap1 seq,"1+2 + one-round swap, sequential (reset d4)",1+2 one-round swap SEQ d4,clinical,mean over 16 timed iters,50.935,,1,f3214016,
 A: seen basis (S-A per-topic),1+2+swap1 seq,"1+2 + one-round swap, sequential (reset d4)",1+2 one-round swap SEQ d4,colmath,mean over 16 timed iters,49.595,,1,f3214016,
 A: seen basis (S-A per-topic),1+2+swap1 seq,"1+2 + one-round swap, sequential (reset d4)",1+2 one-round swap SEQ d4,elecEng,mean over 16 timed iters,50.560,,1,f3214016,
@@ -60,8 +60,8 @@ A: seen basis (S-A per-topic),1+2+swap1 seq,"1+2 + one-round swap, sequential (r
 A: seen basis (S-A per-topic),1+2+swap1 seq,"1+2 + one-round swap, sequential (reset d4)",1+2 one-round swap SEQ d4,hsWorldHist,mean over 16 timed iters,51.123,,1,f3214016,
 A: seen basis (S-A per-topic),1+2+swap1 seq,"1+2 + one-round swap, sequential (reset d4)",1+2 one-round swap SEQ d4,lcb,mean over 16 timed iters,52.608,,1,f3214016,
 A: seen basis (S-A per-topic),1+2+swap1 seq,"1+2 + one-round swap, sequential (reset d4)",1+2 one-round swap SEQ d4,philosophy,mean over 16 timed iters,49.594,,1,f3214016,
-A: seen basis (S-A per-topic),1+2+swap1 seq,"1+2 + one-round swap, sequential (reset d4)",1+2 one-round swap SEQ d4,proLaw,mean over 16 timed iters,51.437,,1,f3214016,
-A: seen basis (S-A per-topic),1+2+swap1 seq,"1+2 + one-round swap, sequential (reset d4)",1+2 one-round swap SEQ d4,ALL,mean over the 8 topics,51.170,1.274,8,f3214016,value = mean of per-topic means; sd = spread over topics
+A: seen basis (S-A per-topic),1+2+swap1 seq,"1+2 + one-round swap, sequential (reset d4)",1+2 one-round swap SEQ d4,proLaw,mean over 16 timed iters,52.159,0.437,4,106bd039+62d5f12f+f3214016+f6f23656,
+A: seen basis (S-A per-topic),1+2+swap1 seq,"1+2 + one-round swap, sequential (reset d4)",1+2 one-round swap SEQ d4,ALL,mean over the 8 topics,51.260,1.315,8,106bd039+62d5f12f+f3214016+f6f23656,value = mean of per-topic means; sd = spread over topics
 A: seen basis (S-A per-topic),1+2+swap1 ovl,"1+2 + one-round swap, overlapped (reset d4)",1+2 one-round swap OVL d4,clinical,mean over 16 timed iters,51.695,,1,f3214016,
 A: seen basis (S-A per-topic),1+2+swap1 ovl,"1+2 + one-round swap, overlapped (reset d4)",1+2 one-round swap OVL d4,colmath,mean over 16 timed iters,52.568,,1,f3214016,
 A: seen basis (S-A per-topic),1+2+swap1 ovl,"1+2 + one-round swap, overlapped (reset d4)",1+2 one-round swap OVL d4,elecEng,mean over 16 timed iters,49.585,,1,f3214016,
@@ -69,8 +69,8 @@ A: seen basis (S-A per-topic),1+2+swap1 ovl,"1+2 + one-round swap, overlapped (r
 A: seen basis (S-A per-topic),1+2+swap1 ovl,"1+2 + one-round swap, overlapped (reset d4)",1+2 one-round swap OVL d4,hsWorldHist,mean over 16 timed iters,51.755,,1,f3214016,
 A: seen basis (S-A per-topic),1+2+swap1 ovl,"1+2 + one-round swap, overlapped (reset d4)",1+2 one-round swap OVL d4,lcb,mean over 16 timed iters,51.957,,1,f3214016,
 A: seen basis (S-A per-topic),1+2+swap1 ovl,"1+2 + one-round swap, overlapped (reset d4)",1+2 one-round swap OVL d4,philosophy,mean over 16 timed iters,49.581,,1,f3214016,
-A: seen basis (S-A per-topic),1+2+swap1 ovl,"1+2 + one-round swap, overlapped (reset d4)",1+2 one-round swap OVL d4,proLaw,mean over 16 timed iters,50.791,,1,f3214016,
-A: seen basis (S-A per-topic),1+2+swap1 ovl,"1+2 + one-round swap, overlapped (reset d4)",1+2 one-round swap OVL d4,ALL,mean over the 8 topics,51.254,1.071,8,f3214016,value = mean of per-topic means; sd = spread over topics
+A: seen basis (S-A per-topic),1+2+swap1 ovl,"1+2 + one-round swap, overlapped (reset d4)",1+2 one-round swap OVL d4,proLaw,mean over 16 timed iters,51.699,0.556,4,106bd039+62d5f12f+f3214016+f6f23656,
+A: seen basis (S-A per-topic),1+2+swap1 ovl,"1+2 + one-round swap, overlapped (reset d4)",1+2 one-round swap OVL d4,ALL,mean over the 8 topics,51.367,1.064,8,106bd039+62d5f12f+f3214016+f6f23656,value = mean of per-topic means; sd = spread over topics
 "B: drift schedule (S-C dwell 4, placement carried over)",COMET,COMET,COMET,ALL,"whole-schedule mean, mean over reps",57.611,0.994,3,46fdee0e+e5fcc8d4+f3ee8e20,
 "B: drift schedule (S-C dwell 4, placement carried over)",COMET,COMET,COMET,ALL,"whole-schedule median, mean over reps",56.186,0.996,3,46fdee0e+e5fcc8d4+f3ee8e20,
 "B: drift schedule (S-C dwell 4, placement carried over)",COMET,COMET,COMET,clinical,"topic-block mean, mean over reps",54.119,0.543,3,46fdee0e+e5fcc8d4+f3ee8e20,

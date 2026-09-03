@@ -128,3 +128,30 @@ this number (`mismatch_vs_gain.csv`).
   0.7 ms on the schedule mean), and the overlapped arm's remaining cost is
   host decision time (~2 ms per event) plus the inter-node imbalance an
   intra-node swap cannot reach (~8 ms on the block).
+
+## Addendum (9/2 19:40) — S-A professional_law cell, 3 same-allocation reps
+
+The one measured point that satisfies BOTH candidate chains
+(COMET > 1 > 1+2 > 1+2+ovl swap and COMET > 2 > 1+2 > 1+2+ovl swap) with
+large speedups. Seen-8 basis, professional_law eval (basis mismatch 1.3–1.8x
+matched), 12 arms, 3 reps in allocation 57878144 (capsules
+20260903-02*_106bd039 / 62d5f12f / f6f23656; the 9/2 single rep in
+f3214016 agrees within 1 ms). Mean ± sd over reps; speedup vs COMET:
+
+| arm | ms | vs COMET |
+|---|---|---|
+| COMET | 66.0 ± 0.2 | — |
+| 2 placement + routing | 61.6 ± 0.1 | -6.8%, 1.07x |
+| 1 token-comm overlap | 58.6 ± 0.3 | -11.3%, 1.13x |
+| 1+2 (no expert movement) | 54.6 ± 0.1 | -17.2%, 1.21x |
+| 1+2 + full-orbit swap, seq / ovl (reset d4) | 53.8 ± 0.3 / 53.2 ± 0.1 | -18.6% / -19.5%, 1.24x |
+| 1+2 + one-round swap, seq / ovl (reset d4) | 52.4 ± 0.2 / 52.0 ± 0.2 | -20.6% / -21.2%, 1.27x |
+| (dwell-1 proxies: full-orbit seq / ovl 59.7 / 56.5; one-round 53.6 / 53.4) | | |
+
+Both chains hold with 3-rep margins: COMET−1 = 7.5, COMET−2 = 4.5,
+1−(1+2) = 3.9, 2−(1+2) = 6.9, (1+2)−ovl = 1.5 (full orbit) / 2.6 (one
+round), seq−ovl = 0.6 / 0.4 (dwell 4) and 3.3 / 0.1 (dwell 1). Every sd
+≤ 0.5 ms. Caveat: one topic (the hardest seen topic for COMET and the
+only seen topic with a swap-recoverable mismatch); the swap arms here are
+the reset-period-4 proxy (one event + 3 quiet iterations), not the
+carried-over schedule.
