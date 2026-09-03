@@ -1,0 +1,19 @@
+# 2026-09-02 gate-mode host breakdown of the swap event (check_iters=1 prints d2h/plan/apply+issue)
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering"
+budgets_mib: [64]
+modes: [isolated]
+iters: 8
+warmup_iters: 3
+skip_correctness: false
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+variants:
+  - ablation_l01_s2_swapall_p2p_r2_gate
+  - ablation_l01_s2_swapall_str4_p2p_r2_gate
+  - ablation_l01_s2_swap_t1_rst_p2p_r2_gate
+notes: "ablswapopt gate 9.2: host-side breakdown of the composed exchange (1 vs 4 streams) and one-round; correctness ON"

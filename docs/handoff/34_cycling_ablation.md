@@ -8,7 +8,7 @@ topk 8, H 7168, ffn 2048), 4 nodes / 16 ranks, budget 64 MiB, isolated
 mode, one binary (`libflux_cuda_ths_op.so` 505e4bed / `libflux_cuda.so`
 4f66d1c4), statistic = per-iteration MAX across ranks of `total_ms`
 (plan_comm + plan + e2e; SCHEMA rule 5), mean over the timed iterations
-unless stated. Two allocations (57861324, 57867155; m5350_g), ~9.5 nh.
+unless stated. Four allocations (57861324, 57867155, 57874427, 57875964; m5350_g), ~19 nh.
 
 ## 0. The ask and the verdict
 
@@ -190,24 +190,33 @@ Per-block trajectory in S-C d4 (iterations 27–30 = the proLaw block,
 64.7 63.5 63.8 | 62.0. The swap arm re-adapts inside the block (third
 iteration at the floor) and pays ~2.5 ms on the way back out.
 
-### 4.4 Repetitions
+### 4.4 Repetitions (3 same-allocation reps for every schedule spec)
 
-S-B schedule specs, 3 same-allocation reps each (whole-schedule mean, mean
-± sd over reps): dwell 4 — COMET 56.44 ± 0.27, slipstream 53.92 ± 0.13,
-pr0 60.61 ± 0.10, static 56.06 ± 0.93, full-orbit seq 54.38 ± 0.21 / ovl
-53.70 ± 0.65, one-round seq 53.74 ± 0.34 / ovl 53.68 ± 1.02; dwell 1 —
-static 54.85 ± 0.07, full-orbit seq 58.18 ± 0.17 / ovl 55.63 ± 0.10,
-one-round seq 53.95 ± 0.27 / ovl 54.80 ± 1.83 (one rep stalled). The
-S-B orderings static > full-orbit seq > full-orbit ovl and full-orbit seq
-> one-round arms are stable across reps; one-round seq vs ovl is a tie at
-dwell 4.
+Whole-schedule mean ± sd over reps [median]:
 
-S-B per-topic cells, 2 reps (second allocation): every per-topic ordering
-of §4.2 reproduces; means shift by ≤1 ms except COMET on hsPsych/hsWorldHist
-(−2.5 ms in the second rep, the cross-allocation ambient offset).
+| arm | S-A d1 | S-A d4 | S-B d1 | S-B d4 | S-C d1 | S-C d4 |
+|---|---|---|---|---|---|---|
+| COMET | 57.6 ± 0.6 [56.9] | 57.3 ± 0.3 [56.8] | 56.4 ± 0.4 [54.8] | 56.4 ± 0.3 [54.6] | 57.5 ± 0.3 [56.8] | 57.6 ± 1.0 [56.2] |
+| 2 placement only (pr0) | 57.5 ± 0.2 [57.7] | 57.5 ± 0.1 [57.1] | 60.0 ± 0.2 [57.0] | 60.6 ± 0.1 [57.5] | 59.8 ± 0.9 [56.3] | 59.0 ± 0.1 [56.5] |
+| 1 token-comm overlap | 54.5 ± 0.4 [54.4] | 54.4 ± 0.4 [54.3] | 54.7 ± 0.8 [53.7] | 53.9 ± 0.1 [53.7] | 55.4 ± 1.7 [54.0] | 54.8 ± 0.3 [54.6] |
+| 1+2 static | 52.8 ± 1.6 [51.1] | 51.4 ± 0.3 [51.2] | 54.9 ± 0.1 [51.8] | 56.1 ± 0.9 [52.1] | 53.8 ± 0.6 [50.9] | 53.6 ± 0.5 [50.8] |
+| full-orbit seq | 56.3 ± 0.1 [56.3] | 52.8 ± 0.6 [52.1] | 58.2 ± 0.2 [55.9] | 54.4 ± 0.2 [53.0] | 56.3 ± 0.4 [55.8] | 52.9 ± 0.4 [51.6] |
+| full-orbit ovl | 54.2 ± 0.8 [54.0] | 51.8 ± 0.2 [52.0] | 55.6 ± 0.1 [54.7] | 53.7 ± 0.7 [53.0] | 53.8 ± 0.3 [53.4] | 52.2 ± 0.4 [51.6] |
+| one-round seq | 52.1 ± 0.2 [52.2] | 52.3 ± 0.1 [52.1] | 54.0 ± 0.3 [52.4] | 53.7 ± 0.3 [53.0] | 53.6 ± 0.8 [53.2] | 52.6 ± 0.2 [51.9] |
+| one-round ovl | 51.9 ± 0.2 [51.7] | 51.8 ± 0.3 [51.6] | 54.8 ± 1.8 [52.4] | 53.7 ± 1.0 [52.3] | 52.2 ± 0.3 [51.7] | 52.9 ± 1.5 [52.0] |
 
-S-A and S-C schedules are single-rep; their swap-rung margins (0.3–2.5 ms)
-need the same 3-rep treatment before they are quoted with error bars.
+S-C d4 professional_law block (mean ± sd over 3 reps): COMET 63.9 ± 0.2,
+pr0 80.0 ± 0.2, slipstream 58.5 ± 0.2, static 72.4 ± 0.3, full-orbit seq
+60.3 ± 0.6 / ovl 58.0 ± 1.3, one-round seq 56.9 ± 0.4 / ovl 56.3 ± 0.3.
+
+Readings: every single-rep ordering of §4.3 survives. The static arm's
+dwell-1 stall reproduces in all reps (S-A d1 mean 52.8 ± 1.6 vs median
+51.1) — a systematic one-iteration ~40 ms event, not noise. Whole-schedule
+swap-rung margins on S-C d4 are 0.7 ms (static − full-orbit seq − ovl) by
+mean and zero by median; on the severe block they are 12–16 ms with sd
+≤ 1.3. S-B per-topic cells (2 reps) reproduce within 1 ms except COMET,
+which is 4–6 ms cheaper on the second allocation on three topics (a
+node-topology effect on the allgather; compare COMET only within a capsule).
 
 ## 5. Analysis and recommendation
 
@@ -255,6 +264,51 @@ need the same 3-rep treatment before they are quoted with error bars.
    (b) the S-C d4 per-iteration trajectory through the severe block
    (adaptation within 3 iterations, re-adaptation cost on exit); (c) the
    seq − ovl overlap benefit vs slots moved per iteration (§5.3).
+
+## 5b. Expert-dispatch overlap: is the exchange fully hidden? (9/2 evening, user-directed)
+
+Question: the swap recovers 11–16 ms on the severe block but the seq/ovl
+knob only moves 1–2 ms — is the expert exchange still exposed? Answer from
+an nsys capture + knob A/B + gate-mode host breakdown (capsules
+753d133b / ced23329 / a2969578, reset-every proLaw so every timed
+iteration is an event; analysis scripts `~scratchpad/nsys_timeline2.py`):
+
+1. **The exchange is already hidden from the GEMM.** Overlapped full
+   orbit: 8 × 29 MB slot copies (235 MB) on one movement stream, 2.4 ms
+   span (~98 GB/s), issued 7–8 ms before the fused l0 GEMM and landed
+   5–6 ms before it; the GEMM duration equals the sequential twin's (no
+   gate spin). Sequential vs overlapped twins have the same e2e (52.6 vs
+   52.0; 53.6 vs 55.5) — the whole difference is the place bracket
+   (10.9 → 3.7 ms): the overlap hides all of the copy + wait, ~7 ms/event.
+2. **What the overlapped arm still pays is host time.** Barrier → l0 GEMM
+   span: static 5.6 ms, ovl 13.8, seq 18.1, one-round 9.0. Gate mode
+   splits the ovl arm's place bracket: load D2H 0.15–0.55, orbit decision
+   2.1–2.2, table apply + issue 0.7–0.8 ms (one-round: 0.1–0.5 / 0.37 /
+   0.4). Offline profile of the orbit on the same inputs: 1.5–1.9 ms =
+   8 rounds × ~35 tiny numpy calls at ~10–12 µs each; rounds give a
+   steady ~3k max-rank rows each (no knee). A multi-exchange-per-pair
+   pass (`--swap_pair_moves`, new, default 1) halves the passes but not
+   the calls (1.9 → 1.6 ms): the floor in numpy is ~1.5 ms; only a
+   compiled orbit (numba/C, = env/build change) reaches ~0.3 ms. At dwell
+   4 the decision is paid once per event, ≤0.5 ms/iteration amortized.
+3. **Knob verdicts (A/B, both bases, every iteration an event):**
+   moved-last tile schedule (now wired for the swap lanes,
+   `FLUX_OURS_SCHED_MOVED_LAST=1`) HURTS: +3 to +6 ms e2e (deferred tiles
+   make a poorly filled GEMM tail while the weights were already
+   resident); 4 movement streams (`FLUX_OURS_SWAP_STREAMS=4`) shorten the
+   copy to 0.9 ms (~260 GB/s) but the timed arm is 1–4 ms WORSE (e2e +2,
+   contention with the dispatch); split issue (one-round) is neutral
+   (−0.2). All default OFF; kept as ablation arms
+   (`ablation_l01_s2_swapall_{ml,str4,ml_str4}[_noov]_p2p_r2`,
+   `ablation_l01_s2_swap_t1_rst_{ml,split}_p2p_r2`, `*_gate` twins).
+4. **Residual above the floor on the severe block = ~3.7 ms host chain
+   (full orbit; 0.8 one-round) + ~8 ms inter-node imbalance the
+   intra-node swap cannot reach** (e2e 55 vs 46–47 floor after the orbit
+   converged). The one-round arm beats the full orbit under reset-every
+   (58.0 vs 59.3) despite worse balance (e2e 54.7 vs 52.0) purely on the
+   decision cost. Levers, in order: cross-node migration for the 8 ms
+   (a different mechanism), a compiled/pipelined decision for ~2 ms,
+   batched stream mem-ops for ~0.3 ms.
 
 ## 6. Caveats and open items
 
@@ -304,6 +358,13 @@ Capsules (all `sweeps/results/runs/20260902-*`, one binary):
 | 192521_f644dd6e, 193713_a91a8c37 | ablsched_sb_d1 reps 2–3 | 8/8 each |
 | 193121_d16e05aa, 194313_30bf8f78 | ablsched_sb_d4 reps 2–3 | 8/8 each |
 | 194912_15c7a486 | ablcycle_sb rep 2 (S-B per-topic) | 48/48 |
+| 231923_c89c644c, 235321_e6d17eb6 | ablsched_sa_d1 reps 2–3 | 8/8 each |
+| 232801_d4a24da5, 0903-000148_b81a9315 | ablsched_sa_d4 reps 2–3 | 8/8 each |
+| 233633_fcef6041, 0903-001033_20abcdfa | ablsched_sc_d1 reps 2–3 | 8/8 each |
+| 234457_e5fcc8d4, 0903-001853_46fdee0e | ablsched_sc_d4 reps 2–3 | 8/8 each |
+| 0903-002800_753d133b | ablswapopt_nsys (5 nsys cells) | 5/5 |
+| 0903-003227_ced23329 | ablswapopt knob A/B (12 arms × 2 bases) | 24/24 |
+| 0903-005110_a2969578 | ablswapopt_gate (host breakdown, correctness on) | 3/3 |
 
 Code (python only, no .so rebuild): `test/python/moe_ag_scatter/test_moe_ours_traffic.py`
 (`--swap_reset_period`, `--routing_sched_files/--routing_dwell`, sizing

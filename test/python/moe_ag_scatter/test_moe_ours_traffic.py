@@ -250,6 +250,10 @@ def parse_args():
                         " fixpoint at decision time, executed as the"
                         " COMPOSED multi-slot exchange in one phase"
                         " (p2p + issue early only).")
+    p.add_argument("--swap_pair_moves", type=int, default=1,
+                   help="ABLATION (2026-09-02): exchanges taken per hot/cold"
+                        " pair per orbit pass (1 = one per re-paired round,"
+                        " the 8/28 greedy); >1 collapses the numpy rounds.")
     p.add_argument("--swap_max_moves", type=int, default=8,
                    help="staging cap for --swap_rounds all: max exchanged"
                         " slots per rank per iteration (round-granular"
@@ -1378,7 +1382,8 @@ def main():
                     # permutation executes as one multi-slot phase.
                     _p2l_f, _l2p_f, _nr = oswap_rt.swap_orbit_capped(
                         load_g, plan.p2l, plan.l2p, plan.lcnts, L,
-                        cfg.nlp, args.swap_max_moves)
+                        cfg.nlp, args.swap_max_moves,
+                        per_pair=args.swap_pair_moves)
                     all_moves = oswap_rt.net_moves(plan.p2l, _p2l_f, L,
                                                    cfg.nlp)
                     swaps = [mv for lst in all_moves for mv in lst]

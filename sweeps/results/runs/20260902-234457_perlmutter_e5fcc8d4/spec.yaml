@@ -1,0 +1,36 @@
+G: 384
+H: 7168
+budgets_mib:
+  - 64
+chunk_bytes: 14336
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy;sched=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy+mmlu/professional_law;dwell=4"
+ffn_hidden: 2048
+idle_timeout_s: 900
+iters: 32
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 7
+nodes: 4
+notes: "ablsched S-C dwell4 9.2: K2 4n b64 oracle = 7 pools EXCLUDING professional_law, 8-topic schedule (1/8 severe), placement carried over, 8 arms"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+shape: k2
+skip_correctness: true
+sm_margin: 8
+timeout_s: 2400
+topk: 8
+variants:
+  - l01_allgather_dense
+  - l01_slipstream
+  - ablation_l01_pr0_pv2_r2
+  - ours_l01_s1_pv2_r2
+  - ablation_l01_s2_swapall_nr_p2p_r2
+  - ablation_l01_s2_swapall_nr_noov_p2p_r2
+  - ours_l01_s2_swap_p2p_t1_r2
+  - ablation_l01_s2_swap_t1_noov_p2p_r2
+warmup_iters: 5

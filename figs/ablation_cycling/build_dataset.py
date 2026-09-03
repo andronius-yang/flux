@@ -99,7 +99,7 @@ def load(cap_dir):
 
 
 def main():
-    caps = sorted(glob.glob(os.path.join(RUNS, "20260902-*")))
+    caps = sorted(glob.glob(os.path.join(RUNS, "20260902-*")) + glob.glob(os.path.join(RUNS, "20260903-*")))
     rows = []
     for c in caps:
         note = open(os.path.join(c, "spec.yaml")).read()

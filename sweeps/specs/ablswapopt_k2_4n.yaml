@@ -1,0 +1,30 @@
+# 2026-09-02 expert-dispatch overlap knob A/B: severe cell (professional_law) under the
+# S-B (4-pool) and S-C (7-pool) bases, reset-every = every timed iteration is a drift event.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering"
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy"
+budgets_mib: [64]
+modes: [isolated]
+iters: 16
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+variants:
+  - ours_l01_s1_pv2_r2
+  - ablation_l01_s2_swapall_p2p_r2
+  - ablation_l01_s2_swapall_noov_p2p_r2
+  - ablation_l01_s2_swapall_ml_p2p_r2
+  - ablation_l01_s2_swapall_str4_p2p_r2
+  - ablation_l01_s2_swapall_str4_noov_p2p_r2
+  - ablation_l01_s2_swapall_ml_str4_p2p_r2
+  - ablation_l01_s2_swapall_ml_str4_noov_p2p_r2
+  - ablation_l01_s2_swap_t1_rst_p2p_r2
+  - ablation_l01_s2_swap_t1_rst_noov_p2p_r2
+  - ablation_l01_s2_swap_t1_rst_ml_p2p_r2
+  - ablation_l01_s2_swap_t1_rst_split_p2p_r2
+notes: "ablswapopt 9.2: K2 4n b64 proLaw under 4-pool and 7-pool bases, reset-every; moved-last / 4-stream / split knobs vs ovl+noov twins"

@@ -1,0 +1,27 @@
+# 2026-09-02 nsys capture of the expert-dispatch overlap: severe cell, reset-every (each profiled
+# iteration is an event). ISOLATED_ITERS + EARLY_LAUNCH per profiling defaults; NVTX proxy ranges on.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering"
+budgets_mib: [64]
+modes: [nsys]
+profile_iters: 3
+iters: 16
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+extra_env:
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+  FLUX_A2AV_EARLY_LAUNCH: "1"
+  FLUX_A2AV_NVTX_PROXY: "1"
+variants:
+  - ours_l01_s1_pv2_r2
+  - ablation_l01_s2_swapall_p2p_r2
+  - ablation_l01_s2_swapall_noov_p2p_r2
+  - ablation_l01_s2_swapall_ml_str4_p2p_r2
+  - ablation_l01_s2_swap_t1_rst_p2p_r2
+notes: "ablswapopt nsys 9.2: K2 4n b64 proLaw 4-pool basis, reset-every, 3 profiled iters; static / swapall ovl / noov / ml+str4 / one-round"

@@ -3485,6 +3485,32 @@ VARIANTS["ablation_l01_s2_swapall_nr_p2p_r2"] = dict(
     _ABL_SWAP_BASE, test_args=list(_ABL_SWAPALL_NR))
 VARIANTS["ablation_l01_s2_swapall_nr_noov_p2p_r2"] = dict(
     _ABL_SWAP_BASE, test_args=list(_ABL_SWAPALL_NR) + ["--swap_overlap", "0"])
+# expert-dispatch OVERLAP knobs (2026-09-02, user-directed): moved-last GEMM
+# tile schedule for the swapped slots (FLUX_OURS_SCHED_MOVED_LAST, now wired
+# for the swap lanes) and N-stream composed exchange (FLUX_OURS_SWAP_STREAMS);
+# reset-every proxies so every timed iteration is a drift event. ABLATION-ONLY.
+_SWAPALL_RST = VARIANTS["ablation_l01_s2_swapall_p2p_r2"]
+_SWAPALL_RST_NOOV = VARIANTS["ablation_l01_s2_swapall_noov_p2p_r2"]
+for _tag, _env in (("ml", {"FLUX_OURS_SCHED_MOVED_LAST": "1"}),
+                   ("str4", {"FLUX_OURS_SWAP_STREAMS": "4"}),
+                   ("ml_str4", {"FLUX_OURS_SCHED_MOVED_LAST": "1",
+                                "FLUX_OURS_SWAP_STREAMS": "4"})):
+    VARIANTS[f"ablation_l01_s2_swapall_{_tag}_p2p_r2"] = dict(
+        _SWAPALL_RST, env=dict(_SWAPALL_RST["env"], **_env))
+    VARIANTS[f"ablation_l01_s2_swapall_{_tag}_noov_p2p_r2"] = dict(
+        _SWAPALL_RST_NOOV, env=dict(_SWAPALL_RST_NOOV["env"], **_env))
+_T1_RST = VARIANTS["ablation_l01_s2_swap_t1_rst_p2p_r2"]
+VARIANTS["ablation_l01_s2_swap_t1_rst_ml_p2p_r2"] = dict(
+    _T1_RST, env=dict(_T1_RST["env"], FLUX_OURS_SCHED_MOVED_LAST="1"))
+_t1_split = list(_T1_RST["test_args"])
+_t1_split[_t1_split.index("--swap_issue") + 1] = "split"
+VARIANTS["ablation_l01_s2_swap_t1_rst_split_p2p_r2"] = dict(
+    _T1_RST, test_args=_t1_split)
+# gate-mode twins (host breakdown print: d2h / plan / apply+issue per iteration)
+for _k in ("ablation_l01_s2_swapall_p2p_r2", "ablation_l01_s2_swapall_str4_p2p_r2",
+           "ablation_l01_s2_swap_t1_rst_p2p_r2"):
+    VARIANTS[_k + "_gate"] = dict(
+        VARIANTS[_k], test_args=VARIANTS[_k]["test_args"] + ["--check_iters", "1"])
 # correctness gate twin of pr0 (OURS-driver arms verify via --check_iters,
 # not the flux-driver correct_* columns)
 VARIANTS["ablation_l01_pr0_gate_pv2_r2"] = dict(

@@ -1,0 +1,36 @@
+G: 384
+H: 7168
+budgets_mib:
+  - 64
+chunk_bytes: 14336
+dtype: bfloat16
+extra_env:
+  FLUX_A2AV_EARLY_LAUNCH: "1"
+  FLUX_A2AV_NVTX_PROXY: "1"
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering"
+ffn_hidden: 2048
+idle_timeout_s: 900
+iters: 16
+matrix_instance: "001"
+modes:
+  - nsys
+n_split_l1: 7
+nodes: 4
+notes: "ablswapopt nsys 9.2: K2 4n b64 proLaw 4-pool basis, reset-every, 3 profiled iters; static / swapall ovl / noov / ml+str4 / one-round"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+shape: k2
+skip_correctness: true
+sm_margin: 8
+timeout_s: 2400
+topk: 8
+variants:
+  - ours_l01_s1_pv2_r2
+  - ablation_l01_s2_swapall_p2p_r2
+  - ablation_l01_s2_swapall_noov_p2p_r2
+  - ablation_l01_s2_swapall_ml_str4_p2p_r2
+  - ablation_l01_s2_swap_t1_rst_p2p_r2
+warmup_iters: 5
