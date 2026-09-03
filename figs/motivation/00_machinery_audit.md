@@ -173,3 +173,23 @@ kwarg `weight_place_wire`, variant twin `eplb_l01_nvplace`, heap sizing in
   wait AFTER GEMM 1.35–3.81 ms (the end-of-op barrier absorbs the spread).
 - Rank rule: extremes of GEMM, extremes of inter-node wire (EPLB: of
   placement and dispatch), + median GEMM; 4–6 ranks, nodes mixed.
+
+## 6. EPLB exposed dispatch wire (2026-09-02, user-directed side lane)
+
+- `--dispatch_wire blocking_ring` (driver) / `enable_blocking_ring_wire` +
+  `_a2av_blocking_ring` (EPLBLayer0Runner) / variant `eplb_l01_nvplace_bwire`
+  / heap add in eplb_sym_size / spec `motivation_4n_k2_nsys_bwire.yaml`.
+  Pack, placement, place, GEMM byte-identical; only the wire changes: one
+  blocking putmem_on_stream per destination in ring order (hidden rows +
+  fp32 probs) from/into symmetric panels laid out source-major like the a2a
+  op, self block = device copy, ONE world barrier. NVTX `disp_put pe<d> <B>`
+  per put. Instrumented lane — never a latency arm.
+- Capsule `20260902-140327_perlmutter_7fd98ac6` (job 57860364, 2/2 ok,
+  correctness on -> bitwise dispatch rows match). b16 per rank: inter-node
+  wire occupancy 6.90–11.26 ms (1.24x) with 92–98 MB sent per rank (equal
+  by construction) and 88–108 MB received; barrier wait before GEMM
+  0.02–4.56 ms (complementary); GEMM 1.97–2.32 (1.08x, balanced). b32:
+  14.8–22.7 ms (1.26x), wait 0.02–7.80. The staged a2a arm hides all of
+  this inside its barrier quiet (13.05–13.34 equalized).
+- Page rebuilt from both capsules (EPLB panel = exposed wire; section
+  "Same EPLB step, two dispatch wires" shows the a2a twin on the same ranks).

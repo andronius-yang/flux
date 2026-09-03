@@ -946,7 +946,15 @@ def eplb_sym_size(matrix_path, plat, spec, v=None):
     hidden = 2 * w * max_pair_bytes                   # in+out staging, row bytes
     probs = 2 * w * (max_pair_bytes // chunk) * 4     # one fp32 per row (no dedup)
     place = eplb_place_sym_bytes(w, spec, v)          # nvshmem placement wire only
-    sym_g = max(2, math.ceil((2 * (hidden + probs) + place) / (1 << 30)))
+    bwire = 0
+    ta = (v or {}).get("test_args") or []
+    if "--dispatch_wire" in ta and ta[ta.index("--dispatch_wire") + 1] == "blocking_ring":
+        # exposed-wire side lane: symmetric send panel (row sum, equal on
+        # every rank) + recv panel (max post-placement column <= 1.25x the
+        # pre-placement max column, EPLB only lowers the max) + fp32 probs
+        max_col_bytes = max(sum(vals[src * w + dst] for src in range(w)) for dst in range(w))
+        bwire = int(1.25 * (max_pair_bytes + max_col_bytes) * (1 + 4 / chunk))
+    sym_g = max(2, math.ceil((2 * (hidden + probs) + place + bwire) / (1 << 30)))
     sym_max = plat.get("sym_size_max_g")
     if sym_max:
         sym_g = min(sym_g, int(sym_max))
@@ -1266,6 +1274,21 @@ def build_cell_env(spec, plat, cell, staging, matrix):
     env["FLUX_SWEEP_RECORD_DIR"] = os.path.join(staging, "records")
     env["FLUX_EXTRA_TORCHRUN_ARGS"] = f"--redirects 3 --log-dir {os.path.join(staging, 'torchrun')}"
     env.update(spec.get("extra_env") or {})
+    # spec-level heap override (2026-09-03, COMET 32n b64): the exact sizer
+    # under-estimates the dense allgather path at W=128 (15G sized, heap
+    # exhausted at flux_shm.cc:117). Applied AFTER sizing and the platform
+    # cap, recorded in env_json like every other knob; the skipped_capacity
+    # guard still keys on _A2AV_SYM_G_REQUIRED. Use only for targeted
+    # re-runs, never in canon specs.
+    ovr = spec.get("sym_size_override_g")
+    if ovr and "NVSHMEM_SYMMETRIC_SIZE" in env:
+        env["NVSHMEM_SYMMETRIC_SIZE"] = f"{int(ovr)}G"
+    # generic targeted env override (same contract: recorded in env_json,
+    # never in canon specs) — e.g. PYTORCH_CUDA_ALLOC_CONF for memory-wall
+    # probes.
+    for k_, v_ in (spec.get("env_override") or {}).items():
+        env[str(k_)] = str(v_)
+
     return env
 
 

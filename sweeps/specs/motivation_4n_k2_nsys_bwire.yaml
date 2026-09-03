@@ -1,0 +1,28 @@
+# Motivation-figure side lane (2026-09-02): EPLB with the dispatch wire
+# EXPOSED — blocking putmem_on_stream per destination + world barrier in
+# place of the staged a2a kernel (whose nbi puts complete inside the
+# barrier and hide every per-destination span). Same placement wire, same
+# pack/place/GEMM, same routing/matrices as motivation_4n_k2_nsys.yaml.
+# Correctness ON (bitwise dispatch rows prove the wire). Instrumented:
+# never quote latency.
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [eplb_l01_nvplace_bwire]
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [16, 32]
+modes: [nsys]
+extra_env:
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+matrix_instance: "001"
+skip_correctness: false
+sm_margin: 8
+n_split_l1: 7
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 0
+notes: "motivation figure side lane: eplb exposed dispatch wire (blocking ring puts), 4n K2 lcb b16+b32, nsys isolated"

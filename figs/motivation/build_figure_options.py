@@ -20,9 +20,11 @@ CLASSES = {  # class -> (label, light, dark)
 }
 ARMS = [
     ("l01_nvshmem", "A2AV + GEMM", "NVSHMEM blocking-put ring dispatch, then un-overlapped grouped GEMM"),
-    ("eplb_l01_nvplace", "EPLB", "static pool-oracle placement (replicated hot experts), direct a2a dispatch, per-slot GEMM"),
+    ("eplb_l01_nvplace_bwire", "EPLB", "static pool-oracle placement (replicated hot experts), direct a2a dispatch with the wire exposed (one blocking put per destination), per-slot GEMM"),
     ("l01_allgather_dense", "COMET", "dense all-gather: inter-node fetch gate, intra-node P2P, tile-gated fused GEMM"),
 ]
+EPLB_A2A = ("eplb_l01_nvplace", "EPLB, staged a2a kernel", "same placement / pack / place / GEMM; dispatch = All2AllSingle kernel (nbi puts complete inside the barrier)")
+IS_EPLB = lambda arm: arm.startswith("eplb")
 
 
 def classify(name, place=False):
@@ -58,7 +60,7 @@ def rank_metrics(cell, rk, it, arm=""):
     for s in segs: s["t1"] = min(s["t1"], cut)
     g = [s for s in segs if s["cls"] == "gemm"]
     g_t0 = min([x["t0"] for x in g], default=cut)
-    if arm == "eplb_l01_nvplace":
+    if arm == "eplb_l01_nvplace":  # the staged a2a arm only (the exposed-wire twin keeps inter/intra/wait)
         # the direct-a2a kernel only ISSUES nbi puts; their completion (the
         # actual wire time) is forced inside the following barrier's quiet,
         # so wire + wait before the GEMM are one inseparable class
@@ -111,11 +113,15 @@ def pick_ranks(cell, arm, M, P):
             chosen.append(r); why.append((r, reason))
     add(arg(max, lambda r: M[r]["gemm"]), "longest expert GEMM (most routed rows)")
     add(arg(min, lambda r: M[r]["gemm"]), "shortest expert GEMM (fewest routed rows)")
-    if arm == "eplb_l01_nvplace":
+    if IS_EPLB(arm):
         add(arg(max, lambda r: P[r]["span"]), "longest placement (pushes the most replicated experts)")
         add(arg(min, lambda r: P[r]["span"]), "shortest placement")
-        add(arg(max, lambda r: M[r]["dispatch_span"]), "longest dispatch (a2a kernel + barrier wait)")
-        add(arg(min, lambda r: M[r]["dispatch_span"]), "shortest dispatch")
+        if arm.endswith("_bwire"):
+            add(arg(max, lambda r: M[r]["inter"]), "longest inter-node dispatch wire occupancy")
+            add(arg(min, lambda r: M[r]["inter"]), "shortest inter-node dispatch wire occupancy")
+        else:
+            add(arg(max, lambda r: M[r]["dispatch_span"]), "longest dispatch (a2a kernel + barrier wait)")
+            add(arg(min, lambda r: M[r]["dispatch_span"]), "shortest dispatch")
     else:
         add(arg(max, lambda r: M[r]["inter"]), "longest inter-node wire occupancy")
         add(arg(min, lambda r: M[r]["inter"]), "shortest inter-node wire occupancy")
@@ -178,7 +184,7 @@ def stat_line(cell, arm, r, M, P):
 def option_a(cell, arm, title, M, P, chosen, iter_name):
     LW, RW, W = 150, 330, 1180
     rowh, gap = 22, 8
-    place = arm == "eplb_l01_nvplace"
+    place = IS_EPLB(arm)
     PW = 260 if place else 0                       # placement sub-axis width
     x0 = LW + (PW + 40 if place else 0)
     tmax = max(M[r]["cut"] for r in chosen) * 1.02
@@ -221,7 +227,7 @@ def option_b(cell, arm, title, M, P, chosen, iter_name):
     LW, RW, W = 150, 330, 1180
     laneh, lanegap, rowgap = 9, 3, 12
     lanes = ["inter", "intra", "gemm"]
-    place = arm == "eplb_l01_nvplace"
+    place = IS_EPLB(arm)
     PW = 260 if place else 0
     x0 = LW + (PW + 40 if place else 0)
     tmax = max(M[r]["cut"] for r in chosen) * 1.02
@@ -296,7 +302,7 @@ def option_c(cells, iter_name):
 
 def meter_vals(arm, M, P, mk):
     if mk == "place":
-        return {r: P[r]["span"] for r in P} if arm == "eplb_l01_nvplace" and P else {}
+        return {r: P[r]["span"] for r in P} if IS_EPLB(arm) and P else {}
     if mk == "dispatch":
         return {r: M[r]["dispatch_span"] for r in M}
     return {r: M[r]["gemm"] for r in M}
@@ -309,7 +315,7 @@ def table(cell, arm, M, P, chosen, why):
             "<th>dispatch span</th><th>NIC wire (a2a for EPLB)</th><th>NVLink wire</th><th>wait before GEMM</th><th>wait after GEMM</th><th>GEMM0</th><th>layer-0 end</th><th>drawn</th></tr></thead><tbody>"]
     for r in sorted(M, key=int):
         m = M[r]; ri = int(r)
-        if arm == "eplb_l01_nvplace":
+        if IS_EPLB(arm):
             wb = cell["info"]["eplb_wire_bytes"]["0"]; W, rpn = cell["W"], cell["rpn"]
             ib = sum(wb[ri][d] for d in range(W) if d // rpn != ri // rpn); rr = cell["info"]["gemm_rows_per_rank"]["0"][ri]
         elif arm == "l01_allgather_dense":
@@ -383,17 +389,18 @@ a{color:var(--accent)}
 LEGEND = "".join(f'<span><i class="sw {k}" style="{"" if k == "wait" else f"background:var(--c-{k})"}"></i>{esc(v[0])}</span>' for k, v in CLASSES.items())
 
 
-def make_panels(data, budget):
+def make_panels(data, budget, arms=None):
     cells = {}
     for cid, c in data["cells"].items():
         if c["budget_mib"] == budget and c["status"] == "ok": cells[c["variant"]] = c
     panels = []
-    for arm, title, desc in ARMS:
+    for arm, title, desc in (arms or ARMS):
+        if arm not in cells: continue
         cell = cells[arm]
         iters = sorted(cell["ranks"]["0"]["iters"])
         it = iters[len(iters) // 2]
         M = {r: rank_metrics(cell, r, it, arm) for r in cell["ranks"]}
-        P = {r: place_metrics(cell, r) for r in cell["ranks"]} if arm == "eplb_l01_nvplace" else None
+        P = {r: place_metrics(cell, r) for r in cell["ranks"]} if IS_EPLB(arm) else None
         chosen, why = pick_ranks(cell, arm, M, P)
         panels.append((arm, title, desc, cell, M, P, chosen, why, it))
     return panels
@@ -449,6 +456,18 @@ def build(data, budget, out_path, capsule_meta, appendix_budget=None):
     H.append(f"<figure>{option_c([(arm, cell, M, P, chosen) for arm, title, desc, cell, M, P, chosen, why, it in panels], panels[0][8])}<figcaption>Placement is a one-shot cost (EPLB only) on the same ms scale as the per-step meters — that is the point, not a mistake. Dispatch span = first wire event to last wait before the GEMM.</figcaption></figure>")
     H.append("<div class=\"grid2\"><div><h3>Why it works</h3><ul><li>Uses all 16 ranks, so no reviewer can ask whether the chosen ranks were cherry-picked.</li><li>The horizontal shift of the wide cluster from meter to meter across the three rows <i>is</i> the title of the section.</li><li>Compact: fits in a single column with room for the caption.</li></ul></div><div><h3>Risks</h3><ul><li>Loses the pipeline order; a reader who has not seen a timeline may not know that the dispatch meter precedes the GEMM meter.</li><li>Placement dots dwarf the others; the scale is per meter, which must be stated.</li></ul></div></div></section>")
 
+    # ---- EPLB: exposed wire vs staged a2a kernel, same ranks
+    a2a = make_panels(data, budget, [EPLB_A2A])
+    bw = [p for p in panels if p[0] == "eplb_l01_nvplace_bwire"]
+    if a2a and bw:
+        arm, title, desc, cell, M, P, chosen, why, it = bw[0]
+        a_arm, a_title, a_desc, a_cell, a_M, a_P, _, _, a_it = a2a[0]
+        H.append('<section class="opt"><div class="eyebrow">Why the EPLB panel uses the exposed wire</div><h2>Same EPLB step, two dispatch wires</h2>')
+        H.append("<p>The staged All2AllSingle kernel only issues non-blocking device puts; their completion happens inside the following barrier's quiet, so nsys shows one short kernel and one long barrier per rank and no per-destination structure. The side lane replaces only the wire: one blocking put per destination in ring order plus one world barrier, with pack, placement, place and GEMM byte-identical (the bitwise dispatch check passed). Same ranks in both strips.</p>")
+        H.append(f"<figure>{option_a(cell, arm, 'EPLB, exposed wire (blocking put per destination)', M, P, chosen, it)}<figcaption>Exposed wire: each blue span is one inter-node put to one destination; NVLink puts are aqua; hatched = waiting at the world barrier for the other ranks.</figcaption></figure>")
+        H.append(f"<figure>{option_a(a_cell, a_arm, 'EPLB, staged a2a kernel (what the paper baseline runs)', a_M, a_P, chosen, a_it)}<figcaption>Staged kernel: the same bytes move, but the wire time is inside the barrier's quiet (magenta), so the per-rank structure is invisible. The two captures are separate capsules on the same python-only binary; this comparison is about shape, not latency.</figcaption></figure>")
+        H.append("</section>")
+
     # ---- rank-selection tables
     H.append("<h2>Rank selection and every labelled number</h2>")
     H.append("<p>Selection rule, applied identically per baseline: the two ranks at the extremes of the expert-GEMM duration (most and fewest routed rows), the two at the extremes of the inter-node wire (or, for EPLB, of placement and of dispatch), plus the median-GEMM rank as the typical case. Ranks are drawn from all four nodes; node membership is shown because inter-node incast depends on it. Highlighted rows are the drawn ranks; the last column gives the reason.</p>")
@@ -482,10 +501,12 @@ def build(data, budget, out_path, capsule_meta, appendix_budget=None):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("json"); ap.add_argument("--budget", type=int, default=16); ap.add_argument("--out", required=True)
+    ap.add_argument("json", nargs="+"); ap.add_argument("--budget", type=int, default=16); ap.add_argument("--out", required=True)
     ap.add_argument("--meta", default="{}"); ap.add_argument("--appendix-budget", type=int, default=0)
     a = ap.parse_args()
-    data = json.load(open(a.json))
+    data = {"cells": {}}
+    for j in a.json:
+        data["cells"].update(json.load(open(j))["cells"])
     panels = build(data, a.budget, a.out, json.loads(a.meta), a.appendix_budget or None)
     for arm, title, desc, cell, M, P, chosen, why, it in panels:
         print(title, it, "chosen", chosen, {r: round(M[r]["gemm"], 2) for r in chosen})

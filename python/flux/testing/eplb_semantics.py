@@ -64,6 +64,7 @@ from .ep_gpu_plan import (
 # nowhere in production.
 REPLICA_SELECT_MODES = ("local_spread", "local_static", "quota")
 from .ultraep_semantics import (
+    wire_matrix,
     UltraEPConfig,
     UltraEPPlan,
     UltraEPLayer0Runner,
@@ -694,6 +695,80 @@ class EPLBLayer0Runner(UltraEPLayer0Runner):
         self.weight_place_ms = (time.perf_counter() - t0) * 1e3
         self.weight_place_bytes = recv_bytes
         return recv_bytes, self.weight_place_ms
+
+    # -- side lane (2026-09-02, motivation figure): EXPOSED dispatch wire ----
+    #
+    # The staged All2AllSingle kernel only ISSUES nbi puts; their completion
+    # is forced inside the following barrier's quiet, so nsys shows one
+    # short kernel plus one long barrier per rank and NO per-destination
+    # spans. This lane keeps pack/place/GEMM byte-identical and replaces the
+    # wire with the ring baseline's: one BLOCKING nvshmemx_putmem_on_stream
+    # per destination in ring order ((rank+1..rank+W-1) % W), hidden rows
+    # and fp32 probs, self block = device copy, ONE world barrier as the
+    # fence (wire rule 6a; consumers gate on the barrier). Every put is its
+    # own device span (P2P copy intra-node, proxy RMA kernel inter-node)
+    # with known bytes — the per-rank dispatch imbalance that survives
+    # expert load balancing becomes visible. Instrumented lane: never quote
+    # its latency against the a2a arm.
+    def enable_blocking_ring_wire(self):
+        import flux  # GPU-side only
+        assert self.transport == "nvshmem", "blocking ring wire needs the nvshmem transport"
+        cfg = self.cfg
+        rows = wire_matrix(cfg, self.plan, self._topk_all)  # [R][R] rows, host, replicated
+        R = cfg.R; me = self.rank
+        self._bw_rows = rows
+        self._bw_cnt = [int(rows[me][d]) for d in range(R)]
+        self._bw_soff = [sum(self._bw_cnt[:d]) for d in range(R)]
+        self._bw_doff = [sum(int(rows[s][d]) for s in range(me)) for d in range(R)]
+        n_send = sum(self._bw_cnt); recv_max = max(sum(int(rows[s][d]) for s in range(R)) for d in range(R))
+        assert n_send == self.n_send, (n_send, self.n_send)
+        H = cfg.H
+        # symmetric panels: identical shapes on every PE (collective alloc);
+        # send rows == S*K on every rank (budget invariant), recv = max column
+        self._bw_send = flux.nvshmem_create_tensor([n_send, H], self.dtype)
+        self._bw_recv = flux.nvshmem_create_tensor([max(recv_max, 1), H], self.dtype)
+        self._bw_wsend = flux.nvshmem_create_tensor([n_send], torch.float32)
+        self._bw_wrecv = flux.nvshmem_create_tensor([max(recv_max, 1)], torch.float32)
+        # pack writes straight into the symmetric send panels; place reads
+        # the symmetric recv panels (source-major, same layout as a2a)
+        self.send_buf = self._bw_send
+        self.wsend_buf = self._bw_wsend
+        self.recv_buf = self._bw_recv[:self.n_recv]
+        self.wrecv_buf = self._bw_wrecv[:self.n_recv]
+        self._bw_row_bytes = H * self.dtype.itemsize
+        self.dispatch_wire = "blocking_ring"
+
+    def _a2av_blocking_ring(self):
+        import flux
+        R = self.cfg.R; me = self.rank
+        assert list(self.lay.send_counts) == self._bw_cnt, "per-iteration send counts drifted from the wire matrix"
+        stream = torch.cuda.current_stream().cuda_stream
+        rb = self._bw_row_bytes
+        for off in range(1, R):
+            d = (me + off) % R
+            c = self._bw_cnt[d]
+            if not c:
+                continue
+            with torch.cuda.nvtx.range(f"disp_put pe{d} {c * rb}B"):
+                flux.nvshmem_putmem_on_stream(
+                    self._bw_recv.data_ptr() + self._bw_doff[d] * rb,
+                    self._bw_send.data_ptr() + self._bw_soff[d] * rb,
+                    c * rb, d, stream)
+                flux.nvshmem_putmem_on_stream(
+                    self._bw_wrecv.data_ptr() + self._bw_doff[d] * 4,
+                    self._bw_wsend.data_ptr() + self._bw_soff[d] * 4,
+                    c * 4, d, stream)
+        c = self._bw_cnt[me]
+        if c:
+            so, do = self._bw_soff[me], self._bw_doff[me]
+            self._bw_recv[do:do + c].copy_(self._bw_send[so:so + c])
+            self._bw_wrecv[do:do + c].copy_(self._bw_wsend[so:so + c])
+        flux.nvshmem_barrier_all_on_stream(stream)
+
+    def a2av(self):
+        if getattr(self, "dispatch_wire", "a2a") == "blocking_ring":
+            return self._a2av_blocking_ring()
+        return super().a2av()
 
     def _place_weights_nvshmem(self, pairs, group):
         """Same placement, one-sided wire (2026-09-02): the ORIGINAL HOME of

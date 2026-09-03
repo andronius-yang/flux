@@ -483,6 +483,14 @@ def parse_args():
                         " expert's original home + world barrier (per-put"
                         " spans/bytes visible in nsys; needs --transport"
                         " nvshmem|fused for the symmetric heap)")
+    parser.add_argument("--dispatch_wire", default="a2a",
+                        choices=["a2a", "blocking_ring"],
+                        help="nvshmem transport only: a2a = staged"
+                        " All2AllSingle kernel (nbi puts, completion in the"
+                        " barrier — historical); blocking_ring = one blocking"
+                        " putmem_on_stream per destination in ring order +"
+                        " world barrier (EXPOSED per-put spans/bytes in nsys;"
+                        " instrumented side lane, never a latency arm)")
     parser.add_argument("--transport", default="nccl",
                         choices=["nccl", "nvshmem", "fused"],
                         help="dispatch transport: NCCL alltoallv, flux's"
@@ -514,6 +522,9 @@ if __name__ == "__main__":
     if args.replica_select is None:
         args.replica_select = (
             "local_spread" if args.transport == "fused" else "quota")
+    assert not (args.dispatch_wire == "blocking_ring"
+                and args.transport != "nvshmem"), (
+        "--dispatch_wire blocking_ring needs --transport nvshmem")
     assert not (args.weight_place_wire == "nvshmem"
                 and args.transport == "nccl"), (
         "--weight_place_wire nvshmem needs the symmetric heap"
@@ -629,6 +640,8 @@ if __name__ == "__main__":
     if args.transport == "nvshmem":
         # collective + device-syncing ctor: setup only, never timed
         runner.enable_nvshmem(DIST_ENV.LOCAL_WORLD_SIZE, args.num_comm_sm)
+        if args.dispatch_wire == "blocking_ring":
+            runner.enable_blocking_ring_wire()
     elif args.transport == "fused":
         # campaign-2 canonical wire (collective ctor: symmetric recv/
         # signal allocation + priming; capacity = deployment-scope bounds)
@@ -759,6 +772,7 @@ if __name__ == "__main__":
             eplb_interleave=not args.no_interleave,
             eplb_weight_place=args.weight_place,
             eplb_weight_place_wire=args.weight_place_wire,
+            eplb_dispatch_wire=args.dispatch_wire,
             eplb_weight_place_ms_oneshot=place_ms,
             eplb_transport=args.transport,
         )
