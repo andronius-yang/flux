@@ -130,7 +130,7 @@ def build(data, out, placement_frac, absolute, budget, n_ranks):
     rank_h = 3 * LANE_H + 2 * LANE_GAP
     D = Doc()
     y = TOP
-    if pw: D.text(L_GUT, y + 6, "expert placement (relative)", 6, "labels", color=INK2)
+    if pw: D.text(L_GUT, y + 6, "placement (rel.)", 6, "labels", color=INK2)
     D.text(tx0, y + 6, "token dispatch → expert GEMM" + (" (ms, shared scale)" if absolute else " (relative per baseline)"), 6, "labels", color=INK2)
     y += HEAD_H
     ledger = []
@@ -159,7 +159,8 @@ def build(data, out, placement_frac, absolute, budget, n_ranks):
                     for s in P[r]["lanes"][ln]:
                         D.rect(L_GUT + s["t0"] / P[r]["span"] * ps, lanes_y[ln], (s["t1"] - s["t0"]) / P[r]["span"] * ps, LANE_H, COL["place"] if ln == "inter" else COL["intra"], "bars",
                                f"r{r} placement {ln} {s['t0']:.1f}–{s['t1']:.1f} ms")
-                D.text(L_GUT + ps + 1.5, lanes_y["gemm"] + LANE_H, f"{P[r]['span']:.0f} ms · {P[r]['inter_bytes'] / 2**30:.1f} GB", 5, "labels", color=INK2)
+                # label on the (empty) SM lane of the placement column, right-aligned to the column edge
+                D.text(L_GUT + pw - 1, lanes_y["gemm"] + LANE_H - 0.2, f"{P[r]['span']:.0f} ms · {P[r]['inter_bytes'] / 2**30:.1f} GB", 5, "labels", "end", INK2)
             D.text(COL_W - 1, y + rank_h / 2 + 2, annot(cell, arm, r), 5.5, "labels", "end", INK2)
             ledger.append(dict(baseline=title, rank=r, node=int(r) // cell["rpn"], why=why[r], total_ms=round(m["total"], 2), inter_ms=round(m["inter"], 2),
                                intra_ms=round(m["intra"], 2), wait_ms=round(m["wait"], 2), gemm_ms=round(m["gemm"], 2), barrier_ms=None if m["barrier"] is None else round(m["barrier"], 2),
