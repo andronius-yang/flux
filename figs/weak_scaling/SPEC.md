@@ -1,7 +1,7 @@
 # Weak-scaling figure — aesthetic & architecture spec
 
-Status: REV 2.0 (2026-09-03; `--baseline nvshmem` variant per user, REV 1.2 COMET
-renders unchanged). Data authority: `figure_src.csv` (+
+Status: REV 2.1 (2026-09-03; `--budget 1` variant per user — does the ring
+speedup hold at small node counts? REV 2.0/1.2 renders unchanged). Data authority: `figure_src.csv` (+
 `figure_src.md`). Generator: `make_figure.py` (matplotlib; one `CONFIG`
 block, every **[knob]** below lives there). Two versions from one script:
 **verA** (latency) and **verB** (throughput).
@@ -93,6 +93,13 @@ block, every **[knob]** below lives there). Two versions from one script:
   Ours in one capsule; the Ours row keeps the COMET-capsule value 36.092 ms,
   the ring capsule's 36.097 ms agrees within 0.01%).
 - The default (no flag) still produces the COMET renders byte-identically.
+- **Budget switch (REV 2.1)** **[knob: BUDGET]**: `--budget 1` plots the
+  1 MiB rows of `figure_src.csv` (72 pre-topk tokens/rank; verB throughput
+  scales accordingly); outputs gain a `_b1` infix
+  (`weak_scaling_nvshmem_b1_ver{A,B}.{pdf,png}`). 64 MiB stays the
+  unsuffixed canon. The 1 MiB story is the fixed-cost regime: the ring
+  speedup is 1.18× at 2n and grows with node count (1.33 / 1.62 / 1.92 /
+  2.08×) — the opposite shape from 64 MiB, where it is ~2.4–3.1× flat.
 
 ## 5. Output & checks
 

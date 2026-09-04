@@ -4,6 +4,7 @@
 Usage:  python3 make_figure.py                    (COMET baseline; weak_scaling_ver{A,B}.{pdf,png})
         python3 make_figure.py --baseline nvshmem (NVSHMEM+GEMM ring baseline;
                                                    weak_scaling_nvshmem_ver{A,B}.{pdf,png})
+        ... --budget 1                            (1 MiB rows; output prefix gains _b1)
 
 Every aesthetic decision lives in CONFIG below; VERSIONS holds the per-version
 differences. Values are true points/inches at final size (\\columnwidth).
@@ -81,10 +82,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def load(cfg):
-    """-> data[(nodes, system)] = row dict; asserts the grid is complete."""
+    """-> data[(nodes, system)] = row dict for cfg["BUDGET"]; asserts the grid is complete."""
     data = {}
     with open(os.path.join(HERE, "figure_src.csv"), newline="") as f:
         for r in csv.DictReader(f):
+            if int(r["budget_mib"]) != cfg["BUDGET"]:
+                continue
             data[(int(r["nodes"]), r["system"])] = r
     for n in cfg["NODES"]:
         for s in cfg["SYSTEMS"]:
@@ -222,15 +225,17 @@ def plot(data, cfg, version):
     return fig
 
 
-def configure(baseline):
-    """CONFIG specialized to one baseline (REF, SYSTEMS, labels, output names)."""
+def configure(baseline, budget=64):
+    """CONFIG specialized to one baseline (REF, SYSTEMS, labels, output names) and budget."""
     b = CONFIG["BASELINES"][baseline]
     cfg = dict(CONFIG)
+    cfg["BUDGET"] = budget
+    tag = "" if budget == 64 else f"_b{budget}"   # 64 MiB = the unsuffixed canon
     cfg["REF"], cfg["SYSTEMS"], cfg["RIGHT_LABEL"] = b["REF"], b["SYSTEMS"], b["RIGHT_LABEL"]
     cfg["BARS"] = dict(CONFIG["BARS"], label=b["BAR_LABEL"])
     cfg["LEGEND"] = dict(CONFIG["LEGEND"], **b.get("LEGEND", {}))
     cfg["VERSIONS"] = {
-        v: dict(vc, outputs=[(b["prefix"] + v + ext, kw) for ext, kw in
+        v: dict(vc, outputs=[(b["prefix"].replace("_ver", tag + "_ver") + v + ext, kw) for ext, kw in
                              [(".pdf", {}), (".png", {"dpi": 300})]])
         for v, vc in CONFIG["VERSIONS"].items()}
     return cfg
@@ -240,7 +245,10 @@ def main():
     baseline = "comet"
     if "--baseline" in sys.argv:
         baseline = sys.argv[sys.argv.index("--baseline") + 1]
-    cfg = configure(baseline)
+    budget = 64
+    if "--budget" in sys.argv:
+        budget = int(sys.argv[sys.argv.index("--budget") + 1])
+    cfg = configure(baseline, budget)
     data = load(cfg)
     for version, vcfg in cfg["VERSIONS"].items():
         fig = plot(data, cfg, version)

@@ -14,3 +14,18 @@ nodes,ranks,system,budget_mib,total_ms,tokens_per_rank,total_tokens,throughput_m
 32,128,ours,64,120.173,4680,599040,4.9848,,3.068,ok,20260901-024555_perlmutter_ffb6e32d,ours_l01_s1_pv2_r2_trace-610042_b64_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,
 32,128,comet,64,,4680,599040,,,,oom_40gb_a100,20260902-235755_perlmutter_81951099,l01_allgather_dense_trace-610042_b64_k8_isolated,figs/weak_scaling/weak_scaling_speedup_table.csv,"64 MiB at 128 ranks does not fit A100-40GB: NVSHMEM symmetric heap exhausted at 13G/15G/17G (flux_shm.cc:117), 24G heap -> torch OOM (needs 16.1 GiB + ~6.1 GiB non-torch); heap>17G+16.1+6.1 > 39.5 GB. Probes 20260902-235755/20260903-014242/20260903-023656. COMET DOES run at 32n for 1-16 MiB after the MaxTpRanks 64->128 fix (the original 20260901-075429 failure was that 64-rank sort-table cap)."
 32,128,nvshmem,64,368.636,4680,599040,1.6250,,,ok,20260901-075429_perlmutter_5433d58e,l01_nvshmem_trace-610042_b64_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,
+2,8,ours,1,4.240,72,576,0.1358,0.913,1.180,ok,20260904-004243_perlmutter_da6f9186,ours_l01_s1_pv2_r2_trace-610042_b1_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,ours 2n row = ring-capsule value (4.240; COMET-capsule 4.224 within 0.4%)
+2,8,comet,1,3.873,72,576,0.1487,,,ok,20260901-101958_perlmutter_03919f49,l01_allgather_dense_trace-610042_b1_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,
+2,8,nvshmem,1,5.003,72,576,0.1151,,,ok,20260904-004243_perlmutter_da6f9186,l01_nvshmem_trace-610042_b1_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,
+4,16,ours,1,4.009,72,1152,0.2874,1.003,1.328,ok,20260830-130128_perlmutter_ae736b36,ours_l01_s1_pv2_r2_trace-610042_b1_k8_isolated,docs/handoff/30_arms_synthesis_results_tidy.csv,
+4,16,comet,1,4.020,72,1152,0.2866,,,ok,20260830-125320_perlmutter_f1b40b3f,l01_allgather_dense_trace-610042_b1_k8_isolated,docs/handoff/30_arms_synthesis_results_tidy.csv,
+4,16,nvshmem,1,5.323,72,1152,0.2164,,,ok,20260831-051230_perlmutter_5b301226,l01_nvshmem_trace-610042_b1_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,
+8,32,ours,1,5.684,72,2304,0.4053,1.197,1.617,ok,20260830-131319_perlmutter_e67680e8,ours_l01_s1_pv2_r2_trace-610042_b1_k8_isolated,docs/handoff/30_arms_synthesis_results_tidy.csv,
+8,32,comet,1,6.801,72,2304,0.3388,,,ok,20260830-130408_perlmutter_00e156e4,l01_allgather_dense_trace-610042_b1_k8_isolated,docs/handoff/30_arms_synthesis_results_tidy.csv,
+8,32,nvshmem,1,9.192,72,2304,0.2507,,,ok,20260831-052029_perlmutter_2e94d27b,l01_nvshmem_trace-610042_b1_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,
+16,64,ours,1,12.613,72,4608,0.3653,1.235,1.921,ok,20260830-180110_perlmutter_e216d851,ours_l01_s1_pv2_r2_trace-610042_b1_k8_isolated,docs/handoff/30_arms_synthesis_results_tidy.csv,
+16,64,comet,1,15.576,72,4608,0.2958,,,ok,20260830-174436_perlmutter_3d1c53d9,l01_allgather_dense_trace-610042_b1_k8_isolated,docs/handoff/30_arms_synthesis_results_tidy.csv,
+16,64,nvshmem,1,24.234,72,4608,0.1901,,,ok,20260831-063232_perlmutter_e6841547,l01_nvshmem_trace-610042_b1_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,
+32,128,ours,1,38.403,72,9216,0.2400,1.126,2.084,ok,20260901-024555_perlmutter_ffb6e32d,ours_l01_s1_pv2_r2_trace-610042_b1_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,
+32,128,comet,1,43.251,72,9216,0.2131,,,ok,20260902-235755_perlmutter_81951099,l01_allgather_dense_trace-610042_b1_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,
+32,128,nvshmem,1,80.014,72,9216,0.1152,,,ok,20260901-075429_perlmutter_5433d58e,l01_nvshmem_trace-610042_b1_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,

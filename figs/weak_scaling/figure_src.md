@@ -60,3 +60,14 @@ capsule), 4/8/16n from the 8/31 ring ladder capsules
 `20260901-075429_5433d58e`. `speedup_vs_nvshmem` on the `ours` rows =
 nvshmem_total_ms / ours_total_ms (2.92 / 3.02 / 2.67 / 2.44 / 3.07×). The
 ring runs at 32n, so the nvshmem variant has no OOM marker.
+
+## 1 MiB rows (`budget_mib = 1`, REV 2.1)
+
+Added 2026-09-03 for `make_figure.py --budget 1`: ours / comet / nvshmem at
+2–32n, same capsules as the 64 MiB rows (each capsule's b1 cell), plus the
+2n ring capsule `20260904-004243` for ours+nvshmem. `tokens_per_rank` = 72
+(effective_budget_bytes 1,032,192 / 14,336, exact in every b1 cell). The
+ours 2n row uses the ring capsule's value (4.240 ms; the COMET-capsule 2n
+value 4.224 ms agrees within 0.4%) so that both baselines' 2n speedups are
+same-capsule. Speedups vs nvshmem: 1.18 / 1.33 / 1.62 / 1.92 / 2.08×; vs
+COMET: 0.91 / 1.00 / 1.20 / 1.23 / 1.13×.
