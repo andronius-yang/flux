@@ -1,0 +1,13 @@
+panel,arm,rank,node,why,total_ms,nic_ms,nvlink_ms,wait_ms,barrier_at_ms,gemm_ms,placement_ms,capsule
+Computation Imbalance + Communication Imbalance,l01_nvshmem,7,1,longest inter-node wire,38.63,33.8,0.88,0.02,34.75,2.55,,20260904-123815
+Computation Imbalance + Communication Imbalance,l01_nvshmem,11,2,shortest inter-node wire,38.76,16.98,0.76,17.6,35.39,2.11,,20260904-123815
+Computation Imbalance + Communication Imbalance,l01_nvshmem,12,3,longest expert GEMM,48.72,22.73,0.54,12.03,35.41,8.53,,20260904-123815
+Computation Imbalance + Communication Imbalance,l01_nvshmem,15,3,shortest expert GEMM,37.82,21.63,1.12,12.63,35.44,1.59,,20260904-123815
+Token Comm. Balanced + Expert Comp. Imbalance,l01_allgather_dense,4,1,longest inter-node wire,17.5,6.51,4.39,0.76,,7.17,,20260904-123815
+Token Comm. Balanced + Expert Comp. Imbalance,l01_allgather_dense,8,2,shortest inter-node wire,17.6,4.94,4.39,1.98,,4.21,,20260904-123815
+Token Comm. Balanced + Expert Comp. Imbalance,l01_allgather_dense,12,3,longest expert GEMM,17.41,5.48,4.39,1.07,,11.12,,20260904-123815
+Token Comm. Balanced + Expert Comp. Imbalance,l01_allgather_dense,15,3,shortest expert GEMM,17.49,5.72,4.46,0.81,,2.74,,20260904-123815
+Expert Comp. Balanced → Comm. Imbalance,eplb_l01_nvplace_bwire_ringplace,7,1,longest inter-node wire,27.86,22.91,0.91,0.02,23.91,3.11,100.5,20260904-132050
+Expert Comp. Balanced → Comm. Imbalance,eplb_l01_nvplace_bwire_ringplace,11,2,shortest inter-node wire,29.03,14.07,0.95,10.07,25.17,3.01,94.0,20260904-132050
+Expert Comp. Balanced → Comm. Imbalance,eplb_l01_nvplace_bwire_ringplace,12,3,longest placement,29.5,17.73,0.86,6.48,25.17,3.37,114.2,20260904-132050
+Expert Comp. Balanced → Comm. Imbalance,eplb_l01_nvplace_bwire_ringplace,13,3,shortest placement,29.4,17.85,0.93,6.42,25.29,3.21,65.0,20260904-132050

@@ -1,0 +1,666 @@
+<title>Lanes v2</title>
+<style>
+body{background:#f7f6f2;color:#17191c;font-family:"IBM Plex Sans",system-ui,sans-serif;font-size:15px;line-height:1.55;margin:0}
+main{max-width:1180px;margin:0 auto;padding:32px 28px 80px}
+h1{font-family:"Newsreader",Georgia,serif;font-weight:500;font-size:36px;margin:0 0 6px} h2{font-family:"Newsreader",Georgia,serif;font-weight:500;font-size:25px;margin:40px 0 8px}
+.eyebrow{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:#7d8289;font-weight:600}
+p,li{max-width:72ch} figure{margin:18px 0;background:#fff;border:1px solid #dad7cf;padding:18px;border-radius:4px;overflow-x:auto}
+figcaption{font-size:13.5px;color:#4f545c;padding-top:8px}
+.zoom svg{width:1120px;height:auto} .actual svg{width:504pt;height:auto}
+table{border-collapse:collapse;font-size:12.5px;font-family:"IBM Plex Mono",monospace} th,td{text-align:left;padding:4px 10px 4px 0;border-bottom:1px solid #dad7cf;white-space:nowrap} th{font-family:"IBM Plex Sans",sans-serif;color:#4f545c}
+pre{background:#fff;border:1px solid #dad7cf;padding:14px;font-size:12.5px;overflow-x:auto;white-space:pre-wrap} .wrap{overflow-x:auto}
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500&family=IBM+Plex+Sans:wght@400;600&family=IBM+Plex+Mono&display=swap">
+<main>
+<div class="eyebrow">Motivation figure · SPEC v2 · cross-column · 2026-09-04</div>
+<h1>Lanes v2</h1>
+<p>Cross-column NSDI figure (504 pt wide, 121 pt tall). Three subdiagrams left to right with the postdoc's titles; four ranks each, lanes NIC RDMA / NVLink / GPU; bars colored by task (token comm., expert comm., expert comp.); each subdiagram has its own ms scale; the expert-comm block of the third subdiagram is relative and takes 2/5 of its width. Data: K2 professional_law layer 18, b32, capsules 20260904-123815 (panels 1, 2) and 20260904-132050 ring-order placement (panel 3).</p>
+<h2>At 2.2×</h2><figure class="zoom"><svg xmlns="http://www.w3.org/2000/svg" width="504.0pt" height="121.0pt" viewBox="0 0 504.0 121.0" font-family="Helvetica, Arial, sans-serif">
+<rect width="504.0" height="121.0" fill="#ffffff"/>
+<text x="99.33" y="8.50" font-size="6.5" text-anchor="middle" fill="#17191c" font-weight="bold">Computation Imbalance+</text>
+<text x="99.33" y="16.00" font-size="6.5" text-anchor="middle" fill="#17191c" font-weight="bold">Communication Imbalance</text>
+<line x1="24.00" y1="21.50" x2="174.67" y2="21.50" stroke="#7d8289" stroke-width="0.5"/>
+<text x="22.00" y="23.20" font-size="4.2" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<line x1="24.00" y1="27.50" x2="174.67" y2="27.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="22.00" y="29.20" font-size="4.2" text-anchor="end" fill="#5a5e66">NVLink</text>
+<line x1="24.00" y1="33.50" x2="174.67" y2="33.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="22.00" y="35.20" font-size="4.2" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="24.00" y="19.00" width="102.52" height="5.00" fill="#2a78d6"><title>r7 inter 0.00–33.81 ms</title></rect>
+<rect x="126.54" y="25.00" width="2.69" height="5.00" fill="#2a78d6"><title>r7 intra 33.82–34.71 ms</title></rect>
+<rect x="133.40" y="31.00" width="7.73" height="5.00" fill="#eda100"><title>r7 gemm 36.08–38.63 ms</title></rect>
+<line x1="128.65" y1="18.50" x2="128.65" y2="36.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="130.05" y1="18.50" x2="130.05" y2="36.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="24.00" y1="41.50" x2="174.67" y2="41.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="24.00" y1="47.50" x2="174.67" y2="47.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="24.00" y1="53.50" x2="174.67" y2="53.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="24.00" y="39.00" width="51.53" height="5.00" fill="#2a78d6"><title>r11 inter 0.00–17.00 ms</title></rect>
+<rect x="75.54" y="45.00" width="2.34" height="5.00" fill="#2a78d6"><title>r11 intra 17.00–17.77 ms</title></rect>
+<rect x="135.14" y="51.00" width="6.39" height="5.00" fill="#eda100"><title>r11 gemm 36.66–38.76 ms</title></rect>
+<line x1="130.61" y1="38.50" x2="130.61" y2="56.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="132.01" y1="38.50" x2="132.01" y2="56.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="24.00" y1="61.50" x2="174.67" y2="61.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="24.00" y1="67.50" x2="174.67" y2="67.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="24.00" y1="73.50" x2="174.67" y2="73.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="25.69" y="59.00" width="68.95" height="5.00" fill="#2a78d6"><title>r12 inter 0.56–23.30 ms</title></rect>
+<rect x="24.00" y="65.00" width="1.67" height="5.00" fill="#2a78d6"><title>r12 intra 0.00–0.55 ms</title></rect>
+<rect x="145.86" y="71.00" width="25.85" height="5.00" fill="#eda100"><title>r12 gemm 40.19–48.72 ms</title></rect>
+<line x1="130.65" y1="58.50" x2="130.65" y2="76.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="132.05" y1="58.50" x2="132.05" y2="76.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="24.00" y1="81.50" x2="174.67" y2="81.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="24.00" y1="87.50" x2="174.67" y2="87.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="24.00" y1="93.50" x2="174.67" y2="93.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="24.00" y="79.00" width="65.63" height="5.00" fill="#2a78d6"><title>r15 inter 0.00–21.65 ms</title></rect>
+<rect x="89.65" y="85.00" width="3.45" height="5.00" fill="#2a78d6"><title>r15 intra 21.65–22.79 ms</title></rect>
+<rect x="133.86" y="91.00" width="4.82" height="5.00" fill="#eda100"><title>r15 gemm 36.24–37.82 ms</title></rect>
+<line x1="130.76" y1="78.50" x2="130.76" y2="96.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="132.16" y1="78.50" x2="132.16" y2="96.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="24.00" y1="99.00" x2="174.67" y2="99.00" stroke="#5a5e66" stroke-width="0.5"/>
+<line x1="24.00" y1="99.00" x2="24.00" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="24.00" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">0</text>
+<line x1="54.32" y1="99.00" x2="54.32" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="54.32" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">10</text>
+<line x1="84.64" y1="99.00" x2="84.64" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="84.64" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">20</text>
+<line x1="114.96" y1="99.00" x2="114.96" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="114.96" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">30</text>
+<line x1="145.28" y1="99.00" x2="145.28" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="145.28" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">40</text>
+<text x="174.67" y="106.00" font-size="5" text-anchor="end" fill="#5a5e66">ms</text>
+<text x="264.00" y="8.50" font-size="6.5" text-anchor="middle" fill="#17191c" font-weight="bold">Token Comm. Balanced+</text>
+<text x="264.00" y="16.00" font-size="6.5" text-anchor="middle" fill="#17191c" font-weight="bold">Expert Comp. Imbalance</text>
+<line x1="188.67" y1="21.50" x2="339.33" y2="21.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="188.67" y1="27.50" x2="339.33" y2="27.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="188.67" y1="33.50" x2="339.33" y2="33.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="188.67" y="19.00" width="40.50" height="5.00" fill="#2a78d6"><title>r4 inter 0.00–4.82 ms</title></rect>
+<rect x="233.12" y="19.00" width="14.28" height="5.00" fill="#2a78d6"><title>r4 inter 5.30–7.00 ms</title></rect>
+<rect x="188.75" y="25.00" width="9.40" height="5.00" fill="#2a78d6"><title>r4 intra 0.01–1.13 ms</title></rect>
+<rect x="215.36" y="25.00" width="9.36" height="5.00" fill="#2a78d6"><title>r4 intra 3.18–4.29 ms</title></rect>
+<rect x="233.25" y="25.00" width="9.44" height="5.00" fill="#2a78d6"><title>r4 intra 5.31–6.44 ms</title></rect>
+<rect x="247.94" y="25.00" width="9.48" height="5.00" fill="#2a78d6"><title>r4 intra 7.06–8.19 ms</title></rect>
+<rect x="248.19" y="31.00" width="60.21" height="5.00" fill="#eda100"><title>r4 gemm 7.09–14.26 ms</title></rect>
+<line x1="188.67" y1="41.50" x2="339.33" y2="41.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="188.67" y1="47.50" x2="339.33" y2="47.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="188.67" y1="53.50" x2="339.33" y2="53.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="188.67" y="39.00" width="13.46" height="5.00" fill="#2a78d6"><title>r8 inter 0.00–1.60 ms</title></rect>
+<rect x="205.52" y="39.00" width="12.41" height="5.00" fill="#2a78d6"><title>r8 inter 2.01–3.49 ms</title></rect>
+<rect x="220.58" y="39.00" width="15.63" height="5.00" fill="#2a78d6"><title>r8 inter 3.80–5.66 ms</title></rect>
+<rect x="188.77" y="45.00" width="9.46" height="5.00" fill="#2a78d6"><title>r8 intra 0.01–1.14 ms</title></rect>
+<rect x="205.56" y="45.00" width="9.36" height="5.00" fill="#2a78d6"><title>r8 intra 2.01–3.13 ms</title></rect>
+<rect x="220.72" y="45.00" width="9.38" height="5.00" fill="#2a78d6"><title>r8 intra 3.82–4.94 ms</title></rect>
+<rect x="244.70" y="45.00" width="9.38" height="5.00" fill="#2a78d6"><title>r8 intra 6.68–7.79 ms</title></rect>
+<rect x="244.84" y="51.00" width="35.33" height="5.00" fill="#eda100"><title>r8 gemm 6.69–10.90 ms</title></rect>
+<line x1="188.67" y1="61.50" x2="339.33" y2="61.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="188.67" y1="67.50" x2="339.33" y2="67.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="188.67" y1="73.50" x2="339.33" y2="73.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="188.67" y="59.00" width="16.92" height="5.00" fill="#2a78d6"><title>r12 inter 0.00–2.02 ms</title></rect>
+<rect x="205.86" y="59.00" width="14.09" height="5.00" fill="#2a78d6"><title>r12 inter 2.05–3.73 ms</title></rect>
+<rect x="224.29" y="59.00" width="15.02" height="5.00" fill="#2a78d6"><title>r12 inter 4.24–6.03 ms</title></rect>
+<rect x="188.77" y="65.00" width="9.46" height="5.00" fill="#2a78d6"><title>r12 intra 0.01–1.14 ms</title></rect>
+<rect x="205.95" y="65.00" width="9.39" height="5.00" fill="#2a78d6"><title>r12 intra 2.06–3.18 ms</title></rect>
+<rect x="224.38" y="65.00" width="9.38" height="5.00" fill="#2a78d6"><title>r12 intra 4.25–5.37 ms</title></rect>
+<rect x="241.11" y="65.00" width="9.42" height="5.00" fill="#2a78d6"><title>r12 intra 6.25–7.37 ms</title></rect>
+<rect x="241.36" y="71.00" width="93.38" height="5.00" fill="#eda100"><title>r12 gemm 6.28–17.40 ms</title></rect>
+<line x1="188.67" y1="81.50" x2="339.33" y2="81.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="188.67" y1="87.50" x2="339.33" y2="87.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="188.67" y1="93.50" x2="339.33" y2="93.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="188.67" y="79.00" width="16.78" height="5.00" fill="#2a78d6"><title>r15 inter 0.00–2.00 ms</title></rect>
+<rect x="206.44" y="79.00" width="31.36" height="5.00" fill="#2a78d6"><title>r15 inter 2.12–5.85 ms</title></rect>
+<rect x="188.78" y="85.00" width="9.44" height="5.00" fill="#2a78d6"><title>r15 intra 0.01–1.14 ms</title></rect>
+<rect x="206.50" y="85.00" width="9.42" height="5.00" fill="#2a78d6"><title>r15 intra 2.12–3.25 ms</title></rect>
+<rect x="224.11" y="85.00" width="9.46" height="5.00" fill="#2a78d6"><title>r15 intra 4.22–5.35 ms</title></rect>
+<rect x="240.88" y="85.00" width="9.92" height="5.00" fill="#2a78d6"><title>r15 intra 6.22–7.40 ms</title></rect>
+<rect x="241.00" y="91.00" width="22.98" height="5.00" fill="#eda100"><title>r15 gemm 6.23–8.97 ms</title></rect>
+<line x1="188.67" y1="99.00" x2="339.33" y2="99.00" stroke="#5a5e66" stroke-width="0.5"/>
+<line x1="188.67" y1="99.00" x2="188.67" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="188.67" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">0</text>
+<line x1="230.64" y1="99.00" x2="230.64" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="230.64" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">5</text>
+<line x1="272.61" y1="99.00" x2="272.61" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="272.61" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">10</text>
+<line x1="314.59" y1="99.00" x2="314.59" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="314.59" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">15</text>
+<text x="339.33" y="106.00" font-size="5" text-anchor="end" fill="#5a5e66">ms</text>
+<text x="428.67" y="8.50" font-size="6.5" text-anchor="middle" fill="#17191c" font-weight="bold">Expert Comp. Balanced→</text>
+<text x="428.67" y="16.00" font-size="6.5" text-anchor="middle" fill="#17191c" font-weight="bold">Comm. Imbalance</text>
+<line x1="419.60" y1="21.50" x2="504.00" y2="21.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="353.33" y1="21.50" x2="413.60" y2="21.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="419.60" y1="27.50" x2="504.00" y2="27.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="353.33" y1="27.50" x2="413.60" y2="27.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="419.60" y1="33.50" x2="504.00" y2="33.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<line x1="353.33" y1="33.50" x2="413.60" y2="33.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="419.60" y="19.00" width="64.34" height="5.00" fill="#2a78d6"><title>r7 inter 0.00–22.93 ms</title></rect>
+<rect x="483.96" y="25.00" width="2.59" height="5.00" fill="#2a78d6"><title>r7 intra 22.94–23.86 ms</title></rect>
+<rect x="488.75" y="31.00" width="9.02" height="5.00" fill="#eda100"><title>r7 gemm 24.65–27.86 ms</title></rect>
+<line x1="485.98" y1="18.50" x2="485.98" y2="36.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="487.38" y1="18.50" x2="487.38" y2="36.50" stroke="#17191c" stroke-width="0.6"/>
+<rect x="353.33" y="19.00" width="2.69" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="356.07" y="19.00" width="3.81" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="359.92" y="19.00" width="1.36" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="361.32" y="19.00" width="1.38" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="362.75" y="19.00" width="2.02" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="364.82" y="19.00" width="2.70" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="367.57" y="19.00" width="2.86" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="370.48" y="19.00" width="3.64" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="374.17" y="19.00" width="4.21" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="378.43" y="19.00" width="2.32" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="380.79" y="19.00" width="1.58" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="382.42" y="19.00" width="1.71" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="384.18" y="19.00" width="2.10" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="386.34" y="19.00" width="4.14" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="390.53" y="19.00" width="2.14" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="392.72" y="19.00" width="1.40" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="394.16" y="19.00" width="1.36" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="395.56" y="19.00" width="1.34" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="396.94" y="19.00" width="1.92" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="398.91" y="19.00" width="1.43" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="400.39" y="19.00" width="1.35" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="401.78" y="19.00" width="1.37" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="403.20" y="19.00" width="1.37" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="404.61" y="19.00" width="1.34" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="405.99" y="25.00" width="0.36" height="5.00" fill="#1baf7a"><title>r7 placement intra</title></rect>
+<rect x="393.20" y="30.70" width="20.40" height="5.60" fill="#ffffff"></rect>
+<text x="412.60" y="35.40" font-size="5" text-anchor="end" fill="#5a5e66">100 ms</text>
+<line x1="419.60" y1="41.50" x2="504.00" y2="41.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="353.33" y1="41.50" x2="413.60" y2="41.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="419.60" y1="47.50" x2="504.00" y2="47.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="353.33" y1="47.50" x2="413.60" y2="47.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="419.60" y1="53.50" x2="504.00" y2="53.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<line x1="353.33" y1="53.50" x2="413.60" y2="53.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="419.60" y="39.00" width="39.54" height="5.00" fill="#2a78d6"><title>r11 inter 0.00–14.10 ms</title></rect>
+<rect x="459.15" y="45.00" width="2.72" height="5.00" fill="#2a78d6"><title>r11 intra 14.10–15.07 ms</title></rect>
+<rect x="492.31" y="51.00" width="8.73" height="5.00" fill="#eda100"><title>r11 gemm 25.92–29.03 ms</title></rect>
+<line x1="489.51" y1="38.50" x2="489.51" y2="56.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="490.91" y1="38.50" x2="490.91" y2="56.50" stroke="#17191c" stroke-width="0.6"/>
+<rect x="353.33" y="39.00" width="2.81" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="356.19" y="39.00" width="1.80" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="358.03" y="39.00" width="1.49" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="359.56" y="39.00" width="1.55" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="361.15" y="39.00" width="1.51" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="362.70" y="39.00" width="2.36" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="365.12" y="39.00" width="2.00" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="367.17" y="39.00" width="1.65" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="368.87" y="39.00" width="2.37" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="371.28" y="39.00" width="3.02" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="374.35" y="39.00" width="2.80" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="377.19" y="39.00" width="2.38" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="379.62" y="39.00" width="3.42" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="383.08" y="39.00" width="5.21" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="388.34" y="39.00" width="2.57" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="390.96" y="39.00" width="2.34" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="393.35" y="39.00" width="1.94" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="395.34" y="39.00" width="1.60" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="396.99" y="39.00" width="1.50" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="398.53" y="39.00" width="1.36" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="399.94" y="39.00" width="1.41" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="401.40" y="45.00" width="0.35" height="5.00" fill="#1baf7a"><title>r11 placement intra</title></rect>
+<rect x="401.80" y="45.00" width="0.33" height="5.00" fill="#1baf7a"><title>r11 placement intra</title></rect>
+<rect x="402.18" y="45.00" width="0.36" height="5.00" fill="#1baf7a"><title>r11 placement intra</title></rect>
+<rect x="402.60" y="45.00" width="0.33" height="5.00" fill="#1baf7a"><title>r11 placement intra</title></rect>
+<rect x="396.10" y="50.70" width="17.50" height="5.60" fill="#ffffff"></rect>
+<text x="412.60" y="55.40" font-size="5" text-anchor="end" fill="#5a5e66">94 ms</text>
+<line x1="419.60" y1="61.50" x2="504.00" y2="61.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="353.33" y1="61.50" x2="413.60" y2="61.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="419.60" y1="67.50" x2="504.00" y2="67.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="353.33" y1="67.50" x2="413.60" y2="67.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="419.60" y1="73.50" x2="504.00" y2="73.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<line x1="353.33" y1="73.50" x2="413.60" y2="73.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="422.10" y="59.00" width="49.81" height="5.00" fill="#2a78d6"><title>r12 inter 0.89–18.65 ms</title></rect>
+<rect x="419.60" y="65.00" width="2.47" height="5.00" fill="#2a78d6"><title>r12 intra 0.00–0.88 ms</title></rect>
+<rect x="492.60" y="71.00" width="9.74" height="5.00" fill="#eda100"><title>r12 gemm 26.02–29.50 ms</title></rect>
+<line x1="489.50" y1="58.50" x2="489.50" y2="76.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="490.90" y1="58.50" x2="490.90" y2="76.50" stroke="#17191c" stroke-width="0.6"/>
+<rect x="357.34" y="59.00" width="2.56" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="359.95" y="59.00" width="2.71" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="362.71" y="59.00" width="2.76" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="365.50" y="59.00" width="1.68" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="367.22" y="59.00" width="3.01" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="370.28" y="59.00" width="2.72" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="373.05" y="59.00" width="2.45" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="375.55" y="59.00" width="3.68" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="379.29" y="59.00" width="2.15" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="381.47" y="59.00" width="2.97" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="384.48" y="59.00" width="1.35" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="385.87" y="59.00" width="3.18" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="389.09" y="59.00" width="3.58" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="392.71" y="59.00" width="1.34" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="394.10" y="59.00" width="1.35" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="395.50" y="59.00" width="1.74" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="397.28" y="59.00" width="1.53" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="398.87" y="59.00" width="2.20" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="401.13" y="59.00" width="1.45" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="402.63" y="59.00" width="1.32" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="403.99" y="59.00" width="1.34" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="405.37" y="59.00" width="1.33" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="406.74" y="59.00" width="1.32" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="408.11" y="59.00" width="1.33" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="409.47" y="59.00" width="1.35" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="410.87" y="59.00" width="1.36" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="412.27" y="59.00" width="1.33" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="353.33" y="65.00" width="0.36" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="353.75" y="65.00" width="0.33" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="354.14" y="65.00" width="0.35" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="354.55" y="65.00" width="0.34" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="354.95" y="65.00" width="0.34" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="355.34" y="65.00" width="0.35" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="355.75" y="65.00" width="0.34" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="356.15" y="65.00" width="0.34" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="356.55" y="65.00" width="0.34" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="356.94" y="65.00" width="0.34" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="393.20" y="70.70" width="20.40" height="5.60" fill="#ffffff"></rect>
+<text x="412.60" y="75.40" font-size="5" text-anchor="end" fill="#5a5e66">114 ms</text>
+<line x1="419.60" y1="81.50" x2="504.00" y2="81.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="353.33" y1="81.50" x2="413.60" y2="81.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="419.60" y1="87.50" x2="504.00" y2="87.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="353.33" y1="87.50" x2="413.60" y2="87.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="419.60" y1="93.50" x2="504.00" y2="93.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<line x1="353.33" y1="93.50" x2="413.60" y2="93.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="421.55" y="79.00" width="50.13" height="5.00" fill="#2a78d6"><title>r13 inter 0.69–18.56 ms</title></rect>
+<rect x="419.60" y="85.00" width="1.94" height="5.00" fill="#2a78d6"><title>r13 intra 0.00–0.69 ms</title></rect>
+<rect x="471.70" y="85.00" width="0.74" height="5.00" fill="#2a78d6"><title>r13 intra 18.57–18.83 ms</title></rect>
+<rect x="492.78" y="91.00" width="9.29" height="5.00" fill="#eda100"><title>r13 gemm 26.09–29.40 ms</title></rect>
+<line x1="489.85" y1="78.50" x2="489.85" y2="96.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="491.25" y1="78.50" x2="491.25" y2="96.50" stroke="#17191c" stroke-width="0.6"/>
+<rect x="354.94" y="79.00" width="1.42" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="356.40" y="79.00" width="1.79" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="358.25" y="79.00" width="2.19" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="360.49" y="79.00" width="2.28" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="362.81" y="79.00" width="2.70" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="365.56" y="79.00" width="2.02" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="367.64" y="79.00" width="2.58" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="370.26" y="79.00" width="1.61" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="371.92" y="79.00" width="1.61" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="373.59" y="79.00" width="2.72" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="376.36" y="79.00" width="1.53" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="377.93" y="79.00" width="1.47" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="379.44" y="79.00" width="2.50" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="381.99" y="79.00" width="1.43" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="383.48" y="79.00" width="1.95" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="385.47" y="79.00" width="1.40" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="353.33" y="85.00" width="0.35" height="5.00" fill="#1baf7a"><title>r13 placement intra</title></rect>
+<rect x="353.74" y="85.00" width="0.33" height="5.00" fill="#1baf7a"><title>r13 placement intra</title></rect>
+<rect x="354.13" y="85.00" width="0.33" height="5.00" fill="#1baf7a"><title>r13 placement intra</title></rect>
+<rect x="354.53" y="85.00" width="0.35" height="5.00" fill="#1baf7a"><title>r13 placement intra</title></rect>
+<rect x="386.92" y="85.00" width="0.36" height="5.00" fill="#1baf7a"><title>r13 placement intra</title></rect>
+<rect x="387.33" y="85.00" width="0.33" height="5.00" fill="#1baf7a"><title>r13 placement intra</title></rect>
+<rect x="396.10" y="90.70" width="17.50" height="5.60" fill="#ffffff"></rect>
+<text x="412.60" y="95.40" font-size="5" text-anchor="end" fill="#5a5e66">65 ms</text>
+<line x1="419.60" y1="99.00" x2="504.00" y2="99.00" stroke="#5a5e66" stroke-width="0.5"/>
+<line x1="419.60" y1="99.00" x2="419.60" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="419.60" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">0</text>
+<line x1="447.65" y1="99.00" x2="447.65" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="447.65" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">10</text>
+<line x1="475.71" y1="99.00" x2="475.71" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="475.71" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">20</text>
+<line x1="503.76" y1="99.00" x2="503.76" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="504.00" y="106.00" font-size="5" text-anchor="end" fill="#5a5e66">ms</text>
+<text x="383.47" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">expert comm. (relative)</text>
+<rect x="24.00" y="110.00" width="8.00" height="4.50" fill="#2a78d6"></rect>
+<text x="34.00" y="114.00" font-size="5.5" text-anchor="start" fill="#5a5e66">Token Comm.</text>
+<rect x="74.90" y="110.00" width="8.00" height="4.50" fill="#1baf7a"></rect>
+<text x="84.90" y="114.00" font-size="5.5" text-anchor="start" fill="#5a5e66">Expert Comm.</text>
+<rect x="128.70" y="110.00" width="8.00" height="4.50" fill="#eda100"></rect>
+<text x="138.70" y="114.00" font-size="5.5" text-anchor="start" fill="#5a5e66">Expert Comp.</text>
+<line x1="182.50" y1="109.00" x2="182.50" y2="115.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="184.00" y1="109.00" x2="184.00" y2="115.50" stroke="#17191c" stroke-width="0.6"/>
+<text x="186.50" y="114.00" font-size="5.5" text-anchor="start" fill="#5a5e66">Barrier</text>
+<line x1="222.80" y1="112.20" x2="234.80" y2="112.20" stroke="#7d8289" stroke-width="0.6"/>
+<text x="236.80" y="114.00" font-size="5.5" text-anchor="start" fill="#5a5e66">NIC RDMA</text>
+<line x1="269.00" y1="112.20" x2="281.00" y2="112.20" stroke="#7d8289" stroke-width="0.6" stroke-dasharray="2,1.5"/>
+<text x="283.00" y="114.00" font-size="5.5" text-anchor="start" fill="#5a5e66">NVLink</text>
+<line x1="309.40" y1="112.20" x2="321.40" y2="112.20" stroke="#7d8289" stroke-width="0.6" stroke-dasharray="0.6,1.2"/>
+<text x="323.40" y="114.00" font-size="5.5" text-anchor="start" fill="#5a5e66">GPU</text>
+</svg></figure>
+<h2>At print width (504 pt)</h2><figure class="actual"><svg xmlns="http://www.w3.org/2000/svg" width="504.0pt" height="121.0pt" viewBox="0 0 504.0 121.0" font-family="Helvetica, Arial, sans-serif">
+<rect width="504.0" height="121.0" fill="#ffffff"/>
+<text x="99.33" y="8.50" font-size="6.5" text-anchor="middle" fill="#17191c" font-weight="bold">Computation Imbalance+</text>
+<text x="99.33" y="16.00" font-size="6.5" text-anchor="middle" fill="#17191c" font-weight="bold">Communication Imbalance</text>
+<line x1="24.00" y1="21.50" x2="174.67" y2="21.50" stroke="#7d8289" stroke-width="0.5"/>
+<text x="22.00" y="23.20" font-size="4.2" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<line x1="24.00" y1="27.50" x2="174.67" y2="27.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="22.00" y="29.20" font-size="4.2" text-anchor="end" fill="#5a5e66">NVLink</text>
+<line x1="24.00" y1="33.50" x2="174.67" y2="33.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="22.00" y="35.20" font-size="4.2" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="24.00" y="19.00" width="102.52" height="5.00" fill="#2a78d6"><title>r7 inter 0.00–33.81 ms</title></rect>
+<rect x="126.54" y="25.00" width="2.69" height="5.00" fill="#2a78d6"><title>r7 intra 33.82–34.71 ms</title></rect>
+<rect x="133.40" y="31.00" width="7.73" height="5.00" fill="#eda100"><title>r7 gemm 36.08–38.63 ms</title></rect>
+<line x1="128.65" y1="18.50" x2="128.65" y2="36.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="130.05" y1="18.50" x2="130.05" y2="36.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="24.00" y1="41.50" x2="174.67" y2="41.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="24.00" y1="47.50" x2="174.67" y2="47.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="24.00" y1="53.50" x2="174.67" y2="53.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="24.00" y="39.00" width="51.53" height="5.00" fill="#2a78d6"><title>r11 inter 0.00–17.00 ms</title></rect>
+<rect x="75.54" y="45.00" width="2.34" height="5.00" fill="#2a78d6"><title>r11 intra 17.00–17.77 ms</title></rect>
+<rect x="135.14" y="51.00" width="6.39" height="5.00" fill="#eda100"><title>r11 gemm 36.66–38.76 ms</title></rect>
+<line x1="130.61" y1="38.50" x2="130.61" y2="56.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="132.01" y1="38.50" x2="132.01" y2="56.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="24.00" y1="61.50" x2="174.67" y2="61.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="24.00" y1="67.50" x2="174.67" y2="67.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="24.00" y1="73.50" x2="174.67" y2="73.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="25.69" y="59.00" width="68.95" height="5.00" fill="#2a78d6"><title>r12 inter 0.56–23.30 ms</title></rect>
+<rect x="24.00" y="65.00" width="1.67" height="5.00" fill="#2a78d6"><title>r12 intra 0.00–0.55 ms</title></rect>
+<rect x="145.86" y="71.00" width="25.85" height="5.00" fill="#eda100"><title>r12 gemm 40.19–48.72 ms</title></rect>
+<line x1="130.65" y1="58.50" x2="130.65" y2="76.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="132.05" y1="58.50" x2="132.05" y2="76.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="24.00" y1="81.50" x2="174.67" y2="81.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="24.00" y1="87.50" x2="174.67" y2="87.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="24.00" y1="93.50" x2="174.67" y2="93.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="24.00" y="79.00" width="65.63" height="5.00" fill="#2a78d6"><title>r15 inter 0.00–21.65 ms</title></rect>
+<rect x="89.65" y="85.00" width="3.45" height="5.00" fill="#2a78d6"><title>r15 intra 21.65–22.79 ms</title></rect>
+<rect x="133.86" y="91.00" width="4.82" height="5.00" fill="#eda100"><title>r15 gemm 36.24–37.82 ms</title></rect>
+<line x1="130.76" y1="78.50" x2="130.76" y2="96.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="132.16" y1="78.50" x2="132.16" y2="96.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="24.00" y1="99.00" x2="174.67" y2="99.00" stroke="#5a5e66" stroke-width="0.5"/>
+<line x1="24.00" y1="99.00" x2="24.00" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="24.00" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">0</text>
+<line x1="54.32" y1="99.00" x2="54.32" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="54.32" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">10</text>
+<line x1="84.64" y1="99.00" x2="84.64" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="84.64" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">20</text>
+<line x1="114.96" y1="99.00" x2="114.96" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="114.96" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">30</text>
+<line x1="145.28" y1="99.00" x2="145.28" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="145.28" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">40</text>
+<text x="174.67" y="106.00" font-size="5" text-anchor="end" fill="#5a5e66">ms</text>
+<text x="264.00" y="8.50" font-size="6.5" text-anchor="middle" fill="#17191c" font-weight="bold">Token Comm. Balanced+</text>
+<text x="264.00" y="16.00" font-size="6.5" text-anchor="middle" fill="#17191c" font-weight="bold">Expert Comp. Imbalance</text>
+<line x1="188.67" y1="21.50" x2="339.33" y2="21.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="188.67" y1="27.50" x2="339.33" y2="27.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="188.67" y1="33.50" x2="339.33" y2="33.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="188.67" y="19.00" width="40.50" height="5.00" fill="#2a78d6"><title>r4 inter 0.00–4.82 ms</title></rect>
+<rect x="233.12" y="19.00" width="14.28" height="5.00" fill="#2a78d6"><title>r4 inter 5.30–7.00 ms</title></rect>
+<rect x="188.75" y="25.00" width="9.40" height="5.00" fill="#2a78d6"><title>r4 intra 0.01–1.13 ms</title></rect>
+<rect x="215.36" y="25.00" width="9.36" height="5.00" fill="#2a78d6"><title>r4 intra 3.18–4.29 ms</title></rect>
+<rect x="233.25" y="25.00" width="9.44" height="5.00" fill="#2a78d6"><title>r4 intra 5.31–6.44 ms</title></rect>
+<rect x="247.94" y="25.00" width="9.48" height="5.00" fill="#2a78d6"><title>r4 intra 7.06–8.19 ms</title></rect>
+<rect x="248.19" y="31.00" width="60.21" height="5.00" fill="#eda100"><title>r4 gemm 7.09–14.26 ms</title></rect>
+<line x1="188.67" y1="41.50" x2="339.33" y2="41.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="188.67" y1="47.50" x2="339.33" y2="47.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="188.67" y1="53.50" x2="339.33" y2="53.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="188.67" y="39.00" width="13.46" height="5.00" fill="#2a78d6"><title>r8 inter 0.00–1.60 ms</title></rect>
+<rect x="205.52" y="39.00" width="12.41" height="5.00" fill="#2a78d6"><title>r8 inter 2.01–3.49 ms</title></rect>
+<rect x="220.58" y="39.00" width="15.63" height="5.00" fill="#2a78d6"><title>r8 inter 3.80–5.66 ms</title></rect>
+<rect x="188.77" y="45.00" width="9.46" height="5.00" fill="#2a78d6"><title>r8 intra 0.01–1.14 ms</title></rect>
+<rect x="205.56" y="45.00" width="9.36" height="5.00" fill="#2a78d6"><title>r8 intra 2.01–3.13 ms</title></rect>
+<rect x="220.72" y="45.00" width="9.38" height="5.00" fill="#2a78d6"><title>r8 intra 3.82–4.94 ms</title></rect>
+<rect x="244.70" y="45.00" width="9.38" height="5.00" fill="#2a78d6"><title>r8 intra 6.68–7.79 ms</title></rect>
+<rect x="244.84" y="51.00" width="35.33" height="5.00" fill="#eda100"><title>r8 gemm 6.69–10.90 ms</title></rect>
+<line x1="188.67" y1="61.50" x2="339.33" y2="61.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="188.67" y1="67.50" x2="339.33" y2="67.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="188.67" y1="73.50" x2="339.33" y2="73.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="188.67" y="59.00" width="16.92" height="5.00" fill="#2a78d6"><title>r12 inter 0.00–2.02 ms</title></rect>
+<rect x="205.86" y="59.00" width="14.09" height="5.00" fill="#2a78d6"><title>r12 inter 2.05–3.73 ms</title></rect>
+<rect x="224.29" y="59.00" width="15.02" height="5.00" fill="#2a78d6"><title>r12 inter 4.24–6.03 ms</title></rect>
+<rect x="188.77" y="65.00" width="9.46" height="5.00" fill="#2a78d6"><title>r12 intra 0.01–1.14 ms</title></rect>
+<rect x="205.95" y="65.00" width="9.39" height="5.00" fill="#2a78d6"><title>r12 intra 2.06–3.18 ms</title></rect>
+<rect x="224.38" y="65.00" width="9.38" height="5.00" fill="#2a78d6"><title>r12 intra 4.25–5.37 ms</title></rect>
+<rect x="241.11" y="65.00" width="9.42" height="5.00" fill="#2a78d6"><title>r12 intra 6.25–7.37 ms</title></rect>
+<rect x="241.36" y="71.00" width="93.38" height="5.00" fill="#eda100"><title>r12 gemm 6.28–17.40 ms</title></rect>
+<line x1="188.67" y1="81.50" x2="339.33" y2="81.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="188.67" y1="87.50" x2="339.33" y2="87.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="188.67" y1="93.50" x2="339.33" y2="93.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="188.67" y="79.00" width="16.78" height="5.00" fill="#2a78d6"><title>r15 inter 0.00–2.00 ms</title></rect>
+<rect x="206.44" y="79.00" width="31.36" height="5.00" fill="#2a78d6"><title>r15 inter 2.12–5.85 ms</title></rect>
+<rect x="188.78" y="85.00" width="9.44" height="5.00" fill="#2a78d6"><title>r15 intra 0.01–1.14 ms</title></rect>
+<rect x="206.50" y="85.00" width="9.42" height="5.00" fill="#2a78d6"><title>r15 intra 2.12–3.25 ms</title></rect>
+<rect x="224.11" y="85.00" width="9.46" height="5.00" fill="#2a78d6"><title>r15 intra 4.22–5.35 ms</title></rect>
+<rect x="240.88" y="85.00" width="9.92" height="5.00" fill="#2a78d6"><title>r15 intra 6.22–7.40 ms</title></rect>
+<rect x="241.00" y="91.00" width="22.98" height="5.00" fill="#eda100"><title>r15 gemm 6.23–8.97 ms</title></rect>
+<line x1="188.67" y1="99.00" x2="339.33" y2="99.00" stroke="#5a5e66" stroke-width="0.5"/>
+<line x1="188.67" y1="99.00" x2="188.67" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="188.67" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">0</text>
+<line x1="230.64" y1="99.00" x2="230.64" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="230.64" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">5</text>
+<line x1="272.61" y1="99.00" x2="272.61" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="272.61" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">10</text>
+<line x1="314.59" y1="99.00" x2="314.59" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="314.59" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">15</text>
+<text x="339.33" y="106.00" font-size="5" text-anchor="end" fill="#5a5e66">ms</text>
+<text x="428.67" y="8.50" font-size="6.5" text-anchor="middle" fill="#17191c" font-weight="bold">Expert Comp. Balanced→</text>
+<text x="428.67" y="16.00" font-size="6.5" text-anchor="middle" fill="#17191c" font-weight="bold">Comm. Imbalance</text>
+<line x1="419.60" y1="21.50" x2="504.00" y2="21.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="353.33" y1="21.50" x2="413.60" y2="21.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="419.60" y1="27.50" x2="504.00" y2="27.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="353.33" y1="27.50" x2="413.60" y2="27.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="419.60" y1="33.50" x2="504.00" y2="33.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<line x1="353.33" y1="33.50" x2="413.60" y2="33.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="419.60" y="19.00" width="64.34" height="5.00" fill="#2a78d6"><title>r7 inter 0.00–22.93 ms</title></rect>
+<rect x="483.96" y="25.00" width="2.59" height="5.00" fill="#2a78d6"><title>r7 intra 22.94–23.86 ms</title></rect>
+<rect x="488.75" y="31.00" width="9.02" height="5.00" fill="#eda100"><title>r7 gemm 24.65–27.86 ms</title></rect>
+<line x1="485.98" y1="18.50" x2="485.98" y2="36.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="487.38" y1="18.50" x2="487.38" y2="36.50" stroke="#17191c" stroke-width="0.6"/>
+<rect x="353.33" y="19.00" width="2.69" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="356.07" y="19.00" width="3.81" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="359.92" y="19.00" width="1.36" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="361.32" y="19.00" width="1.38" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="362.75" y="19.00" width="2.02" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="364.82" y="19.00" width="2.70" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="367.57" y="19.00" width="2.86" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="370.48" y="19.00" width="3.64" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="374.17" y="19.00" width="4.21" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="378.43" y="19.00" width="2.32" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="380.79" y="19.00" width="1.58" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="382.42" y="19.00" width="1.71" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="384.18" y="19.00" width="2.10" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="386.34" y="19.00" width="4.14" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="390.53" y="19.00" width="2.14" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="392.72" y="19.00" width="1.40" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="394.16" y="19.00" width="1.36" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="395.56" y="19.00" width="1.34" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="396.94" y="19.00" width="1.92" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="398.91" y="19.00" width="1.43" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="400.39" y="19.00" width="1.35" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="401.78" y="19.00" width="1.37" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="403.20" y="19.00" width="1.37" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="404.61" y="19.00" width="1.34" height="5.00" fill="#1baf7a"><title>r7 placement inter</title></rect>
+<rect x="405.99" y="25.00" width="0.36" height="5.00" fill="#1baf7a"><title>r7 placement intra</title></rect>
+<rect x="393.20" y="30.70" width="20.40" height="5.60" fill="#ffffff"></rect>
+<text x="412.60" y="35.40" font-size="5" text-anchor="end" fill="#5a5e66">100 ms</text>
+<line x1="419.60" y1="41.50" x2="504.00" y2="41.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="353.33" y1="41.50" x2="413.60" y2="41.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="419.60" y1="47.50" x2="504.00" y2="47.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="353.33" y1="47.50" x2="413.60" y2="47.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="419.60" y1="53.50" x2="504.00" y2="53.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<line x1="353.33" y1="53.50" x2="413.60" y2="53.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="419.60" y="39.00" width="39.54" height="5.00" fill="#2a78d6"><title>r11 inter 0.00–14.10 ms</title></rect>
+<rect x="459.15" y="45.00" width="2.72" height="5.00" fill="#2a78d6"><title>r11 intra 14.10–15.07 ms</title></rect>
+<rect x="492.31" y="51.00" width="8.73" height="5.00" fill="#eda100"><title>r11 gemm 25.92–29.03 ms</title></rect>
+<line x1="489.51" y1="38.50" x2="489.51" y2="56.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="490.91" y1="38.50" x2="490.91" y2="56.50" stroke="#17191c" stroke-width="0.6"/>
+<rect x="353.33" y="39.00" width="2.81" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="356.19" y="39.00" width="1.80" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="358.03" y="39.00" width="1.49" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="359.56" y="39.00" width="1.55" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="361.15" y="39.00" width="1.51" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="362.70" y="39.00" width="2.36" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="365.12" y="39.00" width="2.00" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="367.17" y="39.00" width="1.65" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="368.87" y="39.00" width="2.37" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="371.28" y="39.00" width="3.02" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="374.35" y="39.00" width="2.80" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="377.19" y="39.00" width="2.38" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="379.62" y="39.00" width="3.42" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="383.08" y="39.00" width="5.21" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="388.34" y="39.00" width="2.57" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="390.96" y="39.00" width="2.34" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="393.35" y="39.00" width="1.94" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="395.34" y="39.00" width="1.60" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="396.99" y="39.00" width="1.50" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="398.53" y="39.00" width="1.36" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="399.94" y="39.00" width="1.41" height="5.00" fill="#1baf7a"><title>r11 placement inter</title></rect>
+<rect x="401.40" y="45.00" width="0.35" height="5.00" fill="#1baf7a"><title>r11 placement intra</title></rect>
+<rect x="401.80" y="45.00" width="0.33" height="5.00" fill="#1baf7a"><title>r11 placement intra</title></rect>
+<rect x="402.18" y="45.00" width="0.36" height="5.00" fill="#1baf7a"><title>r11 placement intra</title></rect>
+<rect x="402.60" y="45.00" width="0.33" height="5.00" fill="#1baf7a"><title>r11 placement intra</title></rect>
+<rect x="396.10" y="50.70" width="17.50" height="5.60" fill="#ffffff"></rect>
+<text x="412.60" y="55.40" font-size="5" text-anchor="end" fill="#5a5e66">94 ms</text>
+<line x1="419.60" y1="61.50" x2="504.00" y2="61.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="353.33" y1="61.50" x2="413.60" y2="61.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="419.60" y1="67.50" x2="504.00" y2="67.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="353.33" y1="67.50" x2="413.60" y2="67.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="419.60" y1="73.50" x2="504.00" y2="73.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<line x1="353.33" y1="73.50" x2="413.60" y2="73.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="422.10" y="59.00" width="49.81" height="5.00" fill="#2a78d6"><title>r12 inter 0.89–18.65 ms</title></rect>
+<rect x="419.60" y="65.00" width="2.47" height="5.00" fill="#2a78d6"><title>r12 intra 0.00–0.88 ms</title></rect>
+<rect x="492.60" y="71.00" width="9.74" height="5.00" fill="#eda100"><title>r12 gemm 26.02–29.50 ms</title></rect>
+<line x1="489.50" y1="58.50" x2="489.50" y2="76.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="490.90" y1="58.50" x2="490.90" y2="76.50" stroke="#17191c" stroke-width="0.6"/>
+<rect x="357.34" y="59.00" width="2.56" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="359.95" y="59.00" width="2.71" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="362.71" y="59.00" width="2.76" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="365.50" y="59.00" width="1.68" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="367.22" y="59.00" width="3.01" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="370.28" y="59.00" width="2.72" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="373.05" y="59.00" width="2.45" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="375.55" y="59.00" width="3.68" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="379.29" y="59.00" width="2.15" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="381.47" y="59.00" width="2.97" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="384.48" y="59.00" width="1.35" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="385.87" y="59.00" width="3.18" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="389.09" y="59.00" width="3.58" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="392.71" y="59.00" width="1.34" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="394.10" y="59.00" width="1.35" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="395.50" y="59.00" width="1.74" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="397.28" y="59.00" width="1.53" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="398.87" y="59.00" width="2.20" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="401.13" y="59.00" width="1.45" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="402.63" y="59.00" width="1.32" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="403.99" y="59.00" width="1.34" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="405.37" y="59.00" width="1.33" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="406.74" y="59.00" width="1.32" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="408.11" y="59.00" width="1.33" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="409.47" y="59.00" width="1.35" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="410.87" y="59.00" width="1.36" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="412.27" y="59.00" width="1.33" height="5.00" fill="#1baf7a"><title>r12 placement inter</title></rect>
+<rect x="353.33" y="65.00" width="0.36" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="353.75" y="65.00" width="0.33" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="354.14" y="65.00" width="0.35" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="354.55" y="65.00" width="0.34" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="354.95" y="65.00" width="0.34" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="355.34" y="65.00" width="0.35" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="355.75" y="65.00" width="0.34" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="356.15" y="65.00" width="0.34" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="356.55" y="65.00" width="0.34" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="356.94" y="65.00" width="0.34" height="5.00" fill="#1baf7a"><title>r12 placement intra</title></rect>
+<rect x="393.20" y="70.70" width="20.40" height="5.60" fill="#ffffff"></rect>
+<text x="412.60" y="75.40" font-size="5" text-anchor="end" fill="#5a5e66">114 ms</text>
+<line x1="419.60" y1="81.50" x2="504.00" y2="81.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="353.33" y1="81.50" x2="413.60" y2="81.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="419.60" y1="87.50" x2="504.00" y2="87.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="353.33" y1="87.50" x2="413.60" y2="87.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="419.60" y1="93.50" x2="504.00" y2="93.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<line x1="353.33" y1="93.50" x2="413.60" y2="93.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="421.55" y="79.00" width="50.13" height="5.00" fill="#2a78d6"><title>r13 inter 0.69–18.56 ms</title></rect>
+<rect x="419.60" y="85.00" width="1.94" height="5.00" fill="#2a78d6"><title>r13 intra 0.00–0.69 ms</title></rect>
+<rect x="471.70" y="85.00" width="0.74" height="5.00" fill="#2a78d6"><title>r13 intra 18.57–18.83 ms</title></rect>
+<rect x="492.78" y="91.00" width="9.29" height="5.00" fill="#eda100"><title>r13 gemm 26.09–29.40 ms</title></rect>
+<line x1="489.85" y1="78.50" x2="489.85" y2="96.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="491.25" y1="78.50" x2="491.25" y2="96.50" stroke="#17191c" stroke-width="0.6"/>
+<rect x="354.94" y="79.00" width="1.42" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="356.40" y="79.00" width="1.79" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="358.25" y="79.00" width="2.19" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="360.49" y="79.00" width="2.28" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="362.81" y="79.00" width="2.70" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="365.56" y="79.00" width="2.02" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="367.64" y="79.00" width="2.58" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="370.26" y="79.00" width="1.61" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="371.92" y="79.00" width="1.61" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="373.59" y="79.00" width="2.72" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="376.36" y="79.00" width="1.53" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="377.93" y="79.00" width="1.47" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="379.44" y="79.00" width="2.50" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="381.99" y="79.00" width="1.43" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="383.48" y="79.00" width="1.95" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="385.47" y="79.00" width="1.40" height="5.00" fill="#1baf7a"><title>r13 placement inter</title></rect>
+<rect x="353.33" y="85.00" width="0.35" height="5.00" fill="#1baf7a"><title>r13 placement intra</title></rect>
+<rect x="353.74" y="85.00" width="0.33" height="5.00" fill="#1baf7a"><title>r13 placement intra</title></rect>
+<rect x="354.13" y="85.00" width="0.33" height="5.00" fill="#1baf7a"><title>r13 placement intra</title></rect>
+<rect x="354.53" y="85.00" width="0.35" height="5.00" fill="#1baf7a"><title>r13 placement intra</title></rect>
+<rect x="386.92" y="85.00" width="0.36" height="5.00" fill="#1baf7a"><title>r13 placement intra</title></rect>
+<rect x="387.33" y="85.00" width="0.33" height="5.00" fill="#1baf7a"><title>r13 placement intra</title></rect>
+<rect x="396.10" y="90.70" width="17.50" height="5.60" fill="#ffffff"></rect>
+<text x="412.60" y="95.40" font-size="5" text-anchor="end" fill="#5a5e66">65 ms</text>
+<line x1="419.60" y1="99.00" x2="504.00" y2="99.00" stroke="#5a5e66" stroke-width="0.5"/>
+<line x1="419.60" y1="99.00" x2="419.60" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="419.60" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">0</text>
+<line x1="447.65" y1="99.00" x2="447.65" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="447.65" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">10</text>
+<line x1="475.71" y1="99.00" x2="475.71" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="475.71" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">20</text>
+<line x1="503.76" y1="99.00" x2="503.76" y2="100.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="504.00" y="106.00" font-size="5" text-anchor="end" fill="#5a5e66">ms</text>
+<text x="383.47" y="106.00" font-size="5" text-anchor="middle" fill="#5a5e66">expert comm. (relative)</text>
+<rect x="24.00" y="110.00" width="8.00" height="4.50" fill="#2a78d6"></rect>
+<text x="34.00" y="114.00" font-size="5.5" text-anchor="start" fill="#5a5e66">Token Comm.</text>
+<rect x="74.90" y="110.00" width="8.00" height="4.50" fill="#1baf7a"></rect>
+<text x="84.90" y="114.00" font-size="5.5" text-anchor="start" fill="#5a5e66">Expert Comm.</text>
+<rect x="128.70" y="110.00" width="8.00" height="4.50" fill="#eda100"></rect>
+<text x="138.70" y="114.00" font-size="5.5" text-anchor="start" fill="#5a5e66">Expert Comp.</text>
+<line x1="182.50" y1="109.00" x2="182.50" y2="115.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="184.00" y1="109.00" x2="184.00" y2="115.50" stroke="#17191c" stroke-width="0.6"/>
+<text x="186.50" y="114.00" font-size="5.5" text-anchor="start" fill="#5a5e66">Barrier</text>
+<line x1="222.80" y1="112.20" x2="234.80" y2="112.20" stroke="#7d8289" stroke-width="0.6"/>
+<text x="236.80" y="114.00" font-size="5.5" text-anchor="start" fill="#5a5e66">NIC RDMA</text>
+<line x1="269.00" y1="112.20" x2="281.00" y2="112.20" stroke="#7d8289" stroke-width="0.6" stroke-dasharray="2,1.5"/>
+<text x="283.00" y="114.00" font-size="5.5" text-anchor="start" fill="#5a5e66">NVLink</text>
+<line x1="309.40" y1="112.20" x2="321.40" y2="112.20" stroke="#7d8289" stroke-width="0.6" stroke-dasharray="0.6,1.2"/>
+<text x="323.40" y="114.00" font-size="5.5" text-anchor="start" fill="#5a5e66">GPU</text>
+</svg></figure>
+<h2>Which ranks (not printed on the figure)</h2><div class="wrap"><table><thead><tr><th>panel</th><th>arm</th><th>rank</th><th>node</th><th>why</th><th>total_ms</th><th>nic_ms</th><th>nvlink_ms</th><th>wait_ms</th><th>barrier_at_ms</th><th>gemm_ms</th><th>placement_ms</th><th>capsule</th></tr></thead><tbody><tr><td>Computation Imbalance + Communication Imbalance</td><td>l01_nvshmem</td><td>7</td><td>1</td><td>longest inter-node wire</td><td>38.63</td><td>33.8</td><td>0.88</td><td>0.02</td><td>34.75</td><td>2.55</td><td></td><td>20260904-123815</td></tr><tr><td>Computation Imbalance + Communication Imbalance</td><td>l01_nvshmem</td><td>11</td><td>2</td><td>shortest inter-node wire</td><td>38.76</td><td>16.98</td><td>0.76</td><td>17.6</td><td>35.39</td><td>2.11</td><td></td><td>20260904-123815</td></tr><tr><td>Computation Imbalance + Communication Imbalance</td><td>l01_nvshmem</td><td>12</td><td>3</td><td>longest expert GEMM</td><td>48.72</td><td>22.73</td><td>0.54</td><td>12.03</td><td>35.41</td><td>8.53</td><td></td><td>20260904-123815</td></tr><tr><td>Computation Imbalance + Communication Imbalance</td><td>l01_nvshmem</td><td>15</td><td>3</td><td>shortest expert GEMM</td><td>37.82</td><td>21.63</td><td>1.12</td><td>12.63</td><td>35.44</td><td>1.59</td><td></td><td>20260904-123815</td></tr><tr><td>Token Comm. Balanced + Expert Comp. Imbalance</td><td>l01_allgather_dense</td><td>4</td><td>1</td><td>longest inter-node wire</td><td>17.5</td><td>6.51</td><td>4.39</td><td>0.76</td><td></td><td>7.17</td><td></td><td>20260904-123815</td></tr><tr><td>Token Comm. Balanced + Expert Comp. Imbalance</td><td>l01_allgather_dense</td><td>8</td><td>2</td><td>shortest inter-node wire</td><td>17.6</td><td>4.94</td><td>4.39</td><td>1.98</td><td></td><td>4.21</td><td></td><td>20260904-123815</td></tr><tr><td>Token Comm. Balanced + Expert Comp. Imbalance</td><td>l01_allgather_dense</td><td>12</td><td>3</td><td>longest expert GEMM</td><td>17.41</td><td>5.48</td><td>4.39</td><td>1.07</td><td></td><td>11.12</td><td></td><td>20260904-123815</td></tr><tr><td>Token Comm. Balanced + Expert Comp. Imbalance</td><td>l01_allgather_dense</td><td>15</td><td>3</td><td>shortest expert GEMM</td><td>17.49</td><td>5.72</td><td>4.46</td><td>0.81</td><td></td><td>2.74</td><td></td><td>20260904-123815</td></tr><tr><td>Expert Comp. Balanced → Comm. Imbalance</td><td>eplb_l01_nvplace_bwire_ringplace</td><td>7</td><td>1</td><td>longest inter-node wire</td><td>27.86</td><td>22.91</td><td>0.91</td><td>0.02</td><td>23.91</td><td>3.11</td><td>100.5</td><td>20260904-132050</td></tr><tr><td>Expert Comp. Balanced → Comm. Imbalance</td><td>eplb_l01_nvplace_bwire_ringplace</td><td>11</td><td>2</td><td>shortest inter-node wire</td><td>29.03</td><td>14.07</td><td>0.95</td><td>10.07</td><td>25.17</td><td>3.01</td><td>94.0</td><td>20260904-132050</td></tr><tr><td>Expert Comp. Balanced → Comm. Imbalance</td><td>eplb_l01_nvplace_bwire_ringplace</td><td>12</td><td>3</td><td>longest placement</td><td>29.5</td><td>17.73</td><td>0.86</td><td>6.48</td><td>25.17</td><td>3.37</td><td>114.2</td><td>20260904-132050</td></tr><tr><td>Expert Comp. Balanced → Comm. Imbalance</td><td>eplb_l01_nvplace_bwire_ringplace</td><td>13</td><td>3</td><td>shortest placement</td><td>29.4</td><td>17.85</td><td>0.93</td><td>6.42</td><td>25.29</td><td>3.21</td><td>65.0</td><td>20260904-132050</td></tr></tbody></table></div>
+<h2>SPEC v2</h2><pre># Motivation figure — SPEC v2 (2026-09-04, postdoc edits via lanes_v2_postdoc.drawio)
+
+Source of rulings: the postdoc&#x27;s edited XML (`lanes_v2_postdoc.drawio`) +
+the user&#x27;s written instructions of 2026-09-04. Generator: `build_v2_lanes.py`
+(inputs: phase JSONs of capsules 20260904-123815 and 20260904-132050).
+Outputs: `lanes_v2.svg` (points), `lanes_v2.drawio` (editable twin, layers
+background / bars / glyphs / axes / labels), `lanes_v2.png`, `lanes_v2_ranks.csv`.
+
+## Format
+- Cross-column NSDI figure: width = \textwidth = 504 pt (7.0 in); height ≈ 25 %
+  of width = 126 pt (knob `HEIGHT_FRAC`). Single light look, Helvetica.
+- Three subdiagrams side by side, LEFT TO RIGHT in this order, titles on top
+  exactly as in the XML:
+  1. &quot;Computation Imbalance + Communication Imbalance&quot; — NVSHMEM a2av + GEMM
+  2. &quot;Token Comm. Balanced + Expert Comp. Imbalance&quot; — COMET
+  3. &quot;Expert Comp. Balanced → Comm. Imbalance&quot; — EPLB (exposed dispatch wire,
+     ring-order placement)
+  Equal widths, a gap between subdiagrams; the lane rows are vertically
+  aligned across subdiagrams but every subdiagram has its own lines (no
+  continuous line across the gap).
+- Per rank three lanes, top to bottom: NIC RDMA, NVLink, GPU (labels once, at
+  the left of the first rank row, as in the XML). Lanes are thicker than v1
+  (~5 pt) and near-adjacent; 4 ranks per subdiagram (v1.1 rule; ids omitted).
+- No rank ids, no row/byte stats. The ONLY numbers: per-subdiagram ms axis at
+  the bottom, and the placement span in ms next to each EPLB placement bar.
+
+## Color = task (not resource)
+- blue `#2a78d6` Token Comm. (dispatch puts / fetches on NIC, P2P copies on NVLink)
+- green `#1baf7a` Expert Comm. (one-shot placement puts, NIC and NVLink)
+- yellow `#eda100` Expert Comp. (expert GEMM on GPU) — the XML used orange
+  `#eb6834`; the written instruction says yellow, which wins (knob `COL`).
+- `||` barrier release (black), un-overlapped variants only.
+
+## Background resource lines (bottom layer)
+Darker than v1 (`#7d8289`), one dash pattern per resource so the resource is
+readable even where a bar hides the line: NIC RDMA solid, NVLink dashed,
+GPU dotted. Drawn first so bars overlap and hide them. A pattern ledger at
+the bottom names the three resources; the color legend sits beside it.
+
+## Scales
+- No unified scale. Each subdiagram&#x27;s dispatch→GEMM timeline gets its own
+  0..T axis (T = longest of its four ranks), so each imbalance fills its panel.
+- EPLB subdiagram: the expert-comm (placement) block takes 2/5 of the
+  subdiagram width (relative scale, longest rank fills it, ms label per bar);
+  the remaining 3/5 is the regular dispatch→GEMM timeline with its own axis.
+- Time origin per rank = its first dispatch wire event (prep excluded).
+
+## Data (recommended scenario, 2026-09-04)
+K2 mmlu/professional_law layer 18, b32, middle timed window: ring + COMET
+from capsule 20260904-123815; EPLB from the ring-order placement cell of
+capsule 20260904-132050. Ranks per panel (v1.1 rule): ring r7 r11 r12 r15;
+COMET r4 r8 r12 r15; EPLB r7 r11 r12 r13 (see lanes_v2_ranks.csv).
+
+## Knobs
+`HEIGHT_FRAC` (0.25), `PLACE_FRAC` (0.4), `COL`, `RANKS` (4), `--budget`,
+`--rule`, `--eplb-arm` (ringplace | bwire).
+</pre>
+</main>
