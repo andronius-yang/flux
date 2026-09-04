@@ -1,0 +1,13 @@
+baseline,rank,node,why,total_ms,inter_ms,intra_ms,wait_ms,gemm_ms,barrier_ms,placement_ms,placement_inter_GB,annotation
+NVSHMEM a2av + GEMM,0,0,longest expert GEMM,29.17,18.73,0.69,2.25,5.01,21.74,,,29.2k rows · 187 MB
+NVSHMEM a2av + GEMM,3,0,shortest inter-node wire,26.24,14.61,0.97,6.28,2.63,21.94,,,20.0k rows · 185 MB
+NVSHMEM a2av + GEMM,8,2,longest inter-node wire,24.99,20.91,0.82,0.02,2.07,21.79,,,13.4k rows · 195 MB
+NVSHMEM a2av + GEMM,15,3,shortest expert GEMM,24.48,17.88,0.84,3.16,1.7,21.93,,,10.1k rows · 201 MB
+EPLB,5,1,longest inter-node wire,27.56,22.71,0.85,0.02,3.09,23.66,117.8,1.04,17.8k rows · 195 MB
+EPLB,6,1,longest placement,27.36,17.9,0.83,4.34,3.31,23.17,152.6,1.04,19.2k rows · 195 MB
+EPLB,10,2,shortest placement,27.74,16.37,0.81,6.52,3.1,23.79,59.7,1.04,18.5k rows · 194 MB
+EPLB,15,3,shortest inter-node wire,27.85,14.76,0.95,7.8,3.33,23.6,112.0,0.88,20.6k rows · 187 MB
+COMET,0,0,longest expert GEMM,14.09,6.23,4.41,0.81,7.28,,,,29.2k rows · 96 MB
+COMET,5,1,shortest inter-node wire,14.21,5.01,4.39,1.33,4.42,,,,18.1k rows · 96 MB
+COMET,11,2,longest inter-node wire,14.23,6.84,4.42,0.74,4.49,,,,17.0k rows · 96 MB
+COMET,15,3,shortest expert GEMM,14.22,5.63,4.42,1.38,2.8,,,,10.1k rows · 96 MB

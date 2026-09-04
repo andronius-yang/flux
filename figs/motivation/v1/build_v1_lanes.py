@@ -23,17 +23,35 @@ COL = {"inter": "#2a78d6", "intra": "#1baf7a", "gemm": "#eb6834", "place": "#eda
 ARMS = [("l01_nvshmem", "NVSHMEM a2av + GEMM"), ("eplb_l01_nvplace_bwire", "EPLB"), ("l01_allgather_dense", "COMET")]
 
 
+RULE = "v1.1"   # v1: total extremes, longest placement/NIC, longest GEMM; v1.1 (postdoc 9/4): both extremes of the panel's story metric first
+
+
 def pick(arm, M, P, n=4):
     ranks = sorted(M, key=int); out, why = [], {}
     def add(r, w):
         if r not in out and len(out) < n: out.append(r); why[r] = w
-    add(max(ranks, key=lambda r: M[r]["total"]), "longest layer-0 total")
-    add(min(ranks, key=lambda r: M[r]["total"]), "shortest layer-0 total")
-    if P: add(max(ranks, key=lambda r: P[r]["span"]), "longest placement")
-    else: add(max(ranks, key=lambda r: M[r]["inter"]), "longest inter-node wire")
-    add(max(ranks, key=lambda r: M[r]["gemm"]), "longest expert GEMM")
-    add(min(ranks, key=lambda r: M[r]["inter"]), "shortest inter-node wire")
-    add(min(ranks, key=lambda r: M[r]["gemm"]), "shortest expert GEMM")
+    if RULE == "v1":
+        add(max(ranks, key=lambda r: M[r]["total"]), "longest layer-0 total")
+        add(min(ranks, key=lambda r: M[r]["total"]), "shortest layer-0 total")
+        if P: add(max(ranks, key=lambda r: P[r]["span"]), "longest placement")
+        else: add(max(ranks, key=lambda r: M[r]["inter"]), "longest inter-node wire")
+        add(max(ranks, key=lambda r: M[r]["gemm"]), "longest expert GEMM")
+        add(min(ranks, key=lambda r: M[r]["inter"]), "shortest inter-node wire")
+        add(min(ranks, key=lambda r: M[r]["gemm"]), "shortest expert GEMM")
+    else:
+        # story metric: EPLB = placement span (dispatch + GEMM are balanced by design);
+        # ring / COMET = expert GEMM (compute imbalance) — both extremes, then the
+        # inter-node wire extremes, then the layer-0 total extremes as fallback
+        if P:
+            add(max(ranks, key=lambda r: P[r]["span"]), "longest placement")
+            add(min(ranks, key=lambda r: P[r]["span"]), "shortest placement")
+        else:
+            add(max(ranks, key=lambda r: M[r]["gemm"]), "longest expert GEMM")
+            add(min(ranks, key=lambda r: M[r]["gemm"]), "shortest expert GEMM")
+        add(max(ranks, key=lambda r: M[r]["inter"]), "longest inter-node wire")
+        add(min(ranks, key=lambda r: M[r]["inter"]), "shortest inter-node wire")
+        add(max(ranks, key=lambda r: M[r]["total"]), "longest layer-0 total")
+        add(min(ranks, key=lambda r: M[r]["total"]), "shortest layer-0 total")
     return sorted(out, key=int), why
 
 
@@ -195,8 +213,9 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("json", nargs="+"); ap.add_argument("--out", required=True)
     ap.add_argument("--placement-frac", type=float, default=1 / 3); ap.add_argument("--relative", action="store_true")
-    ap.add_argument("--budget", type=int, default=16); ap.add_argument("--ranks", type=int, default=4)
+    ap.add_argument("--budget", type=int, default=16); ap.add_argument("--ranks", type=int, default=4); ap.add_argument("--rule", default="v1.1", choices=["v1", "v1.1"])
     a = ap.parse_args()
+    RULE = a.rule
     data = {"cells": {}}
     for j in a.json: data["cells"].update(json.load(open(j))["cells"])
     panels, ledger, tmax = build(data, a.out, a.placement_frac, not a.relative, a.budget, a.ranks)
