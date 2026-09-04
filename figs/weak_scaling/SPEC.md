@@ -1,8 +1,8 @@
 # Weak-scaling figure — aesthetic & architecture spec
 
-Status: REV 3.1 (2026-09-04; postdoc: speedup labels ALWAYS above the bar,
-bars in the evaluation-wide speedup color — applied to EVERY render, so the
-REV 1.2/2.x outputs are regenerated, no longer byte-stable). Data authority: `figure_src.csv` (+
+Status: REV 3.2 (2026-09-04; user: red is the Ours-fastest highlight, NOT the
+speedup color — bars = warm-neutral ink family, labels plain black; stacked
+layout: bold scenario tags, one left label, right label tightened). Data authority: `figure_src.csv` (+
 `figure_src.md`). Generator: `make_figure.py` (matplotlib; one `CONFIG`
 block, every **[knob]** below lives there). Two versions from one script:
 **verA** (latency) and **verB** (throughput).
@@ -34,17 +34,17 @@ block, every **[knob]** below lives there). Two versions from one script:
   carry in the main figure, so identity is consistent across figures.
   Line 1.1 pt, marker 3.6 pt, **no edge stroke** (REV 1.1: the white
   marker edge painted over neighbouring elements).
-- **Speedup bars** **[knob: BARS]** (REV 3.1, postdoc): the speedup family
-  is the main figure's Ours-speedup red — fill `#d7616c` (muted red-coral,
-  65% of `#c1121f` on white), edge `#c1121f` 0.5 pt, width 0.55 of the
-  slot, drawn *behind* lines (zorder). This is the ONE speedup color for
-  every evaluation figure (main figure's speedup annotations use the same
-  `#c1121f`). Right y-limit = ceil_nice(max speedup × 1.5) **[knob:
-  BAR_HEADROOM]**. Value label `"{:.2f}×"` **always directly above its bar**
-  (postdoc ruling — even where it crosses a line), 5.8 pt bold `#c1121f`
-  with a 1.3 pt white halo so it stays legible over line segments; drawn on
-  the upper (line) axes so it sits above both lines and markers. The
-  earlier grey fill / auto-base placement is retired.
+- **Speedup bars** **[knob: BARS]** (REV 3.2, user): bars are background
+  context behind two saturated lines, so they take a mid-dark WARM NEUTRAL
+  from the main figure's ink family — fill `#a6a39c` (warm stone, between
+  the axis `#c3c2b7` and muted `#898781` tokens), edge `#52514e` (secondary
+  ink) 0.5 pt, width 0.55 of the slot, drawn *behind* lines. Darker than
+  the retired `#d9d9d9`; NOT red — red `#c1121f` is reserved for the
+  Ours-is-fastest highlight in the main figure, it is not a speedup color.
+  Right y-limit = ceil_nice(max speedup × 1.5) **[knob: BAR_HEADROOM]**.
+  Value label `"{:.2f}×"` **always directly above its bar** (postdoc,
+  REV 3.1 — even where it crosses a line), 5.8 pt plain black `#0b0b0b`
+  with a 1.3 pt white halo, drawn on the line axes above lines and markers.
 - **COMET missing at 32n** **[knob: FAIL_NOTE]** (REV 1.2, postdoc): an **✗**
   in the COMET color sits directly **on the x axis** at the 32n slot, with
   the short note **OOM** just above it (5.5 pt, COMET color). No dashed
@@ -116,9 +116,10 @@ block, every **[knob]** below lives there). Two versions from one script:
   right-axis label** ("Speedup vs NVSHMEM", centered on the stack — per-panel
   labels collided); right-axis SCALES stay per panel (a shared scale
   flattened the 64 MiB bars once the 1 MiB panel reached ~9x — each panel
-  prints its own ticks). Bar value labels use `label_pos="above_all"`: above
-  the bar top AND above every marker at that x, never at the base (the 1 MiB
-  panel's small bars and lines both hug the baseline). Per-panel
+  prints its own ticks). REV 3.2: scenario tags **bold** primary ink; ONE
+  shared left label "Latency (ms)" centered on the stack **[knob:
+  STACKED.shared_left_label, left_label_x]**; the shared right label sits
+  tighter to the right ticks **[knob: STACKED.right_label_x = 0.935]**. Per-panel
   labels collided at this height) **[knob: STACKED]**. Height 1.8 in total
   (= 1/5 of the 9 in text height, "compact for now"; caption not budgeted),
   `hspace` 0.22, x tick labels + "Nodes" only on the bottom panel, a small

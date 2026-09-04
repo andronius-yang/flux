@@ -41,16 +41,18 @@ CONFIG = dict(
     },
     LINE=dict(lw=1.1, ms=3.6, mew=0.0, mec=None),      # markers: no edge stroke
     BARS=dict(label="Speedup vs COMET",        # label follows REF (see BASELINES)
-              # REV 3.1 (postdoc): the speedup family = the main figure's
-              # Ours-speedup red #c1121f — muted red-coral fill (65% of
-              # #c1121f on white), full-red edge; recessive next to the
-              # steel-blue / sand / olive lines but no longer grey-light
-              face="#d7616c", edge="#c1121f",
+              # REV 3.2 (user): red is reserved for the Ours-is-fastest
+              # highlight, not for "speedup". Bars are background context
+              # behind saturated lines, so they take a mid-dark WARM NEUTRAL
+              # from the main figure's ink family (axis #c3c2b7 / muted
+              # #898781 / secondary #52514e): fill = warm stone, edge =
+              # secondary ink. Darker than the old #d9d9d9, no competing hue.
+              face="#a6a39c", edge="#52514e",
               lw=0.5, width=0.55, fmt="{:.2f}×", label_pad_pt=1.5,
               label_pos="top",    # REV 3.1 (postdoc): ALWAYS directly above the
                                   # bar, even across a line — a white halo keeps
                                   # it legible ("auto"/"above_all" kept as knobs)
-              label_color="#c1121f", label_weight="bold",
+              label_color="#0b0b0b", label_weight="normal",   # plain black (user)
               halo_pt=1.3,        # white stroke behind the label glyphs
               label_h_pt=6.5),    # label glyph height used by the auto test
     BAR_HEADROOM=1.5,                         # right ylim = ceil_nice(max*this)
@@ -85,9 +87,12 @@ CONFIG = dict(
     STACKED=dict(budgets=[1, 64], metric="total_ms", FIG_H=1.8,
                  MARGINS=dict(left=0.135, right=0.86, top=0.87, bottom=0.17),
                  hspace=0.22,                       # gap between panels (fraction of panel height)
-                 right_label_x=0.975,               # shared right-axis label position (fig frac)
+                 right_label_x=0.935,               # REV 3.2: tighter to the right ticks (fig frac)
                  label_pos="top",                   # REV 3.1: always above the bar (postdoc)
                  tag_fmt="{} MiB", tag_size=6.0,    # per-panel budget tag, top-left inside
+                 tag_weight="bold",                 # REV 3.2: scenario setting in bold
+                 shared_left_label=True,            # REV 3.2: ONE "Latency (ms)" for the stack
+                 left_label_x=0.028,                # fig frac
                  legend_y=1.0, N_YTICKS=3,
                  outputs=[("weak_scaling_nvshmem_stacked.pdf", {}),
                           ("weak_scaling_nvshmem_stacked.png", {"dpi": 300})]),
@@ -255,10 +260,12 @@ def draw_panel(fig, ax, ax2, data, cfg, metric, y_label, *, x_label=True, legend
     ax.yaxis.set_major_locator(matplotlib.ticker.MaxNLocator(cfg["N_YTICKS"]))
     if x_label:
         ax.set_xlabel(cfg["X_LABEL"], fontsize=fs["label"], labelpad=1.5)
-    ax.set_ylabel(y_label, fontsize=fs["label"], labelpad=2)
+    if y_label:
+        ax.set_ylabel(y_label, fontsize=fs["label"], labelpad=2)
     if tag:
         ax.text(0.01, 0.97, tag, transform=ax.transAxes, ha="left", va="top",
-                fontsize=cfg["STACKED"]["tag_size"], color=cfg["INK"]["secondary"], zorder=5)
+                fontsize=cfg["STACKED"]["tag_size"], color=cfg["INK"]["primary"],
+                fontweight=cfg["STACKED"].get("tag_weight", "normal"), zorder=5)
     # gridlines live on the LOWER axes (ax2) so they render beneath the bars
     # and their value labels; positions follow the left axis's ticks
     for y in ax.get_yticks():
@@ -301,11 +308,16 @@ def plot_stacked(cfg):
     for k, (b, ax) in enumerate(zip(st["budgets"], axes)):
         c = dict(cfg_l, BUDGET=b)
         last_panel = k == len(st["budgets"]) - 1
-        draw_panel(fig, ax, ax.twinx(), datas[b], c, st["metric"], cfg["Y_LABELS"]["A"],
+        draw_panel(fig, ax, ax.twinx(), datas[b], c, st["metric"],
+                   None if st.get("shared_left_label") else cfg["Y_LABELS"]["A"],
                    x_label=last_panel, legend=(k == 0), tag=st["tag_fmt"].format(b),
                    right_label=False)
-    # one shared right-axis label centered on the stack (per-panel labels collide)
     m = st["MARGINS"]
+    if st.get("shared_left_label"):
+        fig.text(st["left_label_x"], (m["top"] + m["bottom"]) / 2, cfg["Y_LABELS"]["A"],
+                 rotation=90, ha="center", va="center", fontsize=cfg["FONT_SIZES"]["label"],
+                 color=cfg["INK"]["primary"])
+    # one shared right-axis label centered on the stack (per-panel labels collide)
     fig.text(st["right_label_x"], (m["top"] + m["bottom"]) / 2, cfg["RIGHT_LABEL"],
              rotation=90, ha="center", va="center", fontsize=cfg["FONT_SIZES"]["label"],
              color=cfg["INK"]["right"])
