@@ -483,6 +483,12 @@ def parse_args():
                         " expert's original home + world barrier (per-put"
                         " spans/bytes visible in nsys; needs --transport"
                         " nvshmem|fused for the symmetric heap)")
+    parser.add_argument("--place_order", default="global",
+                        choices=["global", "ring"],
+                        help="nvshmem placement wire only: order of a home"
+                        " rank's placement puts — global = global pair order"
+                        " (destination-major; every rank hits rank 0 first),"
+                        " ring = start at (me+1) and walk the ring")
     parser.add_argument("--dispatch_wire", default="a2a",
                         choices=["a2a", "blocking_ring"],
                         help="nvshmem transport only: a2a = staged"
@@ -636,6 +642,7 @@ if __name__ == "__main__":
         dtype=input_dtype, ffn_size_shard=moe_ctx.ffn_size_shard,
         place_fc2=(args.weight_place == "fc1fc2"),
         weight_place_wire=args.weight_place_wire,
+        place_order=args.place_order,
     )
     if args.transport == "nvshmem":
         # collective + device-syncing ctor: setup only, never timed
@@ -773,6 +780,7 @@ if __name__ == "__main__":
             eplb_weight_place=args.weight_place,
             eplb_weight_place_wire=args.weight_place_wire,
             eplb_dispatch_wire=args.dispatch_wire,
+            eplb_place_order=args.place_order,
             eplb_weight_place_ms_oneshot=place_ms,
             eplb_transport=args.transport,
         )

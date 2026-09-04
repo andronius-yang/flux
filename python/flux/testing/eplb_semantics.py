@@ -579,7 +579,7 @@ class EPLBLayer0Runner(UltraEPLayer0Runner):
     def __init__(self, plan: UltraEPPlan, rank: int, group, device,
                  topk_all: torch.Tensor, dtype=torch.bfloat16,
                  ffn_size_shard: int = 0, place_fc2: bool = True,
-                 weight_place_wire: str = "nccl"):
+                 weight_place_wire: str = "nccl", place_order: str = "global"):
         # ffn_size_shard=0 makes the parent skip out_buf/replica_fc1/
         # replica_fc2; slot-indexed buffers replace them below.
         super().__init__(plan, rank, group, device, topk_all, dtype=dtype,
@@ -589,6 +589,8 @@ class EPLBLayer0Runner(UltraEPLayer0Runner):
         self.ffn_size_shard = ffn_size_shard
         self.place_fc2 = place_fc2
         self.weight_place_wire = weight_place_wire
+        assert place_order in ("global", "ring"), place_order
+        self.place_order = place_order
         cfg = self.cfg
         self.out_buf = torch.zeros(
             max(self.n_recv, 1), ffn_size_shard, dtype=dtype, device=device
@@ -789,9 +791,18 @@ class EPLBLayer0Runner(UltraEPLayer0Runner):
         fc1_bytes = self._stage_fc1.numel() * self._stage_fc1.element_size()
         fc2_bytes = (self._stage_fc2.numel() * self._stage_fc2.element_size()
                      if self.place_fc2 else 0)
-        # my sends, in global pair order: (dest_pe, dest_slot, logical)
+        # my sends: (dest_pe, dest_slot, logical). Order knob (2026-09-04):
+        #   global = the global pair order (destination-rank major -> every
+        #            home rank pushes to rank 0's slots first: a synchronized
+        #            incast wave; the historical behaviour)
+        #   ring   = start at destination (me+1) and walk the ring, so the
+        #            senders target distinct destinations at any instant (the
+        #            dispatch wire's own incast-avoidance rule)
         my_sends = [(host, b, l) for host, b, l, home in pairs
                     if home == self.rank]
+        if getattr(self, "place_order", "global") == "ring":
+            R = self.cfg.R
+            my_sends.sort(key=lambda t: ((t[0] - self.rank) % R, t[1]))
         recv_bytes = sum(fc1_bytes + fc2_bytes for host, _, _, _ in pairs
                          if host == self.rank)
         # untimed: host synthesis of every expert this rank pushes (each

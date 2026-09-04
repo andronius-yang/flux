@@ -586,6 +586,19 @@ VARIANTS = {
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["nvshmem_putmem_on_stream"],
     ),
+    # 2026-09-04: placement puts in RING order (start at me+1) instead of the
+    # destination-major global pair order (synchronized incast wave).
+    "eplb_l01_nvplace_bwire_ringplace": dict(
+        comm_pattern="eplb_static_a2av",
+        driver="eplb",
+        layer="l01",
+        test_args=["--transport", "nvshmem", "--layers", "l01",
+                   "--weight_place_wire", "nvshmem",
+                   "--dispatch_wire", "blocking_ring",
+                   "--place_order", "ring"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["nvshmem_putmem_on_stream"],
+    ),
     "eplb": dict(
         comm_pattern="eplb_static_a2av",  # cells.csv label only, never a CLI flag
         driver="eplb",

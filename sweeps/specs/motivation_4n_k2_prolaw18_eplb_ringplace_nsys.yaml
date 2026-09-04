@@ -1,0 +1,25 @@
+# EPLB placement-put ORDER A/B on the exposed wire (2026-09-04): global
+# (destination-major, synchronized incast) vs ring (start at me+1), same
+# placement/bytes, ONE capsule, K2 professional_law layer 18, b16 + b32,
+# nsys isolated, correctness on (bitwise slot check proves the wire).
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [eplb_l01_nvplace_bwire, eplb_l01_nvplace_bwire_ringplace]
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=18;sem=homog;dslots=64:32"
+budgets_mib: [16, 32]
+modes: [nsys]
+extra_env:
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+matrix_instance: "001"
+skip_correctness: false
+sm_margin: 8
+n_split_l1: 7
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 0
+notes: "eplb placement put order: global vs ring, exposed wire, K2 professional_law L18, 4n b16+b32, nsys isolated"
