@@ -1,6 +1,6 @@
 # Main performance figure — aesthetic & architecture spec
 
-Status: REV 2.1 (2026-09-02, postdoc review + label-style rulings — see §9). Data authority: `figure_src.csv` (+
+Status: REV 3 DRAFT (2026-09-03, +8 nodes, 3x2 layout — see §9). Aesthetics unchanged from REV 2.1. Data authority: `figure_src.csv` (+
 `figure_src.md` provenance). Generator: `make_figure.py` (matplotlib, to be
 written after this spec is approved). Every value marked **[knob]** is a
 parameter in the generator's single `CONFIG` block — nothing aesthetic is
@@ -13,8 +13,20 @@ hard-coded outside it.
   target width = 7.0 in (\textwidth); the PDF is placed at `\linewidth` so the
   exported figure is built at exactly its final physical size — fonts are
   therefore true points, never scaled.
-- **Four subfigures in a 2x2 grid** — columns = topology **{4 nodes, 16 nodes}**,
-  rows = model **{K2, Qwen}** (K2 top).
+- **REV 3: six subfigures in a 3x2 grid** — rows = topology **{4, 8, 16
+  nodes}** (top to bottom), columns = model **{Kimi K2, Qwen3}** with FULL
+  model names as column titles (**[knob: COL_TITLES]** — "Kimi K2 (1T-A32B)",
+  "Qwen3-235B-A22B"; column order K2 left / Qwen right, the same K2-first
+  order the 2x2 used top-to-bottom, **[knob: COLS]**). Replaces the REV 2
+  2x2 (columns = topology, rows = model).
+- **REV 3 sizing rule (user, 2026-09-03): each subfigure keeps EXACTLY the
+  REV 2.1 panel size and spacing** — panel height 0.592 in, wspace 0.10,
+  hspace 0.14, the same top strip (legend + titles) and bottom strip. The
+  generator derives the figure height from these constants, so adding the
+  8n row grows the figure to **~2.47 in** (was 1.85). That is ~27% of the
+  9 in text height before the caption — i.e. the REV 2 "1/4 page incl.
+  caption" budget is exceeded by design; shrinking is a one-knob change
+  (`PANEL_H_IN`) if the page budget wins later.
 - **Three bar groups per subfigure** — byte budgets **1 MiB, 4 MiB, 16 MiB**.
 - **Seven bars per group**: 6 baselines + 1 "Ours".
 - **One legend for the entire figure, at the top.**
@@ -80,8 +92,10 @@ FAST at 16n (183–227 ms) would flatten every other bar. Mechanism
   Slash geometry (rise, gap, linewidth) **[knob: BREAK_MARK]**.
 - Truncation threshold can be forced per column with an absolute override
   **[knob: YLIM_OVERRIDE = {col: value | None}]** (default None = automatic).
-- On the committed data truncation fires only for FAST at 16n; the rule is
-  generic (any bar over the cap truncates the same way).
+- On the committed data truncation fires only for FAST at 16n; at 8n FAST's
+  tallest bar (62 ms at 16 MiB) is under 1.5x the next system, so it is
+  NOT peeled and sets the 8n ceiling (65 ms) instead — the rule is generic
+  (any bar over the cap truncates the same way; `OUTLIER_FACTOR` decides).
 
 ### 2.4 Speedup annotations (REV 2)
 
@@ -131,21 +145,22 @@ baseline** in the same group: `ratio = NVSHMEM_total_ms / bar_total_ms`
 +------------------------------------------------------------------+
 ```
 
-- Figure size **[knob: FIG_W, FIG_H]** = 7.0 x **1.85 in** (REV 2; was 3.6).
-- Grid: 2x2, `wspace` 0.10, `hspace` 0.14 **[knob]** (REV 2: compacted from
-  0.14/0.16); margins left 0.052 / right 0.968 / top 0.80 / bottom 0.115.
-- **Column titles** "4 nodes" / "16 nodes" **[knob: COL_TITLES]** above the top
+- Figure width 7.0 in **[knob: FIG_W]**; height DERIVED (REV 3) from
+  `PANEL_H_IN` 0.592 × 3 rows + `HSPACE` 0.14 gaps + `TOP_STRIP_IN` 0.315 +
+  `BOTTOM_STRIP_IN` 0.213 = **2.47 in** **[knobs]**. Grid 3x2, `wspace`
+  0.10, `hspace` 0.14; left/right margins 0.052 / 0.968 (unchanged, so the
+  panel WIDTH is identical to REV 2.1).
+- **Column titles** = full model names **[knob: COL_TITLES]** above the top
   row, 7.5 pt bold, 2.5 pt pad.
-- **Model tags** ("K2" / "Qwen") **[knob: ROW_TAGS, ROW_TAG_STYLE="right"]**
-  as rotated labels on the right edge of the right column, 7 pt, secondary
-  ink (the in-axes top-left style is kept as `ROW_TAG_STYLE="inside"`; it
-  collides with the truncated FAST bar at 16n, which is why "right" is the
-  default).
-- **Y sharing** **[knob: SHAREY = "col"]**: the two subfigures in a column
-  share y-limits (4n and 16n magnitudes differ ~4x, so columns must scale
-  independently; K2/Qwen within a column are comparable, and shared limits
-  make the vertical model comparison honest). All four axes keep their own
-  y tick labels; 3 major ticks **[knob: N_YTICKS]**.
+- **Row tags** = topology ("4 nodes" / "8 nodes" / "16 nodes") **[knob:
+  ROW_TAGS, ROW_TAG_STYLE="right"]** as rotated labels on the right edge of
+  the right column, 7 pt, secondary ink (the in-axes style remains a knob;
+  it collides with truncated FAST bars).
+- **Y sharing** **[knob: SHAREY = "row"]** (REV 3: was "col"): the two
+  models at one node count share y-limits — magnitudes scale with topology
+  (~4x from 4n to 16n), and the horizontal K2-vs-Qwen comparison is the
+  honest one. Ceilings on the committed data: 46 (4n), 65 (8n), 80 (16n) ms.
+  All six axes keep their own y tick labels; 3 major ticks **[knob]**.
 - **Ceiling** (REV 2, "the diagram is too empty"): `ylim = ceil_nice(1.03 x
   tallest kept bar)` **[knob: HEADROOM, NICE_STEPS]** with a fine nice-step
   (2 below 60, 5 below 150, 10 above) — on the committed data 46 ms (4n) and
@@ -295,6 +310,12 @@ labels), secondary `#52514e` (in-axes model tags), muted `#898781`
      above short bars; the tallest bars host their label on a solid window
      of their own color. Truncated FAST bars show their true value inside
      instead of a ratio.
+- **REV 3 (2026-09-03) — postdoc: add 8 nodes.** 100/100 offline 8n values
+  authenticated against capsules; layout becomes 3 rows (4/8/16 nodes) x
+  2 columns (models, full names); y shared per ROW; every panel keeps the
+  REV 2.1 size and spacing, so the figure grows to ~2.47 in (flagged
+  against the 1/4-page budget). All marks, colors, labels, truncation and
+  typography rules unchanged.
 - **REV 2.1 (2026-09-02) — label-style rulings after seeing REV 2:**
   inside labels black (white only below OKLCH L 0.40 — none today); "1×"
   mark on the NVSHMEM reference bars; speedups regular weight, Ours bold;

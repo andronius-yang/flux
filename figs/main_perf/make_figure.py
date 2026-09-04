@@ -21,8 +21,8 @@ from matplotlib.patches import Patch
 CONFIG = dict(
     # ---- data selection ----
     BUDGETS=[1, 4, 16],                       # MiB, group order left->right
-    COLS=["4", "16"],                         # topology per subfigure column
-    ROWS=["K2", "Qwen"],                      # model per subfigure row
+    ROWS=["4", "8", "16"],                    # topology per subfigure ROW (top->bottom)
+    COLS=["K2", "Qwen"],                      # model per subfigure COLUMN (left->right)
     SYSTEMS=[                                 # fixed bar order (SPEC 2.1)
         "fast_gemm", "nvshmem_gemm", "moonep", "eplb", "epic", "comet", "OURS",
     ],
@@ -63,7 +63,7 @@ CONFIG = dict(
     OUTLIER_FACTOR=1.5,   # bar is an outlier if > factor * next system's max
     HEADROOM=1.03,        # ylim = ceil_nice(headroom * tallest kept bar)
     NICE_STEPS=[(60, 2), (150, 5), (1e9, 10)],  # ceil_nice: step below bound
-    YLIM_OVERRIDE={"4": None, "16": None},    # absolute per-column cap
+    YLIM_OVERRIDE={"4": None, "8": None, "16": None},   # absolute per-row cap
     BREAK_MARK=dict(dy_frac=0.045,            # slash rise, frac of ylim
                     gap_frac=0.040,           # gap between the two slashes
                     y_frac=0.90,              # slash center height, frac ylim
@@ -94,13 +94,17 @@ CONFIG = dict(
         skip_truncated=True,                  # truncated bars show value instead
     ),
     # ---- layout ----
-    FIG_W=7.0, FIG_H=1.85,     # in; USENIX text block 7x9 -> <=25% incl. caption
-    MARGINS=dict(left=0.052, right=0.968, top=0.80, bottom=0.115),
-    WSPACE=0.10, HSPACE=0.14,
-    COL_TITLES={"4": "4 nodes", "16": "16 nodes"},
+    FIG_W=7.0,                 # in; USENIX \textwidth (figure*)
+    # REV 3: figure HEIGHT is derived so every panel keeps the REV 2.1 size
+    PANEL_H_IN=0.592,          # height of one subfigure panel, in
+    TOP_STRIP_IN=0.315,        # legend + column titles strip above the panels
+    BOTTOM_STRIP_IN=0.213,     # x group labels strip below the panels
+    MARGINS_LR=dict(left=0.052, right=0.968),   # unchanged -> same panel width
+    WSPACE=0.10, HSPACE=0.14,  # fractions of panel width/height
+    COL_TITLES={"K2": "Kimi K2 (1T-A32B)", "Qwen": "Qwen3-235B-A22B"},
     COL_TITLE_PAD=2.5,                        # pt above axes
     COL_TITLE_WEIGHT="bold",
-    ROW_TAGS={"K2": "K2", "Qwen": "Qwen"},    # model tag text
+    ROW_TAGS={"4": "4 nodes", "8": "8 nodes", "16": "16 nodes"},   # row tag text
     ROW_TAG_STYLE="right",                    # "right" rotated edge label,
                                               # or "inside" top-left in-axes
     GROUP_LABELS={1: "1 MiB", 4: "4 MiB", 16: "16 MiB"},
@@ -127,8 +131,8 @@ def load(cfg):
             raw[(r["nodes"], r["model"], int(r["budget_mib"]), r["row_id"])] = \
                 float(r["total_ms"])
     data = {}
-    for nodes in cfg["COLS"]:
-        for model in cfg["ROWS"]:
+    for nodes in cfg["ROWS"]:
+        for model in cfg["COLS"]:
             for b in cfg["BUDGETS"]:
                 cell = {}
                 for sysname in cfg["SYSTEMS"]:
@@ -151,11 +155,11 @@ def ceil_nice(v, cfg):
     return step * math.ceil(v / step)
 
 
-def column_ylim(data, cfg, nodes):
-    """Peel outlier systems (SPEC 2.3), cap from the tallest kept bar."""
+def row_ylim(data, cfg, nodes):
+    """Peel outlier systems (SPEC 2.3), cap from the tallest kept bar (per row)."""
     if cfg["YLIM_OVERRIDE"].get(nodes):
         return cfg["YLIM_OVERRIDE"][nodes]
-    sys_max = {s: max(data[(nodes, m, b)][s] for m in cfg["ROWS"]
+    sys_max = {s: max(data[(nodes, m, b)][s] for m in cfg["COLS"]
                       for b in cfg["BUDGETS"]) for s in cfg["SYSTEMS"]}
     kept = sorted(sys_max.values(), reverse=True)
     while len(kept) > 1 and kept[0] > cfg["OUTLIER_FACTOR"] * kept[1]:
@@ -237,22 +241,25 @@ def plot(data, cfg):
         "xtick.color": cfg["INK"]["primary"], "ytick.color": cfg["INK"]["primary"],
         "text.color": cfg["INK"]["primary"],
     })
-    fig, axes = plt.subplots(len(cfg["ROWS"]), len(cfg["COLS"]),
-                             figsize=(cfg["FIG_W"], cfg["FIG_H"]))
+    nrows = len(cfg["ROWS"])
+    fig_h = (cfg["PANEL_H_IN"] * (nrows + cfg["HSPACE"] * (nrows - 1))
+             + cfg["TOP_STRIP_IN"] + cfg["BOTTOM_STRIP_IN"])
+    fig, axes = plt.subplots(nrows, len(cfg["COLS"]), figsize=(cfg["FIG_W"], fig_h))
     fig.subplots_adjust(wspace=cfg["WSPACE"], hspace=cfg["HSPACE"],
-                        **cfg["MARGINS"])
+                        top=1 - cfg["TOP_STRIP_IN"] / fig_h,
+                        bottom=cfg["BOTTOM_STRIP_IN"] / fig_h, **cfg["MARGINS_LR"])
 
     nbars = len(cfg["SYSTEMS"])
     slot = cfg["GROUP_WIDTH"] / nbars
     bar_w = slot * (1 - cfg["BAR_GAP_FRAC"])
-    ylims = {nodes: column_ylim(data, cfg, nodes) for nodes in cfg["COLS"]}
+    ylims = {nodes: row_ylim(data, cfg, nodes) for nodes in cfg["ROWS"]}
     sp = cfg["SPEEDUP"]
 
-    for ri, model in enumerate(cfg["ROWS"]):
-        for ci, nodes in enumerate(cfg["COLS"]):
+    for ri, nodes in enumerate(cfg["ROWS"]):
+        for ci, model in enumerate(cfg["COLS"]):
             ax = axes[ri][ci]
             ylim = ylims[nodes]
-            ax_h_pt = cfg["FIG_H"] * ax.get_position().height * 72
+            ax_h_pt = fig_h * ax.get_position().height * 72
             ax._data_per_pt = ylim / ax_h_pt   # data units per point (y)
             for gi, b in enumerate(cfg["BUDGETS"]):
                 cell = data[(nodes, model, b)]
@@ -295,17 +302,17 @@ def plot(data, cfg):
             for side in ("top", "right"):
                 ax.spines[side].set_visible(False)
             if cfg["ROW_TAG_STYLE"] == "inside":
-                ax.text(0.015, 0.965, cfg["ROW_TAGS"][model],
+                ax.text(0.015, 0.965, cfg["ROW_TAGS"][nodes],
                         transform=ax.transAxes, ha="left", va="top",
                         fontsize=cfg["FONT_SIZES"]["row_tag"],
                         color=cfg["INK"]["secondary"])
             elif ci == len(cfg["COLS"]) - 1:  # "right": rotated row label
-                ax.text(1.018, 0.5, cfg["ROW_TAGS"][model],
+                ax.text(1.018, 0.5, cfg["ROW_TAGS"][nodes],
                         transform=ax.transAxes, ha="left", va="center",
                         rotation=270, fontsize=cfg["FONT_SIZES"]["row_tag"],
                         color=cfg["INK"]["secondary"])
             if ri == 0:
-                ax.set_title(cfg["COL_TITLES"][nodes],
+                ax.set_title(cfg["COL_TITLES"][model],
                              pad=cfg["COL_TITLE_PAD"],
                              fontsize=cfg["FONT_SIZES"]["col_title"],
                              fontweight=cfg["COL_TITLE_WEIGHT"])

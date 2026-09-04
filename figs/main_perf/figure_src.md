@@ -6,6 +6,21 @@ sweep capsules. Grid: {4n, 16n} x {Qwen, K2} x figure rows x budgets
 capsule statistic within <= 0.006 ms**, the other 3 are in the discrepancy
 ledger below, and the 2 recorded-NA cells were found and filled.
 
+**v2 addendum (2026-09-03): 8-node rows added** — the postdoc's offline 8n
+grid (10 rows x 5 budgets x 2 models = 100 values) was resolved the same
+way: **100/100 matched a capsule statistic exactly** (90 on `main`, the 10
+FAST cells on `fast-split`), no discrepancies. Row-label note: the 8n grid
+calls its reference row "Torch a2av (not ag) + GEMM"; every one of those
+cells matched `l01_nvshmem` (the blocking-put NVSHMEM ring a2av +
+un-overlapped GEMM — the arm that took over the legacy "Torch+GEMM" slot
+on 8/31), i.e. the SAME arm as the 4n/16n "NVSHMEM a2av + GEMM" row, so it
+carries `row_id = nvshmem_gemm` (flag `label_torch_a2av_is_l01_nvshmem`).
+The 8n "2Ours(expert balance + Routing)" row is `llc_l01_s1_pv2` (hier
+a2av, no overlap) like the other topologies; there is no direct-a2av row
+at 8n. Capsule mix per row is recorded per cell; 8n nvshmem cells are
+the runner-console mean (`iter_max_mean`), everything else the campaign
+median, as at 4n/16n.
+
 ## Columns
 
 - `total_ms` — the authoritative value to plot (3 decimals, recomputed from the
