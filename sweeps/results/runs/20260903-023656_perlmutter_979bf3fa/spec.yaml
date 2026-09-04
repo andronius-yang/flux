@@ -1,0 +1,32 @@
+G: 384
+H: 7168
+budgets_mib:
+  - 64
+chunk_bytes: 14336
+dtype: bfloat16
+env_override:
+  PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+extra_env: {}
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+ffn_hidden: 2048
+idle_timeout_s: 120
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 7
+nodes: 32
+notes: "32n COMET b64 re-run with 17G symmetric heap (15G exhausted heap; 24G OOMed torch: peak 16.1G torch + 6.1G overhead)"
+platform: perlmutter
+profile_iters: 3
+retries: 0
+shape: k2
+skip_correctness: true
+sm_margin: 8
+sym_size_override_g: 17
+timeout_s: 180
+topk: 8
+variants:
+  - l01_allgather_dense
+warmup_iters: 5

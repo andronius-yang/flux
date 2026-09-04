@@ -758,6 +758,14 @@ by `gen_matrix.a2av_knob_demands`. Per knob:
   whichever is larger) + 1G overhead, floor 6G, capped by platform
   `sym_size_max_g`. If the *uncapped* requirement exceeds the cap the runner
   records the cell as `skipped_capacity` instead of launching it.
+  **Targeted override (2026-09-03):** a spec may set `sym_size_override_g: N`;
+  the runner then writes `NVSHMEM_SYMMETRIC_SIZE=NG` AFTER sizing and the
+  cap (recorded in `env_json`), while `skipped_capacity` still keys on the
+  exact requirement. For single-cell re-runs where the sizer under-estimates
+  (first use: COMET 32n b64, dense allgather at W=128 exhausted the 15G
+  sizing) — never in canon specs; note the override when quoting the cell.
+  `env_override: {KEY: VALUE}` applies the same targeted-only contract to
+  arbitrary env (e.g. `PYTORCH_CUDA_ALLOC_CONF` on memory-wall probes).
 
 Parity with the torch reference (`flux.testing.moonep_fused_map.required_a2av_knobs`)
 and the dealer closed form are unit-tested in `sweeps/test_knob_demands.py`.

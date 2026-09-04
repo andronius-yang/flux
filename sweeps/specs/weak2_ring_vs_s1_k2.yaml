@@ -1,0 +1,21 @@
+# 2026-09-03 (user-directed): 2n left endpoint for the RING panel of the
+# weak-scaling speedup figure (v2). l01_nvshmem + OURS s1 in ONE capsule,
+# same budget ladder as 32n, W<=128 binary. Pairs with the 2n COMET-vs-s1
+# capsule 20260901-101958.
+platform: perlmutter
+nodes: 2
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 8, 16, 64]
+variants:
+  - l01_nvshmem
+  - ours_l01_s1_pv2_r2
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 180
+idle_timeout_s: 120
+retries: 0
+notes: "2n weak-scaling endpoint: NVSHMEM ring vs ours s1, one capsule"

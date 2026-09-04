@@ -1,0 +1,23 @@
+# 2026-09-03 (user-directed): the ONE missing 32n COMET point. The b64 cell
+# in capsule 20260902-235755 died on symmetric-heap exhaustion at the
+# sizer's 15G; re-run with an explicit 24G heap (sym_size_override_g).
+# Same binary (MaxTpRanks=128), same budget/routing as the 32n ladder.
+platform: perlmutter
+nodes: 32
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [64]
+variants:
+  - l01_allgather_dense
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 180
+idle_timeout_s: 120
+retries: 0
+sym_size_override_g: 17
+env_override:
+  PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+notes: "32n COMET b64 re-run with 17G symmetric heap (15G exhausted heap; 24G OOMed torch: peak 16.1G torch + 6.1G overhead)"

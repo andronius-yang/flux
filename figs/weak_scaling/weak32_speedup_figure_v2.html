@@ -1,4 +1,4 @@
-<title>K2 Weak-Scaling Speedups</title>
+<title>K2 Weak-Scaling Speedups v2</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
   :root {
@@ -128,7 +128,7 @@
   <header>
     <div class="eyebrow">Kimi-K2 &middot; 384 experts / topk 8 &middot; real routing traces &middot; isolated per-layer latency</div>
     <h1>The advantage grows with scale</h1>
-    <p class="thesis">Speedup of the full OURS stack (pv2 placement + LocCap routing + slack&nbsp;r2 + slipstream comm/comp overlap) over each baseline, as node count doubles from 2 to 32 (8&rarr;128 GPUs). Weak scaling: the per-rank pre-topk send budget is held fixed on each line. At 2 nodes COMET wins &mdash; placement and routing have nothing to buy when every token touches both nodes &mdash; and the stack crosses parity by 4n.</p>
+    <p class="thesis">Speedup of the full OURS stack (pv2 placement + LocCap routing + slack&nbsp;r2 + slipstream comm/comp overlap) over each baseline, as node count doubles from 2 to 32 (8&rarr;128 GPUs). Weak scaling: the per-rank pre-topk send budget is held fixed on each line. At 2 nodes COMET wins &mdash; placement and routing have nothing to buy when every token touches both nodes &mdash; and the stack crosses parity by 4n; against the primitive ring the lead is already 1.2&ndash;2.9&times; at 2n. Both panels span 2&ndash;32n (v2).</p>
   </header>
 
   <div class="legend" id="legend">
@@ -146,7 +146,7 @@
     </div>
     <div class="panel" id="pB">
       <h2>vs NVSHMEM blocking-put ring</h2>
-      <p class="sub">primitive transport floor (unfused Torch+GEMM chain)</p>
+      <p class="sub">primitive transport floor (unfused Torch+GEMM chain) &middot; OURS leads already at 2n</p>
     </div>
   </div>
 
@@ -166,7 +166,7 @@
       <li><b>Arms.</b> OURS = <code>ours_l01_s1_pv2_r2</code>; COMET = <code>l01_allgather_dense</code> (this repo&rsquo;s fused allgather&nbsp;l0 + dense-ring&nbsp;l1); ring = <code>l01_nvshmem</code> (blocking-put ring, unfused GEMM). All cells: isolated mode, 10 iters / 5 warmup, <code>FLUX_TEST_DETERMINISTIC=0</code>, Kimi-K2 shape on captured routing (livecodebench/execution, layer&nbsp;5), budgets are the strict per-rank pre-topk send budget.</li>
       <li><b>COMET at 128 ranks.</b> Out of the box it does not run at 32n: upstream Flux&rsquo;s dense-dispatch sort kernel keeps a static 64-source-rank shared-memory table (<code>MaxTpRanks=64</code>, unguarded), which overflows into the expert prefix sums at W=128 &mdash; illegal memory access on some ranks, wedge on the rest (capsule <code>20260901-075429&hellip;04875008</code>). Raising the table to 128 (+ a loud guard) makes it run: capsule <code>20260902-235755</code> is the source of every 32n COMET point. Its b64 cell does not fit a 40&nbsp;GB A100, bracketed by three probes: heap 15G and 17G &rarr; <code>NVSHMEM_MALLOC failed</code> (capsules <code>20260902-235755</code>, <code>20260903-023656</code>); heap 24G &rarr; torch OOM needing 16.1&nbsp;GiB (an 8&nbsp;GiB copy of the dense gathered buffer on top of 8.1&nbsp;GiB resident) beside ~6.1&nbsp;GiB non-torch overhead (<code>20260903-014242</code>). The dense all-gather holds W&times;tokens/rank twice; no heap value satisfies both sides, so the b64 line ends at 16n. FAST is excluded beyond 16 servers (documented 16-server limit, handoff&nbsp;24).</li>
       <li><b>Binary identity.</b> 32n cells run the W&le;128 binary (three 32n cap fixes: l1 node cap, l0 owner bitmask, l0 stage-1 smem window &mdash; all statically inert at W&le;64); 4/8/16n cells are the handoff-30 / 8-31 capsules on the pre-fix tree. A 4n re-run on the patched binary reproduced the handoff-30 OURS row within &plusmn;3.6% (capsule <code>20260901-021249</code>), bounding the cross-build error at well below every plotted effect.</li>
-      <li><b>Capsules.</b> OURS 32n: <code>20260901-024555</code>; COMET 32n: <code>20260902-235755</code>; ring 32n: <code>20260901-075429&hellip;5433d58e</code>; 2n head-to-head (COMET + OURS in ONE capsule, W&le;128 binary): <code>20260901-101958</code>; 4/8/16n: handoff-30 tidy dataset + the 8/31 ring ladder (<code>20260831-051230/052029/063232</code>). The ring was not measured at 2n; ring b8 exists only at 32n; both are omitted from the ring panel.</li>
+      <li><b>Capsules.</b> OURS 32n: <code>20260901-024555</code>; COMET 32n: <code>20260902-235755</code>; ring 32n: <code>20260901-075429&hellip;5433d58e</code>; 2n head-to-heads (each baseline + OURS in ONE capsule, W&le;128 binary): COMET <code>20260901-101958</code>, ring <code>20260904-004243</code>; 4/8/16n: handoff-30 tidy dataset + the 8/31 ring ladder (<code>20260831-051230/052029/063232</code>). Ring b8 exists only at 2n and 32n and is omitted from the ring panel. OURS 2n totals in the two capsules agree within &plusmn;1.5%.</li>
     </ol>
   </section>
 </div>
@@ -177,17 +177,18 @@
   const COLORS = { b1: "--s-b1", b4: "--s-b4", b16: "--s-b16", b64: "--s-b64" };
 
   // total_ms means; null = not measured / does not run
-  // panel A includes the 2n endpoint (one-capsule head-to-head, 20260901-101958);
-  // the ring was not measured at 2n, so panel B starts at 4n.
-  const NODES_A = [2, 4, 8, 16, 32], NODES_B = [4, 8, 16, 32];
+  // v2: both panels span 2-32n. 2n points come from one-capsule head-to-heads
+  // (COMET vs s1: 20260901-101958; ring vs s1: 20260904-004243), each panel
+  // using the OURS column measured in ITS OWN 2n capsule.
+  const NODES_A = [2, 4, 8, 16, 32], NODES_B = [2, 4, 8, 16, 32];
   const OURS_A = { b1: [4.224, 4.009, 5.684, 12.613, 38.403], b4: [5.613, 5.974, 8.416, 15.626, 41.004],
                    b16: [11.742, 14.262, 19.428, 27.916, 53.684], b64: [36.092, 46.247, 62.456, 85.785, 120.173] };
-  const OURS_B = { b1: [4.009, 5.684, 12.613, 38.403], b4: [5.974, 8.416, 15.626, 41.004],
-                   b16: [14.262, 19.428, 27.916, 53.684], b64: [46.247, 62.456, 85.785, 120.173] };
+  const OURS_B = { b1: [4.240, 4.009, 5.684, 12.613, 38.403], b4: [5.638, 5.974, 8.416, 15.626, 41.004],
+                   b16: [11.697, 14.262, 19.428, 27.916, 53.684], b64: [36.097, 46.247, 62.456, 85.785, 120.173] };
   const COMET = { b1: [3.873, 4.020, 6.801, 15.576, 43.251], b4: [5.106, 6.162, 10.695, 23.502, 59.976],
                   b16: [10.768, 16.491, 30.338, 63.159, 144.154], b64: [36.503, 59.331, 115.961, 222.263, null] };
-  const RING = { b1: [5.323, 9.192, 24.234, 80.014], b4: [11.638, 16.699, 30.649, 92.217],
-                 b16: [40.021, 44.363, 63.433, 128.335], b64: [139.664, 166.788, 209.457, 368.636] };
+  const RING = { b1: [5.003, 5.323, 9.192, 24.234, 80.014], b4: [10.196, 11.638, 16.699, 30.649, 92.217],
+                 b16: [27.935, 40.021, 44.363, 63.433, 128.335], b64: [105.516, 139.664, 166.788, 209.457, 368.636] };
 
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
@@ -268,21 +269,19 @@
   drawPanel(document.getElementById("pA"), NODES_A, OURS_A, COMET, true);
   drawPanel(document.getElementById("pB"), NODES_B, OURS_B, RING, false);
 
-  // table over the union of node counts (ring not measured at 2n)
+  // table: both baselines measured at every node count 2-32n
   const tb = document.querySelector("#dataTable tbody");
   const fmt = (v) => (v == null ? "✗" : v.toFixed(2));
   BUDGETS.forEach((b) => {
     NODES_A.forEach((n, i) => {
       const tr = document.createElement("tr");
-      const ri = i - 1; // ring index (starts at 4n)
       const sC = COMET[b][i] == null ? null : COMET[b][i] / OURS_A[b][i];
-      const rv = ri < 0 ? null : RING[b][ri];
-      const sR = rv == null ? null : rv / OURS_A[b][i];
+      const sR = RING[b][i] / OURS_B[b][i];
       tr.innerHTML =
         `<td>${i === 0 ? b : ""}</td><td>${n}n</td><td>${OURS_A[b][i].toFixed(2)}</td>` +
         `<td class="${COMET[b][i] == null ? "fail" : ""}">${fmt(COMET[b][i])}</td>` +
         `<td class="${sC == null ? "fail" : ""}">${sC == null ? "—" : sC.toFixed(2) + "×"}</td>` +
-        `<td>${rv == null ? "—" : rv.toFixed(2)}</td><td>${sR == null ? "—" : sR.toFixed(2) + "×"}</td>`;
+        `<td>${RING[b][i].toFixed(2)}</td><td>${sR.toFixed(2)}×</td>`;
       tb.appendChild(tr);
     });
   });

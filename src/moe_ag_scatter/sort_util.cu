@@ -177,7 +177,7 @@ struct AgScatterSortOp {
   static constexpr int ThreadsInBlock = ThreadsInWarp * Warps;
   static constexpr unsigned FullMask = 0xffffffff;
   static constexpr int MaxNExperts = 1024;
-  static constexpr int MaxTpRanks = 64;
+  static constexpr int MaxTpRanks = 128;  // 64 -> 128 (32n): rows_counter[] is source-rank indexed
 
   using Arguments = AGScatterSortOpArguments;
   struct Params : public Arguments {
@@ -196,6 +196,8 @@ struct AgScatterSortOp {
   to_underlying_arguments(Arguments const &args) {
     int32_t tp_size = args.dist_env.world_size;
     FLUX_CHECK(args.nexperts_ep <= MaxNExperts);
+    FLUX_CHECK(tp_size <= MaxTpRanks) << "dense-dispatch sort rows_counter holds " << MaxTpRanks
+                                      << " source ranks, got " << tp_size;
     FLUX_CHECK(args.ntokens % tp_size == 0) << args.ntokens << " % " << tp_size << " != 0";
     int32_t ntokens_perrank = args.ntokens / tp_size;
     return {args, ntokens_perrank, tp_size};
@@ -346,7 +348,7 @@ struct AgScatterSortOpV2 {
   static constexpr int ThreadsInBlock = ThreadsInWarp * Warps;
   static constexpr unsigned FullMask = 0xffffffff;
   static constexpr int MaxNExperts = 1024;
-  static constexpr int MaxTpRanks = 64;
+  static constexpr int MaxTpRanks = 128;  // 64 -> 128 (32n): rows_counter[] is source-rank indexed
 
   using Arguments = AGScatterSortOpArgumentsV2;
   struct Params : public Arguments {
@@ -365,6 +367,8 @@ struct AgScatterSortOpV2 {
   to_underlying_arguments(Arguments const &args) {
     int32_t tp_size = args.world_size;
     FLUX_CHECK(args.nexperts_ep <= MaxNExperts);
+    FLUX_CHECK(tp_size <= MaxTpRanks) << "dense-dispatch sort rows_counter holds " << MaxTpRanks
+                                      << " source ranks, got " << tp_size;
     FLUX_CHECK(args.ntokens % tp_size == 0) << args.ntokens << " % " << tp_size << " != 0";
     int32_t ntokens_perrank = args.ntokens / tp_size;
     return {args, ntokens_perrank, tp_size};
