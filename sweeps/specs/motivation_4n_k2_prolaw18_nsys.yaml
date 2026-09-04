@@ -1,0 +1,26 @@
+# Motivation-figure recapture (2026-09-04, postdoc request): a higher-skew
+# routing batch — Kimi-K2 mmlu/professional_law layer 18 (static screen:
+# rows/rank 6.2x max/min vs 3.0x on lcb layer 5; EPLB post-placement rows
+# 1.23x; placement ledger 1.76x). Same three panel arms, same nsys +
+# isolated discipline, correctness on. Instrumented: never quote latency.
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [l01_nvshmem, eplb_l01_nvplace_bwire, l01_allgather_dense]
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=18;sem=homog;dslots=64:32"
+budgets_mib: [16, 32]
+modes: [nsys]
+extra_env:
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+matrix_instance: "001"
+skip_correctness: false
+sm_margin: 8
+n_split_l1: 7
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 0
+notes: "motivation figure recapture: K2 professional_law layer 18 (high skew), ring / eplb exposed wire / comet, 4n b16+b32, nsys isolated"

@@ -1,0 +1,272 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="241.0pt" height="236.7pt" viewBox="0 0 241.0 236.7" font-family="Helvetica, Arial, sans-serif">
+<rect width="241.0" height="236.7" fill="#ffffff"/>
+<text x="16.00" y="10.00" font-size="6" text-anchor="start" fill="#5a5e66">placement (rel.)</text>
+<text x="78.33" y="10.00" font-size="6" text-anchor="start" fill="#5a5e66">token dispatch → expert GEMM (ms, shared scale)</text>
+<text x="16.00" y="19.00" font-size="7" text-anchor="start" fill="#17191c" font-weight="bold">NVSHMEM a2av + GEMM</text>
+<text x="45.17" y="44.70" font-size="6" text-anchor="middle" fill="#5a5e66">no placement</text>
+<text x="14.00" y="29.00" font-size="6" text-anchor="end" fill="#17191c">r7</text>
+<line x1="78.33" y1="23.10" x2="191.00" y2="23.10" stroke="v1.1" stroke-width="0.3"/>
+<rect x="78.33" y="21.50" width="76.67" height="3.20" fill="#2a78d6"><title>r7 inter 0.00–33.81 ms</title></rect>
+<line x1="78.33" y1="26.80" x2="191.00" y2="26.80" stroke="v1.1" stroke-width="0.3"/>
+<rect x="155.01" y="25.20" width="2.01" height="3.20" fill="#1baf7a"><title>r7 intra 33.82–34.71 ms</title></rect>
+<line x1="78.33" y1="30.50" x2="191.00" y2="30.50" stroke="v1.1" stroke-width="0.3"/>
+<rect x="160.14" y="28.90" width="5.78" height="3.20" fill="#eb6834"><title>r7 gemm 36.08–38.63 ms</title></rect>
+<line x1="156.51" y1="21.20" x2="156.51" y2="32.40" stroke="#17191c" stroke-width="0.5"/>
+<line x1="157.71" y1="21.20" x2="157.71" y2="32.40" stroke="#17191c" stroke-width="0.5"/>
+<text x="240.00" y="28.80" font-size="5.5" text-anchor="end" fill="#5a5e66">16.1k rows · 194 MB</text>
+<text x="14.00" y="41.60" font-size="6" text-anchor="end" fill="#17191c">r11</text>
+<line x1="78.33" y1="35.70" x2="191.00" y2="35.70" stroke="v1.1" stroke-width="0.3"/>
+<rect x="78.33" y="34.10" width="38.53" height="3.20" fill="#2a78d6"><title>r11 inter 0.00–17.00 ms</title></rect>
+<line x1="78.33" y1="39.40" x2="191.00" y2="39.40" stroke="v1.1" stroke-width="0.3"/>
+<rect x="116.88" y="37.80" width="1.75" height="3.20" fill="#1baf7a"><title>r11 intra 17.00–17.77 ms</title></rect>
+<line x1="78.33" y1="43.10" x2="191.00" y2="43.10" stroke="v1.1" stroke-width="0.3"/>
+<rect x="161.44" y="41.50" width="4.78" height="3.20" fill="#eb6834"><title>r11 gemm 36.66–38.76 ms</title></rect>
+<line x1="157.98" y1="33.80" x2="157.98" y2="45.00" stroke="#17191c" stroke-width="0.5"/>
+<line x1="159.18" y1="33.80" x2="159.18" y2="45.00" stroke="#17191c" stroke-width="0.5"/>
+<text x="240.00" y="41.40" font-size="5.5" text-anchor="end" fill="#5a5e66">15.2k rows · 201 MB</text>
+<text x="14.00" y="54.20" font-size="6" text-anchor="end" fill="#17191c">r12</text>
+<line x1="78.33" y1="48.30" x2="191.00" y2="48.30" stroke="v1.1" stroke-width="0.3"/>
+<rect x="79.60" y="46.70" width="51.56" height="3.20" fill="#2a78d6"><title>r12 inter 0.56–23.30 ms</title></rect>
+<line x1="78.33" y1="52.00" x2="191.00" y2="52.00" stroke="v1.1" stroke-width="0.3"/>
+<rect x="78.33" y="50.40" width="1.25" height="3.20" fill="#1baf7a"><title>r12 intra 0.00–0.55 ms</title></rect>
+<line x1="78.33" y1="55.70" x2="191.00" y2="55.70" stroke="v1.1" stroke-width="0.3"/>
+<rect x="169.46" y="54.10" width="19.33" height="3.20" fill="#eb6834"><title>r12 gemm 40.19–48.72 ms</title></rect>
+<line x1="158.01" y1="46.40" x2="158.01" y2="57.60" stroke="#17191c" stroke-width="0.5"/>
+<line x1="159.21" y1="46.40" x2="159.21" y2="57.60" stroke="#17191c" stroke-width="0.5"/>
+<text x="240.00" y="54.00" font-size="5.5" text-anchor="end" fill="#5a5e66">56.9k rows · 176 MB</text>
+<text x="14.00" y="66.80" font-size="6" text-anchor="end" fill="#17191c">r15</text>
+<line x1="78.33" y1="60.90" x2="191.00" y2="60.90" stroke="v1.1" stroke-width="0.3"/>
+<rect x="78.33" y="59.30" width="49.08" height="3.20" fill="#2a78d6"><title>r15 inter 0.00–21.65 ms</title></rect>
+<line x1="78.33" y1="64.60" x2="191.00" y2="64.60" stroke="v1.1" stroke-width="0.3"/>
+<rect x="127.43" y="63.00" width="2.58" height="3.20" fill="#1baf7a"><title>r15 intra 21.65–22.79 ms</title></rect>
+<line x1="78.33" y1="68.30" x2="191.00" y2="68.30" stroke="v1.1" stroke-width="0.3"/>
+<rect x="160.49" y="66.70" width="3.60" height="3.20" fill="#eb6834"><title>r15 gemm 36.24–37.82 ms</title></rect>
+<line x1="158.09" y1="59.00" x2="158.09" y2="70.20" stroke="#17191c" stroke-width="0.5"/>
+<line x1="159.29" y1="59.00" x2="159.29" y2="70.20" stroke="#17191c" stroke-width="0.5"/>
+<text x="240.00" y="66.60" font-size="5.5" text-anchor="end" fill="#5a5e66">9.4k rows · 175 MB</text>
+<text x="16.00" y="85.90" font-size="7" text-anchor="start" fill="#17191c" font-weight="bold">EPLB</text>
+<text x="14.00" y="95.90" font-size="6" text-anchor="end" fill="#17191c">r0</text>
+<line x1="78.33" y1="90.00" x2="191.00" y2="90.00" stroke="v1.1" stroke-width="0.3"/>
+<rect x="80.28" y="88.40" width="41.85" height="3.20" fill="#2a78d6"><title>r0 inter 0.86–19.32 ms</title></rect>
+<line x1="78.33" y1="93.70" x2="191.00" y2="93.70" stroke="v1.1" stroke-width="0.3"/>
+<rect x="78.33" y="92.10" width="1.93" height="3.20" fill="#1baf7a"><title>r0 intra 0.00–0.85 ms</title></rect>
+<line x1="78.33" y1="97.40" x2="191.00" y2="97.40" stroke="v1.1" stroke-width="0.3"/>
+<rect x="123.75" y="95.80" width="6.77" height="3.20" fill="#eb6834"><title>r0 gemm 20.03–23.02 ms</title></rect>
+<line x1="121.61" y1="88.10" x2="121.61" y2="99.30" stroke="#17191c" stroke-width="0.5"/>
+<line x1="122.81" y1="88.10" x2="122.81" y2="99.30" stroke="#17191c" stroke-width="0.5"/>
+<rect x="17.04" y="88.40" width="3.63" height="3.20" fill="#eda100"><title>r0 placement inter 2.9–12.8 ms</title></rect>
+<rect x="20.71" y="88.40" width="3.11" height="3.20" fill="#eda100"><title>r0 placement inter 12.9–21.5 ms</title></rect>
+<rect x="23.86" y="88.40" width="2.27" height="3.20" fill="#eda100"><title>r0 placement inter 21.6–27.8 ms</title></rect>
+<rect x="26.16" y="88.40" width="1.98" height="3.20" fill="#eda100"><title>r0 placement inter 27.9–33.3 ms</title></rect>
+<rect x="28.18" y="88.40" width="3.17" height="3.20" fill="#eda100"><title>r0 placement inter 33.4–42.1 ms</title></rect>
+<rect x="31.38" y="88.40" width="1.88" height="3.20" fill="#eda100"><title>r0 placement inter 42.2–47.4 ms</title></rect>
+<rect x="33.30" y="88.40" width="0.99" height="3.20" fill="#eda100"><title>r0 placement inter 47.4–50.2 ms</title></rect>
+<rect x="34.32" y="88.40" width="1.30" height="3.20" fill="#eda100"><title>r0 placement inter 50.2–53.8 ms</title></rect>
+<rect x="35.64" y="88.40" width="1.40" height="3.20" fill="#eda100"><title>r0 placement inter 53.9–57.7 ms</title></rect>
+<rect x="37.07" y="88.40" width="1.36" height="3.20" fill="#eda100"><title>r0 placement inter 57.8–61.5 ms</title></rect>
+<rect x="38.46" y="88.40" width="3.48" height="3.20" fill="#eda100"><title>r0 placement inter 61.6–71.1 ms</title></rect>
+<rect x="41.97" y="88.40" width="1.85" height="3.20" fill="#eda100"><title>r0 placement inter 71.2–76.3 ms</title></rect>
+<rect x="43.84" y="88.40" width="2.70" height="3.20" fill="#eda100"><title>r0 placement inter 76.4–83.8 ms</title></rect>
+<rect x="46.58" y="88.40" width="1.72" height="3.20" fill="#eda100"><title>r0 placement inter 83.9–88.6 ms</title></rect>
+<rect x="48.32" y="88.40" width="0.93" height="3.20" fill="#eda100"><title>r0 placement inter 88.6–91.2 ms</title></rect>
+<rect x="49.29" y="88.40" width="4.85" height="3.20" fill="#eda100"><title>r0 placement inter 91.3–104.6 ms</title></rect>
+<rect x="54.16" y="88.40" width="5.61" height="3.20" fill="#eda100"><title>r0 placement inter 104.7–120.1 ms</title></rect>
+<rect x="59.80" y="88.40" width="2.92" height="3.20" fill="#eda100"><title>r0 placement inter 120.1–128.1 ms</title></rect>
+<rect x="62.75" y="88.40" width="2.47" height="3.20" fill="#eda100"><title>r0 placement inter 128.2–135.0 ms</title></rect>
+<rect x="65.25" y="88.40" width="0.97" height="3.20" fill="#eda100"><title>r0 placement inter 135.1–137.7 ms</title></rect>
+<rect x="66.25" y="88.40" width="0.92" height="3.20" fill="#eda100"><title>r0 placement inter 137.8–140.3 ms</title></rect>
+<rect x="16.00" y="92.10" width="0.30" height="3.20" fill="#1baf7a"><title>r0 placement intra 0.0–0.6 ms</title></rect>
+<rect x="16.28" y="92.10" width="0.30" height="3.20" fill="#1baf7a"><title>r0 placement intra 0.8–1.4 ms</title></rect>
+<rect x="16.55" y="92.10" width="0.30" height="3.20" fill="#1baf7a"><title>r0 placement intra 1.5–2.2 ms</title></rect>
+<text x="73.33" y="98.80" font-size="5" text-anchor="end" fill="#5a5e66">140 ms · 1.1 GB</text>
+<text x="240.00" y="95.70" font-size="5.5" text-anchor="end" fill="#5a5e66">17.0k rows · 196 MB</text>
+<text x="14.00" y="108.50" font-size="6" text-anchor="end" fill="#17191c">r3</text>
+<line x1="78.33" y1="102.60" x2="191.00" y2="102.60" stroke="v1.1" stroke-width="0.3"/>
+<rect x="78.33" y="101.00" width="31.56" height="3.20" fill="#2a78d6"><title>r3 inter 0.00–13.92 ms</title></rect>
+<line x1="78.33" y1="106.30" x2="191.00" y2="106.30" stroke="v1.1" stroke-width="0.3"/>
+<rect x="109.91" y="104.70" width="2.06" height="3.20" fill="#1baf7a"><title>r3 intra 13.93–14.84 ms</title></rect>
+<line x1="78.33" y1="110.00" x2="191.00" y2="110.00" stroke="v1.1" stroke-width="0.3"/>
+<rect x="124.47" y="108.40" width="7.17" height="3.20" fill="#eb6834"><title>r3 gemm 20.35–23.51 ms</title></rect>
+<line x1="122.28" y1="100.70" x2="122.28" y2="111.90" stroke="#17191c" stroke-width="0.5"/>
+<line x1="123.48" y1="100.70" x2="123.48" y2="111.90" stroke="#17191c" stroke-width="0.5"/>
+<rect x="18.17" y="101.00" width="2.86" height="3.20" fill="#eda100"><title>r3 placement inter 5.9–13.8 ms</title></rect>
+<rect x="21.06" y="101.00" width="2.33" height="3.20" fill="#eda100"><title>r3 placement inter 13.9–20.3 ms</title></rect>
+<rect x="23.42" y="101.00" width="1.11" height="3.20" fill="#eda100"><title>r3 placement inter 20.3–23.4 ms</title></rect>
+<rect x="24.56" y="101.00" width="2.16" height="3.20" fill="#eda100"><title>r3 placement inter 23.5–29.4 ms</title></rect>
+<rect x="26.75" y="101.00" width="2.83" height="3.20" fill="#eda100"><title>r3 placement inter 29.5–37.2 ms</title></rect>
+<rect x="29.61" y="101.00" width="2.41" height="3.20" fill="#eda100"><title>r3 placement inter 37.3–44.0 ms</title></rect>
+<rect x="32.06" y="101.00" width="1.71" height="3.20" fill="#eda100"><title>r3 placement inter 44.0–48.7 ms</title></rect>
+<rect x="33.80" y="101.00" width="1.10" height="3.20" fill="#eda100"><title>r3 placement inter 48.8–51.8 ms</title></rect>
+<rect x="34.94" y="101.00" width="1.02" height="3.20" fill="#eda100"><title>r3 placement inter 51.9–54.7 ms</title></rect>
+<rect x="35.99" y="101.00" width="0.95" height="3.20" fill="#eda100"><title>r3 placement inter 54.8–57.4 ms</title></rect>
+<rect x="36.96" y="101.00" width="0.94" height="3.20" fill="#eda100"><title>r3 placement inter 57.5–60.1 ms</title></rect>
+<rect x="37.93" y="101.00" width="0.95" height="3.20" fill="#eda100"><title>r3 placement inter 60.1–62.7 ms</title></rect>
+<rect x="38.91" y="101.00" width="0.97" height="3.20" fill="#eda100"><title>r3 placement inter 62.8–65.5 ms</title></rect>
+<rect x="39.90" y="101.00" width="1.50" height="3.20" fill="#eda100"><title>r3 placement inter 65.6–69.7 ms</title></rect>
+<rect x="41.44" y="101.00" width="1.88" height="3.20" fill="#eda100"><title>r3 placement inter 69.8–74.9 ms</title></rect>
+<rect x="16.00" y="104.70" width="0.30" height="3.20" fill="#1baf7a"><title>r3 placement intra 0.0–0.7 ms</title></rect>
+<rect x="16.29" y="104.70" width="0.30" height="3.20" fill="#1baf7a"><title>r3 placement intra 0.8–1.4 ms</title></rect>
+<rect x="16.56" y="104.70" width="0.30" height="3.20" fill="#1baf7a"><title>r3 placement intra 1.5–2.2 ms</title></rect>
+<rect x="16.83" y="104.70" width="0.30" height="3.20" fill="#1baf7a"><title>r3 placement intra 2.3–2.9 ms</title></rect>
+<rect x="17.10" y="104.70" width="0.30" height="3.20" fill="#1baf7a"><title>r3 placement intra 3.0–3.6 ms</title></rect>
+<rect x="17.36" y="104.70" width="0.30" height="3.20" fill="#1baf7a"><title>r3 placement intra 3.7–4.4 ms</title></rect>
+<rect x="17.63" y="104.70" width="0.30" height="3.20" fill="#1baf7a"><title>r3 placement intra 4.5–5.1 ms</title></rect>
+<rect x="17.90" y="104.70" width="0.30" height="3.20" fill="#1baf7a"><title>r3 placement intra 5.2–5.8 ms</title></rect>
+<text x="73.33" y="111.40" font-size="5" text-anchor="end" fill="#5a5e66">75 ms · 0.8 GB</text>
+<text x="240.00" y="108.30" font-size="5.5" text-anchor="end" fill="#5a5e66">17.3k rows · 195 MB</text>
+<text x="14.00" y="121.10" font-size="6" text-anchor="end" fill="#17191c">r7</text>
+<line x1="78.33" y1="115.20" x2="191.00" y2="115.20" stroke="v1.1" stroke-width="0.3"/>
+<rect x="78.33" y="113.60" width="33.51" height="3.20" fill="#2a78d6"><title>r7 inter 0.00–14.78 ms</title></rect>
+<line x1="78.33" y1="118.90" x2="191.00" y2="118.90" stroke="v1.1" stroke-width="0.3"/>
+<rect x="111.86" y="117.30" width="2.06" height="3.20" fill="#1baf7a"><title>r7 intra 14.79–15.70 ms</title></rect>
+<line x1="78.33" y1="122.60" x2="191.00" y2="122.60" stroke="v1.1" stroke-width="0.3"/>
+<rect x="124.87" y="121.00" width="7.00" height="3.20" fill="#eb6834"><title>r7 gemm 20.53–23.61 ms</title></rect>
+<line x1="122.61" y1="113.30" x2="122.61" y2="124.50" stroke="#17191c" stroke-width="0.5"/>
+<line x1="123.81" y1="113.30" x2="123.81" y2="124.50" stroke="#17191c" stroke-width="0.5"/>
+<rect x="16.00" y="113.60" width="6.70" height="3.20" fill="#eda100"><title>r7 placement inter 0.0–18.4 ms</title></rect>
+<rect x="22.73" y="113.60" width="5.98" height="3.20" fill="#eda100"><title>r7 placement inter 18.5–34.9 ms</title></rect>
+<rect x="28.75" y="113.60" width="2.63" height="3.20" fill="#eda100"><title>r7 placement inter 35.0–42.2 ms</title></rect>
+<rect x="31.41" y="113.60" width="4.67" height="3.20" fill="#eda100"><title>r7 placement inter 42.3–55.1 ms</title></rect>
+<rect x="36.12" y="113.60" width="2.28" height="3.20" fill="#eda100"><title>r7 placement inter 55.2–61.4 ms</title></rect>
+<rect x="38.43" y="113.60" width="1.02" height="3.20" fill="#eda100"><title>r7 placement inter 61.5–64.3 ms</title></rect>
+<rect x="39.48" y="113.60" width="1.07" height="3.20" fill="#eda100"><title>r7 placement inter 64.4–67.3 ms</title></rect>
+<rect x="40.58" y="113.60" width="1.67" height="3.20" fill="#eda100"><title>r7 placement inter 67.4–72.0 ms</title></rect>
+<rect x="42.28" y="113.60" width="1.70" height="3.20" fill="#eda100"><title>r7 placement inter 72.1–76.7 ms</title></rect>
+<rect x="44.02" y="113.60" width="1.55" height="3.20" fill="#eda100"><title>r7 placement inter 76.8–81.1 ms</title></rect>
+<rect x="45.89" y="113.60" width="1.24" height="3.20" fill="#eda100"><title>r7 placement inter 82.0–85.4 ms</title></rect>
+<rect x="47.16" y="113.60" width="1.69" height="3.20" fill="#eda100"><title>r7 placement inter 85.5–90.1 ms</title></rect>
+<rect x="48.88" y="113.60" width="0.99" height="3.20" fill="#eda100"><title>r7 placement inter 90.2–92.9 ms</title></rect>
+<rect x="49.89" y="113.60" width="1.91" height="3.20" fill="#eda100"><title>r7 placement inter 93.0–98.2 ms</title></rect>
+<rect x="51.83" y="113.60" width="2.12" height="3.20" fill="#eda100"><title>r7 placement inter 98.3–104.1 ms</title></rect>
+<rect x="53.99" y="113.60" width="2.61" height="3.20" fill="#eda100"><title>r7 placement inter 104.2–111.3 ms</title></rect>
+<rect x="56.63" y="113.60" width="2.24" height="3.20" fill="#eda100"><title>r7 placement inter 111.4–117.6 ms</title></rect>
+<rect x="58.89" y="113.60" width="4.24" height="3.20" fill="#eda100"><title>r7 placement inter 117.6–129.3 ms</title></rect>
+<rect x="63.16" y="113.60" width="0.94" height="3.20" fill="#eda100"><title>r7 placement inter 129.3–131.9 ms</title></rect>
+<rect x="64.13" y="113.60" width="2.83" height="3.20" fill="#eda100"><title>r7 placement inter 132.0–139.7 ms</title></rect>
+<rect x="66.98" y="113.60" width="1.96" height="3.20" fill="#eda100"><title>r7 placement inter 139.8–145.2 ms</title></rect>
+<rect x="68.97" y="113.60" width="2.18" height="3.20" fill="#eda100"><title>r7 placement inter 145.3–151.2 ms</title></rect>
+<rect x="71.18" y="113.60" width="1.13" height="3.20" fill="#eda100"><title>r7 placement inter 151.3–154.4 ms</title></rect>
+<rect x="72.34" y="113.60" width="2.00" height="3.20" fill="#eda100"><title>r7 placement inter 154.5–160.0 ms</title></rect>
+<rect x="45.60" y="117.30" width="0.30" height="3.20" fill="#1baf7a"><title>r7 placement intra 81.2–81.9 ms</title></rect>
+<text x="73.33" y="124.00" font-size="5" text-anchor="end" fill="#5a5e66">160 ms · 1.3 GB</text>
+<text x="240.00" y="120.90" font-size="5.5" text-anchor="end" fill="#5a5e66">18.2k rows · 194 MB</text>
+<text x="14.00" y="133.70" font-size="6" text-anchor="end" fill="#17191c">r13</text>
+<line x1="78.33" y1="127.80" x2="191.00" y2="127.80" stroke="v1.1" stroke-width="0.3"/>
+<rect x="79.90" y="126.20" width="40.21" height="3.20" fill="#2a78d6"><title>r13 inter 0.69–18.43 ms</title></rect>
+<line x1="78.33" y1="131.50" x2="191.00" y2="131.50" stroke="v1.1" stroke-width="0.3"/>
+<rect x="78.33" y="129.90" width="1.56" height="3.20" fill="#1baf7a"><title>r13 intra 0.00–0.69 ms</title></rect>
+<rect x="120.12" y="129.90" width="0.60" height="3.20" fill="#1baf7a"><title>r13 intra 18.43–18.70 ms</title></rect>
+<line x1="78.33" y1="135.20" x2="191.00" y2="135.20" stroke="v1.1" stroke-width="0.3"/>
+<rect x="125.75" y="133.60" width="7.50" height="3.20" fill="#eb6834"><title>r13 gemm 20.91–24.22 ms</title></rect>
+<line x1="123.34" y1="125.90" x2="123.34" y2="137.10" stroke="#17191c" stroke-width="0.5"/>
+<line x1="124.54" y1="125.90" x2="124.54" y2="137.10" stroke="#17191c" stroke-width="0.5"/>
+<rect x="16.00" y="126.20" width="2.59" height="3.20" fill="#eda100"><title>r13 placement inter 0.0–7.1 ms</title></rect>
+<rect x="18.62" y="126.20" width="0.94" height="3.20" fill="#eda100"><title>r13 placement inter 7.2–9.7 ms</title></rect>
+<rect x="19.58" y="126.20" width="0.98" height="3.20" fill="#eda100"><title>r13 placement inter 9.8–12.5 ms</title></rect>
+<rect x="20.59" y="126.20" width="0.94" height="3.20" fill="#eda100"><title>r13 placement inter 12.6–15.2 ms</title></rect>
+<rect x="21.56" y="126.20" width="2.74" height="3.20" fill="#eda100"><title>r13 placement inter 15.2–22.7 ms</title></rect>
+<rect x="24.32" y="126.20" width="1.19" height="3.20" fill="#eda100"><title>r13 placement inter 22.8–26.1 ms</title></rect>
+<rect x="25.54" y="126.20" width="2.76" height="3.20" fill="#eda100"><title>r13 placement inter 26.2–33.7 ms</title></rect>
+<rect x="28.33" y="126.20" width="1.56" height="3.20" fill="#eda100"><title>r13 placement inter 33.8–38.1 ms</title></rect>
+<rect x="29.92" y="126.20" width="0.99" height="3.20" fill="#eda100"><title>r13 placement inter 38.2–40.9 ms</title></rect>
+<rect x="30.93" y="126.20" width="1.04" height="3.20" fill="#eda100"><title>r13 placement inter 41.0–43.8 ms</title></rect>
+<rect x="32.00" y="126.20" width="1.93" height="3.20" fill="#eda100"><title>r13 placement inter 43.9–49.2 ms</title></rect>
+<rect x="33.95" y="126.20" width="1.53" height="3.20" fill="#eda100"><title>r13 placement inter 49.2–53.4 ms</title></rect>
+<rect x="35.52" y="126.20" width="2.14" height="3.20" fill="#eda100"><title>r13 placement inter 53.5–59.4 ms</title></rect>
+<rect x="37.69" y="126.20" width="1.54" height="3.20" fill="#eda100"><title>r13 placement inter 59.5–63.7 ms</title></rect>
+<rect x="39.27" y="126.20" width="0.94" height="3.20" fill="#eda100"><title>r13 placement inter 63.8–66.4 ms</title></rect>
+<rect x="40.24" y="126.20" width="0.97" height="3.20" fill="#eda100"><title>r13 placement inter 66.5–69.1 ms</title></rect>
+<rect x="41.24" y="129.90" width="0.30" height="3.20" fill="#1baf7a"><title>r13 placement intra 69.2–69.9 ms</title></rect>
+<rect x="41.53" y="129.90" width="0.30" height="3.20" fill="#1baf7a"><title>r13 placement intra 70.0–70.6 ms</title></rect>
+<rect x="41.79" y="129.90" width="0.30" height="3.20" fill="#1baf7a"><title>r13 placement intra 70.7–71.4 ms</title></rect>
+<rect x="42.07" y="129.90" width="0.30" height="3.20" fill="#1baf7a"><title>r13 placement intra 71.5–72.1 ms</title></rect>
+<rect x="42.34" y="129.90" width="0.30" height="3.20" fill="#1baf7a"><title>r13 placement intra 72.2–72.9 ms</title></rect>
+<rect x="42.61" y="129.90" width="0.30" height="3.20" fill="#1baf7a"><title>r13 placement intra 73.0–73.6 ms</title></rect>
+<text x="73.33" y="136.60" font-size="5" text-anchor="end" fill="#5a5e66">74 ms · 0.9 GB</text>
+<text x="240.00" y="133.50" font-size="5.5" text-anchor="end" fill="#5a5e66">19.8k rows · 189 MB</text>
+<text x="16.00" y="152.80" font-size="7" text-anchor="start" fill="#17191c" font-weight="bold">COMET</text>
+<text x="45.17" y="178.50" font-size="6" text-anchor="middle" fill="#5a5e66">no placement</text>
+<text x="14.00" y="162.80" font-size="6" text-anchor="end" fill="#17191c">r4</text>
+<line x1="78.33" y1="156.90" x2="191.00" y2="156.90" stroke="v1.1" stroke-width="0.3"/>
+<rect x="78.33" y="155.30" width="10.94" height="3.20" fill="#2a78d6"><title>r4 inter 0.00–4.82 ms</title></rect>
+<rect x="90.34" y="155.30" width="3.86" height="3.20" fill="#2a78d6"><title>r4 inter 5.30–7.00 ms</title></rect>
+<line x1="78.33" y1="160.60" x2="191.00" y2="160.60" stroke="v1.1" stroke-width="0.3"/>
+<rect x="78.36" y="159.00" width="2.54" height="3.20" fill="#1baf7a"><title>r4 intra 0.01–1.13 ms</title></rect>
+<rect x="85.54" y="159.00" width="2.53" height="3.20" fill="#1baf7a"><title>r4 intra 3.18–4.29 ms</title></rect>
+<rect x="90.37" y="159.00" width="2.55" height="3.20" fill="#1baf7a"><title>r4 intra 5.31–6.44 ms</title></rect>
+<rect x="94.34" y="159.00" width="2.56" height="3.20" fill="#1baf7a"><title>r4 intra 7.06–8.19 ms</title></rect>
+<line x1="78.33" y1="164.30" x2="191.00" y2="164.30" stroke="v1.1" stroke-width="0.3"/>
+<rect x="94.41" y="162.70" width="16.26" height="3.20" fill="#eb6834"><title>r4 gemm 7.09–14.26 ms</title></rect>
+<text x="240.00" y="162.60" font-size="5.5" text-anchor="end" fill="#5a5e66">28.3k rows · 96 MB</text>
+<text x="14.00" y="175.40" font-size="6" text-anchor="end" fill="#17191c">r8</text>
+<line x1="78.33" y1="169.50" x2="191.00" y2="169.50" stroke="v1.1" stroke-width="0.3"/>
+<rect x="78.33" y="167.90" width="3.64" height="3.20" fill="#2a78d6"><title>r8 inter 0.00–1.60 ms</title></rect>
+<rect x="82.89" y="167.90" width="3.35" height="3.20" fill="#2a78d6"><title>r8 inter 2.01–3.49 ms</title></rect>
+<rect x="86.95" y="167.90" width="4.22" height="3.20" fill="#2a78d6"><title>r8 inter 3.80–5.66 ms</title></rect>
+<line x1="78.33" y1="173.20" x2="191.00" y2="173.20" stroke="v1.1" stroke-width="0.3"/>
+<rect x="78.36" y="171.60" width="2.56" height="3.20" fill="#1baf7a"><title>r8 intra 0.01–1.14 ms</title></rect>
+<rect x="82.90" y="171.60" width="2.53" height="3.20" fill="#1baf7a"><title>r8 intra 2.01–3.13 ms</title></rect>
+<rect x="86.99" y="171.60" width="2.53" height="3.20" fill="#1baf7a"><title>r8 intra 3.82–4.94 ms</title></rect>
+<rect x="93.47" y="171.60" width="2.53" height="3.20" fill="#1baf7a"><title>r8 intra 6.68–7.79 ms</title></rect>
+<line x1="78.33" y1="176.90" x2="191.00" y2="176.90" stroke="v1.1" stroke-width="0.3"/>
+<rect x="93.50" y="175.30" width="9.54" height="3.20" fill="#eb6834"><title>r8 gemm 6.69–10.90 ms</title></rect>
+<text x="240.00" y="175.20" font-size="5.5" text-anchor="end" fill="#5a5e66">17.2k rows · 96 MB</text>
+<text x="14.00" y="188.00" font-size="6" text-anchor="end" fill="#17191c">r12</text>
+<line x1="78.33" y1="182.10" x2="191.00" y2="182.10" stroke="v1.1" stroke-width="0.3"/>
+<rect x="78.33" y="180.50" width="4.57" height="3.20" fill="#2a78d6"><title>r12 inter 0.00–2.02 ms</title></rect>
+<rect x="82.98" y="180.50" width="3.81" height="3.20" fill="#2a78d6"><title>r12 inter 2.05–3.73 ms</title></rect>
+<rect x="87.96" y="180.50" width="4.06" height="3.20" fill="#2a78d6"><title>r12 inter 4.24–6.03 ms</title></rect>
+<line x1="78.33" y1="185.80" x2="191.00" y2="185.80" stroke="v1.1" stroke-width="0.3"/>
+<rect x="78.36" y="184.20" width="2.56" height="3.20" fill="#1baf7a"><title>r12 intra 0.01–1.14 ms</title></rect>
+<rect x="83.00" y="184.20" width="2.53" height="3.20" fill="#1baf7a"><title>r12 intra 2.06–3.18 ms</title></rect>
+<rect x="87.98" y="184.20" width="2.53" height="3.20" fill="#1baf7a"><title>r12 intra 4.25–5.37 ms</title></rect>
+<rect x="92.50" y="184.20" width="2.54" height="3.20" fill="#1baf7a"><title>r12 intra 6.25–7.37 ms</title></rect>
+<line x1="78.33" y1="189.50" x2="191.00" y2="189.50" stroke="v1.1" stroke-width="0.3"/>
+<rect x="92.56" y="187.90" width="25.22" height="3.20" fill="#eb6834"><title>r12 gemm 6.28–17.40 ms</title></rect>
+<text x="240.00" y="187.80" font-size="5.5" text-anchor="end" fill="#5a5e66">56.9k rows · 96 MB</text>
+<text x="14.00" y="200.60" font-size="6" text-anchor="end" fill="#17191c">r15</text>
+<line x1="78.33" y1="194.70" x2="191.00" y2="194.70" stroke="v1.1" stroke-width="0.3"/>
+<rect x="78.33" y="193.10" width="4.53" height="3.20" fill="#2a78d6"><title>r15 inter 0.00–2.00 ms</title></rect>
+<rect x="83.13" y="193.10" width="8.47" height="3.20" fill="#2a78d6"><title>r15 inter 2.12–5.85 ms</title></rect>
+<line x1="78.33" y1="198.40" x2="191.00" y2="198.40" stroke="v1.1" stroke-width="0.3"/>
+<rect x="78.36" y="196.80" width="2.55" height="3.20" fill="#1baf7a"><title>r15 intra 0.01–1.14 ms</title></rect>
+<rect x="83.15" y="196.80" width="2.54" height="3.20" fill="#1baf7a"><title>r15 intra 2.12–3.25 ms</title></rect>
+<rect x="87.91" y="196.80" width="2.56" height="3.20" fill="#1baf7a"><title>r15 intra 4.22–5.35 ms</title></rect>
+<rect x="92.43" y="196.80" width="2.68" height="3.20" fill="#1baf7a"><title>r15 intra 6.22–7.40 ms</title></rect>
+<line x1="78.33" y1="202.10" x2="191.00" y2="202.10" stroke="v1.1" stroke-width="0.3"/>
+<rect x="92.47" y="200.50" width="6.21" height="3.20" fill="#eb6834"><title>r15 gemm 6.23–8.97 ms</title></rect>
+<text x="240.00" y="200.40" font-size="5.5" text-anchor="end" fill="#5a5e66">9.4k rows · 96 MB</text>
+<line x1="78.33" y1="213.70" x2="191.00" y2="213.70" stroke="#5a5e66" stroke-width="0.5"/>
+<line x1="78.33" y1="213.70" x2="78.33" y2="215.70" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="78.33" y="221.20" font-size="6" text-anchor="middle" fill="#5a5e66">0</text>
+<line x1="89.67" y1="213.70" x2="89.67" y2="215.70" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="89.67" y="221.20" font-size="6" text-anchor="middle" fill="#5a5e66">5</text>
+<line x1="101.01" y1="213.70" x2="101.01" y2="215.70" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="101.01" y="221.20" font-size="6" text-anchor="middle" fill="#5a5e66">10</text>
+<line x1="112.34" y1="213.70" x2="112.34" y2="215.70" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="112.34" y="221.20" font-size="6" text-anchor="middle" fill="#5a5e66">15</text>
+<line x1="123.68" y1="213.70" x2="123.68" y2="215.70" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="123.68" y="221.20" font-size="6" text-anchor="middle" fill="#5a5e66">20</text>
+<line x1="135.01" y1="213.70" x2="135.01" y2="215.70" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="135.01" y="221.20" font-size="6" text-anchor="middle" fill="#5a5e66">25</text>
+<line x1="146.35" y1="213.70" x2="146.35" y2="215.70" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="146.35" y="221.20" font-size="6" text-anchor="middle" fill="#5a5e66">30</text>
+<line x1="157.69" y1="213.70" x2="157.69" y2="215.70" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="157.69" y="221.20" font-size="6" text-anchor="middle" fill="#5a5e66">35</text>
+<line x1="169.02" y1="213.70" x2="169.02" y2="215.70" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="169.02" y="221.20" font-size="6" text-anchor="middle" fill="#5a5e66">40</text>
+<line x1="180.36" y1="213.70" x2="180.36" y2="215.70" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="180.36" y="221.20" font-size="6" text-anchor="middle" fill="#5a5e66">45</text>
+<text x="191.00" y="221.20" font-size="6" text-anchor="end" fill="#5a5e66">ms</text>
+<rect x="16.00" y="227.20" width="7.00" height="4.00" fill="#2a78d6"></rect>
+<text x="25.00" y="231.00" font-size="5.5" text-anchor="start" fill="#5a5e66">NIC RDMA</text>
+<rect x="54.00" y="227.20" width="7.00" height="4.00" fill="#1baf7a"></rect>
+<text x="63.00" y="231.00" font-size="5.5" text-anchor="start" fill="#5a5e66">NVLink</text>
+<rect x="86.50" y="227.20" width="7.00" height="4.00" fill="#eb6834"></rect>
+<text x="95.50" y="231.00" font-size="5.5" text-anchor="start" fill="#5a5e66">expert GEMM</text>
+<rect x="132.75" y="227.20" width="7.00" height="4.00" fill="#eda100"></rect>
+<text x="141.75" y="231.00" font-size="5.5" text-anchor="start" fill="#5a5e66">placement put</text>
+<line x1="184.50" y1="226.20" x2="184.50" y2="232.20" stroke="#17191c" stroke-width="0.5"/>
+<line x1="185.90" y1="226.20" x2="185.90" y2="232.20" stroke="#17191c" stroke-width="0.5"/>
+<text x="188.50" y="231.00" font-size="5.5" text-anchor="start" fill="#5a5e66">barrier</text>
+</svg>
