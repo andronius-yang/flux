@@ -99,7 +99,7 @@ reference, thresholds from the l1 bench maps.
     salloc -A m5350_g -q interactive -C gpu -N 2 --gpus-per-node=4 -t 30
     srun --nodes=2 --ntasks-per-node=1 --gpus-per-node=4 ./launch.sh \\
         test/python/moe_combined/test_moe_l0l1_traffic.py \\
-        --traffic_matrix $PSCRATCH/a2av_test_matrices/<matrix>.txt \\
+        --traffic_matrix $PSCRATCH/workspace/andrewy/a2av_test_matrices/<matrix>.txt \\
         --l0_comm_pattern a2av_hier --l1_comm_pattern a2av_hier
 """
 

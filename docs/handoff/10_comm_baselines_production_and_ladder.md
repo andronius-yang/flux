@@ -192,7 +192,7 @@ after; the runner prints the capsule commit command.
   headroom returns (incidence de-saturation begins).
 - **16n**: (a) **FAST 64-rank segfault** (l0algos, un-root-caused) —
   triage FIRST on the 16n allocation with the segv backtrace shim at
-  `$PSCRATCH/segvbt.so`, dispatch-only smoke before any fast grid cell;
+  `$PSCRATCH/workspace/andrewy/debug/segvbt.so`, dispatch-only smoke before any fast grid cell;
   if libflash is at fault, patch via `scripts/fast_two_instance.patch`-
   style vendored patches (FAST is a submodule — patches must live in the
   parent repo and be applied by `scripts/build_fast.sh`); (b) the W64

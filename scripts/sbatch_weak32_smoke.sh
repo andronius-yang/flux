@@ -12,7 +12,7 @@
 #SBATCH --gpus-per-node=4
 #SBATCH -t 15
 #SBATCH -J weak32_smoke
-#SBATCH -o /pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/slurm_32n/%x-%j.out
+#SBATCH -o /pscratch/sd/y/yufeid/workspace/andrewy/logs/slurm_32n/%x-%j.out
 
 set -euo pipefail
 cd /global/u1/y/yufeid/workspace/changchen/andrewy/flux

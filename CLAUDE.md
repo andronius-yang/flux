@@ -62,12 +62,15 @@ burn the allocation's node-hours and block other users of the interactive
 QOS). Check with `squeue --me`; release with `scancel <jobid>`.
 
 Keep all test logs under `/tmp` (e.g. a per-session scratch dir), never inside the
-repository tree. Redirect job output at the login-side shell (the one running
+repository tree. Anything that must persist (sbatch `-o` output, build logs,
+salloc session logs, profiling logs) goes under
+`$PSCRATCH/workspace/andrewy/logs/` (see its README) — never in `~` or
+another top-level home/scratch directory. Redirect job output at the login-side shell (the one running
 `salloc`/`srun`), since a compute node's `/tmp` is node-local and discarded when
 the job ends. The inverse holds for job *inputs* the compute nodes must read
 (e.g. traffic matrices): those cannot live in login-node `/tmp` — put them on a
 shared filesystem such as `$PSCRATCH` (synthetic 4-rank test matrices live in
-`$PSCRATCH/a2av_test_matrices/`), still not in the repo.
+`$PSCRATCH/workspace/andrewy/a2av_test_matrices/`), still not in the repo.
 
 Single-node multi-GPU tests go through `launch.sh`, which wraps `torchrun` with `--nproc_per_node` set to the number of visible GPUs (4 on Perlmutter) and sets required env vars (`NVSHMEM_BOOTSTRAP=UID`, `NVSHMEM_DISABLE_CUDA_VMM=1`, `CUDA_DEVICE_MAX_CONNECTIONS=1`, ...):
 

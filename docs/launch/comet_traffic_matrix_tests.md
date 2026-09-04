@@ -439,7 +439,7 @@ NVSHMEM_SYMMETRIC_SIZE=4G srun --nodes=4 --ntasks-per-node=1 ./launch.sh \
   the standing next optimization, exactly as layer0 §6 predicted. 4-node
   (`4n_16r` suite) and large-M sweeps not yet run.
 - 4-node / 16-rank budget sweep 2026-07-21 (`4n_16r/*_dist_001` staged with W
-  header at `$PSCRATCH/a2av_test_matrices/4n_16r/`, chunk 8192B, N=K=4096, G=32,
+  header at `$PSCRATCH/workspace/andrewy/a2av_test_matrices/4n_16r/`, chunk 8192B, N=K=4096, G=32,
   topk=4, bf16, n_split=4, iters=10, send/stage caps = 4x average rows;
   288/288 rank-checks allclose). Mean ms over 16 ranks; "torch" = unoverlapped
   per-expert GEMM loop + NCCL reduce-scatter, "dense" = flux multi-node ring,

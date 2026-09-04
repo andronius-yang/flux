@@ -10,15 +10,15 @@
 #SBATCH -C gpu
 #SBATCH -N 32
 #SBATCH --gpus-per-node=4
-#SBATCH -t 15
-#SBATCH -J weak32_comet
+#SBATCH -t 5
+#SBATCH -J weak32_comet_b64
 #SBATCH -o /pscratch/sd/y/yufeid/workspace/andrewy/logs/slurm/%x-%j.out
 
 set -euo pipefail
 cd /global/u1/y/yufeid/workspace/changchen/andrewy/flux
 source ./module.sh
-echo "=== weak32_comet job $SLURM_JOB_ID on $(hostname), $(date -u +%FT%TZ) ==="
+echo "=== weak32_comet_b64 job $SLURM_JOB_ID on $(hostname), $(date -u +%FT%TZ) ==="
 python3 sweeps/sweep.py run \
-    --spec sweeps/specs/weak32_comet_k2.yaml \
+    --spec sweeps/specs/weak32_comet_b64_k2.yaml \
     --jobid="$SLURM_JOB_ID"
-echo "=== weak32_comet done, $(date -u +%FT%TZ) ==="
+echo "=== weak32_comet_b64 done, $(date -u +%FT%TZ) ==="

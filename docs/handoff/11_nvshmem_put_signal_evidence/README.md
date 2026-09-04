@@ -124,7 +124,7 @@ but NOT the missing fence in the nbi kernel — must be re-verified with the pro
 assumed fixed.
 
 ## 7. Standalone NVSHMEM-only reproducer (2026-08-22, job 57407629, 2 nodes × 1 GPU, CXI)
-Program: `$PSCRATCH/nvshmem_repro/repro.cu` (115 lines, no flux): PE0 stamps a symmetric
+Program: `$PSCRATCH/workspace/andrewy/nvshmem_repro/repro.cu` (115 lines, no flux): PE0 stamps a symmetric
 src buffer with `it`, put_signal (nbi or blocking) into PE1 + SET flag=it; PE1 waits
 flag>=it (raw cuStreamWaitValue64 GEQ = flux's gate, or nvshmemx_signal_wait_until_on_stream),
 counts elements != it; every iteration ends with quiet_on_stream + barrier_all_on_stream

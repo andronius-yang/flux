@@ -129,7 +129,7 @@ different batch?" → Tier 2, timed.
 1. CPU: pytest the new derive vs python reference (clone
    `test_a2av_inwindow_meta.py`).
 2. 1n 4-GPU: driver smoke correctness ON, run-twice bitwise; then the
-   skewed matrix (`$PSCRATCH/a2av_test_matrices/matrix_4r_skewed.txt`).
+   skewed matrix (`$PSCRATCH/workspace/andrewy/a2av_test_matrices/matrix_4r_skewed.txt`).
 3. 2n then 4n: the SAME smokes (the proxy-segv class above only exists at
    nnodes>1; 2n uniform matrix `uniform_2n_8r.txt`, 4n
    `4n_16r/*_dist_001.txt`).
