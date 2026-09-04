@@ -572,6 +572,20 @@ VARIANTS = {
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=["nvshmem_putmem_on_stream"],
     ),
+    # 2026-09-04: local_static twin of the exposed-wire arm — every source
+    # sends ALL its tokens for an expert to replica (src mod C) (SGLang
+    # static-map / D6 class) instead of the batch-quota equal split.
+    "eplb_l01_nvplace_bwire_lstatic": dict(
+        comm_pattern="eplb_static_a2av",
+        driver="eplb",
+        layer="l01",
+        test_args=["--transport", "nvshmem", "--layers", "l01",
+                   "--weight_place_wire", "nvshmem",
+                   "--dispatch_wire", "blocking_ring",
+                   "--replica_select", "local_static"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["nvshmem_putmem_on_stream"],
+    ),
     "eplb": dict(
         comm_pattern="eplb_static_a2av",  # cells.csv label only, never a CLI flag
         driver="eplb",

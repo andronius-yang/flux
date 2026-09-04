@@ -1,0 +1,25 @@
+# EPLB replica-rule A/B on the exposed dispatch wire (2026-09-04): quota
+# (batch equal split, the paper arm) vs local_static (src mod C, SGLang
+# static map), ONE capsule, K2 professional_law layer 18, b16 + b32, nsys
+# isolated, correctness on. Static prediction: recv bytes 1.24x -> 1.44x.
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [eplb_l01_nvplace_bwire, eplb_l01_nvplace_bwire_lstatic]
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=18;sem=homog;dslots=64:32"
+budgets_mib: [16, 32]
+modes: [nsys]
+extra_env:
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+matrix_instance: "001"
+skip_correctness: false
+sm_margin: 8
+n_split_l1: 7
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 0
+notes: "eplb exposed wire: quota vs local_static replica rule, K2 professional_law L18, 4n b16+b32, nsys isolated"
