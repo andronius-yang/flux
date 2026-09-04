@@ -1,7 +1,7 @@
 # Weak-scaling figure — aesthetic & architecture spec
 
-Status: REV 2.1 (2026-09-03; `--budget 1` variant per user — does the ring
-speedup hold at small node counts? REV 2.0/1.2 renders unchanged). Data authority: `figure_src.csv` (+
+Status: REV 3.0 (2026-09-04; ver4 = `--stacked` two-budget figure + Ours =
+min-over-arms per user; REV 2.x/1.2 renders unchanged). Data authority: `figure_src.csv` (+
 `figure_src.md`). Generator: `make_figure.py` (matplotlib; one `CONFIG`
 block, every **[knob]** below lives there). Two versions from one script:
 **verA** (latency) and **verB** (throughput).
@@ -100,6 +100,32 @@ block, every **[knob]** below lives there). Two versions from one script:
   unsuffixed canon. The 1 MiB story is the fixed-cost regime: the ring
   speedup is 1.18× at 2n and grows with node count (1.33 / 1.62 / 1.92 /
   2.08×) — the opposite shape from 64 MiB, where it is ~2.4–3.1× flat.
+
+## 4c. ver4: stacked two-budget figure (REV 3.0, user 2026-09-04)
+
+- `python3 make_figure.py --baseline nvshmem --stacked` -> one single-column
+  figure, **two panels stacked** (top 1 MiB, bottom 64 MiB), latency lines
+  + speedup bars in each, **one shared legend** on top and **one shared
+  right-axis label** ("Speedup vs NVSHMEM", centered on the stack — per-panel
+  labels collided); right-axis SCALES stay per panel (a shared scale
+  flattened the 64 MiB bars once the 1 MiB panel reached ~9x — each panel
+  prints its own ticks). Bar value labels use `label_pos="above_all"`: above
+  the bar top AND above every marker at that x, never at the base (the 1 MiB
+  panel's small bars and lines both hug the baseline). Per-panel
+  labels collided at this height) **[knob: STACKED]**. Height 1.8 in total
+  (= 1/5 of the 9 in text height, "compact for now"; caption not budgeted),
+  `hspace` 0.22, x tick labels + "Nodes" only on the bottom panel, a small
+  budget tag ("1 MiB" / "64 MiB") top-left inside each panel.
+  Outputs `weak_scaling_nvshmem_stacked.{pdf,png}`.
+- **Ours = min over arms** **[knob: OURS_ARMS]** (main-figure convention):
+  at each node count the "Ours" line takes the fastest of `ours` (s1) and
+  `dwire` (placement + routing over a direct staged a2av) rows present in
+  `figure_src.csv`; the winning arm is recorded on the merged row. At
+  64 MiB s1 wins everywhere (dwire rows absent/slower) so REV 2.x renders
+  are byte-identical; at 1 MiB dwire wins from 16n (7.20 vs 12.77 ms at
+  16n; 9.25 vs 39.19 ms at 32n — the 32n dwire cell's timed loop is complete
+  but its process hung at teardown, see `figure_src.md`). 1 MiB 16n rows are the same-binary one-capsule set
+  `20260904-120809` (dwire + s1 + ring).
 
 ## 5. Output & checks
 

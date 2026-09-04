@@ -33,3 +33,14 @@ Headline: vs COMET at b16 the speedup runs 0.92x (2n, COMET wins) ->
 1.16x -> 1.56x -> 2.26x -> 2.69x (32n); at b64 1.01 -> 1.28 -> 1.86 ->
 2.59 -> COMET does not fit at 32n (40 GB A100 memory wall, bracketed). FAST excluded
 (16-server hard limit, handoff 24).
+
+## ver4 (REV 3.0): stacked 1 MiB / 64 MiB figure, Ours = min over arms
+
+`make_figure.py --baseline nvshmem --stacked` -> `weak_scaling_nvshmem_stacked.{pdf,png}`.
+"Ours" follows the main figure's convention (fastest of s1 and the
+direct-wire arm per node). New same-binary one-capsule sets at 1 MiB:
+16n `20260904-120809` (dwire 7.20 / s1 12.77 / ring 24.77) and 32n
+`20260904-124333` (dwire 9.25 / s1 39.19 / ring 81.77; the 32n dwire cell's
+timed loop is complete but the process hung at teardown -> status timeout,
+flagged in figure_src.csv). 1 MiB speedups vs ring: 1.18 / 1.33 / 1.62 /
+3.44 / 8.84x.

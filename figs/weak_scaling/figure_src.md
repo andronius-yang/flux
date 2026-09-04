@@ -71,3 +71,20 @@ ours 2n row uses the ring capsule's value (4.240 ms; the COMET-capsule 2n
 value 4.224 ms agrees within 0.4%) so that both baselines' 2n speedups are
 same-capsule. Speedups vs nvshmem: 1.18 / 1.33 / 1.62 / 1.92 / 2.08×; vs
 COMET: 0.91 / 1.00 / 1.20 / 1.23 / 1.13×.
+
+## `dwire` rows and the min-over-arms "Ours" (REV 3.0, ver4)
+
+`system = dwire` = `ours_l01_s1_pv2_r2_dwire` (our placement + routing over
+a direct staged a2av, handoff 29/30) at 1 MiB: 4n/8n from handoff 30
+(6.171 / 6.130 ms — slower than s1 there), 16n from the same-binary
+one-capsule set `20260904-120809` (dwire 7.200, s1 12.769, ring 24.772 ms;
+reproduces handoff 30 within 2%), 32n from the same-binary one-capsule set `20260904-124333` (dwire 9.252,
+s1 39.186, ring 81.774 ms; s1/ring reproduce the ladder/ring capsules
+within 2%). **32n dwire caveat:** the timed loop completed (10/10 iters on
+all 128 ranks, per-iteration e2e 6.8–7.1 ms, no stall) but the process
+hung at teardown and the 120 s watchdog killed it, so the cell status is
+`timeout` (recorded here as `ok_iters_teardown_timeout`). The number is a
+valid measurement; say so when quoting. 32n 1 MiB speedup vs NVSHMEM =
+81.774 / 9.252 = 8.84x. The generator's "Ours" line is min(ours, dwire) per node, the
+main figure's convention; the `ours` rows' speedup columns are computed
+against that min (16n 1 MiB: 24.772 / 7.200 = 3.44x vs NVSHMEM).
