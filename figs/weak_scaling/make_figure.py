@@ -24,6 +24,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
+from matplotlib import patheffects
 
 # ============================== CONFIG =======================================
 CONFIG = dict(
@@ -39,10 +40,18 @@ CONFIG = dict(
         "nvshmem": dict(label="NVSHMEM+GEMM", color="#ddaa33", marker="^"),
     },
     LINE=dict(lw=1.1, ms=3.6, mew=0.0, mec=None),      # markers: no edge stroke
-    BARS=dict(label="Speedup vs COMET", face="#d9d9d9", edge="#8f8f8f",   # label follows REF (see BASELINES)
-              lw=0.4, width=0.55, fmt="{:.2f}×", label_pad_pt=1.5,
-              label_pos="auto",   # auto: above the bar unless a line marker
-                                  # sits in that band, then inside at the base
+    BARS=dict(label="Speedup vs COMET",        # label follows REF (see BASELINES)
+              # REV 3.1 (postdoc): the speedup family = the main figure's
+              # Ours-speedup red #c1121f — muted red-coral fill (65% of
+              # #c1121f on white), full-red edge; recessive next to the
+              # steel-blue / sand / olive lines but no longer grey-light
+              face="#d7616c", edge="#c1121f",
+              lw=0.5, width=0.55, fmt="{:.2f}×", label_pad_pt=1.5,
+              label_pos="top",    # REV 3.1 (postdoc): ALWAYS directly above the
+                                  # bar, even across a line — a white halo keeps
+                                  # it legible ("auto"/"above_all" kept as knobs)
+              label_color="#c1121f", label_weight="bold",
+              halo_pt=1.3,        # white stroke behind the label glyphs
               label_h_pt=6.5),    # label glyph height used by the auto test
     BAR_HEADROOM=1.5,                         # right ylim = ceil_nice(max*this)
     HEADROOM=1.12,                            # left ylim = ceil_nice(max*this)
@@ -77,7 +86,7 @@ CONFIG = dict(
                  MARGINS=dict(left=0.135, right=0.86, top=0.87, bottom=0.17),
                  hspace=0.22,                       # gap between panels (fraction of panel height)
                  right_label_x=0.975,               # shared right-axis label position (fig frac)
-                 label_pos="above_all",             # bar labels clear bar top + markers at that x
+                 label_pos="top",                   # REV 3.1: always above the bar (postdoc)
                  tag_fmt="{} MiB", tag_size=6.0,    # per-panel budget tag, top-left inside
                  legend_y=1.0, N_YTICKS=3,
                  outputs=[("weak_scaling_nvshmem_stacked.pdf", {}),
@@ -208,20 +217,19 @@ def draw_panel(fig, ax, ax2, data, cfg, metric, y_label, *, x_label=True, legend
         if pos == "auto":
             clash = any(top - mk <= m <= top + band + mk for m in marks)
             pos = "base" if clash else "top"
+        lkw = dict(ha="center", va="bottom", fontsize=fs["bar"], zorder=6,
+                   color=bars.get("label_color", cfg["INK"]["primary"]),
+                   fontweight=bars.get("label_weight", "normal"))
+        if bars.get("halo_pt"):
+            lkw["path_effects"] = [patheffects.withStroke(linewidth=bars["halo_pt"],
+                                                          foreground="white")]
         if pos == "above_all":
-            # stacked panels: clear the bar top and every marker at this x
             y_top = max([v] + [m * rmax + mk * rmax for m in marks])
-            ax2.text(i, y_top + bars["label_pad_pt"] * rpt, bars["fmt"].format(v),
-                     ha="center", va="bottom", fontsize=fs["bar"],
-                     color=cfg["INK"]["primary"], zorder=4)
+            ax.text(i, (y_top + bars["label_pad_pt"] * rpt) / rmax * ylim, bars["fmt"].format(v), **lkw)
         elif pos == "top":
-            ax2.text(i, v + bars["label_pad_pt"] * rpt, bars["fmt"].format(v),
-                     ha="center", va="bottom", fontsize=fs["bar"],
-                     color=cfg["INK"]["primary"], zorder=4)
+            ax.text(i, (v + bars["label_pad_pt"] * rpt) / rmax * ylim, bars["fmt"].format(v), **lkw)
         else:
-            ax2.text(i, bars["label_pad_pt"] * rpt, bars["fmt"].format(v),
-                     ha="center", va="bottom", fontsize=fs["bar"],
-                     color=cfg["INK"]["primary"], zorder=4)
+            ax.text(i, (bars["label_pad_pt"] * rpt) / rmax * ylim, bars["fmt"].format(v), **lkw)
 
     # ---- baseline fail marker: an x ON the x axis at each slot it lacks, note above ----
     fn = cfg["FAIL_NOTE"]

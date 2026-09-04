@@ -1,7 +1,8 @@
 # Weak-scaling figure — aesthetic & architecture spec
 
-Status: REV 3.0 (2026-09-04; ver4 = `--stacked` two-budget figure + Ours =
-min-over-arms per user; REV 2.x/1.2 renders unchanged). Data authority: `figure_src.csv` (+
+Status: REV 3.1 (2026-09-04; postdoc: speedup labels ALWAYS above the bar,
+bars in the evaluation-wide speedup color — applied to EVERY render, so the
+REV 1.2/2.x outputs are regenerated, no longer byte-stable). Data authority: `figure_src.csv` (+
 `figure_src.md`). Generator: `make_figure.py` (matplotlib; one `CONFIG`
 block, every **[knob]** below lives there). Two versions from one script:
 **verA** (latency) and **verB** (throughput).
@@ -33,11 +34,17 @@ block, every **[knob]** below lives there). Two versions from one script:
   carry in the main figure, so identity is consistent across figures.
   Line 1.1 pt, marker 3.6 pt, **no edge stroke** (REV 1.1: the white
   marker edge painted over neighbouring elements).
-- **Speedup bars** **[knob: BARS]**: fill `#d9d9d9`, edge `#8f8f8f` 0.4 pt,
-  width 0.55 of the slot, drawn *behind* lines (zorder). Right y-limit =
-  ceil_nice(max speedup × 1.5) **[knob: BAR_HEADROOM]** so bars occupy the
-  lower ~2/3 of the panel and never dominate. Value label
-  `"{:.2f}×"` centered above each bar, 5.8 pt, primary ink **[knob]**.
+- **Speedup bars** **[knob: BARS]** (REV 3.1, postdoc): the speedup family
+  is the main figure's Ours-speedup red — fill `#d7616c` (muted red-coral,
+  65% of `#c1121f` on white), edge `#c1121f` 0.5 pt, width 0.55 of the
+  slot, drawn *behind* lines (zorder). This is the ONE speedup color for
+  every evaluation figure (main figure's speedup annotations use the same
+  `#c1121f`). Right y-limit = ceil_nice(max speedup × 1.5) **[knob:
+  BAR_HEADROOM]**. Value label `"{:.2f}×"` **always directly above its bar**
+  (postdoc ruling — even where it crosses a line), 5.8 pt bold `#c1121f`
+  with a 1.3 pt white halo so it stays legible over line segments; drawn on
+  the upper (line) axes so it sits above both lines and markers. The
+  earlier grey fill / auto-base placement is retired.
 - **COMET missing at 32n** **[knob: FAIL_NOTE]** (REV 1.2, postdoc): an **✗**
   in the COMET color sits directly **on the x axis** at the 32n slot, with
   the short note **OOM** just above it (5.5 pt, COMET color). No dashed
