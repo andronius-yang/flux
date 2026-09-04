@@ -22,7 +22,7 @@ CONFIG = dict(
     # ---- data selection ----
     BUDGETS=[1, 4, 16],                       # MiB, group order left->right
     ROWS=["4", "8", "16"],                    # topology per subfigure ROW (top->bottom)
-    COLS=["K2", "Qwen"],                      # model per subfigure COLUMN (left->right)
+    COLS=["Qwen", "K2"],                      # model per subfigure COLUMN (left->right)
     SYSTEMS=[                                 # fixed bar order (SPEC 2.1)
         "fast_gemm", "nvshmem_gemm", "moonep", "eplb", "epic", "comet", "OURS",
     ],
@@ -101,7 +101,7 @@ CONFIG = dict(
     BOTTOM_STRIP_IN=0.213,     # x group labels strip below the panels
     MARGINS_LR=dict(left=0.052, right=0.968),   # unchanged -> same panel width
     WSPACE=0.10, HSPACE=0.14,  # fractions of panel width/height
-    COL_TITLES={"K2": "Kimi K2 (1T-A32B)", "Qwen": "Qwen3-235B-A22B"},
+    COL_TITLES={"Qwen": "Qwen3-235B", "K2": "Kimi K2"},
     COL_TITLE_PAD=2.5,                        # pt above axes
     COL_TITLE_WEIGHT="bold",
     ROW_TAGS={"4": "4 nodes", "8": "8 nodes", "16": "16 nodes"},   # row tag text

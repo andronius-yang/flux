@@ -1,6 +1,6 @@
 # Main performance figure — aesthetic & architecture spec
 
-Status: REV 3 DRAFT (2026-09-03, +8 nodes, 3x2 layout — see §9). Aesthetics unchanged from REV 2.1. Data authority: `figure_src.csv` (+
+Status: REV 3 (2026-09-03, +8 nodes, 3x2 layout, Qwen left / K2 right — see §9). Aesthetics unchanged from REV 2.1. Data authority: `figure_src.csv` (+
 `figure_src.md` provenance). Generator: `make_figure.py` (matplotlib, to be
 written after this spec is approved). Every value marked **[knob]** is a
 parameter in the generator's single `CONFIG` block — nothing aesthetic is
@@ -14,11 +14,10 @@ hard-coded outside it.
   exported figure is built at exactly its final physical size — fonts are
   therefore true points, never scaled.
 - **REV 3: six subfigures in a 3x2 grid** — rows = topology **{4, 8, 16
-  nodes}** (top to bottom), columns = model **{Kimi K2, Qwen3}** with FULL
-  model names as column titles (**[knob: COL_TITLES]** — "Kimi K2 (1T-A32B)",
-  "Qwen3-235B-A22B"; column order K2 left / Qwen right, the same K2-first
-  order the 2x2 used top-to-bottom, **[knob: COLS]**). Replaces the REV 2
-  2x2 (columns = topology, rows = model).
+  nodes}** (top to bottom), columns = model **{Qwen3, Kimi K2}** — Qwen
+  LEFT, K2 RIGHT **[knob: COLS]** — with model names as column titles
+  **[knob: COL_TITLES]**: "Qwen3-235B" and "Kimi K2" (user ruling
+  2026-09-03). Replaces the REV 2 2x2 (columns = topology, rows = model).
 - **REV 3 sizing rule (user, 2026-09-03): each subfigure keeps EXACTLY the
   REV 2.1 panel size and spacing** — panel height 0.592 in, wspace 0.10,
   hspace 0.14, the same top strip (legend + titles) and bottom strip. The
