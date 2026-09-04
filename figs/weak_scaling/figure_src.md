@@ -50,5 +50,13 @@ Two-stage story, both verified from capsules (no guesswork):
    would fit an 80 GB part). Hence the figure's 32n COMET marker reads
    **OOM**, not "does not run".
 
-The NVSHMEM ring baseline (32n data, no 2n) is in the campaign table but not
-in this figure (USER RULING: bars vs COMET only).
+## NVSHMEM+GEMM ring rows (`system = nvshmem`, REV 2.0)
+
+Added 2026-09-03 for `make_figure.py --baseline nvshmem`: `l01_nvshmem`
+(blocking-put ring + unfused GEMM, the main figure's speedup reference) at
+64 MiB, 2–32n. 2n from capsule `20260904-004243` (ring + Ours in ONE
+capsule), 4/8/16n from the 8/31 ring ladder capsules
+(`20260831-051230/052029/063232`, pre-cap-fix binary), 32n from
+`20260901-075429_5433d58e`. `speedup_vs_nvshmem` on the `ours` rows =
+nvshmem_total_ms / ours_total_ms (2.92 / 3.02 / 2.67 / 2.44 / 3.07×). The
+ring runs at 32n, so the nvshmem variant has no OOM marker.

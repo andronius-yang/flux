@@ -1,6 +1,7 @@
 # Weak-scaling figure — aesthetic & architecture spec
 
-Status: REV 1.2 (2026-09-03; on-axis OOM marker per postdoc). Data authority: `figure_src.csv` (+
+Status: REV 2.0 (2026-09-03; `--baseline nvshmem` variant per user, REV 1.2 COMET
+renders unchanged). Data authority: `figure_src.csv` (+
 `figure_src.md`). Generator: `make_figure.py` (matplotlib; one `CONFIG`
 block, every **[knob]** below lives there). Two versions from one script:
 **verA** (latency) and **verB** (throughput).
@@ -77,6 +78,21 @@ block, every **[knob]** below lives there). Two versions from one script:
   the main figure's capsules by up to ~5% for the same nominal cells —
   user ruling: keep); 2n/32n are the cap-fix binary; NVSHMEM ring omitted
   (user ruling: bars vs COMET only).
+
+## 4b. Baseline switch (REV 2.0, user 2026-09-03)
+
+- `python3 make_figure.py --baseline nvshmem` renders the same two versions
+  against the **NVSHMEM+GEMM ring** (`l01_nvshmem`, the main figure's
+  speedup reference) instead of COMET: series `nvshmem` = sand `#ddaa33`
+  (the main figure's nvshmem_gemm hue), triangle markers **[knob: SERIES]**;
+  bars = `speedup_vs_nvshmem`, right label + legend entry "Speedup vs NVSHMEM" (the full
+  "…+GEMM" form overflowed the column width), legend colspacing 0.7;
+  outputs `weak_scaling_nvshmem_ver{A,B}.{pdf,png}` **[knob: BASELINES]**.
+  The ring runs at every node count incl. 32n, so all five bars are drawn
+  and no fail note appears. 2n ring point: capsule `20260904-004243` (ring +
+  Ours in one capsule; the Ours row keeps the COMET-capsule value 36.092 ms,
+  the ring capsule's 36.097 ms agrees within 0.01%).
+- The default (no flag) still produces the COMET renders byte-identically.
 
 ## 5. Output & checks
 

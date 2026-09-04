@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Weak-scaling figure generator (verA latency / verB throughput). See SPEC.md.
 
-Usage:  python3 make_figure.py        (writes weak_scaling_ver{A,B}.{pdf,png})
+Usage:  python3 make_figure.py                    (COMET baseline; weak_scaling_ver{A,B}.{pdf,png})
+        python3 make_figure.py --baseline nvshmem (NVSHMEM+GEMM ring baseline;
+                                                   weak_scaling_nvshmem_ver{A,B}.{pdf,png})
 
 Every aesthetic decision lives in CONFIG below; VERSIONS holds the per-version
 differences. Values are true points/inches at final size (\\columnwidth).
@@ -9,6 +11,7 @@ differences. Values are true points/inches at final size (\\columnwidth).
 import csv
 import math
 import os
+import sys
 
 os.environ.setdefault("SOURCE_DATE_EPOCH", "0")  # reproducible PDF bytes
 import matplotlib
@@ -26,9 +29,11 @@ CONFIG = dict(
     SERIES={                                  # identity: color + marker
         "comet": dict(label="COMET", color="#999933", marker="s"),
         "ours": dict(label="Ours", color="#4878b0", marker="o"),
+        # ring baseline: the main figure's nvshmem_gemm sand (#ddaa33), triangle
+        "nvshmem": dict(label="NVSHMEM+GEMM", color="#ddaa33", marker="^"),
     },
     LINE=dict(lw=1.1, ms=3.6, mew=0.0, mec=None),      # markers: no edge stroke
-    BARS=dict(label="Speedup vs COMET", face="#d9d9d9", edge="#8f8f8f",
+    BARS=dict(label="Speedup vs COMET", face="#d9d9d9", edge="#8f8f8f",   # label follows REF (see BASELINES)
               lw=0.4, width=0.55, fmt="{:.2f}×", label_pad_pt=1.5,
               label_pos="auto",   # auto: above the bar unless a line marker
                                   # sits in that band, then inside at the base
@@ -51,6 +56,16 @@ CONFIG = dict(
     # ---- typography ----
     FONT_FAMILY=["Helvetica", "Arial", "DejaVu Sans"],
     FONT_SIZES=dict(legend=6.5, label=6.5, tick=6, bar=5.8, note=5.5),
+    # ---- baselines: what --baseline swaps (REF, draw order, labels, outputs) ----
+    BASELINES={
+        "comet": dict(REF="comet", SYSTEMS=["comet", "ours"],
+                      RIGHT_LABEL="Speedup vs COMET", BAR_LABEL="Speedup vs COMET",
+                      prefix="weak_scaling_ver"),
+        "nvshmem": dict(REF="nvshmem", SYSTEMS=["nvshmem", "ours"],
+                        RIGHT_LABEL="Speedup vs NVSHMEM", BAR_LABEL="Speedup vs NVSHMEM",
+                        LEGEND=dict(colspacing=0.7),   # longer names: tighter row
+                        prefix="weak_scaling_nvshmem_ver"),
+    },
     # ---- versions ----
     VERSIONS={
         "A": dict(metric="total_ms", outputs=[("weak_scaling_verA.pdf", {}),
@@ -101,7 +116,7 @@ def plot(data, cfg, version):
     bars = cfg["BARS"]
     sp = []
     for i, n in enumerate(cfg["NODES"]):
-        v = data[(n, "ours")]["speedup_vs_comet"]
+        v = data[(n, "ours")]["speedup_vs_" + cfg["REF"]]
         if v:
             sp.append((i, float(v)))
     rmax = ceil_nice(max(v for _, v in sp) * cfg["BAR_HEADROOM"], cfg)
@@ -158,7 +173,7 @@ def plot(data, cfg, version):
                      ha="center", va="bottom", fontsize=fs["bar"],
                      color=cfg["INK"]["primary"], zorder=4)
 
-    # ---- COMET fail marker: an x ON the x axis at each slot it lacks, note above ----
+    # ---- baseline fail marker: an x ON the x axis at each slot it lacks, note above ----
     fn = cfg["FAIL_NOTE"]
     ref = cfg["REF"]
     dpt = ylim / (cfg["FIG_H"] * ax.get_position().height * 72)   # data/pt
@@ -207,10 +222,28 @@ def plot(data, cfg, version):
     return fig
 
 
+def configure(baseline):
+    """CONFIG specialized to one baseline (REF, SYSTEMS, labels, output names)."""
+    b = CONFIG["BASELINES"][baseline]
+    cfg = dict(CONFIG)
+    cfg["REF"], cfg["SYSTEMS"], cfg["RIGHT_LABEL"] = b["REF"], b["SYSTEMS"], b["RIGHT_LABEL"]
+    cfg["BARS"] = dict(CONFIG["BARS"], label=b["BAR_LABEL"])
+    cfg["LEGEND"] = dict(CONFIG["LEGEND"], **b.get("LEGEND", {}))
+    cfg["VERSIONS"] = {
+        v: dict(vc, outputs=[(b["prefix"] + v + ext, kw) for ext, kw in
+                             [(".pdf", {}), (".png", {"dpi": 300})]])
+        for v, vc in CONFIG["VERSIONS"].items()}
+    return cfg
+
+
 def main():
-    data = load(CONFIG)
-    for version, vcfg in CONFIG["VERSIONS"].items():
-        fig = plot(data, CONFIG, version)
+    baseline = "comet"
+    if "--baseline" in sys.argv:
+        baseline = sys.argv[sys.argv.index("--baseline") + 1]
+    cfg = configure(baseline)
+    data = load(cfg)
+    for version, vcfg in cfg["VERSIONS"].items():
+        fig = plot(data, cfg, version)
         for name, kw in vcfg["outputs"]:
             fig.savefig(os.path.join(HERE, name), **kw)
             print("wrote", name)
