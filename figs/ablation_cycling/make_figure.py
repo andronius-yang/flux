@@ -26,7 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # ----------------------------------------------------------------------------
 KNOBS = dict(
     FIG_W=3.33, FIG_H=1.90,                       # inches (single column, 1/4 text height incl. caption)
-    MARGINS=dict(left=0.135, right=0.995, bottom=0.17, top=0.78),
+    MARGINS=dict(left=0.135, right=0.995, bottom=0.13, top=0.78),
     VERSIONS={                                    # chain per version: (tidy arm key, legend text)
         "A": [("COMET", "COMET"),
               ("slip", "w/ token-dispatch comp. overlap"),
@@ -41,8 +41,8 @@ KNOBS = dict(
     INCLUDE_SEQ=False,                            # insert the sequential-swap twin before the last bar
     SEQ_TEXT="+ expert dispatch, un-overlapped",
     GROUPS=[                                      # (group label, figure_src panel prefix, topic, statistic)
-        ("S-A: seen basis\n(prof. law, 4 reps)", "A:", "proLaw", "mean over 16 timed iters"),
-        ("S-C: drift schedule\n(1/8 unseen, 3 reps)", "B:", "ALL", "whole-schedule mean, mean over reps"),
+        ("Predictable load", "A:", "proLaw", "mean over 16 timed iters"),
+        ("Shifting load", "B:", "ALL", "whole-schedule mean, mean over reps"),
     ],
     ARM_ROWS={                                    # tidy_arm names in figure_src.csv, per panel prefix
         "COMET": {"A:": "COMET", "B:": "COMET"},

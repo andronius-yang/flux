@@ -1,4 +1,4 @@
-# Ablation figure — specification (REV 0, 2026-09-03)
+# Ablation figure — specification (REV 0.2, 2026-09-04)
 
 One single-column bar chart, two groups (S-A, S-C), two versions from one
 parameterized script (`make_figure.py`, every **[knob]** below lives in its
@@ -13,8 +13,8 @@ weak-scaling rulings (palette, fonts, edge stroke, hatch channel).
   (2.25 in) → figure PDF **1.90 in** tall **[knob: FIG_H]**, leaving
   ~0.35 in for a caption. (Weak-scaling used 1/5 → 1.45 in; this one gets
   the extra height because the vertical speedup labels need it.)
-- Margins **[knob: MARGINS]**: left 0.135, right 0.995, bottom 0.17,
-  top 0.80 of the figure (legend lives in the top 0.20).
+- Margins **[knob: MARGINS]**: left 0.135, right 0.995, bottom 0.13,
+  top 0.78 of the figure (legend lives in the top 0.22).
 - Exported at final physical size; fonts embedded (`pdf.fonttype 42`).
 
 ## 2. What is drawn
@@ -100,11 +100,12 @@ reads as a reported miss rather than a typo.
 
 ## 4. Text
 
-- Group labels **[knob: GROUP_LABELS]** under each group, two lines,
-  6 pt, primary ink:
-  `S-A: seen basis\n(prof. law, 4 reps)` and
-  `S-C: drift schedule\n(1/8 unseen, 3 reps)`.
-  Alternative one-liners `seen basis` / `1-in-8 drift` **[knob]**.
+- Group labels **[knob: GROUPS]** under each group, ONE line, 6 pt,
+  primary ink: `Predictable load` / `Shifting load` (REV 0.2). The label
+  names the one variable the groups vary — whether the served load matches
+  the load the placement was solved on — in the paper's vocabulary.
+  Scenario codes (S-A/S-C), topic names and rep counts are caption
+  material, never figure text; the mechanism argument is body text.
 - Y label `Total latency (ms)` 6.5 pt. No x title.
 - Legend **[knob: LEGEND]** on top, outside the axes, flush to the top
   edge, one row of 4 swatches (fill+hatch+edge), 6 pt, no frame, column
@@ -171,3 +172,9 @@ out-of-basis block; combined with the overlap it leads."
   Everything else as REV 0. Rendered values: S-A 65.84 / 58.61 (1.12×) /
   61.27 (1.07×) / 54.32 (1.21×) / 52.86 (1.25×); S-C 57.61 / 54.77 (1.05×)
   / 59.01 (0.98×) / 53.56 (1.08×) / 52.24 (1.10×).
+- **REV 0.2 (2026-09-04)** — postdoc review: group labels were tier-2/3
+  material (codenames, topic, reps). Replaced by one-line
+  `Predictable load` / `Shifting load` (user pick over "stationary /
+  drifting workload" and "in-/out-of-basis topic"); axes bottom margin
+  0.17 → 0.13 with the second label line gone. Specifics move to the
+  caption (§7), justification to the text. Numbers unchanged.
