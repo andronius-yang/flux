@@ -32,7 +32,7 @@ CONFIG = dict(
     ],
     # ---- legend ----
     LEGEND_NAMES={                            # system -> legend text
-        "fast_gemm": "FAST+GEMM", "nvshmem_gemm": "NVSHMEM A2AV+GEMM",
+        "fast_gemm": "FAST+GEMM", "nvshmem_gemm": "A2AV+GEMM",
         "moonep": "MoonEP", "eplb": "EPLB", "epic": "EPIC",
         "comet": "COMET", "OURS": "Ours",
     },

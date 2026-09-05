@@ -52,7 +52,7 @@ groups (see §7):
 | pos | system (legend name **[knob]**) | figure_src `row_id` |
 |---|---|---|
 | 1 | FAST+GEMM | `fast_gemm` |
-| 2 | NVSHMEM A2AV+GEMM | `nvshmem_gemm` |
+| 2 | A2AV+GEMM | `nvshmem_gemm` |
 | 3 | MoonEP | `moonep` |
 | 4 | EPLB | `eplb` |
 | 5 | EPIC | `epic` |
@@ -98,7 +98,7 @@ FAST at 16n (183–227 ms) would flatten every other bar. Mechanism
 
 ### 2.4 Speedup annotations (REV 2)
 
-Every non-truncated bar carries its **speedup vs the NVSHMEM A2AV+GEMM
+Every non-truncated bar carries its **speedup vs the A2AV+GEMM
 baseline** in the same group: `ratio = NVSHMEM_total_ms / bar_total_ms`
 (> 1 = faster than NVSHMEM). **[knob: SPEEDUP]**
 
@@ -212,7 +212,7 @@ identical: OKLab dE x 100, Machado severity-1.0 CVD) against white
 | pos | system | hex | note |
 |---|---|---|---|
 | 1 | FAST+GEMM | `#c0653f` | terracotta |
-| 2 | NVSHMEM A2AV+GEMM | `#ddaa33` | sand |
+| 2 | A2AV+GEMM | `#ddaa33` | sand |
 | 3 | MoonEP | `#2f7a4d` | deep green |
 | 4 | EPLB | `#44bb99` | teal |
 | 5 | EPIC | `#9d4a4a` | wine |

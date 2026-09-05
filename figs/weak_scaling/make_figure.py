@@ -2,7 +2,7 @@
 """Weak-scaling figure generator (verA latency / verB throughput). See SPEC.md.
 
 Usage:  python3 make_figure.py                    (COMET baseline; weak_scaling_ver{A,B}.{pdf,png})
-        python3 make_figure.py --baseline nvshmem (NVSHMEM+GEMM ring baseline;
+        python3 make_figure.py --baseline nvshmem (A2AV+GEMM ring baseline;
                                                    weak_scaling_nvshmem_ver{A,B}.{pdf,png})
         ... --budget 1                            (1 MiB rows; output prefix gains _b1)
         python3 make_figure.py --baseline nvshmem --stacked
@@ -37,7 +37,7 @@ CONFIG = dict(
         "comet": dict(label="COMET", color="#999933", marker="s"),
         "ours": dict(label="Ours", color="#4878b0", marker="o"),
         # ring baseline: the main figure's nvshmem_gemm sand (#ddaa33), triangle
-        "nvshmem": dict(label="NVSHMEM+GEMM", color="#ddaa33", marker="^"),
+        "nvshmem": dict(label="A2AV+GEMM", color="#ddaa33", marker="^"),
     },
     LINE=dict(lw=1.1, ms=3.6, mew=0.0, mec=None),      # markers: no edge stroke
     BARS=dict(label="Speedup vs COMET",        # label follows REF (see BASELINES)
@@ -79,7 +79,7 @@ CONFIG = dict(
                       RIGHT_LABEL="Speedup vs COMET", BAR_LABEL="Speedup vs COMET",
                       prefix="weak_scaling_ver"),
         "nvshmem": dict(REF="nvshmem", SYSTEMS=["nvshmem", "ours"],
-                        RIGHT_LABEL="Speedup vs NVSHMEM", BAR_LABEL="Speedup vs NVSHMEM",
+                        RIGHT_LABEL="Speedup vs A2AV", BAR_LABEL="Speedup vs A2AV",
                         LEGEND=dict(colspacing=0.7),   # longer names: tighter row
                         prefix="weak_scaling_nvshmem_ver"),
     },
