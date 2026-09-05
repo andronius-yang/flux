@@ -92,7 +92,7 @@ block, every **[knob]** below lives there). Two versions from one script:
   against the **NVSHMEM+GEMM ring** (`l01_nvshmem`, the main figure's
   speedup reference) instead of COMET: series `nvshmem` = sand `#ddaa33`
   (the main figure's nvshmem_gemm hue), triangle markers **[knob: SERIES]**;
-  bars = `speedup_vs_nvshmem`, right label + legend entry "Speedup vs A2AV" (the full
+  bars = `speedup_vs_nvshmem`, right label + legend entry "Speedup vs A2AV+GEMM" (the full
   "…+GEMM" form overflowed the column width), legend colspacing 0.7;
   outputs `weak_scaling_nvshmem_ver{A,B}.{pdf,png}` **[knob: BASELINES]**.
   The ring runs at every node count incl. 32n, so all five bars are drawn
@@ -113,7 +113,7 @@ block, every **[knob]** below lives there). Two versions from one script:
 - `python3 make_figure.py --baseline nvshmem --stacked` -> one single-column
   figure, **two panels stacked** (top 1 MiB, bottom 64 MiB), latency lines
   + speedup bars in each, **one shared legend** on top and **one shared
-  right-axis label** ("Speedup vs A2AV", centered on the stack — per-panel
+  right-axis label** ("Speedup vs A2AV+GEMM", centered on the stack — per-panel
   labels collided); right-axis SCALES stay per panel (a shared scale
   flattened the 64 MiB bars once the 1 MiB panel reached ~9x — each panel
   prints its own ticks). REV 3.2: scenario tags **bold** primary ink; ONE

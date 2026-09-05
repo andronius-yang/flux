@@ -79,7 +79,7 @@ CONFIG = dict(
                       RIGHT_LABEL="Speedup vs COMET", BAR_LABEL="Speedup vs COMET",
                       prefix="weak_scaling_ver"),
         "nvshmem": dict(REF="nvshmem", SYSTEMS=["nvshmem", "ours"],
-                        RIGHT_LABEL="Speedup vs A2AV", BAR_LABEL="Speedup vs A2AV",
+                        RIGHT_LABEL="Speedup vs A2AV+GEMM", BAR_LABEL="Speedup vs A2AV+GEMM",
                         LEGEND=dict(colspacing=0.7),   # longer names: tighter row
                         prefix="weak_scaling_nvshmem_ver"),
     },
