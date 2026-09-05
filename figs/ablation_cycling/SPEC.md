@@ -35,8 +35,8 @@ two versions **[knob: VERSION]**:
 | bar | verA (comm first) | verB (placement first) |
 |---|---|---|
 | 1 | COMET | COMET |
-| 2 | w/ token-dispatch computation overlap | w/ expert placement & routing |
-| 3 | + expert placement & routing | + token-dispatch computation overlap |
+| 2 | w/ token comm.-comp. overlap | w/ expert placement & routing |
+| 3 | + expert placement & routing | + token comm.-comp. overlap |
 | 4 | + expert-dispatch overlap (composed expert swap, overlapped) | same |
 
 Bar 3 is the same arm in both versions (`1+2 (no expert movement)`); bar
@@ -110,7 +110,7 @@ reads as a reported miss rather than a typo.
 - Legend **[knob: LEGEND]** on top, outside the axes, flush to the top
   edge, one row of 4 swatches (fill+hatch+edge), 6 pt, no frame, column
   spacing 0.8; falls to 2+2 if it oversets 3.33 in at final size. Texts
-  **[knob: LEGEND_TEXTS]**: verA `COMET`, `w/ token-dispatch comp. overlap`,
+  **[knob: LEGEND_TEXTS]**: verA `COMET`, `w/ token comm.-comp. overlap`,
   `+ expert placement & routing`, `+ expert-dispatch overlap`; verB swaps
   the middle two. The `+` prefix encodes the cumulative stack.
 - Font **[knob: FONT_FAMILY]**: `["Helvetica", "Arial", "DejaVu Sans"]`;
@@ -148,16 +148,17 @@ preview), deterministic PDFs (fixed metadata, `pdf.fonttype 42`).
 4. Legend reads left-to-right in the same order as the bars.
 5. Grayscale print: the four fills remain distinguishable by hatch alone.
 
-## 7. Caption skeleton (for the paper, not drawn)
+## 7. Caption (summary style, user draft 2026-09-04)
 
-"Ablation at K2, 4 nodes, 64 MiB per rank. Bars accumulate optimizations
-left to right; labels give the speedup over COMET. S-A: placement solved
-on the previous window of the 8-topic mix, traffic from professional_law
-(the mix's hardest topic), 4 reps. S-C: the same 8 topics cycled 4
-iterations each with the placement carried over and professional_law
-excluded from the placement basis, 3 reps. Placement-only exceeds COMET on
-S-C (0.98×) because it has no communication overlap to absorb the
-out-of-basis block; combined with the overlap it leads."
+"Ablation study on {SYS} component performance. Comparison of the COMET
+baseline against token comm.-comp. overlap, expert placement & routing,
+and expert-dispatch overlap optimizations. Performed on Kimi K2 traces on
+a 4-node, 16-GPU cluster with 64 MiB of tokens per GPU across two
+scenarios." Scenario definitions (predictable load = placement solved on
+the previous window of the 8-topic mix, evaluated on professional law;
+shifting load = 8 topics cycled 4 iterations each, professional law
+withheld from the basis; 4 / 3 runs) and the verB 0.98x miss are body
+text. Optimization names must match the legend verbatim.
 
 ## 8. Revision log
 
@@ -178,3 +179,8 @@ out-of-basis block; combined with the overlap it leads."
   drifting workload" and "in-/out-of-basis topic"); axes bottom margin
   0.17 → 0.13 with the second label line gone. Specifics move to the
   caption (§7), justification to the text. Numbers unchanged.
+- **REV 0.3 (2026-09-04)** — legend entry `token-dispatch comp. overlap`
+  → `token comm.-comp. overlap` (the arm overlaps the layer-1 combine as
+  well as the layer-0 dispatch, so "dispatch" undersold it). Caption
+  (§7) switched to the user's summary style: components + setup only,
+  scenario definitions live in the text; terms match the legend verbatim.
