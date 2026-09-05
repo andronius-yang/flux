@@ -3,8 +3,8 @@
 
 One single-column bar chart, two groups (S-A professional_law cell, S-C
 dwell-4 schedule), a 4-bar feature chain per group, two versions:
-  verA: COMET > w/ token comm.-comp. overlap > + placement & routing > + expert-dispatch overlap
-  verB: COMET > w/ placement & routing > + token comm.-comp. overlap > + expert-dispatch overlap
+  verA: COMET > w/ token comm comp overlap > + placement & routing > + expert-dispatch overlap
+  verB: COMET > w/ placement & routing > + token comm comp overlap > + expert-dispatch overlap
 Reads figure_src.csv only.  Every adjustable parameter is in KNOBS.
     python figs/ablation_cycling/make_figure.py            # both versions
     python figs/ablation_cycling/make_figure.py --version A
@@ -29,12 +29,12 @@ KNOBS = dict(
     MARGINS=dict(left=0.135, right=0.995, bottom=0.13, top=0.78),
     VERSIONS={                                    # chain per version: (tidy arm key, legend text)
         "A": [("COMET", "COMET"),
-              ("slip", "w/ token comm.-comp. overlap"),
+              ("slip", "w/ token comm comp overlap"),
               ("static", "+ expert placement & routing"),
               ("swap", "+ expert-dispatch overlap")],
         "B": [("COMET", "COMET"),
               ("pr0", "w/ expert placement & routing"),
-              ("static", "+ token comm.-comp. overlap"),
+              ("static", "+ token comm comp overlap"),
               ("swap", "+ expert-dispatch overlap")],
     },
     SWAP_ARM="full",                              # "full" = composed full-orbit swap, "one" = one-round swap
