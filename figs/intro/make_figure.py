@@ -22,13 +22,13 @@ CONFIG = dict(
     BAR_FRAC=1 / 3,                          # v3: share of the plot height for the bar panel
     VGAP_IN=0.50,                            # v3.1: gap holds the x label + "(a)" sub-label + heatmap titles
     BAR_TOPICS=["livecodebench/execution"],  # v3.1: panel (a) shows LiveCodeBench only (prof. law's 33x outlier hides the shape)
-    PANEL_LABELS=["(a) Expert activation frequency", "(b) GPU-to-GPU dispatch traffic"],
-    SUBLABEL_A_IN=0.20, SUBLABEL_B_IN=0.40,  # distance below each panel's axes (inches)
-    HM_XLABEL_IN=0.16,                       # v3.1: "Receiver rank" a little further below the maps
+    PANEL_LABELS=["(a) Expert activation frequency", "(b) NIC-to-NIC dispatch traffic"],
+    SUBLABEL_A_IN=0.20, SUBLABEL_B_IN=0.27,  # distance below each panel's axes (inches)
+    HM_XLABEL_IN=0.06,                       # v3.4: no tick labels, so the x label moves back up under the maps
     HM_GAP_IN=0.14,                          # v3: gap between the two heatmaps (inches)
     # --- geometry (inches; USENIX column 3.33 in, text height 9.0 in) ---
-    FIG_W=3.33, FIG_H=2.60,                  # v3.1: +0.2 in for the sub-labels under each panel
-    LEFT=0.15, RIGHT=0.895, BOTTOM=0.185, TOP=0.96,   # LEFT holds the two-line y label + panel tags   # RIGHT leaves room for the colorbar label
+    FIG_W=3.33, FIG_H=2.50,                  # v3.4: tick labels gone, bottom strip tightened
+    LEFT=0.15, RIGHT=0.895, BOTTOM=0.14, TOP=0.96,   # LEFT holds the two-line y label + panel tags   # RIGHT leaves room for the colorbar label
     SPLIT=0.50,                             # fraction of the width given to the bar panel
     WSPACE_IN=0.42,                          # gap between bar panel and heatmaps (inches)
     HSPACE_IN=0.30,                          # gap between the two heatmaps (inches)
@@ -43,7 +43,7 @@ CONFIG = dict(
     # v2: ORIENT "h" = horizontal bars (x = normalized count, y = experts, most popular on top);
     #     SORT "each" = every topic sorted by its own count (y is then a rank, not an ID),
     #          "none" = fixed expert IDs (v1), or a topic name = both follow that topic's order
-    ORIENT="v", SORT="each", SORTED_AXIS_LABEL="Expert rank",
+    ORIENT="v", SORT="each", SORTED_AXIS_LABEL="Expert ID",   # v3.4: "rank" would collide with physical ranks
     X_LOG=False, X_LOG_MIN=0.05,             # log count axis (companion render); bars start at X_LOG_MIN
     Y_MAX=None,                              # None = data max; a number clips (bars above are marked)
     UNIFORM_LINE=dict(color="#0b0b0b", lw=0.5, ls=(0, (2, 1.5))),
@@ -52,10 +52,12 @@ CONFIG = dict(
     CMAP_NAME="custom",
     VMIN=0.0, VMAX=None,                     # shared scale; None = max over both matrices
     NODE_LINE=dict(color="#0b0b0b", lw=0.6),
+    NIC_ONLY=True,                           # v3.5: intra-node (same node) blocks are NVLink, not NIC -> zeroed;
+                                             # normalization = mean over INTER-node cells, so 1x = uniform NIC traffic
     HM_EDGE_LW=0.5,                          # thin frame so the pale low cells do not dissolve into the page
-    HM_XLABEL="Receiver GPU", HM_YLABEL="Sender GPU",   # v3.3: no "rank" in the intro
+    HM_XLABEL="Receiver NIC", HM_YLABEL="Sender NIC",   # v3.4: talk about NICs directly
     CBAR_LABEL="Normalized traffic",
-    HM_TICKS=[0, 4, 8, 12],
+    HM_TICKS=[],                             # v3.4: no tick labels on the maps (node blocks carry the structure)
     # --- type ---
     FONT_FAMILY=["Helvetica", "Arial", "DejaVu Sans"],
     FS=dict(label=7, tick=6, legend=6.5, title=7, panel=6.5, cbar=6),
@@ -198,6 +200,10 @@ def main():
             h.set_alpha(cfg["BAR_ALPHA"])
 
     # ---- (b) two heatmaps, shared scale ----
+    if cfg["NIC_ONLY"]:
+        nodes = np.arange(W) // L
+        off = nodes[:, None] != nodes[None, :]
+        M = {t: np.where(off, m / m[off].mean(), 0.0) for t, m in M.items()}
     cmap = (matplotlib.colormaps[cfg["CMAP"]] if isinstance(cfg["CMAP"], str)
             else LinearSegmentedColormap.from_list(cfg["CMAP_NAME"], cfg["CMAP"]))
     vmax = cfg["VMAX"] or max(float(m.max()) for m in M.values())

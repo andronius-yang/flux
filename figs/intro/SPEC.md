@@ -67,6 +67,19 @@ the rejected alternatives: `intro_options.html` (options page, 2026-09-04).
 
 ## 4. Revision log
 
+- **v3.5 (2026-09-04, user)** — NIC semantics made exact **[knob:
+  NIC_ONLY]**: the four same-node 4x4 blocks are zeroed (that traffic
+  rides NVLink, never a NIC) and the map is renormalized by the mean over
+  the 192 inter-node cells, so 1x = uniform NIC traffic. Hot receiver NIC:
+  LiveCodeBench 1.58x, prof. law 2.19x.
+
+- **v3.4 (2026-09-04, feedback)** — (a) x label "Expert ID" (an "expert
+  rank" would collide with physical ranks; the experts are still sorted by
+  count — the label names the entity, the caption states the sort). (b) the
+  hardware is named as NICs directly: "Sender NIC" / "Receiver NIC",
+  "(b) NIC-to-NIC dispatch traffic"; tick labels 0/4/8/12 removed
+  **[knobs: SORTED_AXIS_LABEL, HM_XLABEL, HM_YLABEL, PANEL_LABELS, HM_TICKS]**.
+
 - **v3.3 (2026-09-04, user)** — (a) keeps a legend entry with its color
   swatch even with one topic; (b) axis labels "Sender GPU" / "Receiver GPU"
   and sub-label "(b) GPU-to-GPU dispatch traffic" — the intro does not
