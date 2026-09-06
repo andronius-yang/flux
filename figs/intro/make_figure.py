@@ -23,12 +23,12 @@ CONFIG = dict(
     VGAP_IN=0.50,                            # v3.1: gap holds the x label + "(a)" sub-label + heatmap titles
     BAR_TOPICS=["livecodebench/execution"],  # v3.1: panel (a) shows LiveCodeBench only (prof. law's 33x outlier hides the shape)
     PANEL_LABELS=["(a) Expert activation frequency", "(b) NIC-to-NIC dispatch traffic"],
-    SUBLABEL_A_IN=0.20, SUBLABEL_B_IN=0.27,  # distance below each panel's axes (inches)
+    SUBLABEL_A_IN=0.20, SUBLABEL_B_IN=0.25,  # distance below each panel's axes (inches)
     HM_XLABEL_IN=0.06,                       # v3.4: no tick labels, so the x label moves back up under the maps
     HM_GAP_IN=0.14,                          # v3: gap between the two heatmaps (inches)
     # --- geometry (inches; USENIX column 3.33 in, text height 9.0 in) ---
     FIG_W=3.33, FIG_H=2.50,                  # v3.4: tick labels gone, bottom strip tightened
-    LEFT=0.15, RIGHT=0.895, BOTTOM=0.14, TOP=0.96,   # LEFT holds the two-line y label + panel tags   # RIGHT leaves room for the colorbar label
+    LEFT=0.15, RIGHT=0.895, BOTTOM=0.16, TOP=0.96,   # BOTTOM must clear the (b) sub-label descenders   # LEFT holds the two-line y label + panel tags   # RIGHT leaves room for the colorbar label
     SPLIT=0.50,                             # fraction of the width given to the bar panel
     WSPACE_IN=0.42,                          # gap between bar panel and heatmaps (inches)
     HSPACE_IN=0.30,                          # gap between the two heatmaps (inches)
