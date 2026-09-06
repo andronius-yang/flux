@@ -1,0 +1,4 @@
+ 4n K2 b4 canon lower-id : forced rows    360 ( 1.0%)  over-cap rows    213  remote nodes/token 2.349  GPU max load 2668/2516  cover rounds 3  119 from N1 -> [132, 0, 42, 30]
+ 4n K2 b4 tickets-aware  : forced rows    372 ( 1.0%)  over-cap rows    200  remote nodes/token 2.349  GPU max load 2636/2516  cover rounds 3  119 from N1 -> [101, 0, 73, 30]
+16n K2 b4 canon lower-id : forced rows  12433 ( 8.2%)  over-cap rows   8893  remote nodes/token 4.457  GPU max load 3582/2516  cover rounds 3
+16n K2 b4 tickets-aware  : forced rows  10520 ( 6.9%)  over-cap rows   5756  remote nodes/token 4.409  GPU max load 3357/2516  cover rounds 3

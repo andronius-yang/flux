@@ -1,0 +1,11 @@
+cap 2516
+N1 remote rows total: 5883 ; destination node split N0/N2/N3: [1947, 2078, 1858]
+  N1 demand for experts hosted ONLY on N0: 1564 rows ; experts hosted on N0 at all: 104 ; single-copy experts on N0: 91
+  N1 demand for experts hosted ONLY on N2: 1830 rows ; experts hosted on N2 at all: 104 ; single-copy experts on N2: 92
+  N1 demand for experts hosted ONLY on N3: 1712 rows ; experts hosted on N3 at all: 104 ; single-copy experts on N3: 89
+  N1 tickets on N0: 2281 ; N0 residual after tiers1-2: 6692 ; N0 load after tiers1-2 by GPU: [1002, 849, 698, 823]
+  N1 tickets on N2: 2411 ; N2 residual after tiers1-2: 6647 ; N2 load after tiers1-2 by GPU: [1050, 719, 977, 671]
+  N1 tickets on N3: 2005 ; N3 residual after tiers1-2: 6500 ; N3 load after tiers1-2 by GPU: [970, 935, 763, 896]
+N1 tokens with 119: 204; round-1 top-score node(s): {(0,): 80, (0, 2): 29, (2,): 32, (3,): 30, (2, 3): 10, (0, 2, 3): 9, (0, 3): 14}; ties 62; where 119 went: {0: 132, 2: 42, 3: 30}
+all N1 tokens, round-1 top-score node(s): {(0, 3): 78, (0,): 267, (2,): 315, (3,): 296, (0, 2): 94, (0, 2, 3): 57, (2, 3): 77}
+mean hosts-of-N1-demand per node (rows of N1 batch demand whose expert is hosted on node n): [3334, 3589, 3497, 3520]
