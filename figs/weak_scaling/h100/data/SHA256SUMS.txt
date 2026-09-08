@@ -1,0 +1,7 @@
+06e99abf6b222f12ddd7d491c524e55d912ecade090d9e65131e1e0c379fb2d3  traces_k2_lcb_execution.tar.xz.part-00
+091540cfcf31e01de8a3f4516e6738d91b580d86390c4237ddc55734c872ad31  traces_k2_lcb_execution.tar.xz.part-01
+47ecc87f5b64685c08d32078f12006279c7cf0124af3af04cbca0df5f5036f15  traces_k2_lcb_execution.tar.xz.part-02
+02facd0621cbaf2fd82f5789f4dd9a8130e4afbc66596c23a3fbf7cceba1f1cc  matrices_k2_weak.tar.xz
+# reassembled stream checks (not files in this directory):
+#   cat traces_k2_lcb_execution.tar.xz.part-* | sha256sum        -> 6c2bae341243b19b43aa4c9674ccc61eedb059f0c963c432d3b7a948cfb7fafe  (traces_k2_lcb_execution.tar.xz)
+#   cat traces_k2_lcb_execution.tar.xz.part-* | xz -dc | sha256sum -> 53e624854a0c0ea595a2ae3f5f0c07cc7eae932fcd4384d94524faccde2ab334  (traces_k2_lcb_execution.tar, 1,529,477,120 bytes)
