@@ -1,0 +1,26 @@
+# H100/ALPS weak-scaling lane (2026-09-06, docs/handoff/35_h100_alps_weak_scaling.md):
+# the 2-node rung of the A2AV+GEMM weak-scaling figure (figs/weak_scaling ver4,
+# make_figure.py --baseline nvshmem --stacked). ALL THREE ARMS IN ONE CAPSULE
+# (rule 4): dwire first (a walltime cut still keeps it), then s1, then the
+# ring reference. Budgets = the two panels of the figure only (1 MiB and
+# 64 MiB per-rank pre-topk; user: "nothing more, nothing less"). Perf lane:
+# skip_correctness (the 2n gate capsule carries correctness). Same binary for
+# every rung 2n..32n — never rebuild between rungs.
+platform: alps
+nodes: 2
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 64]
+variants:
+  - ours_l01_s1_pv2_r2_dwire
+  - ours_l01_s1_pv2_r2
+  - l01_nvshmem
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 300
+idle_timeout_s: 180
+retries: 0
+notes: "H100/ALPS weak-scaling 2n: dwire vs s1 vs A2AV+GEMM ring, K2 b1+b64 isolated, one capsule"

@@ -2,6 +2,9 @@
 """Weak-scaling figure generator (verA latency / verB throughput). See SPEC.md.
 
 Usage:  python3 make_figure.py                    (COMET baseline; weak_scaling_ver{A,B}.{pdf,png})
+        ... --src-dir DIR --out-dir DIR           (read DIR/figure_src.csv, write renders into DIR;
+                                                   default = this directory. H100/ALPS lane:
+                                                   --src-dir h100 --out-dir h100, handoff 35)
         python3 make_figure.py --baseline nvshmem (A2AV+GEMM ring baseline;
                                                    weak_scaling_nvshmem_ver{A,B}.{pdf,png})
         ... --budget 1                            (1 MiB rows; output prefix gains _b1)
@@ -108,12 +111,17 @@ CONFIG = dict(
 # =============================================================================
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# --src-dir / --out-dir (2026-09-06, H100/ALPS lane): the same generator renders a
+# sibling dataset (e.g. h100/figure_src.csv) into its own directory; defaults
+# keep every existing render byte-identical.
+SRC_DIR = HERE
+OUT_DIR = HERE
 
 
 def load(cfg):
     """-> data[(nodes, system)] = row dict for cfg["BUDGET"]; asserts the grid is complete."""
     data = {}
-    with open(os.path.join(HERE, "figure_src.csv"), newline="") as f:
+    with open(os.path.join(SRC_DIR, "figure_src.csv"), newline="") as f:
         for r in csv.DictReader(f):
             if int(r["budget_mib"]) != cfg["BUDGET"]:
                 continue
@@ -341,6 +349,13 @@ def configure(baseline, budget=64):
 
 
 def main():
+    global SRC_DIR, OUT_DIR
+    if "--src-dir" in sys.argv:
+        SRC_DIR = os.path.abspath(os.path.join(os.getcwd(), sys.argv[sys.argv.index("--src-dir") + 1]))
+        OUT_DIR = SRC_DIR
+    if "--out-dir" in sys.argv:
+        OUT_DIR = os.path.abspath(os.path.join(os.getcwd(), sys.argv[sys.argv.index("--out-dir") + 1]))
+    os.makedirs(OUT_DIR, exist_ok=True)
     baseline = "comet"
     if "--baseline" in sys.argv:
         baseline = sys.argv[sys.argv.index("--baseline") + 1]
@@ -351,7 +366,7 @@ def main():
     if "--stacked" in sys.argv:
         fig = plot_stacked(cfg)
         for name, kw in cfg["STACKED"]["outputs"]:
-            fig.savefig(os.path.join(HERE, name.replace("nvshmem", baseline)), **kw)
+            fig.savefig(os.path.join(OUT_DIR, name.replace("nvshmem", baseline)), **kw)
             print("wrote", name.replace("nvshmem", baseline))
         plt.close(fig)
         return
@@ -359,7 +374,7 @@ def main():
     for version, vcfg in cfg["VERSIONS"].items():
         fig = plot(data, cfg, version)
         for name, kw in vcfg["outputs"]:
-            fig.savefig(os.path.join(HERE, name), **kw)
+            fig.savefig(os.path.join(OUT_DIR, name), **kw)
             print("wrote", name)
         plt.close(fig)
 

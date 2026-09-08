@@ -36,12 +36,30 @@ init_device_properties() {
   cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, 0);
   cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, 0);
   int arch_num = major * 10 + minor;
+  // H100/ALPS port (2026-09-06, docs/handoff/35_h100_alps_weak_scaling.md):
+  // FLUX_ARCH_OVERRIDE=80 makes an sm90 device select the Sm80-tagged kernel
+  // space (the V2 ops that carry the a2av/OURS work are generated for
+  // Sm80/Sm89 only; their CUTLASS-2.x kernels compile natively for sm_90a,
+  // see CMake GEN_CUDAARCHS). Unset = stock behaviour.
+  if (const char *ov = getenv("FLUX_ARCH_OVERRIDE"); ov != nullptr && ov[0] != '\0') {
+    int forced = atoi(ov);
+    FLUX_CHECK(forced == 80 || forced == 89 || forced == 90)
+        << "FLUX_ARCH_OVERRIDE must be 80/89/90, got " << ov;
+    FLUX_CHECK(forced <= arch_num) << "FLUX_ARCH_OVERRIDE=" << forced
+                                   << " cannot exceed the device arch " << arch_num;
+    arch_num = forced;
+  }
   FLUX_CHECK(arch_num == 80 || arch_num == 89 || arch_num == 90)
       << "unsupported arch: " << arch_num;
   arch = ArchEnum{arch_num};
 
   int sm_count;
   cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, 0);
+  // FLUX_SM_CORE_OVERRIDE=<92|108|78|132>: registry-key only (the GEMM grid
+  // still sizes from the real device SM count via get_sm_count()).
+  if (const char *ov = getenv("FLUX_SM_CORE_OVERRIDE"); ov != nullptr && ov[0] != '\0') {
+    sm_count = atoi(ov);
+  }
 
   switch (sm_count) {
     case 92: sm_core = SMCoreEnum::L20; break;

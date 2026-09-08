@@ -1,0 +1,12 @@
+# H100/ALPS lane: run-time artifacts stay INSIDE the clone (user rule) but are
+# never committed. Commit: capsules (sweeps/results/runs/*_alps_*), figure_src.csv,
+# figure_src.md, SESSION_LOG.md, the renders, build_figure_src.py.
+raw/
+matrices/
+traces/
+logs/
+venv/
+nvshmem/
+*.tar
+*.tar.gz
+*.tgz

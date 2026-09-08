@@ -1,0 +1,24 @@
+# H100/ALPS bring-up GATE (2026-09-06, docs/handoff/35_h100_alps_weak_scaling.md):
+# the first sweep on the cluster. Correctness ON (random payload rides every
+# cell per the wire-ordering hard rule — CLAUDE.md invariant 5 / SCHEMA rule 6),
+# all three figure arms, both figure budgets, 2 nodes. Its latencies are NEVER
+# quoted (correctness cells are instrumented); it proves the port is bitwise
+# right on H100 + CXI before any perf capsule is taken.
+platform: alps
+nodes: 2
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 64]
+variants:
+  - ours_l01_s1_pv2_r2_dwire
+  - ours_l01_s1_pv2_r2
+  - l01_nvshmem
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: false
+timeout_s: 900
+idle_timeout_s: 300
+retries: 0
+notes: "H100/ALPS 2n GATE: correctness ON, dwire+s1+ring, K2 b1+b64 (never quote)"

@@ -1,5 +1,9 @@
 # START HERE — layer0 a2av, AWS → Perlmutter handoff (2026-08-04)
 
+> **2026-09-06 — running on CSCS ALPS (H100/GH200)?** Skip this file's Perlmutter ladder:
+> `35_h100_alps_weak_scaling.md` is the self-contained authority for that platform
+> (`35_h100_alps_prompt.md` is the operator's paste-in prompt).
+
 You are picking up a **measurement project with a working implementation**. Your output is
 capsules, not code. The implementation landed; what is unfinished is knowing how it behaves
 on a shape we never ran.

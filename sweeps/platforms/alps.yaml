@@ -1,0 +1,29 @@
+# CSCS ALPS (HPE Cray EX, GH200 nodes: 4x NVIDIA H100 per node on Grace/aarch64,
+# Slingshot-11 = libfabric/CXI, i.e. the SAME NVSHMEM transport as Perlmutter).
+# H100 weak-scaling lane, 2026-09-06: docs/handoff/35_h100_alps_weak_scaling.md.
+# Source ./env_alps.sh before running (exports FLUX_ROOT, NVSHMEM_HOME, the
+# arch override, and the Cray/CUDA stack you discovered on the cluster).
+name: alps
+ranks_per_node: 4          # VERIFY on the cluster: nvidia-smi -L inside an allocation must list 4 GPUs
+fabric: cxi                # VERIFY: fi_info -l lists the cxi provider
+# USER RULE for this lane: every run-time artifact stays INSIDE the clone under
+# figs/weak_scaling/h100/ (never the collaborator's $SCRATCH/$HOME). All three
+# roots resolve through FLUX_ROOT (exported by env_alps.sh) and are gitignored
+# there; only capsules (sweeps/results/runs/) + figure files are committed.
+data_root: ${FLUX_ROOT}/figs/weak_scaling/h100/raw
+matrices_root: ${FLUX_ROOT}/figs/weak_scaling/h100/matrices
+traces_root: ${FLUX_ROOT}/figs/weak_scaling/h100/traces
+# srun steps must see the GPUs (Perlmutter needed this explicitly; harmless if
+# ALPS already inherits the job GRES). Add --account/--partition style flags
+# here ONLY if `srun --jobid=<id>` alone does not inherit them on ALPS.
+srun_extra: ["--gpus-per-node=4"]
+# Applied to every cell before variant env (recorded in cells.csv env_json):
+# the H100 port runs the sm80/V2 kernel space natively compiled for sm_90a
+# (build.sh --arch 90 --gen-arch 80 --sm-cores 132; src/cuda/op_registry.cu).
+env:
+  FLUX_ARCH_OVERRIDE: "80"
+# NVSHMEM symmetric-heap cap (GiB). H100 on GH200 = 96 GB (VERIFY nvidia-smi;
+# 80 GB SXM parts also fit 32). Perlmutter's A100-40GB cap was 16.
+sym_size_max_g: 32
+# no nsys cells in this lane; set if a timeline is ever requested
+# nsys_bin: /path/to/nsys

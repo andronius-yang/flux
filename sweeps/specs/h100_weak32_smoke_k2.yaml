@@ -1,0 +1,21 @@
+# H100/ALPS 32-node SMOKE (2026-09-06, docs/handoff/35_h100_alps_weak_scaling.md):
+# mirrors Perlmutter's weak32_smoke_k2.yaml — first-ever 32n run on the cluster,
+# correctness ON, s1 only, budget extremes (b1 = wire fan-out floor, b64 = heap
+# ceiling). Run it in the same allocation BEFORE h100_weak_32n_k2.yaml; a red
+# smoke means stop and root-cause, not "run the perf spec anyway".
+platform: alps
+nodes: 32
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 64]
+variants:
+  - ours_l01_s1_pv2_r2
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: false
+timeout_s: 600
+idle_timeout_s: 300
+retries: 0
+notes: "H100/ALPS 32n SMOKE: ours_l01_s1_pv2_r2 K2 b1+b64 isolated, correctness ON (never quote)"

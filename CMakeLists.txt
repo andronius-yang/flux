@@ -51,6 +51,19 @@ endif()
 set(CMAKE_CUDA_ARCHITECTURES ${CUDAARCHS})
 message(STATUS "CUDA_ARCHITECTURES=${CMAKE_CUDA_ARCHITECTURES}")
 
+# H100/ALPS port (2026-09-06, docs/handoff/35_h100_alps_weak_scaling.md):
+# GEN_CUDAARCHS is the arch list handed to the kernel GENERATORS (which
+# kernel-space registers are emitted), CUDAARCHS the nvcc gencode targets.
+# Default: identical (stock behaviour). `-DGEN_CUDAARCHS=80 -DCUDAARCHS=90`
+# emits the Sm80-tagged V2 kernel space and compiles it natively for sm_90a
+# (the CUTLASS-2.x templates are arch-portable; runtime pairs it with
+# FLUX_ARCH_OVERRIDE=80, see src/cuda/op_registry.cu).
+set(GEN_CUDAARCHS "" CACHE STRING "arch list for the kernel generators (default: CUDAARCHS)")
+if(NOT GEN_CUDAARCHS)
+  set(GEN_CUDAARCHS ${CUDAARCHS})
+endif()
+message(STATUS "GENERATOR_ARCHITECTURES=${GEN_CUDAARCHS}")
+
 set(SM_CORES "")
 option(GPU_SM_CORES "Manually specify GPU SM core number (e.g., '108;78'). Overrides auto-detection." "")
 

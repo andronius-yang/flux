@@ -29,7 +29,7 @@ struct GemmGroupedV2GatherRS_Space {
           make_gemm_dtype_config(_FP16{}, _FP16{}, _Void{}, _FP16{}),
           make_gemm_dtype_config(_BF16{}, _BF16{}, _Void{}, _BF16{})),
       cute::make_tuple(_Sm80{}, _Sm89{}),
-      cute::make_tuple(_A100{}, _L20{}),
+      cute::make_tuple(_A100{}, _L20{}, _H800{}),  // _H800 = 132 SMs (H100 port, --sm-cores 132)
       cute::make_tuple(_GatherRS{}),
       cute::make_tuple(_RCR{}),  // TODO(houqi.1993) only RCR is supported
       cute::make_tuple(_GemmGroupedV2{}),

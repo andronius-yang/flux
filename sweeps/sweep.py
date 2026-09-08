@@ -2455,7 +2455,7 @@ def main():
     sub = ap.add_subparsers(dest="command", required=True)
     rp = sub.add_parser("run", help="run a sweep")
     rp.add_argument("--spec", help="YAML spec file; explicit flags override its fields")
-    rp.add_argument("--platform", choices=["aws", "perlmutter"])
+    rp.add_argument("--platform", choices=["aws", "perlmutter", "alps"])
     rp.add_argument("--jobid", help="Slurm allocation (autodetect if exactly one RUNNING)")
     rp.add_argument("--nodes", type=int)
     rp.add_argument("--variants", type=parse_list)

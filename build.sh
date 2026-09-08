@@ -7,6 +7,7 @@ export PATH=${CUDA_HOME:-/usr/local/cuda}/bin:$PATH
 CMAKE=${CMAKE:-cmake}
 
 ARCH=""
+GEN_ARCH=""   # --gen-arch: kernel-space arch for the generators (default = --arch); H100 port uses 80
 SM_CORES=""
 BUILD_TEST="ON"
 BDIST_WHEEL="OFF"
@@ -46,6 +47,13 @@ while [[ $# -gt 0 ]]; do
         SM_CORES="$2"
         shift # Skip the argument value
         shift # Skip the argument key
+        ;;
+    --gen-arch)
+        # arch list for the kernel GENERATORS only (see CMakeLists GEN_CUDAARCHS);
+        # H100/ALPS port: --arch 90 --gen-arch 80 --sm-cores 132
+        GEN_ARCH="$2"
+        shift
+        shift
         ;;
     --no_test)
         BUILD_TEST="OFF"
@@ -162,6 +170,7 @@ function build_flux_cuda() {
             -DENABLE_NVSHMEM=${ENABLE_NVSHMEM}
             -DNVSHMEM_HOME=${NVSHMEM_HOME}
             -DCUDAARCHS=${ARCH}
+            -DGEN_CUDAARCHS=${GEN_ARCH}
             -DGPU_SM_CORES=${SM_CORES}
             -DCMAKE_EXPORT_COMPILE_COMMANDS=1
             -DBUILD_TEST=${BUILD_TEST}

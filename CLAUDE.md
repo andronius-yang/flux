@@ -8,6 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 > bring-up ladder, the settled-questions ledger, and the build ledger needed to
 > interpret the 124 existing sweep capsules.
 
+> **On CSCS ALPS / H100 (GH200, aarch64)?** Your only authority is
+> `docs/handoff/35_h100_alps_weak_scaling.md` (the weak-scaling figure port); the
+> Perlmutter/AWS specifics below (module.sh, accounts, PSCRATCH, `--arch 80`) do not apply there.
+
 ## Deployment context: NERSC Perlmutter (+ AWS ParallelCluster)
 
 This is ByteDance's Flux/Comet repository (fine-grained computation-communication overlapping GPU kernels), deployed on **two platforms**: NERSC Perlmutter (4x A100/node, Slingshot/CXI — `source ./module.sh`) and an AWS ParallelCluster (p4d, **8x A100/node**, EFA — `source ./env_aws.sh`, tracked in-repo; see `docs/launch/aws_efa_environment.md`). Both are sm80, 108 SM cores — hence `--arch 80 --sm-cores 108`. Platform specifics live in opt-in env files and overridable `${VAR:-default}` launcher defaults — there is no platform branch. The working tree contains **local edits made specifically to compile on these platforms** — do not blindly revert them to match upstream:

@@ -24,6 +24,8 @@ import sys
 from contextlib import contextmanager, nullcontext
 from typing import List, Optional
 
+import os
+
 import torch
 import torch.distributed
 
@@ -32,7 +34,17 @@ def get_arch():
     properties = torch.cuda.get_device_properties(torch.cuda.current_device())
     major = properties.major
     minor = properties.minor
-    return major * 10 + minor
+    arch = major * 10 + minor
+    # H100/ALPS port (2026-09-06, docs/handoff/35_h100_alps_weak_scaling.md):
+    # mirrors src/cuda/op_registry.cu — FLUX_ARCH_OVERRIDE=80 routes an sm90
+    # device to the sm80/V2 ops (the a2av/OURS implementation). Unset = stock.
+    ov = os.getenv("FLUX_ARCH_OVERRIDE")
+    if ov:
+        forced = int(ov)
+        assert forced in (80, 89, 90) and forced <= arch, (
+            f"FLUX_ARCH_OVERRIDE={ov} invalid for device arch {arch}")
+        return forced
+    return arch
 
 
 def torch_allclose(x, y, rtol, atol, verbose=True):

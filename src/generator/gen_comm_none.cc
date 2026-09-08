@@ -30,7 +30,7 @@ struct GemmV2CommNone_Space {
           make_gemm_dtype_config(_FP16{}, _FP16{}, _Void{}, _FP16{}),
           make_gemm_dtype_config(_BF16{}, _BF16{}, _Void{}, _BF16{})),
       cute::make_tuple(_Sm80{}, _Sm89{}),
-      cute::make_tuple(_A100{}, _L20{}),
+      cute::make_tuple(_A100{}, _L20{}, _H800{}),  // _H800 = 132 SMs (H100 port, --sm-cores 132)
       cute::make_tuple(_CommNone{}),
       cute::make_tuple(_RCR{}, _RRR{}),
       cute::make_tuple(_GemmV2{}));
@@ -63,7 +63,7 @@ struct GemmV2CommNone_Space {
           make_gemm_dtype_config(_S8{}, _S8{}, _BF16{}, _BF16{}, _S32{}),
           make_gemm_dtype_config(_S8{}, _S8{}, _Void{}, _BF16{}, _S32{})),
       cute::make_tuple(_Sm80{}, _Sm89{}),
-      cute::make_tuple(_A100{}, _L20{}),
+      cute::make_tuple(_A100{}, _L20{}, _H800{}),  // _H800 = 132 SMs (H100 port, --sm-cores 132)
       cute::make_tuple(_CommNone{}),
       cute::make_tuple(_RCR{}),
       cute::make_tuple(_GemmV2{}));
@@ -269,7 +269,7 @@ struct GemmGroupedV2CommNone_Space {
           make_gemm_dtype_config(_FP16{}, _FP16{}, _Void{}, _FP16{}),
           make_gemm_dtype_config(_BF16{}, _BF16{}, _Void{}, _BF16{})),
       cute::make_tuple(_Sm80{}, _Sm89{}),
-      cute::make_tuple(_A100{}, _L20{}),
+      cute::make_tuple(_A100{}, _L20{}, _H800{}),  // _H800 = 132 SMs (H100 port, --sm-cores 132)
       cute::make_tuple(_CommNone{}),
       cute::make_tuple(_RCR{}, _RCC{}),
       cute::make_tuple(_GemmGroupedV2{}),
