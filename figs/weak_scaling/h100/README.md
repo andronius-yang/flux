@@ -7,8 +7,9 @@ never touched:
 
 | path | what | committed? |
 |---|---|---|
-| `traces/` | the Kimi-K2 `livecodebench/execution` routing pool (shipped tarball, handoff 35 §4) | no (gitignored) |
-| `matrices/` | traffic matrices + routing/oracle sidecars (shipped; the runner regenerates identical ids from `traces/` if absent) | no |
+| `data/` | **`h100-weak-scaling` branch only**: the routing pool (xz tar in sub-50 MiB parts) + the 10 matrix sets + `SHA256SUMS.txt`; unpack per `data/README.md` / handoff 35 §4.1 | yes, on that branch (never on main) |
+| `traces/` | the Kimi-K2 `livecodebench/execution` routing pool, unpacked from `data/` | no (gitignored) |
+| `matrices/` | traffic matrices + routing/oracle sidecars, unpacked from `data/` (the runner regenerates identical ids from `traces/` if absent) | no |
 | `raw/` | sweep data root: per-cell rank JSONLs, torchrun logs (`sweeps/platforms/alps.yaml data_root`) | no |
 | `logs/` | build logs, salloc/sbatch stdout, session scratch | no |
 | `venv/` | the python environment, if a venv is used | no |

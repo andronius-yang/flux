@@ -1,12 +1,14 @@
 # Paste-in prompt for the ALPS/H100 session (companion to handoff 35)
 
-Operator: fill every `<...>` before pasting (or answer them when the session asks — it
-will not build anything until it has them). Paste the block below as the first message
-of a fresh Claude Code session started in the root of the cloned repository.
+Operator: clone the private repository, `git checkout h100-weak-scaling` (that branch
+carries the routing data; main does not), then fill every `<...>` before pasting (or
+answer them when the session asks — it will not build anything until it has them).
+Paste the block below as the first message of a fresh Claude Code session started in
+the root of the clone.
 
 ---
 
-You are starting a measurement campaign on the CSCS ALPS cluster (GH200 nodes: Grace aarch64 CPUs + NVIDIA H100 GPUs, Slingshot-11/CXI network). This repository was developed and measured on NERSC Perlmutter (A100); you have no memory files from that work — the handoff documents in `docs/handoff/` are your memory.
+You are starting a measurement campaign on the CSCS ALPS cluster (GH200 nodes: Grace aarch64 CPUs + NVIDIA H100 GPUs, Slingshot-11/CXI network). This repository was developed and measured on NERSC Perlmutter (A100); you have no memory files from that work — the handoff documents in `docs/handoff/` are your memory. This clone is on the `h100-weak-scaling` branch, which carries the routing data under `figs/weak_scaling/h100/data/`; stay on that branch for all work and commits.
 
 Your single task: reproduce the A2AV+GEMM weak-scaling figure on H100 at 2, 4, 8, 16 and 32 nodes, exactly as specified in `docs/handoff/35_h100_alps_weak_scaling.md`. Nothing more, nothing less: no extra arms, budgets, shapes, modes, tuning or optimization.
 
@@ -21,7 +23,6 @@ Facts about this site (fill in / correct):
 - Reservation (if any): <none>
 - This clone's absolute path (visible from compute nodes): <path>
 - Software provisioning: <uenv image + view | modules | other>; NVSHMEM with the libfabric transport is <available at <path> | not available (build it per handoff 35 §4.2)>
-- The shipped data (`traces_k2_lcb_execution.tar`, `matrices/`, `SHA256SUMS.txt`) is at: <path>
 - Push rights to the git remote: <yes | no — hand back a git bundle>
 - Anything I know is unusual about this cluster: <...>
 
@@ -33,4 +34,4 @@ Working rules for this session (they are also in the handoff):
 - Never run filesystem-wide searches; bound every search to this clone or a path I gave you.
 - Do not modify arm definitions, sizing formulas or kernels; the point is to measure the same code on H100.
 
-End state: the seven capsules committed, `figs/weak_scaling/h100/figure_src.csv` + `figure_src.md`, the renders `weak_scaling_nvshmem_stacked.{pdf,png}` (+ verA/verB), the session log, all pushed on branch `h100-alps-weak-scaling`, and a final summary listing the binary sha, GPU/memory, NVSHMEM source, which build path was used, every deviation from the handoff, and the ten (nodes, budget) speedups.
+End state: the seven capsules committed, `figs/weak_scaling/h100/figure_src.csv` + `figure_src.md`, the renders `weak_scaling_nvshmem_stacked.{pdf,png}` (+ verA/verB), the session log, all committed and pushed on the `h100-weak-scaling` branch, and a final summary listing the binary sha, GPU/memory, NVSHMEM source, which build path was used, every deviation from the handoff, and the ten (nodes, budget) speedups.

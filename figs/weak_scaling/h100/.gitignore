@@ -1,5 +1,6 @@
 # H100/ALPS lane: run-time artifacts stay INSIDE the clone (user rule) but are
-# never committed. Commit: capsules (sweeps/results/runs/*_alps_*), figure_src.csv,
+# never committed (data/ is the exception: committed on the h100-weak-scaling
+# branch only). Commit: capsules (sweeps/results/runs/*_alps_*), figure_src.csv,
 # figure_src.md, SESSION_LOG.md, the renders, build_figure_src.py.
 raw/
 matrices/
@@ -10,3 +11,5 @@ nvshmem/
 *.tar
 *.tar.gz
 *.tgz
+!data/
+!data/**

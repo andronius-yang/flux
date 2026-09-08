@@ -49,7 +49,8 @@ Plus two **gate** capsules whose latencies are never quoted (correctness ON): th
 **Deliverable** (all inside the clone, §7): the 7 capsules under `sweeps/results/runs/`,
 `figs/weak_scaling/h100/figure_src.csv` (+ `figure_src.md`), the renders
 `figs/weak_scaling/h100/weak_scaling_nvshmem_stacked.{pdf,png}` (+ verA/verB),
-`figs/weak_scaling/h100/SESSION_LOG.md`, pushed on a branch `h100-alps-weak-scaling`.
+`figs/weak_scaling/h100/SESSION_LOG.md`, committed and pushed on the **`h100-weak-scaling`**
+branch you were cloned onto (it is the branch that carries the routing data, §4.1).
 
 **Out of scope — do not run unless the operator explicitly asks:** COMET
 (`l01_allgather_dense`), the other budgets (2/4/8/16/32 MiB), Qwen/K3 shapes, e2e/phases/
@@ -209,29 +210,32 @@ gcc 12.2, cmake 3.28, NVSHMEM 3.2.5 (site build, libfabric/CXI), bundled NCCL 2.
 
 ## 4. Repository, data, environment
 
-### 4.1 Clone and the shipped data
+### 4.1 Clone the data branch and unpack the routing data
+
+The routing data travels **inside git, on the `h100-weak-scaling` branch only** (main
+does not carry it): `figs/weak_scaling/h100/data/` holds the Kimi-K2
+`livecodebench/execution` pool as an xz-compressed tar split into sub-50 MiB parts
+(GitHub's per-file limit is 100 MiB; the pool is 1.53 GB raw, ~17× smaller under xz),
+the 10 pre-generated matrix sets, and `SHA256SUMS.txt`. Clone, switch, unpack:
 
 ```bash
 git clone <fork url> flux && cd flux
-git checkout <the commit the operator names; default: main>
+git checkout h100-weak-scaling                                 # the data branch; do ALL work on it
 git submodule update --init 3rdparty/nccl 3rdparty/cutlass     # NOT --recursive: 3rdparty/FAST is a
                                                               # private SSH submodule, unused by this lane
-git checkout -b h100-alps-weak-scaling
-mkdir -p figs/weak_scaling/h100/{raw,matrices,traces,logs}
-```
-
-The routing data is NOT in git. The Perlmutter side staged a tarball for the operator
-(`$PSCRATCH/workspace/andrewy/h100_ship/stage/` on Perlmutter: `traces_k2_lcb_execution.tar`
-1.53 GB, `matrices/` 50 files, `SHA256SUMS.txt`). Ask where they put it, then:
-
-```bash
 cd figs/weak_scaling/h100
-sha256sum -c <stage>/SHA256SUMS.txt                       # every line OK
-mkdir -p traces/moonshotai/Kimi-K2-Thinking/livecodebench
-tar -C traces/moonshotai/Kimi-K2-Thinking/livecodebench -xf <stage>/traces_k2_lcb_execution.tar
-cp <stage>/matrices/* matrices/
-ls traces/moonshotai/Kimi-K2-Thinking/livecodebench/execution | wc -l   # 481 json + pool.manifest.json + pool_cache/
+mkdir -p raw matrices traces/moonshotai/Kimi-K2-Thinking/livecodebench logs
+(cd data && sha256sum -c SHA256SUMS.txt)                       # every part + tarball line OK
+cat data/traces_k2_lcb_execution.tar.xz.part-* | xz -dc | tar -x -C traces/moonshotai/Kimi-K2-Thinking/livecodebench
+tar -xJf data/matrices_k2_weak.tar.xz -C .                     # -> matrices/ (50 files)
+ls traces/moonshotai/Kimi-K2-Thinking/livecodebench/execution | wc -l    # 483: 481 json + pool.manifest.json + pool_cache/
+ls matrices | wc -l                                             # 50
+cd -
 ```
+
+(`data/README.md` repeats these commands. Streaming through `xz -dc | tar -x` needs no
+1.5 GB intermediate file; if you must materialize it, do so under `h100/logs/`, never
+outside the clone.)
 
 Why both: the runner derives every matrix id from the pool's content fingerprint
 (`pool.manifest.json` → `poolsha` folded into the id), so `traces/` is required even
@@ -249,7 +253,7 @@ exactly these (a different hex = wrong pool bytes; stop):
 | 16 | `w64x4_trace-b8bf46_b1_k8_id001` | `w64x4_trace-96c63f_b64_k8_id001` |
 | 32 | `w128x4_trace-3d45b3_b1_k8_id001` | `w128x4_trace-c4f8a4_b64_k8_id001` |
 
-(If the tarball is unavailable, the pool can be re-fetched with
+(If the data branch is unusable, the pool can be re-fetched with
 `sweeps/fetch_traces.py --model Kimi-K2 --pool livecodebench/execution` — gated HF
 dataset, needs a token that accepted the terms — and the runner regenerates the
 matrices; then the ids above are the check that the fetched bytes match.)
@@ -452,7 +456,7 @@ be lower and the *shape* similar. Do not tune anything to make it so.
 
 **Hand back**: commit capsules + `figs/weak_scaling/h100/{figure_src.csv,figure_src.md,
 SESSION_LOG.md,*.pdf,*.png}` + the filled `env_alps.sh`/`alps.yaml` + any build-system
-fix, push the branch (or `git bundle create h100.bundle main..h100-alps-weak-scaling`),
+fix on `h100-weak-scaling`, push it (or `git bundle create h100.bundle main..h100-weak-scaling`),
 and finish with a summary that states: the binary sha, the GPU/memory, the NVSHMEM
 source, which build path (native sm_90a or JIT fallback), every deviation from this
 document, and the 10 (nodes, budget) speedups.
@@ -469,7 +473,9 @@ document, and the 10 (nodes, budget) speedups.
   (`--src-dir/--out-dir`; Perlmutter renders verified byte-identical).
 - New files: `env_alps.sh` (template), `sweeps/platforms/alps.yaml`, the seven
   `sweeps/specs/h100_*.yaml`, `figs/weak_scaling/h100/{README.md,.gitignore,
-  SESSION_LOG.md,build_figure_src.py,sbatch_rung.template.sh}`.
+  SESSION_LOG.md,build_figure_src.py,sbatch_rung.template.sh}`; on the
+  `h100-weak-scaling` branch only: `figs/weak_scaling/h100/data/` (the routing pool +
+  matrices, §4.1) — never merge that directory into main.
 - Verified here: the specs parse and expand to 6 cells each (dry run), the builder
   reproduces the published A100 numbers, the generator still renders the committed
   figures byte-for-byte, python files parse. **Not compiled anywhere**: the C++/CMake
