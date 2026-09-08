@@ -228,7 +228,7 @@ mkdir -p raw matrices traces/moonshotai/Kimi-K2-Thinking/livecodebench logs
 (cd data && sha256sum -c SHA256SUMS.txt)                       # every part + tarball line OK
 cat data/traces_k2_lcb_execution.tar.xz.part-* | xz -dc | tar -x -C traces/moonshotai/Kimi-K2-Thinking/livecodebench
 tar -xJf data/matrices_k2_weak.tar.xz -C .                     # -> matrices/ (50 files)
-ls traces/moonshotai/Kimi-K2-Thinking/livecodebench/execution | wc -l    # 483: 481 json + pool.manifest.json + pool_cache/
+ls traces/moonshotai/Kimi-K2-Thinking/livecodebench/execution | wc -l    # 481: 479 json + pool.manifest.json + pool_cache/
 ls matrices | wc -l                                             # 50
 cd -
 ```
