@@ -136,8 +136,54 @@ Reading:
   0.9 vs 2.4 ms; the l1-side cost does not scale with the block length, so
   it is a landing-time / contention effect, not copy time — see the capture).
 
-## 7. Case-study capture 3 — TBD
+## 7. Case-study capture 3 (capsule 20260909-074415_perlmutter_05252de1, 20/20 ok)
 
-## 7. Case-study capture 3 — TBD
+Spec `casestudy3_3d_sc_d4_k2_4n_nsys` (nsys + isolated, one binary): COMET
+overlapped (no-gate c8) / gated COMET / OURS 8-slot reset-every early /
+sequential / **3D dual** (4 streams, no l0 moved-last). Isolated rank-max
+per-iteration latency (S-C median / mean / proLaw block; plain median):
+
+| arm | S-C med | S-C mean | proLaw | plain |
+|---|---|---|---|---|
+| COMET overlapped (no-gate c8) | 51.43 | 54.81 | 52.7 | 54.20 |
+| COMET gated | 54.71 | 56.64 | 64.8 | 60.00 |
+| OURS early (host-gap issue) | 53.33 | 53.98 | 59.2 | 48.02 |
+| OURS sequential (noov) | 53.60 | 54.87 | 65.6 | 48.44 |
+| **OURS 3D dual** | **51.98** | 53.97 | **58.7** | **47.09** |
+
+Same-capsule verdict: dual <= early on both families (S-C -1.35 median,
+mean equal; plain -0.9; proLaw block -0.5), l1 27.54 vs 27.73 -> the
++1.4 ms l1 seen in A/B-2 was run-to-run variation, not a systematic cost.
+The user condition (total_ms equal or lower vs the host-gap overlap) holds
+for dual in every same-capsule comparison of capture 3 and in 3 of 4 in
+A/B-2. Supplement `casestudy3b_3d_late_k2_4n_nsys` = the late arm's
+timeline rows (best total in A/B-2), same binary/session.
+
+### 7.1 Timelines — TBD (extractor run)
+
+## 7. Case-study capture 3 (capsule 20260909-074415_perlmutter_05252de1, 20/20 ok)
+
+Spec `casestudy3_3d_sc_d4_k2_4n_nsys` (nsys + isolated, one binary): COMET
+overlapped (no-gate c8) / gated COMET / OURS 8-slot reset-every early /
+sequential / **3D dual** (4 streams, no l0 moved-last). Isolated rank-max
+per-iteration latency (S-C median / mean / proLaw block; plain median):
+
+| arm | S-C med | S-C mean | proLaw | plain |
+|---|---|---|---|---|
+| COMET overlapped (no-gate c8) | 51.43 | 54.81 | 52.7 | 54.20 |
+| COMET gated | 54.71 | 56.64 | 64.8 | 60.00 |
+| OURS early (host-gap issue) | 53.33 | 53.98 | 59.2 | 48.02 |
+| OURS sequential (noov) | 53.60 | 54.87 | 65.6 | 48.44 |
+| **OURS 3D dual** | **51.98** | 53.97 | **58.7** | **47.09** |
+
+Same-capsule verdict: dual <= early on both families (S-C -1.35 median,
+mean equal; plain -0.9; proLaw block -0.5), l1 27.54 vs 27.73 -> the
++1.4 ms l1 seen in A/B-2 was run-to-run variation, not a systematic cost.
+The user condition (total_ms equal or lower vs the host-gap overlap) holds
+for dual in every same-capsule comparison of capture 3 and in 3 of 4 in
+A/B-2. Supplement `casestudy3b_3d_late_k2_4n_nsys` = the late arm's
+timeline rows (best total in A/B-2), same binary/session.
+
+### 7.1 Timelines — TBD (extractor run)
 
 ## 6. Case-study capture 3 — TBD
