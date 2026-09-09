@@ -550,8 +550,11 @@ class OursSwapLane:
             weight_gate_group_start=1,
         )
         import os as _os
+        # NOTE (3D sched fix, 2026-09-09): under late/split/dual issue the
+        # exchange is enqueued AFTER gate_kwargs() is read, so the schedule
+        # must not depend on _issued — the moved slot is gated either way.
         if (bool(int(_os.environ.get("FLUX_OURS_SCHED_MOVED_LAST", "0")))
-                and self._pending is not None and self._issued):
+                and self._pending is not None):
             from flux.testing.ours_s2 import build_sched_order
             order, n_front = build_sched_order(
                 self.nlp + 1, [1 + self._pending[0]])
@@ -952,7 +955,9 @@ class OursSwapAllLane:
             weight_signal_epoch=self.epoch,
             weight_gate_group_start=1,
         )
-        if self.sched_moved_last and self._in and self._issued:
+        # late/dual issue the w1 phase AFTER this call (the l0 enqueue
+        # precedes issue_late), so the deferred class is keyed on _in only
+        if self.sched_moved_last and self._in:
             from flux.testing.ours_s2 import build_sched_order
             order, n_front = build_sched_order(
                 self.nlp + 1, [1 + dj for (dj, _sr, _ss, _e) in self._in])
