@@ -49,7 +49,8 @@ LANE_LABEL = {"nic": "NIC RDMA", "nvlink": "NVLink", "gpu": "GPU", "gpu2": "GPU 
 
 # rows: (title line 1, title line 2, cell_id, iteration label)
 SCHED = "trace-b549f7_b64_k8_nsys"; PLAIN = "trace-610042_b64_k8_nsys"
-INCLUDE_GATED_COMET = False        # the stock (gated) COMET row per case, in addition to the overlapped baseline
+INCLUDE_GATED_COMET = False
+INCLUDE_DUAL_V1 = False            # capture-3 "dual" (w2 gated on l0 completion: lands in the l0->l1 gap) next to dual2        # the stock (gated) COMET row per case, in addition to the overlapped baseline
 ROWS = [
     ("Efficient", "COMET (gated)",     f"l01_allgather_dense_{PLAIN}", "iter4"),
     ("Efficient", "COMET, overlapped", f"l01_allgather_dense_nogate_c8_{PLAIN}", "iter4"),
@@ -104,6 +105,7 @@ def build(data, out):
     rows = []
     for t1, t2, cid, itn in ROWS:
         if t2 == "COMET (gated)" and not INCLUDE_GATED_COMET: continue
+        if t2 == "3D swap (l0-done gate)" and not INCLUDE_DUAL_V1: continue
         if cid not in data["cells"]: print("missing cell, row skipped:", cid, file=sys.stderr); continue
         c = data["cells"][cid]; chosen, S = pick2(c, itn)
         rows.append((t1, t2, c, itn, chosen, S))
@@ -169,12 +171,14 @@ ROWS_CS3 = [
     ("Efficient", "COMET, overlapped",   f"l01_allgather_dense_nogate_c8_{PLAIN}", "EFF"),
     ("Efficient", "swap in host gap",    f"{_RST}_early_str4_p2p_r2_{PLAIN}", "EFF"),
     ("Efficient", "sequential swap",     f"{_RST}_noov_str4_p2p_r2_{PLAIN}", "EFF"),
-    ("Efficient", "3D-scheduled swap",   f"{_RST}_dual_str4_p2p_r2_{PLAIN}", "EFF"),
+    ("Efficient", "3D swap (l0-done gate)", f"{_RST}_dual_str4_p2p_r2_{PLAIN}", "EFF"),
+    ("Efficient", "3D-scheduled swap",   f"{_RST}_dual2_str4_p2p_r2_{PLAIN}", "EFF"),
     ("Skewed", "COMET (gated)",          f"l01_allgather_dense_{SCHED}", "SKEW"),
     ("Skewed", "COMET, overlapped",      f"l01_allgather_dense_nogate_c8_{SCHED}", "SKEW"),
     ("Skewed", "swap in host gap",       f"{_RST}_early_str4_p2p_r2_{SCHED}", "SKEW"),
     ("Skewed", "sequential swap",        f"{_RST}_noov_str4_p2p_r2_{SCHED}", "SKEW"),
-    ("Skewed", "3D-scheduled swap",      f"{_RST}_dual_str4_p2p_r2_{SCHED}", "SKEW"),
+    ("Skewed", "3D swap (l0-done gate)", f"{_RST}_dual_str4_p2p_r2_{SCHED}", "SKEW"),
+    ("Skewed", "3D-scheduled swap",      f"{_RST}_dual2_str4_p2p_r2_{SCHED}", "SKEW"),
 ]
 
 if __name__ == "__main__":
