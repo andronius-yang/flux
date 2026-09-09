@@ -565,6 +565,16 @@ class OursSwapLane:
         if self._issued:
             torch.cuda.current_stream().wait_event(self.ev_done)
 
+    # combine-side (dual) API — not implemented on the one-slot lane
+    def issue_l1(self):
+        pass
+
+    def l1_gate_kwargs(self):
+        return None
+
+    def l1_join(self):
+        pass
+
     def movement_ms(self):
         if not self._issued:
             return 0.0
@@ -683,8 +693,18 @@ class OursSwapAllLane:
     every dst slot exactly once, so the post-landing gate raise is final.
     Epoch/gate protocol identical to OursSwapLane."""
 
-    def __init__(self, lane, rank, L, nlp, ffn, H, dtype, cap, pg):
+    def __init__(self, lane, rank, L, nlp, ffn, H, dtype, cap, pg,
+                 issue="early"):
         import flux
+        # 3D scheduling issue points (2026-09-08):
+        #   early: both matrices in the place bracket (2026-09-01 ablation)
+        #   late : both after the fused l0 is enqueued (under dispatch+GEMM)
+        #   split: w1 early, w2 late
+        #   dual : w1 after the l0 enqueue (dispatch side, l0 per-slot gate +
+        #          moved-last), w2 at l1 start gated on l0 completion
+        #          (combine side, l1 per-problem gate + in-wave moved-last)
+        assert issue in ("early", "late", "split", "dual"), issue
+        self.issue_mode = issue
         self.lane = lane
         self.rank = rank
         self.L = L
@@ -712,12 +732,19 @@ class OursSwapAllLane:
         self.ev_end = torch.cuda.Event(enable_timing=True)
         self.ev_done = torch.cuda.Event()
         self.ev_pre = torch.cuda.Event()
+        self.ev_l0 = torch.cuda.Event()  # dual: l0 complete (w2 phase start)
+        # per-matrix phase events: [w1, w2] x (start, end, done)
+        self._ev_ps = [torch.cuda.Event(enable_timing=True) for _ in (0, 1)]
+        self._ev_pe = [torch.cuda.Event(enable_timing=True) for _ in (0, 1)]
+        self._ev_pd = [torch.cuda.Event() for _ in (0, 1)]
         self._idx_all = torch.arange(1, nlp + 1, device="cuda")
         self._slot_idx = [torch.tensor([1 + j], device="cuda")
                           for j in range(nlp)]
         self.swaps_this_iter = 0
         self.move_bytes_this_iter = 0
         self._issued = False
+        self._n_issued = 0
+        self._phase_done = [False, False]
         self._in = []                    # my (dst_slot, src_rank, src_slot)
         self._out = []                   # my (src_slot, dst_rank, dst_idx)
         self._w_waited = False
@@ -764,6 +791,8 @@ class OursSwapAllLane:
         self.swaps_this_iter = sum(len(m) for m in all_moves) // 2
         self.move_bytes_this_iter = 0
         self._issued = False
+        self._n_issued = 0
+        self._phase_done = [False, False]
         self._w_waited = False
         self.epoch += 1
         cur = torch.cuda.current_stream()
@@ -780,77 +809,142 @@ class OursSwapAllLane:
         sig1.index_fill_(0, keep, self.epoch)
         sig2.index_fill_(0, keep, self.epoch)
 
-    def issue_early(self):
-        if not self._in and not self._out:
-            return
+    def _active(self):
+        return bool(self._in or self._out)
+
+    def _phase(self, k, pre_events=()):
+        """One matrix (k: 0 = w1, 1 = w2) of the composed exchange on the
+        N movement streams: push every outgoing slot into its destination's
+        staging + landed-signal store, join the pushes across streams, then
+        pull every incoming slot (landed-signal wait -> staging -> slot ->
+        gate raise). Pushes precede pulls inside the matrix, so a slot that
+        is both outgoing and incoming is read before it is overwritten;
+        pushes never block on peers (deadlock-free). Streams depend only on
+        ev_pre (+ pre_events) — never on the current stream past the l0
+        enqueue (a wait on the gated GEMM's stream = deadlock)."""
         import torch as _t
+        assert not self._phase_done[k], f"matrix {k} issued twice"
         streams = [self.w_stream] + self._xstreams
         N = len(streams)
-        # every stream starts after the pre-event (tables/keep landed)
-        for st in streams:
-            st.wait_event(self.ev_pre)
+        if not self._w_waited:
+            for st in streams:
+                st.wait_event(self.ev_pre)
+            with _t.cuda.stream(self.w_stream):
+                self.ev_start.record()
+            self._w_waited = True
+        for ev in pre_events:
+            for st in streams:
+                st.wait_event(ev)
         with _t.cuda.stream(self.w_stream):
-            self.ev_start.record()
-        self._w_waited = True
-        for k in (0, 1):
-            op = self.lane.op_w1 if k == 0 else self.lane.op_w2
-            slots = op.prefetch_slots()
-            # phase 1: push all outgoing (slot i on stream i % N)
-            for i, (ss, dr, idx) in enumerate(self._out):
-                st = streams[i % N]
-                with _t.cuda.stream(st):
-                    dst_local = dr % self.L
-                    self._stag(k, dst_local, idx).copy_(slots[1 + ss])
-                    peer_sig = self._xsig_all[dst_local]
-                    if self._write_ok:
-                        rc = self._cu_write(st.cuda_stream, peer_sig.data_ptr()
-                                            + 8 * (2 * idx + k),
-                                            self.epoch, 0)
-                        assert rc == 0, f"cuStreamWriteValue64 rc={rc}"
-                    else:
-                        peer_sig[2 * idx + k:2 * idx + k + 1].fill_(
-                            self.epoch)
-        # all pushes precede all pulls (a slot both outgoing and incoming
-        # is read before it is overwritten): join the push phase across
-        # streams before any pull
+            self._ev_ps[k].record()
+        op = self.lane.op_w1 if k == 0 else self.lane.op_w2
+        slots = op.prefetch_slots()
+        # phase 1: push all outgoing (slot i on stream i % N)
+        for i, (ss, dr, idx) in enumerate(self._out):
+            st = streams[i % N]
+            with _t.cuda.stream(st):
+                dst_local = dr % self.L
+                self._stag(k, dst_local, idx).copy_(slots[1 + ss])
+                peer_sig = self._xsig_all[dst_local]
+                if self._write_ok:
+                    rc = self._cu_write(st.cuda_stream, peer_sig.data_ptr()
+                                        + 8 * (2 * idx + k),
+                                        self.epoch, 0)
+                    assert rc == 0, f"cuStreamWriteValue64 rc={rc}"
+                else:
+                    peer_sig[2 * idx + k:2 * idx + k + 1].fill_(self.epoch)
+        # all pushes precede all pulls: join the push phase across streams
         for si, st in enumerate(streams):
             self._ev_push[si].record(st)
         for st in streams:
             for si in range(N):
                 st.wait_event(self._ev_push[si])
-        for k in (0, 1):
-            op = self.lane.op_w1 if k == 0 else self.lane.op_w2
-            slots = op.prefetch_slots()
-            # phase 2: pull all incoming, raise gates on landing
-            for idx, (dj, _sr, _ss, _e) in enumerate(self._in):
-                st = streams[idx % N]
-                with _t.cuda.stream(st):
-                    rc = self._cu_wait(st.cuda_stream, self._xsig.data_ptr()
-                                       + 8 * (2 * idx + k),
-                                       self.epoch, self._wait_flags)
-                    assert rc == 0, f"cuStreamWaitValue64 rc={rc}"
-                    slot = slots[1 + dj]
-                    slot.copy_(self._stag(k, self.local_rank, idx))
-                    if self._write_ok:
-                        rc = self._cu_write(st.cuda_stream, op.signals().data_ptr()
-                                            + 8 * (1 + dj), self.epoch, 0)
-                        assert rc == 0, f"cuStreamWriteValue64 rc={rc}"
-                    else:
-                        op.signals().index_fill_(0, self._slot_idx[dj],
-                                                 self.epoch)
-                    self.move_bytes_this_iter += (
-                        2 * slot.numel() * slot.element_size())
+        # phase 2: pull all incoming, raise gates on landing
+        for idx, (dj, _sr, _ss, _e) in enumerate(self._in):
+            st = streams[idx % N]
+            with _t.cuda.stream(st):
+                rc = self._cu_wait(st.cuda_stream, self._xsig.data_ptr()
+                                   + 8 * (2 * idx + k),
+                                   self.epoch, self._wait_flags)
+                assert rc == 0, f"cuStreamWaitValue64 rc={rc}"
+                slot = slots[1 + dj]
+                slot.copy_(self._stag(k, self.local_rank, idx))
+                if self._write_ok:
+                    rc = self._cu_write(st.cuda_stream, op.signals().data_ptr()
+                                        + 8 * (1 + dj), self.epoch, 0)
+                    assert rc == 0, f"cuStreamWriteValue64 rc={rc}"
+                else:
+                    op.signals().index_fill_(0, self._slot_idx[dj],
+                                             self.epoch)
+                self.move_bytes_this_iter += (
+                    2 * slot.numel() * slot.element_size())
         # join every extra stream back into the movement stream
         for si, st in enumerate(streams[1:], start=1):
             self._ev_join[si].record(st)
             self.w_stream.wait_event(self._ev_join[si])
         with _t.cuda.stream(self.w_stream):
-            self.ev_end.record()
-            self.ev_done.record()
-        self._issued = True
+            self._ev_pe[k].record()
+            self._ev_pd[k].record()
+        self._phase_done[k] = True
+        self._n_issued += 1
+        if self._n_issued == 2:
+            with _t.cuda.stream(self.w_stream):
+                self.ev_end.record()
+                self.ev_done.record()
+            self._issued = True
+
+    def issue_early(self):
+        """Place bracket, right after the decision."""
+        if not self._active():
+            return
+        if self.issue_mode == "early":
+            self._phase(0)
+            self._phase(1)
+        elif self.issue_mode == "split":
+            self._phase(0)
 
     def issue_late(self):
-        pass                              # all-lane is issue=early only
+        """Immediately AFTER the fused l0 forward is enqueued (dispatch
+        side). dual: also marks l0 completion for the combine-side phase."""
+        if self.issue_mode == "dual":
+            self.ev_l0.record(torch.cuda.current_stream())
+        if not self._active():
+            return
+        if self.issue_mode == "late":
+            self._phase(0)
+            self._phase(1)
+        elif self.issue_mode in ("split", "dual"):
+            self._phase(1 if self.issue_mode == "split" else 0)
+
+    def issue_l1(self):
+        """dual only: the combine-side (w2) phase, enqueued right before
+        the l1 forward; the movement streams start it when l0 has completed
+        (ev_l0), so the NVLink block sits under the l1 GEMM + combine wire.
+        Correctness: the l1 GEMM gates the swapped-in experts' problems per
+        tile (l1_gate_kwargs) and orders them last inside every wave."""
+        if self.issue_mode != "dual" or not self._active():
+            return
+        self._phase(1, pre_events=(self.ev_l0,))
+
+    def l1_gate_kwargs(self):
+        """dual: per-problem combine-side weight gate for the fused l1
+        (pad-first slots: local expert 1+dj <-> w2 signal index dj)."""
+        if self.issue_mode != "dual" or not self._in:
+            return None
+        gate = [-1] * (self.nlp + 1)
+        for (dj, _sr, _ss, _e) in self._in:
+            gate[1 + dj] = dj
+        return dict(weight_signal=self.lane.op_w2.signals()[1:],
+                    weight_signal_epoch=self.epoch,
+                    gate_of_expert=gate)
+
+    def l1_join(self):
+        """dual: after the l1 enqueue the current stream joins the whole
+        exchange (free — the phase landed under l1's unmoved waves) so the
+        next iteration's table/signal writes are ordered after the pulls
+        (an EMPTY swapped-in expert schedules no gated tile)."""
+        if self.issue_mode == "dual" and self._issued:
+            torch.cuda.current_stream().wait_event(self.ev_done)
 
     def gate_kwargs(self):
         kw = dict(
@@ -867,11 +961,17 @@ class OursSwapAllLane:
         return kw
 
     def l1_wait(self):
+        """w2 landing gate before l1 (early/late/split). dual: no-op — the
+        l1 per-problem gate replaces the stream-level join."""
+        if self.issue_mode == "dual":
+            return
         if self._issued:
             torch.cuda.current_stream().wait_event(self.ev_done)
 
     def movement_ms(self):
+        """Sum of the per-matrix phase spans (dual separates the phases by
+        the whole l0 GEMM, so start->end would not measure movement)."""
         if not self._issued:
             return 0.0
         self.ev_end.synchronize()
-        return self.ev_start.elapsed_time(self.ev_end)
+        return sum(self._ev_ps[k].elapsed_time(self._ev_pe[k]) for k in (0, 1))

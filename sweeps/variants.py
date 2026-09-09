@@ -3585,6 +3585,55 @@ for _k in ("ablation_l01_s2_swapall_p2p_r2", "ablation_l01_s2_swapall_str4_p2p_r
            "ablation_l01_s2_swap_t1_rst_p2p_r2"):
     VARIANTS[_k + "_gate"] = dict(
         VARIANTS[_k], test_args=VARIANTS[_k]["test_args"] + ["--check_iters", "1"])
+# =========================================================================
+# 3D SCHEDULING arms (2026-09-08, worktree flux-3dsched, user-directed):
+# the composed 8-slot intra-node exchange (swapall, cap 8 slots/rank) with
+# the exchange ISSUE POINT moved out of the host planning gap so the NVLink
+# expert movement shows up UNDER the token wire + GEMM on the nsys timeline:
+#   late : both matrices after the l0 enqueue (dispatch side)
+#   dual : w1 after the l0 enqueue (dispatch side, l0 per-slot gate), w2 at
+#          l1 start gated on l0 completion (combine side, NEW l1 per-problem
+#          weight gate + in-wave moved-last order) -> two separate blocks
+# Knobs: FLUX_OURS_SWAP_STREAMS (1|4 movement streams), FLUX_OURS_SCHED_
+# MOVED_LAST (l0 deferred class = this iteration's swapped-in slots).
+# Two bases: _nr (no reset; topic-schedule harness, case study) and the
+# reset-every proxy (gates / every-iteration events). Needs the 3dsched
+# binary (l1 set_weight_gate); never mix with pre-3dsched capsules.
+def _3d_args(base_args, mode):
+    a = list(base_args)
+    a[a.index("--swap_issue") + 1] = mode
+    return a
+
+
+_3D_ENV = {
+    "": {},
+    "_ml": {"FLUX_OURS_SCHED_MOVED_LAST": "1"},
+    "_str4": {"FLUX_OURS_SWAP_STREAMS": "4"},
+    "_ml_str4": {"FLUX_OURS_SCHED_MOVED_LAST": "1",
+                 "FLUX_OURS_SWAP_STREAMS": "4"},
+}
+for _bt, _bargs in (("nr", _ABL_SWAPALL_NR), ("rst", _ABL_SWAPALL_ARGS)):
+    for _mode in ("late", "dual"):
+        for _et, _env in _3D_ENV.items():
+            _name = f"ablation_l01_s2_swapall_{_bt}_3d_{_mode}{_et}_p2p_r2"
+            VARIANTS[_name] = dict(
+                _ABL_SWAP_BASE, env=dict(_ABL_SWAP_BASE.get("env", {}), **_env),
+                test_args=_3d_args(_bargs, _mode))
+            VARIANTS[_name + "_gate"] = dict(
+                VARIANTS[_name],
+                test_args=VARIANTS[_name]["test_args"] + ["--check_iters", "1"])
+# str4 twins of the existing early / noov bases on BOTH bases (same-capsule
+# comparators for the 3D arms; early_str4 == the 9/2 swapall_str4 on rst)
+for _bt, _bargs in (("nr", _ABL_SWAPALL_NR), ("rst", _ABL_SWAPALL_ARGS)):
+    VARIANTS[f"ablation_l01_s2_swapall_{_bt}_3d_early_str4_p2p_r2"] = dict(
+        _ABL_SWAP_BASE, env=dict(_ABL_SWAP_BASE.get("env", {}),
+                                 FLUX_OURS_SWAP_STREAMS="4"),
+        test_args=list(_bargs))
+    VARIANTS[f"ablation_l01_s2_swapall_{_bt}_3d_noov_str4_p2p_r2"] = dict(
+        _ABL_SWAP_BASE, env=dict(_ABL_SWAP_BASE.get("env", {}),
+                                 FLUX_OURS_SWAP_STREAMS="4"),
+        test_args=list(_bargs) + ["--swap_overlap", "0"])
+
 # correctness gate twin of pr0 (OURS-driver arms verify via --check_iters,
 # not the flux-driver correct_* columns)
 VARIANTS["ablation_l01_pr0_gate_pv2_r2"] = dict(

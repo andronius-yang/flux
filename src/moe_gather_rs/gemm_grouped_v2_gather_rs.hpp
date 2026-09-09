@@ -173,7 +173,10 @@ class GemmGroupedV2GatherRS_Device
         args.non_empty_problem_count,
         args.non_empty_per_group,
         args.scatter_D_ptr,
-        args.prob_group_map};
+        args.prob_group_map,
+        args.prob_wgate_map,
+        args.weight_signal_ptr,
+        args.weight_signal_expected};
     return gemm_args;
   }
 

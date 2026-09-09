@@ -145,6 +145,15 @@ class GemmGroupedV2GatherRSOp {
       torch::Tensor routing_idx,
       torch::Tensor splits_per_source,
       c10::optional<torch::Tensor> a2av_unique_counts = c10::nullopt);
+  // 3D scheduling (2026-09-08): arm the combine-side weight gate for the NEXT
+  // forward_gather_rs (one-shot). weight_signal = int64 CUDA per-slot landed
+  // epochs; gate_of_expert[e] = index into it (-1 = ungated). Gated experts'
+  // problems are ordered last inside every combine wave and spin at tile
+  // start until signal >= epoch. weight_signal = None disarms.
+  void set_weight_gate(
+      c10::optional<torch::Tensor> weight_signal,
+      int64_t weight_signal_epoch,
+      std::vector<int64_t> gate_of_expert);
   torch::Tensor forward_gather_rs_triton_aot(
       torch::Tensor input,
       torch::Tensor weight,

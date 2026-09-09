@@ -3302,6 +3302,17 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
   torch::Tensor msplit_iota_;      // int32 [max_m] shared identity indices
   torch::Tensor msplit_inv_pack_;  // int32 [max_m] gemm row -> panel row
   cudaEvent_t msplit_h2d_event_ = nullptr;
+  // 3D scheduling (2026-09-08): combine-side weight gate, armed per forward
+  // by set_weight_gate() (one-shot). gate_of_expert[e] = index into the
+  // signal array (-1 ungated); the forward orders gated experts LAST inside
+  // every combine wave and ships a per-problem gate map to the GEMM.
+  bool wgate_armed_ = false;
+  torch::Tensor wgate_signal_;
+  uint64_t wgate_epoch_ = 0;
+  std::vector<int32_t> wgate_of_expert_;
+  torch::Tensor wgate_host_;  // pinned int32 [cap]
+  torch::Tensor wgate_dev_;   // device int32 [cap]
+  cudaEvent_t wgate_h2d_event_ = nullptr;
   std::vector<int> msplit_wave_of_node_;  // schedule position -> cascade flag
   std::vector<int> msplit_node_order_;    // schedule position -> dest node
 
@@ -3631,6 +3642,52 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
   }
 
 
+  void
+  set_weight_gate(
+      c10::optional<torch::Tensor> weight_signal,
+      int64_t weight_signal_epoch,
+      std::vector<int64_t> const &gate_of_expert) {
+    // disarm
+    if (!weight_signal.has_value()) {
+      this->wgate_armed_ = false;
+      return;
+    }
+    FLUX_CHECK(weight_signal->is_cuda());
+    FLUX_CHECK(weight_signal->scalar_type() == at::ScalarType::Long)
+        << "weight_signal must be int64 (u64 epoch signals)";
+    FLUX_CHECK(weight_signal->is_contiguous());
+    FLUX_CHECK_EQ((int64_t)gate_of_expert.size(), (int64_t)this->ep_nexperts)
+        << "gate_of_expert must have one entry per local expert";
+    bool any = false;
+    this->wgate_of_expert_.assign(this->ep_nexperts, -1);
+    for (int e = 0; e < this->ep_nexperts; e++) {
+      const int64_t g = gate_of_expert[e];
+      if (g >= 0) {
+        FLUX_CHECK_LT(g, weight_signal->numel()) << "gate index beyond weight_signal";
+        this->wgate_of_expert_[e] = (int32_t)g;
+        any = true;
+      }
+    }
+    if (!any) {
+      this->wgate_armed_ = false;
+      return;
+    }
+    if (!this->wgate_dev_.defined()) {
+      const int64_t cap =
+          (int64_t)std::max<int64_t>(std::max<int64_t>(this->nnodes, 1), (int64_t)this->n_split * this->max_input_groups) *
+          this->ep_nexperts + 128;
+      this->wgate_host_ = torch::empty(
+          {cap}, at::TensorOptions(at::kCPU).dtype(at::ScalarType::Int).pinned_memory(true));
+      this->wgate_dev_ = empty_with_uninitialized_data(
+          std::vector<int64_t>{cap}, at::TensorOptions(at::kCUDA).dtype(at::ScalarType::Int));
+      CUDA_CHECK(cudaEventCreateWithFlags(&this->wgate_h2d_event_, cudaEventDisableTiming));
+      CUDA_CHECK(cudaEventRecord(this->wgate_h2d_event_, c10::cuda::getCurrentCUDAStream()));
+    }
+    this->wgate_signal_ = *weight_signal;
+    this->wgate_epoch_ = (uint64_t)weight_signal_epoch;
+    this->wgate_armed_ = true;
+  }
+
   torch::Tensor
   forward_gather_rs_impl(
       std::vector<torch::Tensor> inputs,
@@ -3838,6 +3895,9 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     // on the forward stream (NR-09: a pageable H2D here would hide a sync).
     int msplit_n_waves = 0;
     int msplit_chunk_E = 0;  // v2 chunked combine: 0 = legacy problem order
+    // 3D sched: per-wave moved-last problem order (gated experts drained last)
+    bool wgate_reorder = false;
+    std::vector<int32_t> idx_of;  // (wave, expert) -> emitted problem index
     const int32_t *msplit_wave_M_dev = nullptr;
     const int32_t *msplit_wave_off_dev = nullptr;
     const int32_t *msplit_ne_wave_dev = nullptr;
@@ -4004,7 +4064,8 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         this->msplit_piece_flags_ = 0;
       }
       const int n_probs = msplit_n_waves * E;
-      std::vector<int32_t> idx_of((size_t)n_probs);
+      idx_of.assign((size_t)n_probs, 0);
+      wgate_reorder = this->wgate_armed_ && !pieces_run && msplit_chunk_E == 0;
       if (msplit_chunk_E > 0) {
         int ip = 0;
         for (int c0 = 0; c0 < E; c0 += msplit_chunk_E) {
@@ -4012,6 +4073,24 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
           for (int w = 0; w < msplit_n_waves; w++) {
             for (int e = c0; e < c1; e++) {
               idx_of[(size_t)w * E + e] = ip++;
+            }
+          }
+        }
+        FLUX_CHECK_EQ(ip, n_probs);
+      } else if (wgate_reorder) {
+        // 3D scheduling (2026-09-08): inside EVERY wave, the unmoved experts
+        // come first (ascending) and this iteration's swapped-in (gated)
+        // experts last, so the persistent fleet drains every ungated tile of
+        // the wave before a weight-blocked tile can park a CTA — the layer-1
+        // twin of layer-0's moved-last schedule. The wave (cascade group)
+        // axis is untouched: wave w still completes after its E problems.
+        int ip = 0;
+        for (int w = 0; w < msplit_n_waves; w++) {
+          for (int pass = 0; pass < 2; pass++) {
+            for (int e = 0; e < E; e++) {
+              if ((this->wgate_of_expert_[e] >= 0) == (pass == 1)) {
+                idx_of[(size_t)w * E + e] = ip++;
+              }
             }
           }
         }
@@ -4102,7 +4181,7 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
       ws_args.wave_off = msplit_wave_off_dev;
       ws_args.non_empty_per_wave = msplit_ne_wave_dev;
       ws_args.n_flags = this->msplit_piece_flags_;  // 0 = per-wave flags
-      ws_args.prob_eid = msplit_chunk_E > 0 ? msplit_eid_dev : nullptr;
+      ws_args.prob_eid = (msplit_chunk_E > 0 || wgate_reorder) ? msplit_eid_dev : nullptr;
       ws_args.barrier = this->barrier.data_ptr<int>();
     }
     ws_args.iota = this->msplit_iota_.data_ptr<int32_t>();
@@ -4180,6 +4259,35 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
 
     float alpha = 1.0, beta = 0.0;
 
+    // 3D scheduling: per-problem combine-side weight-gate map (host-built on
+    // the FINAL problem order, one async H2D; -1 = ungated)
+    const int32_t *wgate_dev = nullptr;
+    if (this->wgate_armed_) {
+      const int E = this->ep_nexperts;
+      const int n_probs_all = msplit_run ? msplit_n_waves * E : num_groups * E * this->n_split;
+      FLUX_CHECK_LE(n_probs_all, this->wgate_dev_.numel()) << "wgate map buffer too small";
+      CUDA_CHECK(cudaEventSynchronize(this->wgate_h2d_event_));
+      int32_t *hw = this->wgate_host_.data_ptr<int32_t>();
+      if (msplit_run) {
+        for (int w = 0; w < msplit_n_waves; w++) {
+          for (int e = 0; e < E; e++) {
+            hw[idx_of[(size_t)w * E + e]] = this->wgate_of_expert_[e];
+          }
+        }
+      } else {
+        // legacy order: sid-outer, group, expert-inner (make_workspace_kernel)
+        const int per_split = num_groups * E;
+        for (int i = 0; i < n_probs_all; i++) {
+          hw[i] = this->wgate_of_expert_[(i % per_split) % E];
+        }
+      }
+      CUDA_CHECK(cudaMemcpyAsync(
+          this->wgate_dev_.data_ptr(), hw, (size_t)n_probs_all * sizeof(int32_t),
+          cudaMemcpyHostToDevice, stream));
+      CUDA_CHECK(cudaEventRecord(this->wgate_h2d_event_, stream));
+      wgate_dev = this->wgate_dev_.data_ptr<int32_t>();
+    }
+
     GemmGroupedV2GatherRSArguments args{
         .problem_sizes = problem_sizes,
         .problem_count = problem_count,
@@ -4212,10 +4320,16 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
                                       : get_rs_threadblock_count()),
         .non_empty_per_group = msplit_run ? msplit_ne_wave_dev : nullptr,
         .prob_group_map =
-            (msplit_run && (msplit_chunk_E > 0 || this->msplit_piece_flags_ > 0))
+            (msplit_run && (msplit_chunk_E > 0 || this->msplit_piece_flags_ > 0|| wgate_reorder))
                 ? msplit_grp_dev
                 : nullptr,
-        .scatter_D_ptr = scatter_D_ptr_ws};
+        .scatter_D_ptr = scatter_D_ptr_ws,
+        .prob_wgate_map = wgate_dev,
+        .weight_signal_ptr = wgate_dev != nullptr
+                                 ? reinterpret_cast<uint64_t const *>(this->wgate_signal_.data_ptr())
+                                 : nullptr,
+        .weight_signal_expected = wgate_dev != nullptr ? this->wgate_epoch_ : 0};
+    this->wgate_armed_ = false;  // one-shot
 
     int64_t workspace_size = gemm_op->get_workspace_size(args);
     this->create_workspace_or_expand(workspace_size);
@@ -4825,6 +4939,14 @@ GemmGroupedV2GatherRSOp::forward_gather_rs(
       std::move(a2av_unique_counts),
       std::move(a2av_wire_csr),
       std::move(a2av_reduce_csr));
+}
+void
+GemmGroupedV2GatherRSOp::set_weight_gate(
+    c10::optional<torch::Tensor> weight_signal,
+    int64_t weight_signal_epoch,
+    std::vector<int64_t> gate_of_expert) {
+  FLUX_CHECK(impl_ != nullptr) << "GemmGroupedV2GatherRSOp not initialized";
+  impl_->set_weight_gate(std::move(weight_signal), weight_signal_epoch, gate_of_expert);
 }
 std::vector<torch::Tensor>
 GemmGroupedV2GatherRSOp::derive_combine_meta(

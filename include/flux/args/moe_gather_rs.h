@@ -160,6 +160,12 @@ struct GemmGroupedV2GatherRSArguments {
   // gen-8c epilogue-fused pack: per-problem D scatter-index pointers (built by
   // make_workspace; identity iota when fused pack is off)
   int **scatter_D_ptr = nullptr;
+  // 3D scheduling (2026-09-08): combine-side weight gate — device
+  // [problem_count] problem -> index into weight_signal_ptr (-1 ungated);
+  // gated problems spin at tile start until signal >= expected. nullptr = off.
+  int const *prob_wgate_map = nullptr;
+  uint64_t const *weight_signal_ptr = nullptr;
+  uint64_t weight_signal_expected = 0;
 };
 
 struct TopKReduceGatherRSArguments {

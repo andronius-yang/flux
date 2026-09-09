@@ -183,6 +183,14 @@ public:
     // gen-8c epilogue-fused pack: per-problem D scatter indices (identity
     // iota in legacy mode — the ScatterD iterator always reads them)
     int **scatter_D_ptr = nullptr;
+    // 3D scheduling (2026-09-08): combine-side weight gate. Per-problem index
+    // into weight_signal_ptr (-1 = ungated). Gated problems (this
+    // iteration's swapped-in slots) spin at tile start until the slot's
+    // landed epoch >= expected — the layer-1 twin of the layer-0 per-slot
+    // gate. nullptr = no gate (bit-exact legacy behaviour).
+    int const *prob_wgate_map = nullptr;
+    uint64_t const *weight_signal_ptr = nullptr;
+    uint64_t weight_signal_expected = 0;
 
     //
     // Methods
@@ -216,7 +224,10 @@ public:
       int *non_problem_count = nullptr,
       int const *non_empty_per_group_ = nullptr,
       int **scatter_D_ptr_ = nullptr,
-      int const *prob_group_map_ = nullptr
+      int const *prob_group_map_ = nullptr,
+      int const *prob_wgate_map_ = nullptr,
+      uint64_t const *weight_signal_ptr_ = nullptr,
+      uint64_t weight_signal_expected_ = 0
     ):
       problem_sizes(problem_sizes),
       problem_count(problem_count),
@@ -240,7 +251,10 @@ public:
       non_empty_problem_count(non_problem_count),
       non_empty_per_group(non_empty_per_group_),
       scatter_D_ptr(scatter_D_ptr_),
-      prob_group_map(prob_group_map_)
+      prob_group_map(prob_group_map_),
+      prob_wgate_map(prob_wgate_map_),
+      weight_signal_ptr(weight_signal_ptr_),
+      weight_signal_expected(weight_signal_expected_)
     {
 
     }
@@ -283,6 +297,9 @@ public:
     int const *non_empty_per_group{nullptr};  // M-split waves; nullptr = uniform
     int **scatter_D_ptr{nullptr};             // per-problem D scatter indices
     int const *prob_group_map{nullptr};       // v2 chunked combine
+    int const *prob_wgate_map{nullptr};       // 3D sched: per-problem weight gate idx
+    uint64_t const *weight_signal_ptr{nullptr};
+    uint64_t weight_signal_expected{0};
     //// added by flux to support barrier ptr /////
 
     //
@@ -315,7 +332,10 @@ public:
       barrier_ptr(args.barrier_ptr),
       non_empty_per_group(args.non_empty_per_group),
       scatter_D_ptr(args.scatter_D_ptr),
-      prob_group_map(args.prob_group_map)
+      prob_group_map(args.prob_group_map),
+      prob_wgate_map(args.prob_wgate_map),
+      weight_signal_ptr(args.weight_signal_ptr),
+      weight_signal_expected(args.weight_signal_expected)
     {
 
     }
@@ -350,6 +370,9 @@ public:
       non_empty_per_group = args.non_empty_per_group;
       scatter_D_ptr = args.scatter_D_ptr;
       prob_group_map = args.prob_group_map;
+      prob_wgate_map = args.prob_wgate_map;
+      weight_signal_ptr = args.weight_signal_ptr;
+      weight_signal_expected = args.weight_signal_expected;
     }
   };
 
@@ -474,6 +497,25 @@ public:
 
       // Compute threadblock-scoped matrix multiply-add
       int gemm_k_iterations = (problem_size.k() + Mma::Shape::kK - 1) / Mma::Shape::kK;
+
+      // 3D scheduling (2026-09-08): combine-side weight gate. A problem whose
+      // expert slot is being swapped in THIS iteration spins here until the
+      // movement stream raised the slot's landed epoch (host-built per-problem
+      // map; the host also orders the moved experts LAST inside every combine
+      // wave, so the persistent fleet drains the unmoved tiles first and this
+      // spin normally finds the signal already up). Writers are NVLink CE
+      // copies + cuStreamWriteValue on the movement stream -> system-scope
+      // acquire; the __syncthreads below publishes to the block. Empty
+      // problems schedule no tiles, so an unsignaled empty slot never hangs.
+      if (params.prob_wgate_map != nullptr && threadIdx.x == 0) {
+        const int wg = params.prob_wgate_map[problem_idx];
+        if (wg >= 0) {
+          cuda::atomic_ref<uint64_t, cuda::thread_scope_system> wsig(
+              const_cast<uint64_t &>(params.weight_signal_ptr[wg]));
+          while (wsig.load(cuda::memory_order_acquire) < params.weight_signal_expected) {
+          }
+        }
+      }
 
       // Wait for all threads to finish their epilogue phases from the previous tile.
       __syncthreads();

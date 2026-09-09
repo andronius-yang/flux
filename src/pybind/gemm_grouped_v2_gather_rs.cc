@@ -135,6 +135,12 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("a2av_wire_csr") = py::none(),
             py::arg("a2av_reduce_csr") = py::none())
         .def(
+            "set_weight_gate",
+            &GemmGroupedV2GatherRSOpCls::set_weight_gate,
+            py::arg("weight_signal") = py::none(),
+            py::arg("weight_signal_epoch") = 0,
+            py::arg("gate_of_expert") = std::vector<int64_t>{})
+        .def(
             "derive_combine_meta",
             &GemmGroupedV2GatherRSOpCls::derive_combine_meta,
             py::arg("splits_gpu"),

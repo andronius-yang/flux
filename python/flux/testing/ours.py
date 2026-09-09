@@ -878,9 +878,13 @@ class OursRunner:
         )
         return self.out_buf[:self._m_this]
 
-    def l1_forward(self, intermediate: torch.Tensor):
+    def l1_forward(self, intermediate: torch.Tensor, gate_kwargs=None):
         if self.plan_overlap:
             torch.cuda.current_stream().wait_event(self._meta_ev)
+        if gate_kwargs is not None:
+            # 3D scheduling: combine-side per-problem weight gate for the
+            # swapped-in experts (one-shot arm, consumed by this forward)
+            self.l1_op.set_weight_gate(**gate_kwargs)
         return self.l1_op.forward_gather_rs(
             intermediate,
             self.w2,

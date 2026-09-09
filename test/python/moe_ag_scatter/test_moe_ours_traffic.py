@@ -215,13 +215,18 @@ def parse_args():
                         " the node subgroup (2026-08-27 baseline); p2p ="
                         " symmetric-heap staging + peer views, cudaMemcpy"
                         " over NVLink + zero-SM landed-signal wait")
-    p.add_argument("--swap_issue", choices=("early", "late", "split"),
+    p.add_argument("--swap_issue", choices=("early", "late", "split",
+                                            "dual"),
                    default="early",
                    help="where the exchange is enqueued: early = in the"
                         " place bracket right after the decision; late ="
                         " after the fused l0 forward is enqueued (moved"
                         " slot's tiles spin until landing); split = w1"
-                        " early, w2 late")
+                        " early, w2 late; dual (3D scheduling, 2026-09-08,"
+                        " --swap_rounds all only) = w1 after the l0"
+                        " enqueue (dispatch side, per-slot GEMM gate) and"
+                        " w2 at l1 start once l0 completed (combine side:"
+                        " l1 per-problem gate + in-wave moved-last)")
     p.add_argument("--swap_overlap", type=int, default=1,
                    help="ABLATION-ONLY knob (2026-09-01). 1 (default) ="
                         " canon: the exchange rides the movement stream"
@@ -545,11 +550,11 @@ def main():
             assert args.swap_overlap or args.swap_issue == "early", (
                 "--swap_overlap 0 (sequential ablation) requires"
                 " --swap_issue early")
-            assert args.swap_rounds == "1" or (
-                args.swap_xport == "p2p"
-                and args.swap_issue == "early"), (
-                "--swap_rounds all needs --swap_xport p2p and"
-                " --swap_issue early")
+            assert args.swap_rounds == "1" or args.swap_xport == "p2p", (
+                "--swap_rounds all needs --swap_xport p2p")
+            assert args.swap_issue != "dual" or args.swap_rounds == "all", (
+                "--swap_issue dual is implemented on the composed"
+                " (--swap_rounds all) lane only")
             from flux.testing import ours_swap as oswap
             _load_g = torch.bincount(tk_dev.reshape(-1),
                                      minlength=args.G).cpu().long()
@@ -1038,7 +1043,8 @@ def main():
                                             args.ffn_hidden_size, args.H,
                                             input_dtype,
                                             args.swap_max_moves,
-                                            TP_GROUP)
+                                            TP_GROUP,
+                                            issue=args.swap_issue)
             else:
                 swap_lane = OursSwapLane(lane, _my_ng, rank, L, cfg.nlp,
                                          args.ffn_hidden_size, args.H,
@@ -1717,12 +1723,24 @@ def main():
                 lane.issue_w2_late()
             intermediate = torch.nn.functional.gelu(l0_out)
             act_end[i].record()
+            _l1_gate = None
             if swap_lane is not None:
                 swap_lane.l1_wait()
+                # 3D scheduling (dual): combine-side phase of the exchange
+                # rides under the l1 GEMM; its swapped-in experts are gated
+                # per problem and ordered last inside every combine wave
+                with _cs_nvtx("swap.issue_l1"):
+                    swap_lane.issue_l1()
+                _l1_gate = swap_lane.l1_gate_kwargs()
             elif lane is not None:
                 lane.join_w2()
             _hbp("l1")
-            out = runner.l1_forward(intermediate)
+            if _l1_gate is not None:
+                out = runner.l1_forward(intermediate, gate_kwargs=_l1_gate)
+            else:
+                out = runner.l1_forward(intermediate)
+            if swap_lane is not None:
+                swap_lane.l1_join()
             e2e_end[i].record()
             if lane is not None and swap_lane is None:
                 # end-of-iteration weight-signal drain (K2-4n stale hang
