@@ -217,7 +217,7 @@ def parse_args():
                         " over NVLink + zero-SM landed-signal wait")
     p.add_argument("--swap_issue", choices=("early", "late", "split",
                                             "dual", "late2", "dual2",
-                                            "late3", "dual3"),
+                                            "late3", "dual3", "dual2s"),
                    default="early",
                    help="where the exchange is enqueued: early = in the"
                         " place bracket right after the decision; late ="

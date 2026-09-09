@@ -729,8 +729,14 @@ class OursSwapAllLane:
         #          set_gemm_start_mark(epoch) arms it) with the zero-SM
         #          cuStreamWaitValue64 — the block starts WITH the GEMM.
         #          Needs attach_ops(l0_op, l1_op).
+        #   dual2s (diagnostic): dual2 + a device-side delay (spin kernel,
+        #          FLUX_OURS_SWAP_W2_DELAY_US) on the movement streams before
+        #          the w2 phase, so the copies land mid-l1-GEMM and the l1
+        #          per-problem gate really spins — without the GEMM-start mark.
         assert issue in ("early", "late", "split", "dual", "late2",
-                         "dual2", "late3", "dual3"), issue
+                         "dual2", "late3", "dual3", "dual2s"), issue
+        import os as _os2
+        self._w2_delay_us = int(_os2.environ.get("FLUX_OURS_SWAP_W2_DELAY_US", "2000"))
         self._l0_op = self._l1_op = None
         self._mark_l0 = self._mark_l1 = None
         self.issue_mode = issue
@@ -952,7 +958,7 @@ class OursSwapAllLane:
         """Call right BEFORE the fused l0 forward is enqueued: records the
         device point at which the stream enters the l0 op (late2/dual2
         phase-start dependency). No-op for the other modes."""
-        if self.issue_mode in ("late2", "dual2"):
+        if self.issue_mode in ("late2", "dual2", "dual2s"):
             self.ev_l0s.record(torch.cuda.current_stream())
         elif self.issue_mode in ("late3", "dual3") and self._active():
             assert self._l0_op is not None, "late3/dual3 need attach_ops()"
@@ -971,7 +977,7 @@ class OursSwapAllLane:
         elif self.issue_mode == "late2":
             self._phase(0, pre_events=(self.ev_l0s,))
             self._phase(1)
-        elif self.issue_mode == "dual2":
+        elif self.issue_mode in ("dual2", "dual2s"):
             self._phase(0, pre_events=(self.ev_l0s,))
         elif self.issue_mode == "late3":
             self._phase(0, pre_mark=self._mark_l0)
@@ -987,9 +993,15 @@ class OursSwapAllLane:
         (ev_l0), so the NVLink block sits under the l1 GEMM + combine wire.
         Correctness: the l1 GEMM gates the swapped-in experts' problems per
         tile (l1_gate_kwargs) and orders them last inside every wave."""
-        if self.issue_mode == "dual2":
+        if self.issue_mode in ("dual2", "dual2s"):
             self.ev_l1s.record(torch.cuda.current_stream())
             if self._active():
+                if self.issue_mode == "dual2s":
+                    # diagnostic delay: ~1.4 GHz SM clock -> cycles
+                    for st in [self.w_stream] + self._xstreams:
+                        st.wait_event(self.ev_l1s)
+                        with torch.cuda.stream(st):
+                            torch.cuda._sleep(int(self._w2_delay_us * 1400))
                 self._phase(1, pre_events=(self.ev_l1s,))
             return
         if self.issue_mode == "dual3":
@@ -1005,7 +1017,7 @@ class OursSwapAllLane:
     def l1_gate_kwargs(self):
         """dual: per-problem combine-side weight gate for the fused l1
         (pad-first slots: local expert 1+dj <-> w2 signal index dj)."""
-        if self.issue_mode not in ("dual", "dual2", "dual3") or not self._in:
+        if self.issue_mode not in ("dual", "dual2", "dual3", "dual2s") or not self._in:
             return None
         gate = [-1] * (self.nlp + 1)
         for (dj, _sr, _ss, _e) in self._in:
@@ -1019,7 +1031,7 @@ class OursSwapAllLane:
         exchange (free — the phase landed under l1's unmoved waves) so the
         next iteration's table/signal writes are ordered after the pulls
         (an EMPTY swapped-in expert schedules no gated tile)."""
-        if self.issue_mode in ("dual", "dual2", "dual3") and self._issued:
+        if self.issue_mode in ("dual", "dual2", "dual3", "dual2s") and self._issued:
             torch.cuda.current_stream().wait_event(self.ev_done)
 
     def gate_kwargs(self):
@@ -1041,7 +1053,7 @@ class OursSwapAllLane:
     def l1_wait(self):
         """w2 landing gate before l1 (early/late/split). dual: no-op — the
         l1 per-problem gate replaces the stream-level join."""
-        if self.issue_mode in ("dual", "dual2", "dual3"):
+        if self.issue_mode in ("dual", "dual2", "dual3", "dual2s"):
             return
         if self._issued:
             torch.cuda.current_stream().wait_event(self.ev_done)

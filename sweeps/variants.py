@@ -3646,6 +3646,9 @@ for _bt, _bargs in (("nr", _ABL_SWAPALL_NR), ("rst", _ABL_SWAPALL_ARGS)):
 _D3 = VARIANTS["ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_gate"]
 VARIANTS["ablation_l01_s2_swapall_rst_3d_dual3_str4_sm16_p2p_r2_gate"] = dict(
     _D3, test_args=[a for a in _D3["test_args"] if a not in ("--sm_margin",)] + ["--sm_margin", "16"])
+VARIANTS["ablation_l01_s2_swapall_rst_3d_dual2s_str4_p2p_r2_gate"] = dict(
+    _D3, env=dict(_D3["env"], FLUX_OURS_SWAP_W2_DELAY_US="2000"),
+    test_args=_3d_args(_D3["test_args"], "dual2s"))
 # str4 twins of the existing early / noov bases on BOTH bases (same-capsule
 # comparators for the 3D arms; early_str4 == the 9/2 swapall_str4 on rst)
 for _bt, _bargs in (("nr", _ABL_SWAPALL_NR), ("rst", _ABL_SWAPALL_ARGS)):
