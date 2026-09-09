@@ -330,3 +330,20 @@ Interim recommendation: **late3** = NVLink block starting WITH the l0 GEMM
 (under GEMM + dispatch puts), total_ms <= early (gate-mode 58.1 vs dual
 58.05 earlier; isolated A/B-5 pending); the two-sided (w2 under l1)
 variant needs the wedge resolved first.
+
+## 11. Capture 3e — late3 timelines (capsule 20260909-112300, 4/4; GEMM-mark gated)
+
+| arm, case | l0 GEMM | NIC puts | swap block | under GEMM / NIC (of busy) |
+|---|---|---|---|---|
+| late3 4str, skewed iter33 | 8.1-24.9 | 7.9-53.9 | **8.1-10.2** (1.3 busy) | 1.4 / 1.4 |
+| late3 4str, mild iter10 | 6.7-22.4 | 6.4-44.0 | 6.6-8.4 (1.3) | 1.2 / 1.3 |
+| late3 4str, efficient iter4 | 6.7-21.6 | 6.4-42.0 | 6.6-7.9 (0.6) | 0.6 / 0.6 |
+| late3 1str, skewed iter33 | 8.0-26.8 | 8.1-51.3 | 8.0-11.1 (1.5) | 1.5 / 1.1 |
+| late3 1str, efficient iter4 | 6.4-21.3 | 6.2-42.6 | 6.5-7.8 (0.6) | 0.6 / 0.6 |
+
+**The GEMM-start mark works:** the NVLink expert-exchange block starts
+with the l0 GEMM kernel (within 0.1 ms) and its entire busy time is
+concurrent with the GEMM and with the inter-node blocking puts — the
+dispatch-side picture the section needs, with the l0 per-slot gate
+absorbing the landing (gate-3 176/176 OK). This is the first capture in
+which "under GEMM / NIC" is non-zero.

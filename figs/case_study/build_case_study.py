@@ -173,12 +173,14 @@ ROWS_CS3 = [
     ("Efficient", "sequential swap",     f"{_RST}_noov_str4_p2p_r2_{PLAIN}", "EFF"),
     ("Efficient", "3D swap (l0-done gate)", f"{_RST}_dual_str4_p2p_r2_{PLAIN}", "EFF"),
     ("Efficient", "3D-scheduled swap",   f"{_RST}_dual2_str4_p2p_r2_{PLAIN}", "EFF"),
+    ("Efficient", "swap under l0 GEMM",  f"{_RST}_late3_str4_p2p_r2_{PLAIN}", "EFF"),
     ("Skewed", "COMET (gated)",          f"l01_allgather_dense_{SCHED}", "SKEW"),
     ("Skewed", "COMET, overlapped",      f"l01_allgather_dense_nogate_c8_{SCHED}", "SKEW"),
     ("Skewed", "swap in host gap",       f"{_RST}_early_str4_p2p_r2_{SCHED}", "SKEW"),
     ("Skewed", "sequential swap",        f"{_RST}_noov_str4_p2p_r2_{SCHED}", "SKEW"),
     ("Skewed", "3D swap (l0-done gate)", f"{_RST}_dual_str4_p2p_r2_{SCHED}", "SKEW"),
     ("Skewed", "3D-scheduled swap",      f"{_RST}_dual2_str4_p2p_r2_{SCHED}", "SKEW"),
+    ("Skewed", "swap under l0 GEMM",     f"{_RST}_late3_str4_p2p_r2_{SCHED}", "SKEW"),
 ]
 
 if __name__ == "__main__":
