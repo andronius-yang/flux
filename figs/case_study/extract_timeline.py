@@ -19,10 +19,10 @@ usage: python figs/case_study/extract_timeline.py <capsule_run_id> \
 import argparse, csv, glob, json, os, re, sqlite3, subprocess, sys
 
 NSYS = "/opt/nvidia/hpc_sdk/Linux_x86_64/25.5/profilers/Nsight_Systems/bin/nsys"
-KQ = ("SELECT s.value, k.start, k.end, k.streamId, k.correlationId FROM CUPTI_ACTIVITY_KIND_KERNEL k "
+KQ = ("SELECT s.value, k.start, k.end, k.streamId, k.correlationId, r.start FROM CUPTI_ACTIVITY_KIND_KERNEL k "
       "JOIN CUPTI_ACTIVITY_KIND_RUNTIME r ON r.correlationId=k.correlationId AND r.globalTid>>24=k.globalPid>>24 "
       "JOIN StringIds s ON s.id=k.shortName WHERE k.globalPid>>24=? AND r.start>=? AND r.start<=? ORDER BY k.start")
-MQ = ("SELECT m.copyKind, m.bytes, m.start, m.end, m.streamId, m.correlationId FROM CUPTI_ACTIVITY_KIND_MEMCPY m "
+MQ = ("SELECT m.copyKind, m.bytes, m.start, m.end, m.streamId, m.correlationId, r.start FROM CUPTI_ACTIVITY_KIND_MEMCPY m "
       "JOIN CUPTI_ACTIVITY_KIND_RUNTIME r ON r.correlationId=m.correlationId AND r.globalTid>>24=m.globalPid>>24 "
       "WHERE m.globalPid>>24=? AND r.start>=? AND r.start<=? ORDER BY m.start")
 NQ = ("SELECT coalesce(s.value, n.text), n.start, n.end, n.globalTid FROM NVTX_EVENTS n "
@@ -65,10 +65,10 @@ def export(rep, out, tag):
 
 def events(cur, pid, s, e, slot_bytes):
     ev = []
-    for n, a, b, st, c in cur.execute(KQ, (pid, s, e)):
+    for n, a, b, st, c, enq in cur.execute(KQ, (pid, s, e)):
         lane, task = classify_kernel(n)
-        ev.append(dict(kind="k", name=n, lane=lane, task=task, t0=a, t1=b, stream=st, cid=c))
-    for ck, by, a, b, st, c in cur.execute(MQ, (pid, s, e)):
+        ev.append(dict(kind="k", name=n, lane=lane, task=task, t0=a, t1=b, stream=st, cid=c, enq=enq))
+    for ck, by, a, b, st, c, enq in cur.execute(MQ, (pid, s, e)):
         kind = MEMCPY_KIND.get(ck, f"copy{ck}")
         if kind == "p2p":
             # swap copies are EXACTLY one bf16 expert slot (verified 9/5: 29,360,128 B on the
@@ -78,7 +78,7 @@ def events(cur, pid, s, e, slot_bytes):
             lane, task = "gpu", "copy.d2d"
         else:
             lane, task = "host", f"copy.{kind}"
-        ev.append(dict(kind="m", name=f"memcpy_{kind}", lane=lane, task=task, bytes=by, t0=a, t1=b, stream=st, cid=c))
+        ev.append(dict(kind="m", name=f"memcpy_{kind}", lane=lane, task=task, bytes=by, t0=a, t1=b, stream=st, cid=c, enq=enq))
     ev.sort(key=lambda x: x["t0"])
     # l0 vs l1 GEMM: by order within the iteration
     n = 0
@@ -160,7 +160,9 @@ def main():
                 rk = dict(node=nid, device=int(dev[0][0]), iters={})
                 for txt, s, e in iters:
                     ev = events(cur, pid, s, e, slot_bytes)
-                    for x in ev: x["t0"] = (x["t0"] - s) / 1e6; x["t1"] = (x["t1"] - s) / 1e6
+                    for x in ev:
+                        x["t0"] = (x["t0"] - s) / 1e6; x["t1"] = (x["t1"] - s) / 1e6
+                        x["enq"] = (x["enq"] - s) / 1e6 if x.get("enq") is not None else None
                     dev_end = max([x["t1"] for x in ev], default=0.0)
                     # host ranges opened inside the iteration bracket (plan.*, swap.*), proxy ranges whose
                     # start falls before the device tail of this iteration
@@ -168,6 +170,15 @@ def main():
                           if t and s0 >= s and s0 <= e and (t.startswith("plan.") or t.startswith("swap."))]
                     pr = [dict(name=t, t0=(s0 - s) / 1e6, t1=(e0 - s) / 1e6) for t, s0, e0, _ in nv
                           if t and re.match(r"i\d+\.", t) and s0 >= s and (s0 - s) / 1e6 <= dev_end]
+                    # 3D scheduling (2026-09-09): tag every swap copy with the host issue
+                    # range that enqueued it (swap.issue_early / issue_late / issue_l1) —
+                    # under dual issue that splits the dispatch-side (w1) block from the
+                    # combine-side (w2) block; both matrices are the same byte size.
+                    issue_r = [h for h in hr if h["name"].startswith("swap.issue")]
+                    for x in ev:
+                        if x["task"] == "nvlink.swap" and x.get("enq") is not None:
+                            ph = [h["name"] for h in issue_r if h["t0"] <= x["enq"] <= h["t1"]]
+                            x["phase"] = ph[0].replace("swap.issue_", "") if ph else "unknown"
                     it = dict(host_ms=(e - s) / 1e6, dev_end_ms=dev_end, events=ev, host_ranges=hr, proxy_ranges=pr)
                     rk["iters"][txt] = it
                     busy = {}
@@ -178,6 +189,23 @@ def main():
                     summ["_lane_nic"] = round(union_busy([(x["t0"], x["t1"]) for x in ev if x["lane"] == "nic"]), 3)
                     summ["_lane_nvlink"] = round(union_busy([(x["t0"], x["t1"]) for x in ev if x["lane"] == "nvlink"]), 3)
                     summ["_bytes_p2p_swap"] = sum(x.get("bytes", 0) for x in ev if x["task"] == "nvlink.swap")
+                    for ph in ("early", "late", "l1"):
+                        iv = [(x["t0"], x["t1"]) for x in ev if x["task"] == "nvlink.swap" and x.get("phase") == ph]
+                        if iv:
+                            summ[f"_swap_{ph}_ms"] = round(union_busy(iv), 3)
+                            summ[f"_swap_{ph}_t0"] = round(min(a for a, _ in iv), 3)
+                            summ[f"_swap_{ph}_t1"] = round(max(b for _, b in iv), 3)
+                    # overlap of the swap copies with the GEMMs / NIC puts (ms of swap busy time
+                    # during which a GEMM kernel / a put kernel was also running)
+                    def _ov(cls):
+                        segs = [(x["t0"], x["t1"]) for x in ev if x["task"].startswith(cls)]
+                        sw = [(x["t0"], x["t1"]) for x in ev if x["task"] == "nvlink.swap"]
+                        tot = 0.0
+                        for a0, a1 in sw:
+                            tot += union_busy([(max(a0, b0), min(a1, b1)) for b0, b1 in segs if min(a1, b1) > max(a0, b0)])
+                        return round(tot, 3)
+                    summ["_swap_under_gemm_ms"] = _ov("gemm")
+                    summ["_swap_under_nic_ms"] = _ov("nic.put")
                     summ["_bytes_p2p_token"] = sum(x.get("bytes", 0) for x in ev if x["task"] == "nvlink.token")
                     summ["_host_swap_ms"] = round(union_busy([(h["t0"], h["t1"]) for h in hr if h["name"].startswith("swap.")]), 3)
                     summ["_host_plan_ms"] = round(union_busy([(h["t0"], h["t1"]) for h in hr if h["name"].startswith("plan.")]), 3)
