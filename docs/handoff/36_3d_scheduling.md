@@ -347,3 +347,27 @@ concurrent with the GEMM and with the inter-node blocking puts — the
 dispatch-side picture the section needs, with the l0 per-slot gate
 absorbing the landing (gate-3 176/176 OK). This is the first capture in
 which "under GEMM / NIC" is non-zero.
+
+## 12. A/B-5 (late3 vs early, capsule 20260909-112822, 6/6) + dual3 diagnostics
+
+| arm (rst base) | S-C med | S-C mean | proLaw | plain med | l0 / l1 / place |
+|---|---|---|---|---|---|
+| early, 4 streams | 53.30 | 54.29 | 61.5 | 47.40 | 21.11 / 27.18 / 2.21 |
+| **late3**, 4 streams | **52.27** | **52.83** | 58.7 | **47.12** | 20.99 / 27.01 / 1.40 |
+| late3, 1 stream | 52.46 | 53.17 | 58.8 | 47.43 | 21.23 / 27.11 / 1.39 |
+
+With the copies genuinely under the l0 GEMM + dispatch puts (§11), late3
+is still at or below the host-gap issue point everywhere (l0 unchanged):
+the GEMM absorbs the 8-slot landing through the per-slot gate.
+
+dual3 diagnostics (window 58113504): `sm_margin 16` still wedges
+(capsule 20260909-113515) -> not SM starvation; `dual2s` (dual2 + 2 ms
+device delay before the w2 phase, so the l1 per-problem gate REALLY
+spins, no mark) passes 144/144 (capsule 20260909-113951; l1 31.1 vs 29.2
+= the induced wait) -> the l1 gate + in-wave moved-last are correct under
+real spin. The remaining difference is the l1 MARK WAIT: at l0 the wait
+is enqueued after the mark's memcpy is queued (late3, proven); at l1 the
+wait was enqueued BEFORE the forward that queues the memcpy. Round 3d:
+dual3 now arms the mark in issue_l1 and enqueues the w2 phase right AFTER
+the l1 forward (`issue_l1_post`), the l0 order. Gate-3d -> capture 3d ->
+A/B-6 on job 58114879.
