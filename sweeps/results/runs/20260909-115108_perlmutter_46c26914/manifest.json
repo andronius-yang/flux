@@ -1,0 +1,682 @@
+{
+  "artifacts": [
+    {
+      "bytes": 10087,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_000.jsonl",
+      "sha256": "d4ea398ad739219ca392a92334acaf654b67d22b3a447eae7e7eeef93ca47d07"
+    },
+    {
+      "bytes": 10091,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_001.jsonl",
+      "sha256": "cbf099f0ec101e2382d40b99e007568f28cbcd33fc096e542cc8683071136b13"
+    },
+    {
+      "bytes": 10089,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_002.jsonl",
+      "sha256": "7c64be8958dbb0445d6d039260c52c402b0c21a11f7589a0343c48eb9eb95d3e"
+    },
+    {
+      "bytes": 10102,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_003.jsonl",
+      "sha256": "0d07c936d0ba92cf3819aa95f75829084d47ee9831bd1dcbe3cd6b8f5f1828b3"
+    },
+    {
+      "bytes": 10093,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_004.jsonl",
+      "sha256": "95b3cbc79fbcc94252d6823ee5667266bc0cb319d6a0f87bcd86a0227b10ee21"
+    },
+    {
+      "bytes": 10098,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_005.jsonl",
+      "sha256": "2c4c83d4b42c05ea9e7503bba760e18c0ef0a4308d537546ff1b65161c59d6e3"
+    },
+    {
+      "bytes": 10093,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_006.jsonl",
+      "sha256": "c2f9ac4a4e69dfd3a5d4c38d6032739719c680b39eb146690d377812417a199f"
+    },
+    {
+      "bytes": 10083,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_007.jsonl",
+      "sha256": "d67c758a46fa396ff28c47140566ac00e61f7158841388d793f3be9a2eaf2b34"
+    },
+    {
+      "bytes": 10108,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_008.jsonl",
+      "sha256": "1fe882d1b5eb8b104ed8786b197822ab92c75adab8f01121c7f15df64ddf4ee9"
+    },
+    {
+      "bytes": 10098,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_009.jsonl",
+      "sha256": "ab4ab89fc789b73ca202e0eb1361277462c1e260eee5b78388c4737329a152c4"
+    },
+    {
+      "bytes": 10083,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_010.jsonl",
+      "sha256": "a57faadbaae79c25308189d618b5b13d8e92ea4a123db808a1f6e58ff2c5097e"
+    },
+    {
+      "bytes": 10092,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_011.jsonl",
+      "sha256": "de44973cc9261af63c4be2677c7806b5378fdb3ab4a84a0e55d81ee8bf830586"
+    },
+    {
+      "bytes": 10103,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_012.jsonl",
+      "sha256": "3d2b99ef5f62e0a33e212e6884e9a009661904c6a7f7bcaa46f60ef0987e4974"
+    },
+    {
+      "bytes": 10094,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_013.jsonl",
+      "sha256": "1c99d5c330bde588a7540d68bef8771a89aaed1ac00df7b4c31774e56eb68db3"
+    },
+    {
+      "bytes": 10103,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_014.jsonl",
+      "sha256": "2c26f235b90f04f50dbda28910834d627ea8294e2ec0d8b7530bbc5658fb72be"
+    },
+    {
+      "bytes": 10106,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_015.jsonl",
+      "sha256": "73437f0b9f93ef4ca3264226d1122a985aab3afe0f2001c94968f44374b4de49"
+    },
+    {
+      "bytes": 13132800,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/nsys/node0_58114879.nsys-rep",
+      "sha256": "9217a8b19ffa798bc949c5ab873bea915c682917e3695366ffb760bab4380c50"
+    },
+    {
+      "bytes": 13297122,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/nsys/node1_58114879.nsys-rep",
+      "sha256": "a29a931cb689ee9551b992d5dd4ed54b1cd2081f461b2eb319ab96f8d8be0600"
+    },
+    {
+      "bytes": 13600470,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/nsys/node2_58114879.nsys-rep",
+      "sha256": "30c61b2ff745ad25b1a625764561102994f9bf5ede8b27fbda2c32026556f8bd"
+    },
+    {
+      "bytes": 12660805,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/nsys/node3_58114879.nsys-rep",
+      "sha256": "eff17ee00f0ef01d7ecb280f9638ab73ecec028a5447d4d1fb36e944b24246fe"
+    },
+    {
+      "bytes": 10102,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_000.jsonl",
+      "sha256": "3c80344b889b3822cdbef177f882e42d0e20ef42b66d10e9281797c6e6870855"
+    },
+    {
+      "bytes": 10073,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_001.jsonl",
+      "sha256": "475ff436061688f97f46eae78f99672af500f3d45fddd7bcd1a5e6fe8ddfd727"
+    },
+    {
+      "bytes": 10085,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_002.jsonl",
+      "sha256": "d1b2fc9372c5469633fc847520565e428b7dc565481c64d42c46eb8407d1f179"
+    },
+    {
+      "bytes": 10081,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_003.jsonl",
+      "sha256": "a0942240827216e7b68538b33461ad0d91cddd8779980d53014be02d140f398d"
+    },
+    {
+      "bytes": 10104,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_004.jsonl",
+      "sha256": "9298471125d4d01a4f569c71c361548d85b83c2803409de651b6925a4a043265"
+    },
+    {
+      "bytes": 10090,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_005.jsonl",
+      "sha256": "9bdf564cecffd99d454d20d84ecef6b80d2942a93fdf598f7994d02eaf18c088"
+    },
+    {
+      "bytes": 10114,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_006.jsonl",
+      "sha256": "b7dcd5fe3fdcf41aa3a8e68a76200a9a3c4a1d7c63f66bd81fbeb14fc2398c51"
+    },
+    {
+      "bytes": 10098,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_007.jsonl",
+      "sha256": "ab6c15707f82895e3786aadd70a037b666dea3640253925dba2f0de387224d28"
+    },
+    {
+      "bytes": 10084,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_008.jsonl",
+      "sha256": "b0392d83162f597402d65872e322540416fd4e7be6d71fee5e7b7c79e129599e"
+    },
+    {
+      "bytes": 10106,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_009.jsonl",
+      "sha256": "c6df321a136ea13f64e06f2ea89fea1751218fbd8a96e3e2e7cda5640c598527"
+    },
+    {
+      "bytes": 10113,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_010.jsonl",
+      "sha256": "ad1db8a70081a800f396506ff32581f0c77f3d043ee827fe1bc0c17724751abf"
+    },
+    {
+      "bytes": 10107,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_011.jsonl",
+      "sha256": "f64e8c145f8a5e240cf40398bf54901ffb677c4ae46c499a3b7092e55dd88536"
+    },
+    {
+      "bytes": 10088,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_012.jsonl",
+      "sha256": "28a1f61a35c66b8f45c8cb0b3bc58417fcd9fc5b81b4c11476efe46057fd9287"
+    },
+    {
+      "bytes": 10074,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_013.jsonl",
+      "sha256": "3f0a183d98da466965761584b3269abcdaff846a171afb4deb68347e35a51641"
+    },
+    {
+      "bytes": 10090,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_014.jsonl",
+      "sha256": "a3da8232834c67eb2ded3d15d8accfd204907eb3636f4e37e50a656516b0916a"
+    },
+    {
+      "bytes": 10101,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_015.jsonl",
+      "sha256": "41c36d9404f060adc2b9dd5921ca2a5013ebb3652ce75c8f87879578831a7c4b"
+    },
+    {
+      "bytes": 13060591,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/nsys/node0_58114879.nsys-rep",
+      "sha256": "5be1918b20914825c4336245541da462492a8611068930af894d00c8d67f3100"
+    },
+    {
+      "bytes": 13017565,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/nsys/node1_58114879.nsys-rep",
+      "sha256": "117d9596cafad13e7e9bddf81e9d0ed805f99a411f59d95064af6abe4936819a"
+    },
+    {
+      "bytes": 13311021,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/nsys/node2_58114879.nsys-rep",
+      "sha256": "2f090cfaccbc94ee4a15390507ad8157ae8dddb606aa561f129c44d347d3b81b"
+    },
+    {
+      "bytes": 12716113,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys/nsys/node3_58114879.nsys-rep",
+      "sha256": "18bbe6247d966d715bbb52e87c2925d6ba23ffed2481b5548e2324322855cf6d"
+    },
+    {
+      "bytes": 10051,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_000.jsonl",
+      "sha256": "8ccf01411dbf41c29dd3df122f30afeb04ec11c8464b1a8f2bd5421bdfee225a"
+    },
+    {
+      "bytes": 10047,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_001.jsonl",
+      "sha256": "1482d8043785a831901e9ff112201892582e19cdf81895bd2d2cea395162999b"
+    },
+    {
+      "bytes": 10053,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_002.jsonl",
+      "sha256": "1fa11a8ff3abab5f8b6efac3bf8d22b7bb9d78df66ed01d5d3b212d74224d79b"
+    },
+    {
+      "bytes": 10062,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_003.jsonl",
+      "sha256": "634b18c9fdc84151ec54546c3f82c415ed30992e385082e5833fe25146dac8ed"
+    },
+    {
+      "bytes": 10048,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_004.jsonl",
+      "sha256": "ff6b34899ada074cde34c325a4f33861203e21fd19fd15930c1f4b4975296d29"
+    },
+    {
+      "bytes": 10037,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_005.jsonl",
+      "sha256": "71409eb29891382a2e4c0238e621670adef1eaf58be1186e91eb921d6f2503af"
+    },
+    {
+      "bytes": 10073,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_006.jsonl",
+      "sha256": "4a88ef3f413ec72c53553b5771667c2c110966d1de36fd14c3c22b22e02c36dc"
+    },
+    {
+      "bytes": 10052,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_007.jsonl",
+      "sha256": "bdaf029507fe7727a2a1fd064813a4e97415f08b6fa57ef61a37703a0085271a"
+    },
+    {
+      "bytes": 10072,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_008.jsonl",
+      "sha256": "be6aaaf19590531b32fcd3ad2f0c9b283093ccde6f68ea08bc8840cedb0b0c9b"
+    },
+    {
+      "bytes": 10049,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_009.jsonl",
+      "sha256": "3fd9e422a879536113ae8f69b9f56e8e4caea4fff0aee21ef61459a540ffc2fc"
+    },
+    {
+      "bytes": 10060,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_010.jsonl",
+      "sha256": "b7b424fd92eddb0e171e5b3d20f0b10d73ef8ae807058a4ac0bce2ff9e651c3a"
+    },
+    {
+      "bytes": 10061,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_011.jsonl",
+      "sha256": "bc779cff777586ea0694fee1eacf1c94d7bfe3efe86b5658affd9df863398353"
+    },
+    {
+      "bytes": 10072,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_012.jsonl",
+      "sha256": "50529d598377d590e2f39c1ba4fdcc25274b30192ac2060e682a1241b14a5a46"
+    },
+    {
+      "bytes": 10046,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_013.jsonl",
+      "sha256": "e5cb3ea7bb01e6f17655c87d09e97fb42db8e4751bbe2e07827c2b921402351f"
+    },
+    {
+      "bytes": 10064,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_014.jsonl",
+      "sha256": "98beaaf4d48680be75a2f8713184daf5faa1021a7e15b2109b570a54ed4e4117"
+    },
+    {
+      "bytes": 10064,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/records/rank_015.jsonl",
+      "sha256": "f1849172f0770b3b45b83db01098bbb391233ea0c3f227719b533177e2e2643f"
+    },
+    {
+      "bytes": 12980568,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/nsys/node0_58114879.nsys-rep",
+      "sha256": "75de2a3f6b89873795eb98cac6c8971d2cae6308ad87859c2951648c580555fa"
+    },
+    {
+      "bytes": 12811539,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/nsys/node1_58114879.nsys-rep",
+      "sha256": "1b96558fd7d15162206c31da8d8812233268f7bc0c3ccfaf3a0e2f910b838421"
+    },
+    {
+      "bytes": 13463626,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/nsys/node2_58114879.nsys-rep",
+      "sha256": "f86f02176000301f1b08fa7fdc1299bac2ddf49ca239496f0b5eacc8aedef8b0"
+    },
+    {
+      "bytes": 13177596,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys/nsys/node3_58114879.nsys-rep",
+      "sha256": "991912a85c0b6bcaa2620352743fc04823a3c3bbbc389d724b99a823385040e7"
+    },
+    {
+      "bytes": 4695,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_000.jsonl",
+      "sha256": "8a92db2df686712b2b47bea178fb79613f35be1407fff73d53a7bd5475d60b47"
+    },
+    {
+      "bytes": 4692,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_001.jsonl",
+      "sha256": "5cd4cc1af07cbf1c6be57c4a8ec45ebc02858b1599a1bbaec2368a2fce6b9fec"
+    },
+    {
+      "bytes": 4692,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_002.jsonl",
+      "sha256": "c9d98e62450acb9777fbbcb918b8319341f92f324b43283a796697ef9de3d8c1"
+    },
+    {
+      "bytes": 4694,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_003.jsonl",
+      "sha256": "45e27813e25a289477e97b04b487ed751fe99b672ced3f0ed3a4418584eac972"
+    },
+    {
+      "bytes": 4690,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_004.jsonl",
+      "sha256": "eb3dc7892b4fdb063cf930e941620258b571a1f8c5a4a600acd5b87b67dfcd78"
+    },
+    {
+      "bytes": 4688,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_005.jsonl",
+      "sha256": "67e8cb036eaf25bfa0e869d46e407d1f5e54a393ff6f74e6ef1578a3f962b9db"
+    },
+    {
+      "bytes": 4696,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_006.jsonl",
+      "sha256": "d8306d5e91c6204928cf28ae546ab1fe7383d17e1ac72eab1acef38135990edd"
+    },
+    {
+      "bytes": 4694,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_007.jsonl",
+      "sha256": "bbd59d4e6a86305a21807fb9bb2c77c070c1cc8c236252d9e2d8634b8d0aa7a1"
+    },
+    {
+      "bytes": 4698,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_008.jsonl",
+      "sha256": "387cf3c753ef240c0c070eecd6990d18f4025ca0f9ff3d323bd20998adc180e3"
+    },
+    {
+      "bytes": 4694,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_009.jsonl",
+      "sha256": "0d8a3a1ae3ea8e7cc09c296b2dd1fa13c00c30a02be61a113364d92b19e28479"
+    },
+    {
+      "bytes": 4695,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_010.jsonl",
+      "sha256": "af57fb37aeda397c003c952bbd2a6d835dea1ea038720d1b3e0f459585185a3e"
+    },
+    {
+      "bytes": 4693,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_011.jsonl",
+      "sha256": "0e61158be5f2a3813da4341aa20eb58c54d5d4db749b0c06c5e7a8d10fed646b"
+    },
+    {
+      "bytes": 4696,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_012.jsonl",
+      "sha256": "d3eb5d7c416af0eff47bb6e3edda8ef3b3efccd93d4173231ccff02d75f0cd83"
+    },
+    {
+      "bytes": 4697,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_013.jsonl",
+      "sha256": "b5569188fd37bbd9b4ba9c215bd88f7e1c175a6fe9472a5ed417fc99fecc3896"
+    },
+    {
+      "bytes": 4699,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_014.jsonl",
+      "sha256": "b17223f333e79d999b72e974818e5bd7482c20e858dd844b5d7907eef8323de8"
+    },
+    {
+      "bytes": 4692,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_015.jsonl",
+      "sha256": "a4e1bb0ece2a519cde76fc03b50659e285ff5ca6237c1d54cd34ea373e686922"
+    },
+    {
+      "bytes": 3862631,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/nsys/node0_58114879.nsys-rep",
+      "sha256": "f468863128baadf377bc7303e53c1cfb9bfe6d2f986cc532675c99f708d920ea"
+    },
+    {
+      "bytes": 4044722,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/nsys/node1_58114879.nsys-rep",
+      "sha256": "3d24f51590a816e5a5d79d60fa9c6e9db790d8d1c466812fbef4476997f0bb60"
+    },
+    {
+      "bytes": 3912517,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/nsys/node2_58114879.nsys-rep",
+      "sha256": "84e4055d875ea5edf7ec711a2073f8d5010b45078d7f45642f5f8508295216a4"
+    },
+    {
+      "bytes": 3981186,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys/nsys/node3_58114879.nsys-rep",
+      "sha256": "a88c27875ccc73fb05ed0d5edfb2948756ec53afdc712fb89fac64457bf14277"
+    },
+    {
+      "bytes": 4695,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_000.jsonl",
+      "sha256": "b6879f1daf092e84a766a9a616bb68f92b249ea62a6cc9f75f180c2a25e53e55"
+    },
+    {
+      "bytes": 4692,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_001.jsonl",
+      "sha256": "d135ab7d77f8582be1e7bfe5acff0e02c1eac1e266ca2b0efb637aede75e6ff6"
+    },
+    {
+      "bytes": 4698,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_002.jsonl",
+      "sha256": "966192c5e3a635d4937edb478f04df61378f5e3b7f1124503dfd8476d719cff3"
+    },
+    {
+      "bytes": 4688,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_003.jsonl",
+      "sha256": "a9f5c70ad4b0d26e3634fddac25f5bd54170b70a71e170e8e604bd8ef80a2d55"
+    },
+    {
+      "bytes": 4691,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_004.jsonl",
+      "sha256": "c3430f1ffa2686fd7db28f44b2ef6b6dbf02aabff8436568b15012e2f6ad2301"
+    },
+    {
+      "bytes": 4693,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_005.jsonl",
+      "sha256": "20c16706fa19feb10f6f008497096526fc3b3ab07d79d1c6f31f71a5f3e9c73b"
+    },
+    {
+      "bytes": 4696,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_006.jsonl",
+      "sha256": "6543fa51a6c2ab69ee822f890d1991fbd9f14e6da95b08d2de202970a0e96ac5"
+    },
+    {
+      "bytes": 4697,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_007.jsonl",
+      "sha256": "a289654438db79d3ac4024ed1a6bc24ed388a4ca828f33bbd703b9ac222f799b"
+    },
+    {
+      "bytes": 4697,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_008.jsonl",
+      "sha256": "af8d5d1c7e638d0829a4b150022e84be18bf18cbda1ed2fc813b13b541f64337"
+    },
+    {
+      "bytes": 4695,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_009.jsonl",
+      "sha256": "b819d91a16b90c713fe4d5efb941b1e15b95835f861a9ed2452feab72983c848"
+    },
+    {
+      "bytes": 4696,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_010.jsonl",
+      "sha256": "6c6baaa61a81a75bfa9e9b9a8cd74f7c986a71bf04d4428d7dcd021a25535ca7"
+    },
+    {
+      "bytes": 4701,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_011.jsonl",
+      "sha256": "fe616bab47dd8f48eddf7e5812222893fd87b65c7ea998ece607fe83da7efebf"
+    },
+    {
+      "bytes": 4698,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_012.jsonl",
+      "sha256": "06541dd2e808e836d396df6b44f14c0c2d15e5d4bb02289234a547ea2ddcf925"
+    },
+    {
+      "bytes": 4702,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_013.jsonl",
+      "sha256": "11dc9fd8050f789036a758fa6137c6d2351ff026a7801b2bf8b7769a22c67a67"
+    },
+    {
+      "bytes": 4695,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_014.jsonl",
+      "sha256": "e1b8965e91d01cf58dc322754c3c86ef6c15db993a6e294fbce26d9fdf25ce38"
+    },
+    {
+      "bytes": 4694,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/records/rank_015.jsonl",
+      "sha256": "302855529c6f756f98fefd352d76ac2610c51e7636bf604d2918f0e848c9b343"
+    },
+    {
+      "bytes": 3867282,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/nsys/node0_58114879.nsys-rep",
+      "sha256": "70a11bfe092f5784fb8b084c3ec6fa92f5fe643cbbc3c2c3981b0aea41584ea9"
+    },
+    {
+      "bytes": 4029948,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/nsys/node1_58114879.nsys-rep",
+      "sha256": "08a01047be5c142cf5eebb3d30e145281878971bf21e6a89a7a47a693f9359b4"
+    },
+    {
+      "bytes": 3926081,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/nsys/node2_58114879.nsys-rep",
+      "sha256": "f78ab0340dfe9a6bf0be0514768ec5de0d4348b9edd8c3ece05adff704c99519"
+    },
+    {
+      "bytes": 3955614,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys/nsys/node3_58114879.nsys-rep",
+      "sha256": "22ad0d80523a05f0fc61c79742442a53972fe2640cac95c7c5fc096d94e9b6a0"
+    },
+    {
+      "bytes": 4651,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/records/rank_000.jsonl",
+      "sha256": "3f83611a1a134f9a06c677aa9d411af7eb368d7736e482c847731798acdfcf2b"
+    },
+    {
+      "bytes": 4656,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/records/rank_001.jsonl",
+      "sha256": "57ab507418486a1d151bc2b4902ee13f88ce454d4899623be6541c990758228f"
+    },
+    {
+      "bytes": 4658,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/records/rank_002.jsonl",
+      "sha256": "e3fa267b3ea4147ecc3c61648f4fa97832556102565efeb6962797eda0610592"
+    },
+    {
+      "bytes": 4654,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/records/rank_003.jsonl",
+      "sha256": "896570c511f673e47052579e58c33c80ee3fa4530e6509c5f8fc9507cd006f42"
+    },
+    {
+      "bytes": 4655,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/records/rank_004.jsonl",
+      "sha256": "35023d6c1aa1a30db64f3c0b497188426e460fdd77103277a9bb37658d31cde1"
+    },
+    {
+      "bytes": 4656,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/records/rank_005.jsonl",
+      "sha256": "b09ec9841868a67803c245c1d3d08f72ab66d4deb75deb2f6b58f83729c4d142"
+    },
+    {
+      "bytes": 4656,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/records/rank_006.jsonl",
+      "sha256": "c5d351c8505551067c1032c9857739d587895d90bcc6aa66178d3e1265ab7d8e"
+    },
+    {
+      "bytes": 4654,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/records/rank_007.jsonl",
+      "sha256": "c49ad7b2147fdcbd356229a891c3a2cc856f6c590cff20844a077067ad8ed678"
+    },
+    {
+      "bytes": 4656,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/records/rank_008.jsonl",
+      "sha256": "14cfe318ee75dc050da3d39f6fecb03c158dd8f9296fd95911693e8795e1a7f7"
+    },
+    {
+      "bytes": 4655,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/records/rank_009.jsonl",
+      "sha256": "e89ed83f085ddfb9cf12ee4d14585a37f9f8b3dc5a11f7976a541daedb41deba"
+    },
+    {
+      "bytes": 4656,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/records/rank_010.jsonl",
+      "sha256": "abf831d79413535c9e7bb9ee60307cf4ac612a8ab35cda63bcf6a5a6c97c20b6"
+    },
+    {
+      "bytes": 4661,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/records/rank_011.jsonl",
+      "sha256": "805f838a84ecb3b8c4b41b65e0c71f65a8627ac7e459e95f0b2878b18e5fb8cd"
+    },
+    {
+      "bytes": 4657,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/records/rank_012.jsonl",
+      "sha256": "64b7dda43be64f48cd714beaf94c0e143882f16a844f9e6833d8fd8350690032"
+    },
+    {
+      "bytes": 4660,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/records/rank_013.jsonl",
+      "sha256": "a4c94625da6b26d07c833bca08b901285da882a6c1c80de0e33c3c37abf3143d"
+    },
+    {
+      "bytes": 4658,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/records/rank_014.jsonl",
+      "sha256": "5e943d28a2ad7d94524bccc0387295dc517f8199da113626c43cf16d928dfcf4"
+    },
+    {
+      "bytes": 4662,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/records/rank_015.jsonl",
+      "sha256": "33c064f037170639c7abbb0cbc0c758246cd438d604e2c33923ef64dd4dfa3dd"
+    },
+    {
+      "bytes": 3889009,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/nsys/node0_58114879.nsys-rep",
+      "sha256": "75fe5f82e233badd2b53ed0648afb7e31c22800b02de681602349fd0ec61214e"
+    },
+    {
+      "bytes": 4094999,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/nsys/node1_58114879.nsys-rep",
+      "sha256": "7497380a89e2e3cbbe7a4bcb6baac911d634cf5cf7c5b25ffce5e826f8657718"
+    },
+    {
+      "bytes": 3859883,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/nsys/node2_58114879.nsys-rep",
+      "sha256": "d491dcd6c3741909e6cb0c835da3e833a6895646097f2aee2528b9479d447b13"
+    },
+    {
+      "bytes": 3979473,
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys/nsys/node3_58114879.nsys-rep",
+      "sha256": "93c5e88422940edd38294c610e19b4f953b2dd7c4ebe45f36e9a1d70d195faab"
+    }
+  ],
+  "capabilities": {
+    "FLUX_A2AV_DISPATCH_ONLY_TAG": true,
+    "FLUX_A2AV_EARLY_LAUNCH": true,
+    "FLUX_A2AV_FUSED_STAGE2": true,
+    "FLUX_A2AV_LB_UNION": true,
+    "FLUX_A2AV_NSPLIT_HONOR_TAG": true,
+    "FLUX_A2AV_RS_BUCKET_TAG": true,
+    "FLUX_A2AV_RS_CTA_1086_TAG": true,
+    "FLUX_A2AV_RS_FUSED_PACK_TAG": true,
+    "FLUX_A2AV_RS_MAX_CONV_ROWS": true,
+    "FLUX_A2AV_RS_MAX_SEND_ROWS": true,
+    "FLUX_A2AV_RS_MAX_WIRE_ROWS": true,
+    "FLUX_A2AV_RS_MSPLIT_TAG": true,
+    "FLUX_A2AV_RS_WIRE_STREAMS_DEFAULT16_TAG": true,
+    "FLUX_A2AV_SLIPSTREAM2_TAG": true,
+    "FLUX_A2AV_WAVE_PACK_TAG": true,
+    "FLUX_PLACELAMBDA_ROUTE_SL_TAG": true,
+    "nsys": "NVIDIA Nsight Systems version 2025.3.1.90-253135822126v0"
+  },
+  "cells": [
+    {
+      "cell_id": "ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-b549f7_b64_k8_nsys",
+      "status": "ok"
+    },
+    {
+      "cell_id": "ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-b549f7_b64_k8_nsys",
+      "status": "ok"
+    },
+    {
+      "cell_id": "ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-b549f7_b64_k8_nsys",
+      "status": "ok"
+    },
+    {
+      "cell_id": "ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2_trace-610042_b64_k8_nsys",
+      "status": "ok"
+    },
+    {
+      "cell_id": "ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_nsys",
+      "status": "ok"
+    },
+    {
+      "cell_id": "ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys",
+      "staging": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914/cells/ablation_l01_s2_swapall_rst_3d_dual3_p2p_r2_trace-610042_b64_k8_nsys",
+      "status": "ok"
+    }
+  ],
+  "created": "2026-09-09T11:59:47Z",
+  "flux_libs": [
+    {
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/flux-3dsched/python/flux/lib/libflux_cuda.so",
+      "sha256": "a7b4dcae9cb34087c241ff3ac328e9b9b62ec4fde054bba936060ce9ed290bde"
+    },
+    {
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/flux-3dsched/python/flux/lib/libflux_cuda_ths_op.so",
+      "sha256": "d3bb40c779fa3d63caf8c8f0de46125b784e60a0e95f9478d35548a6cadaf6eb"
+    },
+    {
+      "path": "/pscratch/sd/y/yufeid/workspace/andrewy/flux-3dsched/python/flux_ths_pybind.cpython-311-x86_64-linux-gnu.so",
+      "sha256": "cf8d87f2f956e1201f3b1327880d1a1f8360fcaa3c6f40139207b70b05116b67"
+    }
+  ],
+  "git": {
+    "dirty": false,
+    "sha": "f238f42810cb33d9cb062a66d978a7b4cb37fe96"
+  },
+  "host": "login32",
+  "platform": {
+    "fabric": "cxi",
+    "name": "perlmutter",
+    "ranks_per_node": 4
+  },
+  "run_id": "20260909-115108_perlmutter_46c26914",
+  "staging_root": "/pscratch/sd/y/yufeid/workspace/andrewy/sweep_data/20260909-115108_perlmutter_46c26914"
+}

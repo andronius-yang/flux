@@ -1,0 +1,32 @@
+G: 384
+H: 7168
+budgets_mib:
+  - 64
+chunk_bytes: 14336
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy;sched=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy+mmlu/professional_law;dwell=4"
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+ffn_hidden: 2048
+idle_timeout_s: 900
+iters: 32
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 7
+nodes: 4
+notes: "abl3d A/B-5 9.9: RESET-EVERY base, isolated; GEMM-mark-gated late3 (4 / 1 streams) vs early (dual3 excluded: l1-mark wedge)"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+shape: k2
+skip_correctness: true
+sm_margin: 8
+timeout_s: 2400
+topk: 8
+variants:
+  - ablation_l01_s2_swapall_rst_3d_early_str4_p2p_r2
+  - ablation_l01_s2_swapall_rst_3d_late3_str4_p2p_r2
+  - ablation_l01_s2_swapall_rst_3d_late3_p2p_r2
+warmup_iters: 5
