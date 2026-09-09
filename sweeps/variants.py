@@ -3640,6 +3640,12 @@ for _bt, _bargs in (("nr", _ABL_SWAPALL_NR), ("rst", _ABL_SWAPALL_ARGS)):
             VARIANTS[_name + "_gate"] = dict(
                 VARIANTS[_name],
                 test_args=VARIANTS[_name]["test_args"] + ["--check_iters", "1"])
+# dual3 wedge diagnostics (2026-09-09 gate-3: all ranks park in the first l1
+# with the w2 phase gated on the l1 GEMM-start mark): larger SM margin (does
+# an SM-starved stream memop / copy unblock it?) and l0-only dual3 twin.
+_D3 = VARIANTS["ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_gate"]
+VARIANTS["ablation_l01_s2_swapall_rst_3d_dual3_str4_sm16_p2p_r2_gate"] = dict(
+    _D3, test_args=[a for a in _D3["test_args"] if a not in ("--sm_margin",)] + ["--sm_margin", "16"])
 # str4 twins of the existing early / noov bases on BOTH bases (same-capsule
 # comparators for the 3D arms; early_str4 == the 9/2 swapall_str4 on rst)
 for _bt, _bargs in (("nr", _ABL_SWAPALL_NR), ("rst", _ABL_SWAPALL_ARGS)):
