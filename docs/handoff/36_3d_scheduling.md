@@ -102,7 +102,41 @@ Verdict: within noise (spread ~1.4 ms S-C, ~0.6 plain) — the nr base cannot
 discriminate issue modes and would show ~no NVLink in the figure. The
 user's "8 swaps" requirement is met by the RESET-EVERY base (A/B-2, §6).
 
-## 6. A/B-2 on the RESET-EVERY base — TBD
+## 6. A/B-2 on the RESET-EVERY base (capsule 20260909-072958_perlmutter_7d007d60, 12/12 ok)
+
+`swapall_rst`: the placement is restored to the oracle basis before EVERY
+timed iteration, so every iteration carries the full composed orbit (the
+9/2 nsys proxy; 253 global swaps/iter on the proLaw block). K2 4n b64,
+isolated, rank-max per iteration; S-C schedule = median / mean over the 32
+iterations (8 topic blocks of 4) and the proLaw block median; plain = median.
+
+| arm (rst base) | S-C med | S-C mean | proLaw block | plain med | l0 / l1 (S-C med) |
+|---|---|---|---|---|---|
+| early, 4 streams (current issue point) | 52.57 | 54.40 | 61.4 | 48.02 | 20.65 / 27.29 |
+| noov (sequential), 4 streams | 53.25 | 54.57 | 64.9 | 47.55 | 20.36 / 26.97 |
+| **late**, 4 streams (both under l0) | **51.35** | **52.33** | 58.1 | 47.59 | 20.66 / 26.93 |
+| **dual**, 4 streams (w1 under l0, w2 under l1) | 53.49 | 53.44 | **57.0** | **47.21** | 20.55 / 28.29 |
+| dual, 1 stream | 52.54 | 53.00 | 59.3 | 47.28 | 20.97 / 27.43 |
+| dual + l0 moved-last, 4 streams | 52.92 | 54.21 | 63.1 | 47.89 | 21.13 / 27.61 |
+
+Reading:
+- Moving the issue point out of the host gap is free on l0 at b64 (late
+  l0 == early l0) and REMOVES ~0.9 ms of place bracket + ~1.1 ms of plan
+  bracket (the ~80 enqueues + the copy/plan contention leave the timed
+  host chain): late = -1.2 ms median / -2.1 ms mean vs early.
+- dual keeps the l0 gain but its l1 is +1.0-1.4 ms on the mild blocks
+  (median 53.49 vs late 51.35); on the severe proLaw block dual is the
+  fastest arm (57.0 vs 58.1 late / 61.4 early / 64.9 sequential). vs the
+  current early point: dual is better on the mean (-1.0..-1.4) and on plain
+  (-0.8), at parity (1 stream) / +0.9 (4 streams) on the S-C median.
+- l0 moved-last stays a loser on the 8-slot lane (+0.5-1.6 ms; the deferred
+  class = ~30 % of the rank's experts makes a poorly filled tail) — the
+  case-study arm runs WITHOUT it.
+- 1 vs 4 streams: within noise on total (4 streams shorten the NVLink block
+  0.9 vs 2.4 ms; the l1-side cost does not scale with the block length, so
+  it is a landing-time / contention effect, not copy time — see the capture).
+
+## 7. Case-study capture 3 — TBD
 
 ## 7. Case-study capture 3 — TBD
 
