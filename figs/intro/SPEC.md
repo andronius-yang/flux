@@ -67,6 +67,24 @@ the rejected alternatives: `intro_options.html` (options page, 2026-09-04).
 
 ## 4. Revision log
 
+- **v4 DRAFT (2026-09-09, postdoc feedback)** — three stacked rows so the
+  figure reads routing skew -> GPU compute imbalance -> NIC traffic
+  imbalance: **(a)** expert activation frequency (LiveCodeBench, sorted,
+  neutral ink `#4b5563` — no resource yet); **(b) NEW: per-GPU compute
+  load** = GEMM rows landing on each GPU under the same contiguous
+  placement as the maps, / uniform, grouped bars for both topics in the
+  **amber "Expert Comp." family** of the later figures (`#eda100`,
+  `#a86f00`), node separators dashed, ticks 0/4/8/12 labelled + a minor
+  tick per GPU; **(c)** the NIC maps as v3.5 (blue = "Token Comm."),
+  with the 0/4/8/12 labels back and an unlabelled minor tick on every
+  row/column. Height is DERIVED from the row stack: **3.33 x 3.47 in**
+  (38.5% of the text height — over the earlier 0.3 budget; knobs
+  ROW_A_IN/ROW_B_IN/GAP_*). Compute max 1.57x lcb / 2.21x prof. law; NIC
+  ingress max 1.58x / 2.18x — the two imbalances are the same number
+  because NIC ingress is the compute load minus its same-node share.
+  Renders `intro_v4.*` (+ `--logx` companion `intro_v4_log.*`). v3.5.1
+  generator preserved in git history (ecef228).
+
 - **v3.5 (2026-09-04, user)** — NIC semantics made exact **[knob:
   NIC_ONLY]**: the four same-node 4x4 blocks are zeroed (that traffic
   rides NVLink, never a NIC) and the map is renormalized by the mean over

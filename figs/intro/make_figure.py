@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Intro figure v1: (a) overlapped per-expert demand for two topics, fixed
-expert-ID axis; (b) two 16x16 rank-to-rank traffic heatmaps (one per topic)
-stacked on the right, shared color scale. Single-column NSDI, built at final
-physical size. Every aesthetic value lives in CONFIG.
+"""Intro figure v4: three stacked rows, single-column NSDI, final physical size.
 
-  python make_figure.py            # writes intro_v1.pdf + intro_v1.png next to this file
+  (a) expert activation frequency   — per-expert routed tokens / uniform, sorted (LiveCodeBench)
+  (b) per-GPU compute load          — GEMM rows landing on each GPU / uniform, contiguous placement, both topics
+  (c) NIC-to-NIC dispatch traffic   — two 16x16 maps (one per topic), same-node blocks zeroed, shared scale
+
+Narrative: routing skew -> GPU compute imbalance -> NIC traffic imbalance. Colors follow the
+later figures: compute = amber family, token communication = blue family; (a) is neutral ink.
+Every aesthetic value lives in CONFIG.  `python make_figure.py [--logx] [--suffix _x]`
 """
 import csv, os, sys
 import numpy as np
@@ -17,53 +20,39 @@ from matplotlib.colors import LinearSegmentedColormap
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG = dict(
     SRC=os.path.join(HERE, "figure_src.csv"),
-    OUT_STEM=os.path.join(HERE, "intro_v3"),
-    LAYOUT="stack",                          # "stack" (v3: bars on top, heatmaps below) | "side" (v1/v2)
-    BAR_FRAC=1 / 3,                          # v3: share of the plot height for the bar panel
-    VGAP_IN=0.50,                            # v3.1: gap holds the x label + "(a)" sub-label + heatmap titles
-    BAR_TOPICS=["livecodebench/execution"],  # v3.1: panel (a) shows LiveCodeBench only (prof. law's 33x outlier hides the shape)
-    PANEL_LABELS=["(a) Expert activation frequency", "(b) NIC-to-NIC dispatch traffic"],
-    SUBLABEL_A_IN=0.20, SUBLABEL_B_IN=0.25,  # distance below each panel's axes (inches)
-    HM_XLABEL_IN=0.06,                       # v3.4: no tick labels, so the x label moves back up under the maps
-    HM_GAP_IN=0.14,                          # v3: gap between the two heatmaps (inches)
-    # --- geometry (inches; USENIX column 3.33 in, text height 9.0 in) ---
-    FIG_W=3.33, FIG_H=2.50,                  # v3.4: tick labels gone, bottom strip tightened
-    LEFT=0.15, RIGHT=0.895, BOTTOM=0.16, TOP=0.96,   # BOTTOM must clear the (b) sub-label descenders   # LEFT holds the two-line y label + panel tags   # RIGHT leaves room for the colorbar label
-    SPLIT=0.50,                             # fraction of the width given to the bar panel
-    WSPACE_IN=0.42,                          # gap between bar panel and heatmaps (inches)
-    HSPACE_IN=0.30,                          # gap between the two heatmaps (inches)
-    CBAR_W_IN=0.07, CBAR_GAP_IN=0.05,        # shared colorbar right of the heatmaps
-    # --- topics (display order = draw order; the second is drawn on top) ---
+    OUT_STEM=os.path.join(HERE, "intro_v4"),
+    # --- geometry, inches (USENIX column 3.33 in). Height is DERIVED from the stack below. ---
+    FIG_W=3.33, LEFT_IN=0.50, RIGHT_IN=0.45,     # right margin holds the colorbar + its label
+    TOP_IN=0.05, BOT_IN=0.06,
+    ROW_A_IN=0.52, ROW_B_IN=0.38,                # bar panel heights
+    GAP_AB_IN=0.36, GAP_BC_IN=0.56,   # (b) sub-label must clear the map titles              # x label + sub-label (+ map titles) between rows
+    BELOW_C_IN=0.42,                             # tick labels + "Receiver NIC" + sub-label under the maps
+    HM_GAP_IN=0.14, CBAR_W_IN=0.07, CBAR_GAP_IN=0.05,
+    SUBLABEL_IN=dict(a=0.20, b=0.30, c=0.26),   # (b) has tick labels under it, so its sub-label sits lower    # sub-label distance below each row's axes
+    HM_XLABEL_IN=0.14,                           # "Receiver NIC" below the maps (tick labels above it)
+    # --- topics ---
     TOPICS=["livecodebench/execution", "mmlu/professional_law"],
     TOPIC_NAMES={"livecodebench/execution": "LiveCodeBench", "mmlu/professional_law": "MMLU prof. law"},
-    # --- bars: two overlappable colors (translucent; overlap reads as a third, darker tone) ---
-    # v3.2: one blue family for both panels — bars = the dark end of the heatmap ramp
-    BAR_COLORS=["#2171b5", "#6baed6"], BAR_ALPHA=0.95, BAR_LW=0.0, BAR_WIDTH=1.0,
-    Y_LABEL="Normalized\ntoken count", X_LABEL="Expert ID",   # two lines: the v3 bar panel is only ~0.6 in tall
-    # v2: ORIENT "h" = horizontal bars (x = normalized count, y = experts, most popular on top);
-    #     SORT "each" = every topic sorted by its own count (y is then a rank, not an ID),
-    #          "none" = fixed expert IDs (v1), or a topic name = both follow that topic's order
-    ORIENT="v", SORT="each", SORTED_AXIS_LABEL="Expert ID",   # v3.4: "rank" would collide with physical ranks
-    X_LOG=False, X_LOG_MIN=0.05,             # log count axis (companion render); bars start at X_LOG_MIN
-    Y_MAX=None,                              # None = data max; a number clips (bars above are marked)
+    A_TOPICS=["livecodebench/execution"],        # (a) shows one topic (prof. law's 33x outlier hides the shape)
+    B_TOPICS=["livecodebench/execution", "mmlu/professional_law"],   # (b) both, grouped bars
+    # --- (a) routing skew: neutral ink (no resource yet) ---
+    A_COLOR="#4b5563", A_ALPHA=1.0, A_XLABEL="Expert ID", A_YLABEL="Normalized\ntoken count",
+    X_LOG=False, X_LOG_MIN=0.05,
+    # --- (b) compute: amber family = "Expert Comp." in the later figures (#eda100) ---
+    B_COLORS=["#eda100", "#a86f00"], B_YLABEL="Normalized\ncompute", B_XLABEL="GPU",
+    B_GROUP_W=0.78, B_YMAX=3.0,   # headroom for the legend above the 2.21x bar (both topics stay)                 # None = next 0.5 above the data max
+    # --- (c) NIC traffic: blue family = "Token Comm." (#2a78d6) ---
+    CMAP="Blues", VMIN=0.0, VMAX=None, NIC_ONLY=True,
+    HM_XLABEL="Receiver NIC", HM_YLABEL="Sender NIC", CBAR_LABEL="Normalized traffic",
+    HM_MAJOR=[0, 4, 8, 12],                      # labelled; minor ticks on every row/column
+    HM_EDGE_LW=0.5, NODE_LINE=dict(color="#0b0b0b", lw=0.6),
+    NODE_SEP=dict(color="#9ca3af", lw=0.5, ls=(0, (1.5, 1.5))),   # node separators in (b)
     UNIFORM_LINE=dict(color="#0b0b0b", lw=0.5, ls=(0, (2, 1.5))),
-    # --- heatmaps ---
-    CMAP="Blues",                            # v3.2: matplotlib sequential name (white -> dark blue), or a list of hex stops
-    CMAP_NAME="custom",
-    VMIN=0.0, VMAX=None,                     # shared scale; None = max over both matrices
-    NODE_LINE=dict(color="#0b0b0b", lw=0.6),
-    NIC_ONLY=True,                           # v3.5: intra-node (same node) blocks are NVLink, not NIC -> zeroed;
-                                             # normalization = mean over INTER-node cells, so 1x = uniform NIC traffic
-    HM_EDGE_LW=0.5,                          # thin frame so the pale low cells do not dissolve into the page
-    HM_XLABEL="Receiver NIC", HM_YLABEL="Sender NIC",   # v3.4: talk about NICs directly
-    CBAR_LABEL="Normalized traffic",
-    HM_TICKS=[],                             # v3.4: no tick labels on the maps (node blocks carry the structure)
-    # --- type ---
+    PANEL_LABELS=["(a) Expert activation frequency", "(b) Per-GPU compute load",
+                  "(c) NIC-to-NIC dispatch traffic"],
     FONT_FAMILY=["Helvetica", "Arial", "DejaVu Sans"],
     FS=dict(label=7, tick=6, legend=6.5, title=7, panel=6.5, cbar=6),
-    INK="#0b0b0b", INK2="#52514e",
-    PANEL_TAGS=["(a)", "(b)"],
-    DPI=300,
+    INK="#0b0b0b", INK2="#52514e", DPI=300,
 )
 
 def load(cfg):
@@ -77,180 +66,132 @@ def load(cfg):
             cells.setdefault(r["topic"], {})[(int(r["i"]), int(r["j"]))] = float(r["value"])
     G = max(max(d) for d in experts.values()) + 1
     W = max(max(s for s, _ in d) for d in cells.values()) + 1
+    L = int(next(p.split("L=")[1].split()[0] for p in prov if "L=" in p))
     E = {t: np.array([experts[t][e] for e in range(G)]) for t in experts}
     M = {t: np.array([[cells[t][(s, d)] for d in range(W)] for s in range(W)]) for t in cells}
-    L = int(next(p.split("L=")[1].split()[0] for p in prov if "L=" in p))
-    return E, M, G, W, L, prov
+    # (b): GEMM rows per GPU under contiguous placement (expert e -> GPU e // (G//W)), / uniform
+    epr = G // W
+    C = {t: np.array([E[t][r * epr:(r + 1) * epr].mean() for r in range(W)]) for t in E}
+    return E, C, M, G, W, L, prov
 
 def main():
     cfg = dict(CONFIG)
-    # optional overrides: --ymax 12 (clip + annotate) --suffix _clip12
     args = sys.argv[1:]
-    if "--ymax" in args:
-        cfg["Y_MAX"] = float(args[args.index("--ymax") + 1])
     if "--logx" in args:
         cfg["X_LOG"] = True
     if "--suffix" in args:
         cfg["OUT_STEM"] += args[args.index("--suffix") + 1]
     plt.rcParams.update({"font.family": "sans-serif", "font.sans-serif": cfg["FONT_FAMILY"],
                          "pdf.fonttype": 42, "ps.fonttype": 42, "axes.linewidth": 0.5,
-                         "xtick.major.width": 0.5, "ytick.major.width": 0.5,
-                         "xtick.major.size": 2, "ytick.major.size": 2})
-    E, M, G, W, L, prov = load(cfg)
-    fig = plt.figure(figsize=(cfg["FIG_W"], cfg["FIG_H"]))
-    fw, fh = cfg["FIG_W"], cfg["FIG_H"]
-    x0, x1, y0, y1 = cfg["LEFT"], cfg["RIGHT"], cfg["BOTTOM"], cfg["TOP"]
-    cb_w, cb_g = cfg["CBAR_W_IN"] / fw, cfg["CBAR_GAP_IN"] / fw
-    stack = cfg["LAYOUT"] == "stack"
-    if stack:
-        vg, hg = cfg["VGAP_IN"] / fh, cfg["HM_GAP_IN"] / fw
-        H = y1 - y0 - vg
-        bar_h = H * cfg["BAR_FRAC"]; hm_h = H - bar_h
-        hm_w = (x1 - x0 - cb_w - cb_g - hg) / 2
-        side = min(hm_w * fw, hm_h * fh)                    # square heatmaps
-        hm_w, hm_h = side / fw, side / fh
-        ax_bar = fig.add_axes([x0, y1 - bar_h, x1 - x0, bar_h])
-        ax_hm = [fig.add_axes([x0, y0, hm_w, hm_h]), fig.add_axes([x0 + hm_w + hg, y0, hm_w, hm_h])]
-        ax_cb = fig.add_axes([x0 + 2 * hm_w + hg + cb_g, y0, cb_w, hm_h])
-        hm_x0 = x0
-    else:
-        ws, hs = cfg["WSPACE_IN"] / fw, cfg["HSPACE_IN"] / fh
-        bar_w = (x1 - x0 - ws - cb_w - cb_g) * cfg["SPLIT"]
-        hm_x0 = x0 + bar_w + ws
-        hm_w = x1 - hm_x0 - cb_w - cb_g
-        hm_h = (y1 - y0 - hs) / 2
-        side = min(hm_w * fw, hm_h * fh)
-        hm_w, hm_h = side / fw, side / fh
-        ax_bar = fig.add_axes([x0, y0, bar_w, y1 - y0])
-        ax_hm = [fig.add_axes([hm_x0, y1 - hm_h, hm_w, hm_h]),
-                 fig.add_axes([hm_x0, y1 - 2 * hm_h - hs, hm_w, hm_h])]
-        ax_cb = fig.add_axes([hm_x0 + hm_w + cb_g, y1 - 2 * hm_h - hs, cb_w, 2 * hm_h + hs])
+                         "xtick.major.width": 0.5, "ytick.major.width": 0.5, "xtick.minor.width": 0.4,
+                         "ytick.minor.width": 0.4, "xtick.major.size": 2, "ytick.major.size": 2,
+                         "xtick.minor.size": 1.1, "ytick.minor.size": 1.1})
+    E, C, M, G, W, L, prov = load(cfg)
+    fs, ink, ink2 = cfg["FS"], cfg["INK"], cfg["INK2"]
 
-    # ---- (a) overlapped bars ----
+    # ---- geometry in inches, top-down; figure height derived ----
+    fw = cfg["FIG_W"]
+    plot_w = fw - cfg["LEFT_IN"] - cfg["RIGHT_IN"]
+    side = (plot_w - cfg["HM_GAP_IN"]) / 2                       # square maps fill the plot width
+    fh = (cfg["TOP_IN"] + cfg["ROW_A_IN"] + cfg["GAP_AB_IN"] + cfg["ROW_B_IN"] + cfg["GAP_BC_IN"]
+          + side + cfg["BELOW_C_IN"] + cfg["BOT_IN"])
+    fig = plt.figure(figsize=(fw, fh))
+    X0, PW = cfg["LEFT_IN"] / fw, plot_w / fw
+    def ax_at(top_in, h_in, x0=X0, w=PW):
+        return fig.add_axes([x0, 1 - (top_in + h_in) / fh, w, h_in / fh])
+    y = cfg["TOP_IN"]
+    ax_a = ax_at(y, cfg["ROW_A_IN"]); y += cfg["ROW_A_IN"] + cfg["GAP_AB_IN"]
+    ax_b = ax_at(y, cfg["ROW_B_IN"]); y += cfg["ROW_B_IN"] + cfg["GAP_BC_IN"]
+    ax_c = [ax_at(y, side, X0, side / fw), ax_at(y, side, X0 + (side + cfg["HM_GAP_IN"]) / fw, side / fw)]
+    ax_cb = ax_at(y, side, X0 + (2 * side + cfg["HM_GAP_IN"] + cfg["CBAR_GAP_IN"]) / fw, cfg["CBAR_W_IN"] / fw)
+
+    # ---- (a) expert activation frequency, sorted ----
     ids = np.arange(G)
-    ymax = cfg["Y_MAX"] or max(float(v.max()) for v in E.values()) * 1.04
-    def ordered(t):
-        v = E[t]
-        if cfg["SORT"] == "each":
-            return np.sort(v)[::-1]
-        if cfg["SORT"] == "none":
-            return v
-        return v[np.argsort(E[cfg["SORT"]])[::-1]]
-    horiz = cfg["ORIENT"] == "h"
-    bar_topics = cfg.get("BAR_TOPICS") or cfg["TOPICS"]
-    ymax = cfg["Y_MAX"] or float(np.ceil(max(float(E[t].max()) for t in bar_topics) / 5) * 5)   # next multiple of 5 so the top tick shows
-    for t, c in zip(cfg["TOPICS"], cfg["BAR_COLORS"]):
-        if t not in bar_topics:
-            continue
-        v = ordered(t)
-        kw = dict(color=c, alpha=cfg["BAR_ALPHA"], linewidth=cfg["BAR_LW"], label=cfg["TOPIC_NAMES"][t], align="edge")
-        if horiz:
-            ax_bar.barh(ids, np.minimum(v, ymax), height=cfg["BAR_WIDTH"], **kw)
-        else:
-            ax_bar.bar(ids, np.minimum(v, ymax), width=cfg["BAR_WIDTH"], **kw)
-        if cfg["Y_MAX"]:
-            for e in np.where(v > ymax)[0]:
-                xy = (ymax, e + .5) if horiz else (e + .5, ymax)
-                ax_bar.annotate(f"{v[e]:.0f}×", xy, xytext=(-1, 0) if horiz else (0, -1), textcoords="offset points",
-                                ha="right" if horiz else "center", va="center" if horiz else "top",
-                                fontsize=cfg["FS"]["tick"], color=cfg["INK"])
-    cat_label = cfg["X_LABEL"] if cfg["SORT"] == "none" else cfg["SORTED_AXIS_LABEL"]
-    if horiz:
-        ax_bar.axvline(1.0, **cfg["UNIFORM_LINE"], zorder=3)
-        ax_bar.text(1.0, G - 1, " uniform", ha="left", va="bottom", fontsize=cfg["FS"]["tick"], color=cfg["INK2"])
-        ax_bar.set_ylim(G, 0)                                     # most popular expert at the top
-        if cfg["X_LOG"]:
-            ax_bar.set_xscale("log"); ax_bar.set_xlim(cfg["X_LOG_MIN"], ymax)
-            ax_bar.set_xticks([0.1, 1, 10]); ax_bar.set_xticklabels(["0.1", "1", "10"])
-            ax_bar.xaxis.set_minor_locator(matplotlib.ticker.LogLocator(subs=(2, 5), numticks=20))
-            ax_bar.tick_params(axis="x", which="minor", length=1.2)
-        else:
-            ax_bar.set_xlim(0, ymax)
-        ax_bar.set_yticks([]); ax_bar.set_ylabel(cat_label, fontsize=cfg["FS"]["label"], labelpad=2)
-        ax_bar.set_xlabel(cfg["Y_LABEL"], fontsize=cfg["FS"]["label"], labelpad=2)
-        ax_bar.tick_params(axis="x", labelsize=cfg["FS"]["tick"], pad=1.5)
+    ymax = float(np.ceil(max(E[t].max() for t in cfg["A_TOPICS"]) / 5) * 5)
+    for t in cfg["A_TOPICS"]:
+        ax_a.bar(ids, np.sort(E[t])[::-1], width=1.0, color=cfg["A_COLOR"], alpha=cfg["A_ALPHA"],
+                 linewidth=0, label=cfg["TOPIC_NAMES"][t], align="edge")
+    ax_a.axhline(1.0, **cfg["UNIFORM_LINE"], zorder=3)
+    ax_a.set_xlim(0, G); ax_a.set_xticks([])
+    if cfg["X_LOG"]:
+        ax_a.set_yscale("log"); ax_a.set_ylim(cfg["X_LOG_MIN"], ymax)
+        ax_a.set_yticks([0.1, 1, 10]); ax_a.set_yticklabels(["0.1", "1", "10"])
+        ax_a.yaxis.set_minor_locator(matplotlib.ticker.LogLocator(subs=(2, 5), numticks=20))
+        ax_a.text(G * 0.99, 0.93, "uniform", ha="right", va="top", fontsize=fs["tick"], color=ink2)
     else:
-        ax_bar.axhline(1.0, **cfg["UNIFORM_LINE"], zorder=3)
-        if not cfg["X_LOG"]:
-            ax_bar.text(G * 0.99, 1.0, "uniform", ha="right", va="bottom", fontsize=cfg["FS"]["tick"], color=cfg["INK2"])
-        ax_bar.set_xlim(0, G)
-        ax_bar.set_xticks([]); ax_bar.set_xlabel(cat_label, fontsize=cfg["FS"]["label"], labelpad=2)
-        ax_bar.set_ylabel(cfg["Y_LABEL"], fontsize=cfg["FS"]["label"], labelpad=2)
-        if cfg["X_LOG"]:                                       # log count axis (vertical form)
-            ax_bar.set_yscale("log"); ax_bar.set_ylim(cfg["X_LOG_MIN"], ymax)
-            ax_bar.set_yticks([0.1, 1, 10]); ax_bar.set_yticklabels(["0.1", "1", "10"])
-            ax_bar.yaxis.set_minor_locator(matplotlib.ticker.LogLocator(subs=(2, 5), numticks=20))
-            ax_bar.tick_params(axis="y", which="minor", length=1.2)
-            ax_bar.text(G * 0.99, 0.93, "uniform", ha="right", va="top", fontsize=cfg["FS"]["tick"], color=cfg["INK2"])
-        else:
-            ax_bar.set_ylim(0, ymax)
-            ax_bar.set_yticks([t for t in ((0, 10, 20, 30) if ymax > 15 else (0, 5, 10)) if t <= ymax])
-        ax_bar.tick_params(axis="y", labelsize=cfg["FS"]["tick"], pad=1.5)
-    for sp in ("top", "right"):
-        ax_bar.spines[sp].set_visible(False)
-    if len(bar_topics) > 1:
-        leg = ax_bar.legend(fontsize=cfg["FS"]["legend"], frameon=False, loc="upper right" if not horiz else "lower right",
-                            handlelength=1.0, handletextpad=0.5, borderaxespad=0.2, labelspacing=0.3)
-        for h in leg.legend_handles:
-            h.set_alpha(cfg["BAR_ALPHA"])
-    else:   # v3.3: still a legend entry with its color swatch
-        leg = ax_bar.legend(fontsize=cfg["FS"]["legend"], frameon=False, loc="upper right" if not horiz else "lower right",
-                            handlelength=1.0, handletextpad=0.5, borderaxespad=0.2)
-        for h in leg.legend_handles:
-            h.set_alpha(cfg["BAR_ALPHA"])
+        ax_a.set_ylim(0, ymax); ax_a.set_yticks([t for t in (0, 5, 10) if t <= ymax])
+        ax_a.text(G * 0.99, 1.0, "uniform", ha="right", va="bottom", fontsize=fs["tick"], color=ink2)
+    ax_a.set_xlabel(cfg["A_XLABEL"], fontsize=fs["label"], labelpad=2)
+    ax_a.set_ylabel(cfg["A_YLABEL"], fontsize=fs["label"], labelpad=2)
+    ax_a.tick_params(labelsize=fs["tick"], pad=1.5)
+    ax_a.legend(fontsize=fs["legend"], frameon=False, loc="upper right", handlelength=1.0,
+                handletextpad=0.5, borderaxespad=0.2)
 
-    # ---- (b) two heatmaps, shared scale ----
+    # ---- (b) per-GPU compute load, grouped bars, node separators ----
+    nb = len(cfg["B_TOPICS"]); bw = cfg["B_GROUP_W"] / nb; xs = np.arange(W)
+    bmax = cfg["B_YMAX"] or float(np.ceil(max(C[t].max() for t in cfg["B_TOPICS"]) / 0.5) * 0.5)
+    for i, t in enumerate(cfg["B_TOPICS"]):
+        ax_b.bar(xs - cfg["B_GROUP_W"] / 2 + (i + 0.5) * bw, C[t], width=bw, color=cfg["B_COLORS"][i],
+                 linewidth=0, label=cfg["TOPIC_NAMES"][t])
+    for n in range(1, W // L):
+        ax_b.axvline(n * L - 0.5, **cfg["NODE_SEP"], zorder=0)
+    ax_b.axhline(1.0, **cfg["UNIFORM_LINE"], zorder=3)
+    ax_b.set_xlim(-0.6, W - 0.4); ax_b.set_ylim(0, bmax)
+    ax_b.set_xticks(cfg["HM_MAJOR"]); ax_b.set_xticks(range(W), minor=True)
+    ax_b.set_yticks([v for v in np.arange(0, bmax + 1e-9, 1.0)])
+    ax_b.set_xlabel(cfg["B_XLABEL"], fontsize=fs["label"], labelpad=2)
+    ax_b.set_ylabel(cfg["B_YLABEL"], fontsize=fs["label"], labelpad=2)
+    ax_b.tick_params(labelsize=fs["tick"], pad=1.5)
+    ax_b.legend(fontsize=fs["legend"], frameon=False, loc="upper right", ncol=2, handlelength=1.0,
+                handletextpad=0.5, borderaxespad=0.2, columnspacing=0.8)
+    for ax in (ax_a, ax_b):
+        for sp in ("top", "right"):
+            ax.spines[sp].set_visible(False)
+
+    # ---- (c) NIC-to-NIC maps ----
     if cfg["NIC_ONLY"]:
         nodes = np.arange(W) // L
         off = nodes[:, None] != nodes[None, :]
         M = {t: np.where(off, m / m[off].mean(), 0.0) for t, m in M.items()}
     cmap = (matplotlib.colormaps[cfg["CMAP"]] if isinstance(cfg["CMAP"], str)
-            else LinearSegmentedColormap.from_list(cfg["CMAP_NAME"], cfg["CMAP"]))
+            else LinearSegmentedColormap.from_list("custom", cfg["CMAP"]))
     vmax = cfg["VMAX"] or max(float(m.max()) for m in M.values())
-    im = None
-    for ax, t in zip(ax_hm, cfg["TOPICS"]):
+    for ax, t in zip(ax_c, cfg["TOPICS"]):
         im = ax.imshow(M[t], cmap=cmap, vmin=cfg["VMIN"], vmax=vmax, origin="upper",
                        interpolation="nearest", aspect="equal")
         for n in range(1, W // L):
             ax.axhline(n * L - .5, **cfg["NODE_LINE"]); ax.axvline(n * L - .5, **cfg["NODE_LINE"])
         for sp in ax.spines.values():
             sp.set_linewidth(cfg["HM_EDGE_LW"])
-        ax.set_title(cfg["TOPIC_NAMES"][t], fontsize=cfg["FS"]["title"], pad=2, color=cfg["INK"])
-        ax.set_xticks(cfg["HM_TICKS"]); ax.set_yticks(cfg["HM_TICKS"])
-        ax.tick_params(labelsize=cfg["FS"]["tick"], pad=1.5, length=1.5)
-    ax_hm[0].set_ylabel(cfg["HM_YLABEL"], fontsize=cfg["FS"]["label"], labelpad=2)
-    if stack:                                              # labels once: y on the left map, x centered under both
-        ax_hm[1].tick_params(labelleft=False)
-        for ax in ax_hm:
-            ax.tick_params(labelbottom=True)
-        pos0, pos1 = ax_hm[0].get_position(), ax_hm[1].get_position()
-        fig.text((pos0.x0 + pos1.x1) / 2, pos0.y0 - cfg["HM_XLABEL_IN"] / fh, cfg["HM_XLABEL"], ha="center", va="top",
-                 fontsize=cfg["FS"]["label"])
-    else:
-        ax_hm[1].set_ylabel(cfg["HM_YLABEL"], fontsize=cfg["FS"]["label"], labelpad=2)
-        ax_hm[0].tick_params(labelbottom=False)
-        ax_hm[1].set_xlabel(cfg["HM_XLABEL"], fontsize=cfg["FS"]["label"], labelpad=2)
+        ax.set_title(cfg["TOPIC_NAMES"][t], fontsize=fs["title"], pad=2, color=ink)
+        ax.set_xticks(cfg["HM_MAJOR"]); ax.set_yticks(cfg["HM_MAJOR"])
+        ax.set_xticks(range(W), minor=True); ax.set_yticks(range(W), minor=True)
+        ax.tick_params(labelsize=fs["tick"], pad=1.5, length=1.6)
+        ax.tick_params(which="minor", length=1.0)
+    ax_c[0].set_ylabel(cfg["HM_YLABEL"], fontsize=fs["label"], labelpad=2)
+    ax_c[1].tick_params(labelleft=False)
     cb = fig.colorbar(im, cax=ax_cb)
-    cb.set_label(cfg["CBAR_LABEL"], fontsize=cfg["FS"]["label"], labelpad=2)
-    cb.ax.tick_params(labelsize=cfg["FS"]["cbar"], pad=1.5, length=1.5)
+    cb.set_label(cfg["CBAR_LABEL"], fontsize=fs["label"], labelpad=2)
+    cb.ax.tick_params(labelsize=fs["cbar"], pad=1.5, length=1.5)
     cb.outline.set_linewidth(0.5)
-    ticks = [t for t in (0, 0.5, 1, 1.5, 2) if t <= vmax]
-    cb.set_ticks(ticks); cb.set_ticklabels([("1×" if t == 1 else f"{t:g}") for t in ticks])
+    ticks = [v for v in (0, 0.5, 1, 1.5, 2) if v <= vmax]
+    cb.set_ticks(ticks); cb.set_ticklabels([("1×" if v == 1 else f"{v:g}") for v in ticks])
+    p0, p1 = ax_c[0].get_position(), ax_c[1].get_position()
+    fig.text((p0.x0 + p1.x1) / 2, p0.y0 - cfg["HM_XLABEL_IN"] / fh, cfg["HM_XLABEL"],
+             ha="center", va="top", fontsize=fs["label"])
 
-    # panel tags
-    if stack:   # v3.1: sub-labels centered UNDER each panel
-        pb, p0, p1 = ax_bar.get_position(), ax_hm[0].get_position(), ax_hm[1].get_position()
-        fig.text((pb.x0 + pb.x1) / 2, pb.y0 - cfg["SUBLABEL_A_IN"] / fh, cfg["PANEL_LABELS"][0],
-                 fontsize=cfg["FS"]["panel"], va="top", ha="center")
-        fig.text((p0.x0 + p1.x1) / 2, p0.y0 - cfg["SUBLABEL_B_IN"] / fh, cfg["PANEL_LABELS"][1],
-                 fontsize=cfg["FS"]["panel"], va="top", ha="center")
-    else:
-        fig.text(x0 - 0.10, y1 + 0.005, cfg["PANEL_TAGS"][0], fontsize=cfg["FS"]["panel"], va="bottom", ha="left")
-        fig.text(hm_x0 - 0.10, y1 + 0.005, cfg["PANEL_TAGS"][1], fontsize=cfg["FS"]["panel"], va="bottom", ha="left")
+    # ---- sub-labels centered under each row ----
+    for ax, key, lab in ((ax_a, "a", 0), (ax_b, "b", 1)):
+        p = ax.get_position()
+        fig.text((p.x0 + p.x1) / 2, p.y0 - cfg["SUBLABEL_IN"][key] / fh, cfg["PANEL_LABELS"][lab],
+                 fontsize=fs["panel"], va="top", ha="center")
+    fig.text((p0.x0 + p1.x1) / 2, p0.y0 - cfg["SUBLABEL_IN"]["c"] / fh, cfg["PANEL_LABELS"][2],
+             fontsize=fs["panel"], va="top", ha="center")
 
     for ext in ("pdf", "png"):
         fig.savefig(f"{cfg['OUT_STEM']}.{ext}", dpi=cfg["DPI"])
-    print("wrote", cfg["OUT_STEM"], "pdf/png", f"{fw:.2f}x{fh:.2f} in", "vmax", round(vmax, 2), "ymax", round(ymax, 1))
+    print("wrote", cfg["OUT_STEM"], f"{fw:.2f}x{fh:.2f} in", "vmax %.2f" % vmax,
+          "compute max " + " ".join(f"{cfg['TOPIC_NAMES'][t]}={C[t].max():.2f}x" for t in cfg["B_TOPICS"]))
 
 if __name__ == "__main__":
     main()
