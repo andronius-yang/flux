@@ -578,6 +578,9 @@ class OursSwapLane:
     def issue_l1(self):
         pass
 
+    def issue_l1_post(self):
+        pass
+
     def l1_gate_kwargs(self):
         return None
 
@@ -1005,14 +1008,26 @@ class OursSwapAllLane:
                 self._phase(1, pre_events=(self.ev_l1s,))
             return
         if self.issue_mode == "dual3":
+            # arm only; the phase is enqueued AFTER the l1 forward
+            # (issue_l1_post) so the mark's memcpy is queued before the
+            # movement streams' wait on it — the l0 (late3) order, proven;
+            # the wait-before-write order wedged every rank (gate-3, 9/9).
             if self._active():
                 assert self._l1_op is not None, "dual3 needs attach_ops()"
                 self._l1_op.set_gemm_start_mark(self.epoch)
-                self._phase(1, pre_mark=self._mark_l1)
             return
         if self.issue_mode != "dual" or not self._active():
             return
         self._phase(1, pre_events=(self.ev_l0,))
+
+    def issue_l1_post(self):
+        """dual3 only: enqueue the combine-side (w2) phase right AFTER the
+        l1 forward is enqueued; the streams wait on the l1 GEMM-start mark
+        (already queued on the forward stream), so the block starts with
+        the l1 GEMM. Never depends on the current stream past the mark."""
+        if self.issue_mode != "dual3" or not self._active():
+            return
+        self._phase(1, pre_mark=self._mark_l1)
 
     def l1_gate_kwargs(self):
         """dual: per-problem combine-side weight gate for the fused l1

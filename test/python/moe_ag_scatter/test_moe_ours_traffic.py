@@ -1747,6 +1747,8 @@ def main():
             else:
                 out = runner.l1_forward(intermediate)
             if swap_lane is not None:
+                with _cs_nvtx("swap.issue_l1"):
+                    swap_lane.issue_l1_post()   # dual3: w2 phase after the l1 enqueue
                 swap_lane.l1_join()
             e2e_end[i].record()
             if lane is not None and swap_lane is None:
