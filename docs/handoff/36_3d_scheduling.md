@@ -159,7 +159,39 @@ for dual in every same-capsule comparison of capture 3 and in 3 of 4 in
 A/B-2. Supplement `casestudy3b_3d_late_k2_4n_nsys` = the late arm's
 timeline rows (best total in A/B-2), same binary/session.
 
-### 7.1 Timelines — TBD (extractor run)
+### 7.1 Timelines (extractor: figs/case_study/extract_timeline.py, JSON on
+PSCRATCH figs_data/case_study/timeline_20260909-074415.json + -080251.json)
+
+Medians over the 16 ranks of the device-time placement of the swap copies
+(ms from the iteration start; "under" = swap busy time concurrent with a
+GEMM kernel / a NIC put kernel):
+
+| arm, case | l0 GEMM | l1 GEMM | NIC puts | swap block(s) | under GEMM / NIC |
+|---|---|---|---|---|---|
+| early, skewed iter33 | 11.7-29.3 | 32.8-42.9 | 11.7-51.9 | host gap 2.6-3.9 | 0 / 0 |
+| sequential, skewed | 17.2-33.1 | 38.2-48.3 | 17.0-58.7 | host gap 2.7-4.1 (+5.5 ms wait) | 0 / 0 |
+| late (3b), skewed | 7.8-23.9 | 31.1-41.2 | 7.6-51.4 | after l0 enqueue 5.7-7.5 | 0 / 0.3 |
+| dual, skewed | 8.2-24.0 | 30.7-40.9 | 8.0-49.8 | w1 6.2-6.7, w2 29.1-29.6 | 0 / 0 |
+| dual, efficient iter4 | 6.5-20.9 | 23.5-34.4 | 6.3-41.3 | w1 4.6-4.9, w2 22.2-22.6 | 0 / 0 |
+
+**Finding (the reason for round 2):** enqueue order alone does NOT place
+the copies under the GEMM. The host runs ~2 ms ahead of the GPU, so a
+block enqueued right after the l0 forward (late, dual-w1) executes while
+the GPU is still in the plan tail and finishes 1.5 ms before the GEMM
+starts and before the first NIC put; dual-w2, gated on l0 COMPLETION,
+lands in the 3-6 ms l0->l1 gap (gelu + combine meta) and finishes before
+the l1 GEMM starts. Every arm therefore reads 0 ms under GEMM. What late /
+dual DO buy is the host chain: the l0 GEMM starts 3.5 ms earlier than
+early on the skewed block (8.2 vs 11.7) because the ~80 enqueues leave the
+place bracket — that is the -1..-2 ms total_ms of §6/§7, not overlap.
+
+Round 2 (`late2` / `dual2`, python-only, same binary): the phases wait on
+DEVICE events — w1 on "the stream reaches the l0 op" (recorded right before
+the l0 enqueue), w2 on "the stream reaches the l1 op" (recorded in
+issue_l1). Both fused ops open with a node barrier, so the peers' pushes
+start together; the l0 per-slot gate / l1 per-problem gate + in-wave
+moved-last absorb the ~1 ms landing. Specs abl3d_gate2 -> abl3d_ab3 ->
+casestudy3c (job 58110152).
 
 ## 7. Case-study capture 3 (capsule 20260909-074415_perlmutter_05252de1, 20/20 ok)
 
@@ -184,6 +216,38 @@ for dual in every same-capsule comparison of capture 3 and in 3 of 4 in
 A/B-2. Supplement `casestudy3b_3d_late_k2_4n_nsys` = the late arm's
 timeline rows (best total in A/B-2), same binary/session.
 
-### 7.1 Timelines — TBD (extractor run)
+### 7.1 Timelines (extractor: figs/case_study/extract_timeline.py, JSON on
+PSCRATCH figs_data/case_study/timeline_20260909-074415.json + -080251.json)
+
+Medians over the 16 ranks of the device-time placement of the swap copies
+(ms from the iteration start; "under" = swap busy time concurrent with a
+GEMM kernel / a NIC put kernel):
+
+| arm, case | l0 GEMM | l1 GEMM | NIC puts | swap block(s) | under GEMM / NIC |
+|---|---|---|---|---|---|
+| early, skewed iter33 | 11.7-29.3 | 32.8-42.9 | 11.7-51.9 | host gap 2.6-3.9 | 0 / 0 |
+| sequential, skewed | 17.2-33.1 | 38.2-48.3 | 17.0-58.7 | host gap 2.7-4.1 (+5.5 ms wait) | 0 / 0 |
+| late (3b), skewed | 7.8-23.9 | 31.1-41.2 | 7.6-51.4 | after l0 enqueue 5.7-7.5 | 0 / 0.3 |
+| dual, skewed | 8.2-24.0 | 30.7-40.9 | 8.0-49.8 | w1 6.2-6.7, w2 29.1-29.6 | 0 / 0 |
+| dual, efficient iter4 | 6.5-20.9 | 23.5-34.4 | 6.3-41.3 | w1 4.6-4.9, w2 22.2-22.6 | 0 / 0 |
+
+**Finding (the reason for round 2):** enqueue order alone does NOT place
+the copies under the GEMM. The host runs ~2 ms ahead of the GPU, so a
+block enqueued right after the l0 forward (late, dual-w1) executes while
+the GPU is still in the plan tail and finishes 1.5 ms before the GEMM
+starts and before the first NIC put; dual-w2, gated on l0 COMPLETION,
+lands in the 3-6 ms l0->l1 gap (gelu + combine meta) and finishes before
+the l1 GEMM starts. Every arm therefore reads 0 ms under GEMM. What late /
+dual DO buy is the host chain: the l0 GEMM starts 3.5 ms earlier than
+early on the skewed block (8.2 vs 11.7) because the ~80 enqueues leave the
+place bracket — that is the -1..-2 ms total_ms of §6/§7, not overlap.
+
+Round 2 (`late2` / `dual2`, python-only, same binary): the phases wait on
+DEVICE events — w1 on "the stream reaches the l0 op" (recorded right before
+the l0 enqueue), w2 on "the stream reaches the l1 op" (recorded in
+issue_l1). Both fused ops open with a node barrier, so the peers' pushes
+start together; the l0 per-slot gate / l1 per-problem gate + in-wave
+moved-last absorb the ~1 ms landing. Specs abl3d_gate2 -> abl3d_ab3 ->
+casestudy3c (job 58110152).
 
 ## 6. Case-study capture 3 — TBD
