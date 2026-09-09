@@ -279,3 +279,31 @@ price of the two-sided picture. l0 moved-last is a loser again (+0.2 med,
 +1.7 mean, +4.9 on proLaw). 1 vs 4 streams: 1 stream is marginally better
 on total (longer, thinner NVLink block: less contention with the token
 forwards); either is fine for the figure.
+
+## 9. Capture 3c timelines (device-gated late2/dual2; capsule 20260909-083619, 6/6)
+
+| arm, case | l0 GEMM | l1 GEMM | NIC puts | swap block(s) | under GEMM / NIC |
+|---|---|---|---|---|---|
+| late2 4str, skewed iter33 | 8.4-24.3 | 32.2-42.3 | 8.3-50.6 | 6.3-8.1 | 0.2 / 0 |
+| dual2 4str, skewed | 7.7-25.0 | 30.8-41.0 | 7.6-50.7 | w1 5.6-6.1, w2 29.5-29.9 | 0 / 0 |
+| dual2 1str, skewed | 7.4-23.4 | 28.3-38.6 | 7.1-47.9 | w1 5.4-6.2, w2 27.0-27.7 | 0 / 0 |
+| dual2 4str, efficient iter4 | 6.4-20.9 | 23.4-34.5 | 6.2-41.7 | w1 4.4-4.8, w2 22.5-22.9 | 0 / 0 |
+
+**Finding (the reason for round 3):** "the stream reaches the op" is still
+1-2 ms before the GEMM kernel: both fused ops run a metadata/staging
+prologue (dispatch: meta + node-pack + relay staging; combine: workspace +
+combine meta) before launching their GEMM, and the l0 NIC puts start only
+~0.3 ms before the GEMM. A 0.5-0.7 ms block that starts with the op
+therefore still ends before the GEMM. The only device point that is the
+GEMM is the GEMM launch itself.
+
+Round 3 (`late3` / `dual3`, C++ + python, rebuild): both fused ops get a
+one-shot GEMM-START MARK — `set_gemm_start_mark(epoch)` arms the next
+forward to write `epoch` into a device int64 on the forward stream
+immediately before the GEMM kernel launch (l0: `Step 5: launch GEMM`; l1:
+after the pre-GEMM node barrier); `gemm_start_mark()` returns the flag.
+The lane's movement streams wait on it with the zero-SM
+cuStreamWaitValue64 (GEQ), so the NVLink block starts WITH the GEMM (w1)
+and WITH the l1 GEMM (w2); the l0 per-slot gate / l1 per-problem gate +
+in-wave moved-last cover the ~1 ms landing. Specs abl3d_gate3 ->
+abl3d_ab4 -> casestudy3d.
