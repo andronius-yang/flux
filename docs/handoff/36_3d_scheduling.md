@@ -80,6 +80,30 @@ Gate-mode (perturbed) totals: dual_str4 58.1 (l0 23.0) vs dual_ml_str4 64.3
 / dual_ml 63.9 / late_ml_str4 63.8 (l0 28.9-29.6) -> **l0 moved-last costs
 ~6 ms of l0 on the 8-slot lane** (9/2 finding reproduced under late issue).
 
-## 5. A/B (isolated) — TBD
+## 5. A/B-1 on the NO-RESET base (capsule 20260909-071236_perlmutter_8bf1c017, 16/16 ok)
+
+`swapall_nr` (placement carried across topics, the cycling-ablation harness):
+the composed orbit CONVERGES, so after a block entry nothing moves — place
+bracket 0.5 ms in every arm, movement only at block entries (0.7-1.8 ms).
+Rank-max medians, K2 4n b64 isolated (S-C dwell-4 schedule / plain lcb):
+
+| arm (nr base, 4 streams unless noted) | S-C total | plain total |
+|---|---|---|
+| early (9/1 issue point) | 50.43 | 45.95 |
+| noov (sequential) | 51.23 | 46.18 |
+| early, 1 stream (9/2 arm) | 51.40 | 45.87 |
+| late + l0 moved-last | 51.49 | 45.65 |
+| dual | 51.80 | 45.92 |
+| dual + l0 moved-last | 51.43 | 45.99 |
+| dual + moved-last, 1 stream | 51.45 | 45.57 |
+| COMET overlapped (no-gate c8) | 52.34 | 54.34 |
+
+Verdict: within noise (spread ~1.4 ms S-C, ~0.6 plain) — the nr base cannot
+discriminate issue modes and would show ~no NVLink in the figure. The
+user's "8 swaps" requirement is met by the RESET-EVERY base (A/B-2, §6).
+
+## 6. A/B-2 on the RESET-EVERY base — TBD
+
+## 7. Case-study capture 3 — TBD
 
 ## 6. Case-study capture 3 — TBD
