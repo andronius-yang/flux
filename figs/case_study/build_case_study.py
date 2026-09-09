@@ -33,7 +33,8 @@ HOST_LANE = False                  # thin host-chain lane (plan.* / swap.* range
 FONT = V2.FONT; INK, INK2, LINE = V2.INK, V2.INK2, V2.LINE
 # colour = TASK (muted palette ruling: no pink/purple)
 COL = {"token": "#2a78d6",        # Token Comm.  (NIC puts, NVLink token copies, dispatch staging copies)
-       "expert_comm": "#1baf7a",  # Expert Comm. (expert-slot swap copies over NVLink)
+       "expert_comm": "#1baf7a",  # Expert Comm. (expert-slot swap copies over NVLink; dispatch-side w1)
+       "expert_comm_w2": "#0d6e4c",  # Expert Comm., combine side (w2 copies under the l1 GEMM; 3D scheduling)
        "comp": "#eda100",         # Expert Comp. (grouped GEMM l0 / l1)
        "reduce": "#c8553d",       # Top-k Reduce (pre-topk reduce, pack, bucket reduce)
        "plan": "#2f8f9d",         # Plan / Meta  (route, meta, sort, plan collectives)
@@ -72,6 +73,7 @@ def lanes_of(it):
         if x["t1"] - x["t0"] < 0.05 and x["task"] not in ("nvlink.swap",): continue
         ck = TASK_COL.get(x["task"])
         if ck is None: continue                       # host-side copies etc.
+        if x["task"] == "nvlink.swap" and x.get("phase") == "l1": ck = "expert_comm_w2"
         lane = x["lane"]
         if lane == "wait": lane = "gpu"
         if lane == "gpu" and GPU_SIDE_LANE and x["task"] in SIDE_TASKS: lane = "gpu2"
@@ -146,7 +148,7 @@ def build(data, out):
     D.text(tx0 + tw, ay + 7, "ms", 5, "labels", "end", INK2)
     # legend: task colours, span tick, resource patterns
     ly_ = ay + AXIS_H + 1; lx = L_GUT
-    for key, lab in (("token", "Token Comm."), ("expert_comm", "Expert Comm."), ("comp", "Expert Comp."),
+    for key, lab in (("token", "Token Comm."), ("expert_comm", "Expert Comm. (dispatch)"), ("expert_comm_w2", "Expert Comm. (combine)"), ("comp", "Expert Comp."),
                      ("reduce", "Top-k Reduce"), ("plan", "Plan / Meta"), ("wait", "Wait")):
         D.rect(lx, ly_ + 1, 8, 4.5, COL[key], "bars"); D.text(lx + 10, ly_ + 5, lab, 5.2, "labels", color=INK2); lx += 10 + 2.75 * len(lab) + 7
     D.line(lx, ly_, lx, ly_ + 6.5, INK, "glyphs", 0.5); D.text(lx + 3, ly_ + 5, "iteration end", 5.2, "labels", color=INK2); lx += 3 + 2.75 * 13 + 9

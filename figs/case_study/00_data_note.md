@@ -87,3 +87,40 @@ rebuilt (9/5 07:06, tags present, python/flux/lib + lib64 synced).
   `internode_reduce_kernel` -> Top-k Reduce (GPU side lane);
   `nvshmemi_signal_wait_until_on_stream_kernel` -> wait; index/workspace
   kernels -> plan compute. 67 MB P2P copies on NVLink = the intra-node allgather.
+
+## Capture 4 (2026-09-09, 3D scheduling — the v2 figure source; capsule 20260909-124809_perlmutter_0e64e3cc, 20/20)
+
+Worktree `flux-3dsched` (docs/handoff/36_3d_scheduling.md is the authority), one
+binary (ths_op d3bb40c7: layer-1 per-problem weight gate + in-wave moved-last,
+GEMM-start marks in both fused ops). Lane = the composed 8-slot intra-node
+exchange, RESET-EVERY (the oracle-basis placement is restored before every timed
+iteration, so every iteration carries the full orbit; 253 global swaps/iter on
+the proLaw block) — the 9/5 one-slot `t1` lane moved ~1 slot/rank and is NOT
+comparable row-for-row. Arms (rows of `case_study_v2`):
+
+| row | arm | issue point of the exchange |
+|---|---|---|
+| COMET, overlapped | l01_allgather_dense_nogate_c8 | — |
+| swap in host gap | ablation_l01_s2_swapall_rst_3d_early_str4_p2p_r2 | place bracket (9/1 ablation; lands in the plan gap) |
+| sequential swap | ablation_l01_s2_swapall_rst_3d_noov_str4_p2p_r2 | place bracket, stream waits for landing |
+| 3D-scheduled swap | ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2 | w1 phase starts WITH the l0 GEMM (GEMM-start mark), w2 phase WITH the l1 GEMM; per-tile / per-problem gates absorb the landing |
+
+Isolated latency, same capsule (rank-max per iteration; S-C median / mean /
+proLaw block; plain median):
+
+| row | S-C med | S-C mean | proLaw | plain |
+|---|---|---|---|---|
+| COMET overlapped | 52.21 | 52.63 | 55.4 | 54.91 |
+| COMET gated | 55.04 | 56.37 | 63.2 | 60.09 |
+| swap in host gap | 52.99 | 53.62 | 59.9 | 47.95 |
+| sequential swap | 54.09 | 56.69 | 65.6 | 48.11 |
+| **3D-scheduled swap** | **52.25** | **52.80** | 61.5 | **47.54** |
+
+total_ms check vs the pre-3D point (host gap): -0.7 (S-C med), -0.8 (mean),
+-0.4 (plain) — the scheme costs nothing; COMET rows within 1 ms of captures
+2/3 (no drift). Timelines: `extract_timeline.py 20260909-124809 ...` ->
+PSCRATCH figs_data/case_study/timeline_20260909-124809.json; swap copies are
+tagged with their issue phase (early / late = w1 / l1 = w2) and the summary
+carries `_swap_under_gemm_ms` / `_swap_under_nic_ms`. Figure:
+`build_case_study.py <json> --rows cs3 --out figs/case_study/case_study_v2`
+(the 9/5 `case_study.*` = v1, untouched).
