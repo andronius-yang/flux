@@ -3544,6 +3544,15 @@ VARIANTS["ablation_l01_s2_swapall_rp4_p2p_r2"] = dict(
 # (sched=...;dwell=N) and the runner passes --routing_sched_files/--routing_dwell.
 VARIANTS["ablation_l01_s2_swap_t1_noov_p2p_r2"] = dict(
     VARIANTS["ours_l01_s1"], test_args=_T1_ARGS + ["--swap_overlap", "0"])
+# CASE-STUDY ONLY (2026-09-05, figs/case_study): routing twin of the
+# one-round overlapped swap arm — identical placement/swap/transport, the
+# LocCap route replaced by the locality-oblivious sender-local equal split
+# (--route_rule equal_split; flux.testing.ours.equal_split_route_all).
+# Isolates what local routing buys on the NIC/NVLink/GEMM lanes. Never a
+# headline arm; no existing spec references it.
+VARIANTS["ablation_l01_s2_swap_t1_esplit_p2p_r2"] = dict(
+    VARIANTS["ours_l01_s1"],
+    test_args=_T1_ARGS + ["--route_rule", "equal_split"])
 _ABL_SWAPALL_NR = [a for a in _ABL_SWAPALL_ARGS]
 _ABL_SWAPALL_NR[_ABL_SWAPALL_NR.index("--swap_reset") + 1] = "off"
 VARIANTS["ablation_l01_s2_swapall_nr_p2p_r2"] = dict(

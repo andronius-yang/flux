@@ -401,3 +401,29 @@ cells hang, bincount the routing for empty experts before anything else.
   FLUX_A2AV_FUSED_STAGE2_LANE_ORDER_TAG; proof ladder: fused hc_lb_union x3 (first with
   the CHECK on), moonep_fused, lbunion_compress l01, epic_l01 (see results below).
   SCHEMA rule 9.
+
+## 4n K3 G1 gate verdict (2026-08-21, job 57397820, ~1.0 node-hour)
+
+- **PASSED live**: kernel+allgather+bounds (setup audit clean, bounds
+  hold), per-iteration relaxed audits, pll placement + hc + K3 pipeline
+  (loccap_gpu AND d6 controls 16/16 bitwise — first live K3 validation of
+  the deterministic pll arms), sub-ms kernel (0.33 ms/rank measured
+  offline at identical shape).
+- **BLOCKED**: kernel-arm final correctness — **op-level cross-iteration
+  staleness, isolated by bisection** (FLUX_PLL_FORCE_REF=1 passes 16/16
+  with ALL new machinery active): when consecutive dispatch_only calls
+  carry DIFFERENT routing metadata, ~3-5% of inter-node rows arrive
+  stale (node-2 victim, sources dominated by node 3; delivered-not-zero,
+  not a permutation — probe forensics in
+  sweep_data/pll_g1_debug_v2). Suspects inside the op: per-source
+  stage/relay region offsets or delivery-gate counts partially reused
+  from the previous call when unique/dedup counts change; relatives:
+  NR-16 delivery gate (fb1697b), inwindow derive_routed_meta caching.
+- **Next**: C++ inspection of dispatch_only/derive_routed_meta under
+  CHANGED per-call metadata (grep for ctor-cached or lazily-initialized
+  per-source offsets); minimal repro exists = the G1 debug cell (recipe
+  in specs/k3synth_pm4n_sl_smoke.yaml comments + FLUX_PLL_DEBUG
+  toggles). G2 capsule postponed until the op fix. NOTE the op fix
+  benefits ALL future dynamic-routing arms (production regime), not just
+  the kernel arm. Teardown hygiene fixed: collective correctness verdict
+  + timeout-wrapped steps (partial asserts used to wedge the allocation).

@@ -1339,6 +1339,14 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
     profiling = cell["mode"] in ("torchprof", "nsys")
     iters = spec["profile_iters"] if profiling else spec["iters"]
     warmup = spec["profile_iters"] if profiling else spec["warmup_iters"]
+    if profiling and sched_routing:
+        # CASE-STUDY ONLY (2026-09-05, figs/case_study): a topic-schedule
+        # family under nsys/torchprof keeps the spec's iters/warmup so the
+        # whole schedule is profiled (profile_iters=3 would truncate the
+        # schedule to one block). Non-schedule profiling cells and every
+        # isolated/e2e/phases cell are unaffected; no earlier capsule ever
+        # combined sched= with a profiling mode.
+        iters, warmup = spec["iters"], spec["warmup_iters"]
     sm_margin = spec["sm_margin"]
     srun_prefix = [
         "srun",

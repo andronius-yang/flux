@@ -1,0 +1,39 @@
+# CASE-STUDY capture 2 (2026-09-05, figs/case_study): same two families as
+# casestudy_sc_d4_k2_4n_nsys.yaml (S-C dwell-4 schedule profiled end to end +
+# plain lcb homog), now WITH the "overlapped" COMET baseline the postdoc asked
+# to compare against: l01_allgather_dense_nogate_c8 = COMET with the pre-GEMM
+# completion gate dropped and 8 CUDA connections, so its GEMM runs alongside
+# the inter-node fetch (handoff 30 rebuttal cell: l0 -23%, l1 +2.4 ms, still
+# behind Slipstream e2e). Gated COMET included for contrast. The three OURS
+# arms are RE-CAPTURED here because the binary changed (no-gate knob +
+# TILE_TRACE_DENSE port cherry-picked onto main 9/5) — protocol rule 4: draw
+# every row of one figure from one capsule / one binary. nsys mode =
+# timelines + byte ledgers only, never latency.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy;sched=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy+mmlu/professional_law;dwell=4"
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [64]
+modes: [nsys, isolated]
+iters: 32
+warmup_iters: 5
+profile_iters: 3
+skip_correctness: true
+timeout_s: 2400
+idle_timeout_s: 900
+retries: 1
+extra_env:
+  FLUX_OURS_NVTX: "1"
+  FLUX_A2AV_NVTX_PROXY: "1"
+  FLUX_A2AV_TILE_TRACE_DENSE: "1"
+  FLUX_A2AV_EARLY_LAUNCH: "1"
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+variants:
+  - l01_allgather_dense_nogate_c8
+  - l01_allgather_dense
+  - ours_l01_s2_swap_p2p_t1_r2
+  - ablation_l01_s2_swap_t1_noov_p2p_r2
+  - ablation_l01_s2_swap_t1_esplit_p2p_r2
+notes: "case-study nsys 9.5 #2: K2 4n b64 S-C dwell4 full-schedule + plain lcb; COMET no-gate c8 (overlapped baseline) + gated COMET + OURS ovl/noov/equal-split, one rebuilt binary (no-gate knob on main)"

@@ -99,6 +99,27 @@ def _nvtx(tag):
     return _nvtx_range(tag) if _NVTX else nullcontext()
 
 
+def equal_split_route_all(topk_all, l2p, lcnts):
+    """CASE-STUDY ONLY (2026-09-05): CPU reference of
+    OursIterPlanner._equal_split_route for ALL ranks — [R, S, K] -> [R, S, K]
+    int32 physical slots (per-source stable expert grouping, ordinal mod
+    instance count). Used by the driver's sizing fold for the equal_split
+    routing twin; bitwise the planner's per-rank product."""
+    R, S, K = topk_all.shape
+    topk = topk_all.long().cpu()
+    l2p_l, lc_l = l2p.cpu().long(), lcnts.cpu().long()
+    out = torch.empty(R, S * K, dtype=torch.int32)
+    ar = torch.arange(S * K)
+    for src in range(R):
+        g = topk[src].reshape(-1)
+        order = torch.argsort(g, stable=True)
+        gs = g[order]
+        ordn = ar - torch.searchsorted(gs, gs)
+        c = torch.remainder(ordn, lc_l[gs])
+        out[src, order] = l2p_l[gs, c].to(torch.int32)
+    return out.view(R, S, K)
+
+
 class OursIterPlan:
     """One iteration's routing products (relaxed kernel lane)."""
 
@@ -129,9 +150,18 @@ class OursIterPlanner:
 
     def __init__(self, plan, rank, device, topk_all, probs_all_setup,
                  local_world_size, eps, f_cap, route_group,
-                 route_global=False):
+                 route_global=False, route_rule="loccap"):
         cfg = plan.cfg
         self.cfg = cfg
+        # CASE-STUDY ONLY (2026-09-05, figs/case_study routing twin):
+        # route_rule="equal_split" replaces the LocCap kernel route with a
+        # sender-local, locality-OBLIVIOUS equal split (per source, per
+        # expert: token-ordinal round-robin over the expert's instances —
+        # count-equivalent to the EPLB `local_spread` rule / SGLang
+        # dynamic-dispatch analog). Default "loccap" = unchanged behaviour;
+        # no existing arm/spec passes the kwarg. Never a headline arm.
+        assert route_rule in ("loccap", "equal_split"), route_rule
+        self.route_rule = route_rule
         self.plan = plan
         self.rank = rank
         self.device = device
@@ -398,11 +428,18 @@ class OursIterPlanner:
         import flux
         cfg = self.cfg
         S, K, R = cfg.S, cfg.K, cfg.R
-        with _nvtx("plan.route"):
-            phys_own, kstats = flux.placelambda_route_sl(
-                self._topk_own_i32, d_gather_buf, self.l2p, self.lcnts,
-                self.rank, cfg.nlp, self.L, self.eps, self.f_cap_current)
-        if self.f_cap_retry:
+        if self.route_rule == "equal_split":
+            # CASE-STUDY ONLY routing twin (see ctor): no LocCap kernel, no
+            # forced-budget retry (kstats identically 0).
+            with _nvtx("plan.route_equal_split"):
+                phys_own, kstats = self._equal_split_route()
+        else:
+            with _nvtx("plan.route"):
+                phys_own, kstats = flux.placelambda_route_sl(
+                    self._topk_own_i32, d_gather_buf, self.l2p, self.lcnts,
+                    self.rank, cfg.nlp, self.L, self.eps,
+                    self.f_cap_current)
+        if self.f_cap_retry and self.route_rule != "equal_split":
             # forced-budget breach check + local escalate-and-reroute
             # (kstats[2] = forced_budget_overflow). Escalation ladder:
             # 4x, then uncapped (kernel INT_MAX tickets). The raised cap
@@ -459,6 +496,24 @@ class OursIterPlanner:
             # pad-FIRST slot convention (see module header)
             vce = ((phys_all // cfg.nlp) * self.gpe + 1 + phys_all % cfg.nlp)
             return OursIterPlan(vce.int(), probs_all, self._kstats_pinned)
+
+    def _equal_split_route(self):
+        """CASE-STUDY ONLY (2026-09-05): sender-local equal split. Own
+        entries grouped by expert (stable), ordinal-within-expert mod the
+        expert's instance count picks the l2p column — largest-remainder
+        equal split with extras to the lowest instance index, oblivious to
+        node locality. Same [S*K] int32 physical-slot product as the
+        LocCap kernel; reads the CURRENT self.l2p/self.lcnts (swap-lane
+        refresh_placement keeps it placement-consistent). Sync-free."""
+        g = self._topk_own_i32.view(-1).long()
+        order = torch.argsort(g, stable=True)
+        gs = g[order]
+        first = torch.searchsorted(gs, gs)
+        ordn = torch.arange(gs.numel(), device=gs.device) - first
+        c = torch.remainder(ordn, self.lcnts[gs].long())
+        phys = torch.empty_like(g, dtype=torch.int32)
+        phys[order] = self.l2p[gs, c]
+        return phys, torch.zeros(4, dtype=torch.int64, device=g.device)
 
     # -- prealloc'd/graphable derive tail (post-allgather device program) ----
 

@@ -198,7 +198,8 @@ def perf_fast(
     # wire-ordering audit (CLAUDE.md invariant 5): send_rows is re-gathered
     # from ctx.inputs_shard every iteration, so an in-place randomization
     # here (outside the window) exercises the FAST wire with changing bytes
-    probe = PayloadProbe(ctx.inputs_shard, TP_GROUP.rank(), keep_ledger=False)
+    probe = PayloadProbe(ctx.inputs_shard, TP_GROUP.rank(),
+                         keep_ledger=payload_probe_enabled())
     torch.distributed.barrier()
     torch.cuda.synchronize()
     for i in range(total_iters):
@@ -555,8 +556,88 @@ if __name__ == "__main__":
         else:
             if payload_probe_enabled():
                 bad = (fast_gemm_input != ref_block).any(dim=1)
-                print(f"  probe rank {rank}: {int(bad.sum())}/{ref_block.shape[0]}"
+                n_bad = int(bad.sum())
+                print(f"  probe rank {rank}: {n_bad}/{ref_block.shape[0]}"
                       " dispatched rows differ from the final-payload reference")
+                # ---- provenance (2026-08-23 FAST residual audit): map each
+                # bad row to its source rank/node and attribute its CONTENT
+                # to a payload epoch by REGENERATING the probe streams
+                # (deterministic seed 4242+7919*src) — collective-free, so
+                # it is safe inside exec_in_rank_order (NR-02).
+                from collections import Counter, deque
+                ep_off = int(torch.sum(moe_ctx.splits_cpu[: rank * epr]))
+                gi = moe_ctx.gather_index[ep_off:ep_off + ref_block.shape[0]]
+                bad_idx = bad.nonzero(as_tuple=True)[0]
+                bad_glob = gi[bad_idx.to(gi.device)].cpu()
+                bad_src = (bad_glob // tokens_per_rank)
+                lws = DIST_ENV.LOCAL_WORLD_SIZE
+                node_cnt = Counter((bad_src // lws).tolist())
+                print(f"  bad-by-src-node: {dict(sorted(node_cnt.items()))}"
+                      f"  bad-by-src-rank: "
+                      f"{dict(sorted(Counter(bad_src.tolist()).items()))}")
+                shard_shape = moe_ctx.inputs_shard.shape
+                shard_dtype = moe_ctx.inputs_shard.dtype
+                total_steps = args.warmup_iters + args.iters
+                LOOKBACK = 4
+                epoch_cnt = Counter()
+                zero_rows = int((fast_gemm_input[bad_idx] == 0)
+                                .all(dim=1).sum())
+                for srcv in sorted(set(bad_src.tolist())):
+                    gen = torch.Generator(device="cuda")
+                    gen.manual_seed(4242 + 7919 * srcv)
+                    keep = deque(maxlen=LOOKBACK)
+                    for it in range(total_steps):
+                        sign = 1.0 if (it % 2 == 0) else -1.0
+                        pay = (torch.rand(shard_shape, device="cuda",
+                                          generator=gen)
+                               * (0.01 * sign)).to(shard_dtype)
+                        keep.append((it, pay))
+                    sel = bad_src == srcv
+                    toks = (bad_glob[sel] % tokens_per_rank).tolist()
+                    rows = bad_idx[sel.to(bad_idx.device)].tolist()
+                    for r_i, t_i in zip(rows, toks):
+                        got_row = fast_gemm_input[r_i]
+                        hit = "unknown"
+                        for it, pay in reversed(keep):
+                            if torch.equal(got_row, pay[t_i]):
+                                hit = (f"final" if it == total_steps - 1
+                                       else f"final-{total_steps - 1 - it}")
+                                break
+                        epoch_cnt[hit] += 1
+                print(f"  content epochs (final = expected): "
+                      f"{dict(epoch_cnt)}; all-zero rows: {zero_rows}")
+                # ---- geometry: tear boundaries + misaddress detection ----
+                ebytes = ref_block.element_size()
+                geo = []
+                for srcv in sorted(set(bad_src.tolist())):
+                    gen = torch.Generator(device="cuda")
+                    gen.manual_seed(4242 + 7919 * srcv)
+                    fin = None
+                    for it in range(total_steps):
+                        sign = 1.0 if (it % 2 == 0) else -1.0
+                        fin = (torch.rand(shard_shape, device="cuda",
+                                          generator=gen)
+                               * (0.01 * sign)).to(shard_dtype)
+                    sel = bad_src == srcv
+                    toks = (bad_glob[sel] % tokens_per_rank).tolist()
+                    rows = bad_idx[sel.to(bad_idx.device)].tolist()
+                    for r_i, t_i in zip(rows[:8], toks[:8]):
+                        got_row = fast_gemm_input[r_i]
+                        exp_row = ref_block[r_i]
+                        dmask = (got_row != exp_row)
+                        nz = dmask.nonzero(as_tuple=True)[0]
+                        b0 = int(nz[0]) * ebytes
+                        b1 = (int(nz[-1]) + 1) * ebytes
+                        # does the delivered row equal the SAME source's
+                        # final payload at some OTHER token? (misaddress)
+                        eqrows = (fin == got_row.unsqueeze(0)).all(dim=1)
+                        wrongtok = eqrows.nonzero(as_tuple=True)[0]
+                        wt = int(wrongtok[0]) if wrongtok.numel() else -1
+                        geo.append((r_i, t_i,
+                                    f"diff[{b0}:{b1}]B",
+                                    f"alias-tok={wt}" if wt >= 0
+                                    else "no-alias"))
+                print(f"  geometry (row, want-tok, tear-span, alias): {geo}")
             RECORDER.emit_correctness(bitwise=False, allclose=False)
             raise AssertionError("❌ FAST gemm input does not match the reference scatter block")
         # same-op check: GemmGroupedV2 on the reference block must reproduce the

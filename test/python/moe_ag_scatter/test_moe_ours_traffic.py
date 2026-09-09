@@ -58,6 +58,10 @@ from flux.testing.ultraep_semantics import (
     loads_from_topk,
 )
 from flux.testing.ours import OursIterPlanner, OursRunner
+# CASE-STUDY ONLY (2026-09-05, figs/case_study): host-chain NVTX ranges for
+# the swap lane, emitted ONLY under FLUX_OURS_NVTX=1 (nullcontext otherwise —
+# zero effect on existing runs/configs).
+from flux.testing.ours import _nvtx as _cs_nvtx
 from flux.testing import ours_swap as oswap_rt
 from flux.testing.payload_probe import PayloadProbe, payload_probe_enabled
 from flux.testing.recorder import RECORDER
@@ -272,6 +276,14 @@ def parse_args():
                         " movement stream, NO cross-node migration (the"
                         " pv2 adoption lane is disabled). Decision is"
                         " timed in the place bracket (total_ms).")
+    p.add_argument("--route_rule", choices=["loccap", "equal_split"],
+                   default="loccap",
+                   help="CASE-STUDY ONLY (2026-09-05, figs/case_study "
+                        "routing twin): equal_split = sender-local, "
+                        "locality-oblivious equal split over each expert's "
+                        "instances instead of the LocCap kernel route "
+                        "(flux.testing.ours.equal_split_route_all). Default "
+                        "loccap = unchanged; no existing arm passes it.")
     p.add_argument("--swap_tau_rows", type=int, default=512,
                    help="EPIC tau in rows: accept a swap only if it drops"
                         " the pair max load by at least this many rows"
@@ -660,6 +672,35 @@ def main():
             topk_all.long().cpu(), _rg_tab_cpu, cfg.nlp, L, args.eps,
             f_cap=0)
         args.pll_f_cap = 0
+    if args.route_rule == "equal_split":
+        # CASE-STUDY ONLY (2026-09-05) routing twin sizing: the runtime
+        # route is the equal split, so the reference route AND the recv /
+        # pair caps must cover ITS exact counts (the LocCap bounds above
+        # bound a different algorithm). Exact-cheap from the [R,S,K]
+        # product; folded over the same sizing set the LocCap path uses
+        # (resident placement x every scheduled topic; the s2 sizing
+        # placements join below). LocCap caps are kept as a floor (max).
+        from flux.testing.ours import equal_split_route_all as _es_route
+
+        def _es_caps(_tk, _l2p_x, _lc_x):
+            _ph = _es_route(_tk, _l2p_x, _lc_x).long()
+            _dst = _ph.reshape(W, -1) // cfg.nlp                # [R, S*K]
+            _recv = torch.bincount(_dst.reshape(-1), minlength=W)
+            _pair = torch.bincount(
+                (torch.arange(W).unsqueeze(1) * W + _dst).reshape(-1),
+                minlength=W * W)
+            return _ph.to(torch.int32), int(_recv.max()), int(_pair.max())
+
+        phys_ref, _r_es, _p_es = _es_caps(topk_all, plan.l2p, plan.lcnts)
+        for _tk in sched_topk_all[1:]:
+            _, _r_t, _p_t = _es_caps(_tk, plan.l2p, plan.lcnts)
+            _r_es, _p_es = max(_r_es, _r_t), max(_p_es, _p_t)
+        pll_bounds["recv_cap"] = max(pll_bounds["recv_cap"], _r_es + 8 * W)
+        pll_bounds["pair_cap"] = max(pll_bounds["pair_cap"], _p_es + 8 * W)
+        if rank == 0:
+            print(f"[es-sizing] resident: recv {_r_es} pair {_p_es} -> caps "
+                  f"recv {pll_bounds['recv_cap']} pair "
+                  f"{pll_bounds['pair_cap']}", flush=True)
     plan.phys_override = phys_ref
     _st("reference route + bounds ok")
     # r2 fix (2026-08-26) generalized (2026-08-27, branch pv2): every
@@ -676,6 +717,17 @@ def main():
         args.pll_f_cap = max(args.pll_f_cap, bounds_x["f_cap"])
         for k in ("recv_cap", "pair_cap"):
             pll_bounds[k] = max(pll_bounds[k], bounds_x[k])
+        if args.route_rule == "equal_split":
+            # CASE-STUDY ONLY (2026-09-05): twin route on every sizing
+            # placement x topic (exact counts, see _es_caps above)
+            phys_x, _r_x, _p_x = _es_caps(topk_all, _l2p_x, _lc_x)
+            for _tk in sched_topk_all[1:]:
+                _, _r_t, _p_t = _es_caps(_tk, _l2p_x, _lc_x)
+                _r_x, _p_x = max(_r_x, _r_t), max(_p_x, _p_t)
+            pll_bounds["recv_cap"] = max(pll_bounds["recv_cap"],
+                                         _r_x + 8 * W)
+            pll_bounds["pair_cap"] = max(pll_bounds["pair_cap"],
+                                         _p_x + 8 * W)
         s2_refs.append((phys_x, aux_x))
         for _tk in sched_topk_all[1:]:
             # topic-schedule harness: every sizing placement x every topic
@@ -1016,7 +1068,8 @@ def main():
                 }
     planner = OursIterPlanner(plan, rank, torch.device("cuda"), topk_all,
                               probs_all_setup, L, args.eps, args.pll_f_cap,
-                              TP_GROUP, route_global=bool(args.route_global))
+                              TP_GROUP, route_global=bool(args.route_global),
+                              route_rule=args.route_rule)
     # r2/s2 f_cap contract fix (handoff 22 §4): runtime-adopted placements
     # can exceed any setup-derived forced budget — enable the planner's
     # local escalate-and-reroute (kstats[2] breach -> 4x then uncapped).
@@ -1373,9 +1426,12 @@ def main():
                 # cross-node migration; the router (next bracket) runs on
                 # the swapped tables — same-iteration benefit.
                 _pt0 = time.perf_counter()
-                d_host = d_gather_buf.cpu()   # blocks on the in-flight
+                with _cs_nvtx("swap.d2h"):
+                    d_host = d_gather_buf.cpu()   # blocks on the in-flight
                 _ptd = time.perf_counter()    # allgather: d2h span below
                 load_g = d_host.long().sum(0)
+                _cs_dec = _cs_nvtx("swap.decide")
+                _cs_dec.__enter__()
                 if args.swap_rounds == "all":
                     # ABLATION-ONLY: capped tau=1 orbit to fixpoint at
                     # decision time; the COMPOSED net intra-node
@@ -1388,27 +1444,34 @@ def main():
                                                    cfg.nlp)
                     swaps = [mv for lst in all_moves for mv in lst]
                     _pt1 = time.perf_counter()
-                    if swaps:
-                        plan.p2l, plan.l2p = _p2l_f, _l2p_f
-                        if swap_sync is not None:
-                            swap_sync.apply(planner, plan)
-                        else:
-                            planner.refresh_placement()
-                    swap_lane.prepare(all_moves)
+                    _cs_dec.__exit__(None, None, None)
+                    with _cs_nvtx("swap.apply_tables"):
+                        if swaps:
+                            plan.p2l, plan.l2p = _p2l_f, _l2p_f
+                            if swap_sync is not None:
+                                swap_sync.apply(planner, plan)
+                            else:
+                                planner.refresh_placement()
+                    with _cs_nvtx("swap.prepare"):
+                        swap_lane.prepare(all_moves)
                 else:
                     swaps, _Lr = oswap_rt.swap_plan(
                         load_g, plan.p2l, plan.lcnts, L, cfg.nlp,
                         args.swap_tau_rows)
                     _pt1 = time.perf_counter()
-                    if swaps:
-                        plan.p2l, plan.l2p = oswap_rt.apply_swaps(
-                            plan.p2l, plan.l2p, swaps)
-                        if swap_sync is not None:
-                            swap_sync.apply(planner, plan)
-                        else:
-                            planner.refresh_placement()
-                    swap_lane.prepare(swaps)
-                swap_lane.issue_early()
+                    _cs_dec.__exit__(None, None, None)
+                    with _cs_nvtx("swap.apply_tables"):
+                        if swaps:
+                            plan.p2l, plan.l2p = oswap_rt.apply_swaps(
+                                plan.p2l, plan.l2p, swaps)
+                            if swap_sync is not None:
+                                swap_sync.apply(planner, plan)
+                            else:
+                                planner.refresh_placement()
+                    with _cs_nvtx("swap.prepare"):
+                        swap_lane.prepare(swaps)
+                with _cs_nvtx("swap.issue_early"):
+                    swap_lane.issue_early()
                 if not args.swap_overlap and swap_lane._issued:
                     # ABLATION-ONLY sequential mode: the exchange must
                     # LAND before anything downstream is enqueued — swap
@@ -1645,7 +1708,8 @@ def main():
             if swap_lane is not None:
                 # late/split issue: the exchange rides under the enqueued
                 # l0 (movement stream depends only on the pre-l0 event)
-                swap_lane.issue_late()
+                with _cs_nvtx("swap.issue_late"):
+                    swap_lane.issue_late()
             l0_end[i].record()
             if lane is not None:
                 # FLUX_OURS_S2_W2_LATE: l1 weight pushes enqueue AFTER the

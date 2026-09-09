@@ -1,9 +1,21 @@
 diff --git a/nvidia/src/fast_alltoall/flash_alltoall_nvshmem.cu b/nvidia/src/fast_alltoall/flash_alltoall_nvshmem.cu
-index 814ff00..c6d3e3c 100644
+index 814ff00..0c326ff 100644
 --- a/nvidia/src/fast_alltoall/flash_alltoall_nvshmem.cu
 +++ b/nvidia/src/fast_alltoall/flash_alltoall_nvshmem.cu
-@@ -1,4 +1,16 @@
+@@ -1,4 +1,28 @@
  #include "fast_alltoall/flash_alltoall_nvshmem.h"
++// flash_blocking_wire_patch v2 (flux 2026-08-23): v1 (nbi -> blocking
++// putmem_signal_warp) narrowed but did not close the race — the DEVICE
++// blocking variant still delivers its signal on the unordered fi_send
++// side-channel (provenance: post-v1 failures were dominated by
++// final-1-epoch rows, i.e. signal-before-data). v2 removes put_signal
++// entirely on the wire paths: data as putmem_nbi, nvshmem_quiet, then
++// the signal as an IMMEDIATE RMA WRITE (nvshmem_uint64_p) of the
++// cumulative value (receiver thresholds are cumulative, so SET ==
++// the old SIGNAL_ADD accumulation bit-for-bit). NOTE: the unused
++// chunk/_old orchestrators still pass short arg arrays to the widened
++// kernels (pre-existing 8/9-arg mismatch in _chunk); they are not on
++// the alltoallv path. Original v1 note follows.
 +// flash_blocking_wire_patch (flux 2026-08-23): every putmem_signal here was
 +// the _nbi_ variant. On Slingshot/CXI (libfabric) the nbi put_signal's
 +// signal travels as a separate fi_send to the target proxy, UNORDERED vs
@@ -19,25 +31,63 @@ index 814ff00..c6d3e3c 100644
  #include "fast_alltoall/fast_nvtx.h"
  #include <cmath>
  #include <cstdio>
-@@ -735,7 +747,7 @@ __global__ void spreadout_alltoallv_internode_kernel(
+@@ -735,16 +759,25 @@ __global__ void spreadout_alltoallv_internode_kernel(
                  const uint64_t send_offset = __ldg(&inter_sender_send_disp[send_rank_id]);
                  const uint64_t recv_offset = __ldg(&inter_sender_recv_disp[send_rank_id]);
                  const int64_t send_sz = __ldg(&inter_sender_transfer_sz[send_rank_id]);
 -                nvshmemx_putmem_signal_nbi_warp(
-+                nvshmemx_putmem_signal_warp(
++                nvshmemx_putmem_nbi_warp(
                      recv_buffer + recv_offset,
                      send_buffer + send_offset,
                      send_sz,
-@@ -926,7 +938,7 @@ __global__ void p2p_kernel(
+-                    &sync_signal[this_rank],
+-                    send_sz,
+-                    NVSHMEM_SIGNAL_ADD,
+                     send_rank_id
+                 );
+-            }   
++            }
++            // flash_blocking_wire_patch v2: quiet the data, then deliver
++            // each dest's signal as an immediate RMA write (single ADD per
++            // slot per iteration + per-iteration reset => SET == ADD).
++            nvshmem_quiet();
++            if (lane_id == 0) {
++                for (uint j = 0; j < local_rank_n; j ++){
++                    const uint32_t send_rank_id = dst_server_id * local_rank_n + (local_rank_id + j) % local_rank_n;
++                    const int64_t send_sz = __ldg(&inter_sender_transfer_sz[send_rank_id]);
++                    nvshmem_uint64_p(&sync_signal[this_rank],
++                                     (uint64_t) send_sz, send_rank_id);
++                }
++            }
+         }
+         nvshmem_quiet();
+     }else if (warp_id == 1){
+@@ -926,15 +959,19 @@ __global__ void p2p_kernel(
          // }
  
          if (warp_id == 0){
 -            nvshmemx_putmem_signal_nbi_warp(
-+            nvshmemx_putmem_signal_warp(
++            // flash_blocking_wire_patch v2: ordered data->signal
++            nvshmemx_putmem_nbi_warp(
                  recv_buffer,
                  send_buffer,
                  send_sz_to_rank,
-@@ -943,7 +955,7 @@ __global__ void p2p_kernel(
+-                &sync_signal[this_rank * block_n + block_id],
+-                send_sz_to_rank * local_rank_n,
+-                NVSHMEM_SIGNAL_ADD,
+                 dst_rank
+-            ); 
++            );
++            nvshmem_quiet();
++            if ((threadIdx.x % 32) == 0) {
++                nvshmem_uint64_p(&sync_signal[this_rank * block_n + block_id],
++                                 (uint64_t)(send_sz_to_rank * local_rank_n),
++                                 dst_rank);
++            }
+         }
+   
+ 
+@@ -943,7 +980,7 @@ __global__ void p2p_kernel(
          // const uint32_t warp_offset = warp_id * times_per_warp;
          // const uint32_t actual_times_this_warp = MIN(times_per_warp, rounds - warp_offset);
          // for (uint i = 0; i < actual_times_this_warp; i++){
@@ -46,30 +96,166 @@ index 814ff00..c6d3e3c 100644
          //         recv_buffer + recv_offset + warp_offset + i * min_tx_sz_at_a_time,
          //         send_buffer + send_offset + warp_offset + i * min_tx_sz_at_a_time,
          //         min_tx_sz_at_a_time,
-@@ -1282,7 +1294,7 @@ __global__ void fanout_alltoallv_kernel(
+@@ -1282,15 +1319,21 @@ __global__ void fanout_alltoallv_kernel(
                  // The first warp initiates sending
                  if (warp_id == 0) {
                      uint8_t * recv_buf = recv_buffer + (sender_recv_disp[r * block_n + block_id]) + tx_offset;
 -                    nvshmemx_putmem_signal_nbi_warp(
-+                    nvshmemx_putmem_signal_warp(
++                    // flash_blocking_wire_patch v2: ordered data->signal;
++                    // cumulative after this round = tx_offset + actual
++                    nvshmemx_putmem_nbi_warp(
                          recv_buf,
                          send_buf,
                          actual_send_sz_this_rank,
-@@ -1859,7 +1871,7 @@ __global__ void flash_internode_p2p(
+-                        &sync_signal[this_rank * block_n + block_id],
+-                        actual_send_sz_this_rank,
+-                        NVSHMEM_SIGNAL_ADD,
+                         r
+                     );
++                    nvshmem_quiet();
++                    if ((threadIdx.x % THREAD_N_PER_WARP) == 0) {
++                        nvshmem_uint64_p(
++                            &sync_signal[this_rank * block_n + block_id],
++                            tx_offset + actual_send_sz_this_rank,
++                            r);
++                    }
+                 }
+             }
+         }
+@@ -1842,7 +1885,11 @@ __global__ void flash_internode_p2p(
+     const uint32_t stage_id,
+     // metadata for internode transfer
+     const struct device_inter_p2p_params_t * param,
+-    const uint data_size
++    const uint data_size,
++    // flash_blocking_wire_patch v2: cumulative signal value for this
++    // (src -> dst) slot after this stage — delivered as an RMA write
++    // AFTER a quiet, never via the unordered fi_send signal channel.
++    const uint64_t sig_cum
+ ){
+     const uint32_t warp_id = threadIdx.x / THREAD_N_PER_WARP;
+     const uint32_t lane_id = threadIdx.x % THREAD_N_PER_WARP;
+@@ -1859,16 +1906,23 @@ __global__ void flash_internode_p2p(
          if (warp_id == 0){
              // use warp 0 in block 0 to do inter-node transfer
              // gpu i only talks to gpu i at another server
 -            nvshmemx_putmem_signal_nbi_warp(
-+            nvshmemx_putmem_signal_warp(
++            // flash_blocking_wire_patch v2: data as put_nbi, quiet (local
++            // completion of the RMA data), then the signal as an immediate
++            // RMA write (uint64_p) of the CUMULATIVE value == what the old
++            // SIGNAL_ADD accumulation would read. Receiver waits are GE on
++            // cumulative thresholds, so SET-of-cumulative is bit-equal.
++            nvshmemx_putmem_nbi_warp(
                  recv_buffer + param -> dst_disp * data_size,
                  send_buffer + param -> src_disp * data_size,
                  param -> send_sz * data_size,
-@@ -2899,7 +2911,7 @@ __global__ void flash_internode_p2p_chunk(
+-                &sync_signal[this_rank],
+-                param -> send_sz,
+-                NVSHMEM_SIGNAL_ADD,
+                 param -> dst_rank
+             );
+             nvshmem_quiet();
++            if (lane_id == 0) {
++                nvshmem_uint64_p(&sync_signal[this_rank], sig_cum,
++                                 param -> dst_rank);
++            }
++            nvshmem_quiet();
+             // if (lane_id == 0){
+             //     nvshmem_uint64_wait_until(&sync_signal[param -> src_rank], NVSHMEM_CMP_EQ, param -> recv_sz);
+             //     // sync_signal[param -> src_rank] = 0;
+@@ -2713,9 +2767,21 @@ int launch_flash_alltoallv(
+         fast_nvtx::FastNvtxRange nvtx(fast_nvtx::kIntraNodeGpuNicCpuSynchronization, fast_nvtx::FastNvtxLevel::Sync);
+         CUDACHECK(cudaStreamWaitEvent(stream1, events[0], 0));
+     }
++    // flash_blocking_wire_patch v2.1: per-(signal-buffer PARITY, dst)
++    // cumulative signal values — the pipeline alternates sync_signal1/2 by
++    // stage parity and the receiver thresholds accumulate PER PARITY
++    // (scheduler sync1_threshold/sync2_threshold); a parity-blind
++    // cumulative inflates the SET values and lets receiver gates pass a
++    // stage early (v2 residual: 256B-DMA-boundary torn rows).
++    uint64_t flash_sig_cum_bw[2][1024] = {{0}};
++    uint64_t cur_sig_cum_bw = 0;
+     cur_p2p = flash_sched -> dev_stages_internode;
+     cur_credit_idx = flash_sched -> host_stages_internode[0].dst_rank;
+     stage_signal_id = 1;    // need to receive credit before run to avoid cross-iteration test issue
++    flash_sig_cum_bw[0][flash_sched -> host_stages_internode[0].dst_rank] +=
++        flash_sched -> host_stages_internode[0].send_sz;
++    cur_sig_cum_bw =
++        flash_sig_cum_bw[0][flash_sched -> host_stages_internode[0].dst_rank];
+     void * internode_first_stage[] = {
+         &this_rank,
+         &buf->send_buffer,
+@@ -2725,7 +2791,8 @@ int launch_flash_alltoallv(
+         &cur_credit_idx,
+         &stage_signal_id,
+         &cur_p2p,
+-        &data_size
++        &data_size,
++        &cur_sig_cum_bw
+     };
+     {
+         char nvtx_label[256];
+@@ -2789,6 +2856,11 @@ int launch_flash_alltoallv(
+         
+         cur_credit_idx = flash_sched -> host_stages_internode[step_id].dst_rank + (step_id % 2) * rank_n;
+         stage_signal_id = step_id;
++        // flash_blocking_wire_patch v2.1: running per-(parity, dst)
++        flash_sig_cum_bw[step_id % 2][flash_sched -> host_stages_internode[step_id].dst_rank] +=
++            flash_sched -> host_stages_internode[step_id].send_sz;
++        cur_sig_cum_bw =
++            flash_sig_cum_bw[step_id % 2][flash_sched -> host_stages_internode[step_id].dst_rank];
+ 
+         void * internode_cur_stage[] = {
+             &this_rank,
+@@ -2799,7 +2871,8 @@ int launch_flash_alltoallv(
+             &cur_credit_idx,
+             &stage_signal_id,
+             &cur_p2p,
+-            &data_size
++            &data_size,
++            &cur_sig_cum_bw
+         };
+         {
+             char nvtx_label[256];
+@@ -2891,24 +2964,35 @@ __global__ void flash_internode_p2p_chunk(
+     const uint32_t credit_idx,
+     const uint32_t stage_id,
+     const device_inter_p2p_params_t * p, // has src_disp, dst_disp, send_sz, dst_rank, src_rank
+-    const chunk_metadata_t * c
++    const chunk_metadata_t * c,
++    // flash_blocking_wire_patch v2: cumulative signal value BEFORE this
++    // stage for this (src -> dst) slot
++    const uint64_t sig_cum_base
+ ){
+     const uint32_t warp_id = threadIdx.x / 32;
++    const uint32_t lane_id_bw = threadIdx.x % 32;
+     if (p -> send_sz > 0){
+         wait_and_consume_credit(credit, credit_idx, stage_id, this_rank);
          
          if (warp_id == 0) {
++            // flash_blocking_wire_patch v2: per chunk, data put_nbi ->
++            // quiet -> signal as RMA write of the running cumulative
++            // (receiver chunk gates are GE on cumulative chunk ends).
++            uint64_t cum = sig_cum_base;
              for (uint chunkid = 0; chunkid < c -> chunk_n; chunkid++){
 -                nvshmemx_putmem_signal_nbi_warp(
-+                nvshmemx_putmem_signal_warp(
++                nvshmemx_putmem_nbi_warp(
                      recv_buffer + p->dst_disp + c->chunk_disp[chunkid],
                      send_buffer + p->src_disp + c->chunk_disp[chunkid],
                      c->chunk_sz[chunkid],
+-                    &sync_signal[this_rank],
+-                    c->chunk_sz[chunkid],
+-                    NVSHMEM_SIGNAL_ADD,      // or use ADD with n and wait >=
+                     p->dst_rank);
++                nvshmem_quiet();
++                cum += c->chunk_sz[chunkid];
++                if (lane_id_bw == 0) {
++                    nvshmem_uint64_p(&sync_signal[this_rank], cum,
++                                     p->dst_rank);
++                }
+             }
+-            nvshmem_quiet();  // optional: only if you need to bound completion here.
++            nvshmem_quiet();
+         }
+     }
+ }
