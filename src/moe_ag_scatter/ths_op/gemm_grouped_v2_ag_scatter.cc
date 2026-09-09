@@ -4011,6 +4011,59 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   torch::Tensor rt_block_hist_, rt_block_offset_, rt_expert_base_;
   cudaEvent_t rt_meta_event_ = nullptr;
 
+
+ public:
+  // 3D scheduling (2026-09-09): one-shot GEMM-START MARK. set_gemm_start_mark(e)
+  // arms the next forward to write e into a device int64 flag on the forward
+  // stream right before the GEMM kernel launches; the swap lane's movement
+  // streams wait on it (cuStreamWaitValue64 GEQ) so the NVLink expert copies
+  // start with the GEMM, not with the op's metadata/staging prologue.
+  torch::Tensor gemm_mark_;       // device int64[1]
+  torch::Tensor gemm_mark_host_;  // pinned int64[1]
+  int64_t gemm_mark_epoch_ = 0;
+  bool gemm_mark_armed_ = false;
+  cudaEvent_t gemm_mark_event_ = nullptr;
+
+  void
+  ensure_gemm_mark() {
+    if (this->gemm_mark_.defined()) {
+      return;
+    }
+    this->gemm_mark_ = torch::zeros({1}, at::TensorOptions(at::kCUDA).dtype(at::ScalarType::Long));
+    this->gemm_mark_host_ = torch::zeros(
+        {1}, at::TensorOptions(at::kCPU).dtype(at::ScalarType::Long).pinned_memory(true));
+    CUDA_CHECK(cudaEventCreateWithFlags(&this->gemm_mark_event_, cudaEventDisableTiming));
+    CUDA_CHECK(cudaEventRecord(this->gemm_mark_event_, c10::cuda::getCurrentCUDAStream()));
+  }
+
+  torch::Tensor
+  gemm_start_mark() {
+    ensure_gemm_mark();
+    return this->gemm_mark_;
+  }
+
+  void
+  set_gemm_start_mark(int64_t epoch) {
+    ensure_gemm_mark();
+    this->gemm_mark_epoch_ = epoch;
+    this->gemm_mark_armed_ = true;
+  }
+
+  void
+  write_gemm_mark(cudaStream_t stream) {
+    if (!this->gemm_mark_armed_) {
+      return;
+    }
+    // the pinned slot is reused: wait for the previous 8-byte upload first
+    CUDA_CHECK(cudaEventSynchronize(this->gemm_mark_event_));
+    this->gemm_mark_host_.data_ptr<int64_t>()[0] = this->gemm_mark_epoch_;
+    CUDA_CHECK(cudaMemcpyAsync(
+        this->gemm_mark_.data_ptr(), this->gemm_mark_host_.data_ptr(), sizeof(int64_t),
+        cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaEventRecord(this->gemm_mark_event_, stream));
+    this->gemm_mark_armed_ = false;
+  }
+
  protected:
   std::vector<torch::Tensor>
   forward_impl(
@@ -4590,6 +4643,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                 std::move(src_rows)}));
       }
       // Step 5: launch GEMM
+      this->write_gemm_mark(stream);  // 3D sched: GEMM-start mark (one-shot)
       op->run(args, workspace_size ? this->workspace_buffer.data_ptr() : nullptr, stream);
     }
     // FLUX_A2AV_EARLY_LAUNCH: replay the deferred intra wire now that the GEMM
@@ -5265,6 +5319,16 @@ void
 GemmGroupedV2AGScatterOp::clear_buffers() {
   FLUX_CHECK(impl_ != nullptr) << "GemmGroupedV2AGScatterOp is not initialized";
   impl_->clear_buffers();
+}
+torch::Tensor
+GemmGroupedV2AGScatterOp::gemm_start_mark() {
+  FLUX_CHECK(impl_ != nullptr) << "GemmGroupedV2AGScatterOp is not initialized";
+  return impl_->gemm_start_mark();
+}
+void
+GemmGroupedV2AGScatterOp::set_gemm_start_mark(int64_t epoch) {
+  FLUX_CHECK(impl_ != nullptr) << "GemmGroupedV2AGScatterOp is not initialized";
+  impl_->set_gemm_start_mark(epoch);
 }
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, int64_t>
 GemmGroupedV2AGScatterOp::dispatch_only(

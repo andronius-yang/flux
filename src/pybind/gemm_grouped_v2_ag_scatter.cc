@@ -59,6 +59,8 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("a2av_hier") = false,
             py::arg("a2av_hier_compress") = false)
         .def("clear_buffers", &GemmGroupedV2AGScatterOpCls::clear_buffers)
+        .def("gemm_start_mark", &GemmGroupedV2AGScatterOpCls::gemm_start_mark)
+        .def("set_gemm_start_mark", &GemmGroupedV2AGScatterOpCls::set_gemm_start_mark, py::arg("epoch"))
         .def(
             "dispatch_only",
             &GemmGroupedV2AGScatterOpCls::dispatch_only,

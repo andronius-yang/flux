@@ -3622,12 +3622,16 @@ for _bt, _bargs in (("nr", _ABL_SWAPALL_NR), ("rst", _ABL_SWAPALL_ARGS)):
             VARIANTS[_name + "_gate"] = dict(
                 VARIANTS[_name],
                 test_args=VARIANTS[_name]["test_args"] + ["--check_iters", "1"])
+# late3 / dual3 (2026-09-09, capture-3c finding: the ops' 1-2 ms metadata
+# prologue precedes the GEMM launch): the phases wait on the fused op's
+# GEMM-START MARK (device int64 written on the forward stream right before
+# the GEMM kernel launches; needs the a4f418de+mark binary).
 # late2 / dual2 (2026-09-09, capture-3 finding: enqueue order alone leaves the
 # copies in the plan tail because the host runs ~2 ms ahead of the GPU): the
 # phases are gated on DEVICE events — late2 = both on "stream reaches the l0
 # op", dual2 = w1 on that, w2 on "stream reaches the l1 op".
 for _bt, _bargs in (("nr", _ABL_SWAPALL_NR), ("rst", _ABL_SWAPALL_ARGS)):
-    for _mode in ("late2", "dual2"):
+    for _mode in ("late2", "dual2", "late3", "dual3"):
         for _et, _env in _3D_ENV.items():
             _name = f"ablation_l01_s2_swapall_{_bt}_3d_{_mode}{_et}_p2p_r2"
             VARIANTS[_name] = dict(

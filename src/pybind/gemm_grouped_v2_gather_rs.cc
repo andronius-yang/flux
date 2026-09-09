@@ -134,6 +134,8 @@ static int _register_gemm_only_ops [[maybe_unused]] = []() {
             py::arg("a2av_unique_counts") = py::none(),
             py::arg("a2av_wire_csr") = py::none(),
             py::arg("a2av_reduce_csr") = py::none())
+        .def("gemm_start_mark", &GemmGroupedV2GatherRSOpCls::gemm_start_mark)
+        .def("set_gemm_start_mark", &GemmGroupedV2GatherRSOpCls::set_gemm_start_mark, py::arg("epoch"))
         .def(
             "set_weight_gate",
             &GemmGroupedV2GatherRSOpCls::set_weight_gate,

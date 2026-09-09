@@ -572,6 +572,9 @@ class OursSwapLane:
     def mark_l0_start(self):
         pass
 
+    def attach_ops(self, l0_op, l1_op):
+        pass
+
     def issue_l1(self):
         pass
 
@@ -718,8 +721,18 @@ class OursSwapAllLane:
         #          gated on that event, w2 gated on the event recorded when
         #          the stream reaches the l1 op (issue_l1). Both ops open
         #          with a node barrier, so the peers' pushes start together.
+        #   late3/dual3 (2026-09-09, capture-3c finding): the ops spend 1-2 ms
+        #          in metadata/staging kernels BEFORE their GEMM launches, so
+        #          "stream reaches the op" is still ~1.5 ms early. late3/dual3
+        #          wait on the op's GEMM-START MARK (a device int64 the fused
+        #          op writes on its stream right before the GEMM kernel launch;
+        #          set_gemm_start_mark(epoch) arms it) with the zero-SM
+        #          cuStreamWaitValue64 — the block starts WITH the GEMM.
+        #          Needs attach_ops(l0_op, l1_op).
         assert issue in ("early", "late", "split", "dual", "late2",
-                         "dual2"), issue
+                         "dual2", "late3", "dual3"), issue
+        self._l0_op = self._l1_op = None
+        self._mark_l0 = self._mark_l1 = None
         self.issue_mode = issue
         self.lane = lane
         self.rank = rank
@@ -830,7 +843,19 @@ class OursSwapAllLane:
     def _active(self):
         return bool(self._in or self._out)
 
-    def _phase(self, k, pre_events=()):
+    def attach_ops(self, l0_op, l1_op):
+        """late3/dual3: the fused ops whose GEMM-start marks gate the phases."""
+        self._l0_op, self._l1_op = l0_op, l1_op
+        self._mark_l0 = l0_op.gemm_start_mark()
+        self._mark_l1 = l1_op.gemm_start_mark()
+
+    def _wait_mark(self, streams, mark):
+        for st in streams:
+            rc = self._cu_wait(st.cuda_stream, mark.data_ptr(), self.epoch,
+                               self._wait_flags)
+            assert rc == 0, f"cuStreamWaitValue64(mark) rc={rc}"
+
+    def _phase(self, k, pre_events=(), pre_mark=None):
         """One matrix (k: 0 = w1, 1 = w2) of the composed exchange on the
         N movement streams: push every outgoing slot into its destination's
         staging + landed-signal store, join the pushes across streams, then
@@ -853,6 +878,8 @@ class OursSwapAllLane:
         for ev in pre_events:
             for st in streams:
                 st.wait_event(ev)
+        if pre_mark is not None:
+            self._wait_mark(streams, pre_mark)
         with _t.cuda.stream(self.w_stream):
             self._ev_ps[k].record()
         op = self.lane.op_w1 if k == 0 else self.lane.op_w2
@@ -927,6 +954,9 @@ class OursSwapAllLane:
         phase-start dependency). No-op for the other modes."""
         if self.issue_mode in ("late2", "dual2"):
             self.ev_l0s.record(torch.cuda.current_stream())
+        elif self.issue_mode in ("late3", "dual3") and self._active():
+            assert self._l0_op is not None, "late3/dual3 need attach_ops()"
+            self._l0_op.set_gemm_start_mark(self.epoch)
 
     def issue_late(self):
         """Immediately AFTER the fused l0 forward is enqueued (dispatch
@@ -943,6 +973,11 @@ class OursSwapAllLane:
             self._phase(1)
         elif self.issue_mode == "dual2":
             self._phase(0, pre_events=(self.ev_l0s,))
+        elif self.issue_mode == "late3":
+            self._phase(0, pre_mark=self._mark_l0)
+            self._phase(1)
+        elif self.issue_mode == "dual3":
+            self._phase(0, pre_mark=self._mark_l0)
         elif self.issue_mode in ("split", "dual"):
             self._phase(1 if self.issue_mode == "split" else 0)
 
@@ -957,6 +992,12 @@ class OursSwapAllLane:
             if self._active():
                 self._phase(1, pre_events=(self.ev_l1s,))
             return
+        if self.issue_mode == "dual3":
+            if self._active():
+                assert self._l1_op is not None, "dual3 needs attach_ops()"
+                self._l1_op.set_gemm_start_mark(self.epoch)
+                self._phase(1, pre_mark=self._mark_l1)
+            return
         if self.issue_mode != "dual" or not self._active():
             return
         self._phase(1, pre_events=(self.ev_l0,))
@@ -964,7 +1005,7 @@ class OursSwapAllLane:
     def l1_gate_kwargs(self):
         """dual: per-problem combine-side weight gate for the fused l1
         (pad-first slots: local expert 1+dj <-> w2 signal index dj)."""
-        if self.issue_mode not in ("dual", "dual2") or not self._in:
+        if self.issue_mode not in ("dual", "dual2", "dual3") or not self._in:
             return None
         gate = [-1] * (self.nlp + 1)
         for (dj, _sr, _ss, _e) in self._in:
@@ -978,7 +1019,7 @@ class OursSwapAllLane:
         exchange (free — the phase landed under l1's unmoved waves) so the
         next iteration's table/signal writes are ordered after the pulls
         (an EMPTY swapped-in expert schedules no gated tile)."""
-        if self.issue_mode in ("dual", "dual2") and self._issued:
+        if self.issue_mode in ("dual", "dual2", "dual3") and self._issued:
             torch.cuda.current_stream().wait_event(self.ev_done)
 
     def gate_kwargs(self):
@@ -1000,7 +1041,7 @@ class OursSwapAllLane:
     def l1_wait(self):
         """w2 landing gate before l1 (early/late/split). dual: no-op — the
         l1 per-problem gate replaces the stream-level join."""
-        if self.issue_mode in ("dual", "dual2"):
+        if self.issue_mode in ("dual", "dual2", "dual3"):
             return
         if self._issued:
             torch.cuda.current_stream().wait_event(self.ev_done)

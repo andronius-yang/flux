@@ -216,7 +216,8 @@ def parse_args():
                         " symmetric-heap staging + peer views, cudaMemcpy"
                         " over NVLink + zero-SM landed-signal wait")
     p.add_argument("--swap_issue", choices=("early", "late", "split",
-                                            "dual", "late2", "dual2"),
+                                            "dual", "late2", "dual2",
+                                            "late3", "dual3"),
                    default="early",
                    help="where the exchange is enqueued: early = in the"
                         " place bracket right after the decision; late ="
@@ -552,9 +553,9 @@ def main():
                 " --swap_issue early")
             assert args.swap_rounds == "1" or args.swap_xport == "p2p", (
                 "--swap_rounds all needs --swap_xport p2p")
-            assert (args.swap_issue not in ("dual", "late2", "dual2")
+            assert (args.swap_issue in ("early", "late", "split")
                     or args.swap_rounds == "all"), (
-                "--swap_issue dual/late2/dual2 are implemented on the"
+                "--swap_issue dual*/late2/late3 are implemented on the"
                 " composed (--swap_rounds all) lane only")
             from flux.testing import ours_swap as oswap
             _load_g = torch.bincount(tk_dev.reshape(-1),
@@ -1046,6 +1047,9 @@ def main():
                                             args.swap_max_moves,
                                             TP_GROUP,
                                             issue=args.swap_issue)
+                if args.swap_issue in ("late3", "dual3"):
+                    # GEMM-start marks of the fused ops gate the phases
+                    swap_lane.attach_ops(runner.l0_op, runner.l1_op)
             else:
                 swap_lane = OursSwapLane(lane, _my_ng, rank, L, cfg.nlp,
                                          args.ffn_hidden_size, args.H,

@@ -3313,6 +3313,17 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
   torch::Tensor wgate_host_;  // pinned int32 [cap]
   torch::Tensor wgate_dev_;   // device int32 [cap]
   cudaEvent_t wgate_h2d_event_ = nullptr;
+
+  // 3D scheduling (2026-09-09): one-shot GEMM-START MARK. set_gemm_start_mark(e)
+  // arms the next forward to write e into a device int64 flag on the forward
+  // stream right before the GEMM kernel launches; the swap lane's movement
+  // streams wait on it (cuStreamWaitValue64 GEQ) so the NVLink expert copies
+  // start with the GEMM, not with the op's metadata/staging prologue.
+  torch::Tensor gemm_mark_;       // device int64[1]
+  torch::Tensor gemm_mark_host_;  // pinned int64[1]
+  int64_t gemm_mark_epoch_ = 0;
+  bool gemm_mark_armed_ = false;
+  cudaEvent_t gemm_mark_event_ = nullptr;
   std::vector<int> msplit_wave_of_node_;  // schedule position -> cascade flag
   std::vector<int> msplit_node_order_;    // schedule position -> dest node
 
@@ -3641,6 +3652,47 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
         this->a2av_compress);
   }
 
+
+
+  void
+  ensure_gemm_mark() {
+    if (this->gemm_mark_.defined()) {
+      return;
+    }
+    this->gemm_mark_ = torch::zeros({1}, at::TensorOptions(at::kCUDA).dtype(at::ScalarType::Long));
+    this->gemm_mark_host_ = torch::zeros(
+        {1}, at::TensorOptions(at::kCPU).dtype(at::ScalarType::Long).pinned_memory(true));
+    CUDA_CHECK(cudaEventCreateWithFlags(&this->gemm_mark_event_, cudaEventDisableTiming));
+    CUDA_CHECK(cudaEventRecord(this->gemm_mark_event_, c10::cuda::getCurrentCUDAStream()));
+  }
+
+  torch::Tensor
+  gemm_start_mark() {
+    ensure_gemm_mark();
+    return this->gemm_mark_;
+  }
+
+  void
+  set_gemm_start_mark(int64_t epoch) {
+    ensure_gemm_mark();
+    this->gemm_mark_epoch_ = epoch;
+    this->gemm_mark_armed_ = true;
+  }
+
+  void
+  write_gemm_mark(cudaStream_t stream) {
+    if (!this->gemm_mark_armed_) {
+      return;
+    }
+    // the pinned slot is reused: wait for the previous 8-byte upload first
+    CUDA_CHECK(cudaEventSynchronize(this->gemm_mark_event_));
+    this->gemm_mark_host_.data_ptr<int64_t>()[0] = this->gemm_mark_epoch_;
+    CUDA_CHECK(cudaMemcpyAsync(
+        this->gemm_mark_.data_ptr(), this->gemm_mark_host_.data_ptr(), sizeof(int64_t),
+        cudaMemcpyHostToDevice, stream));
+    CUDA_CHECK(cudaEventRecord(this->gemm_mark_event_, stream));
+    this->gemm_mark_armed_ = false;
+  }
 
   void
   set_weight_gate(
@@ -4340,6 +4392,7 @@ class GemmGroupedV2GatherRSOp::GemmGroupedV2GatherRSOpImpl {
     CUDA_CHECK(cudaEventRecord(this->gemm_start_event, stream));
     CUDA_CHECK(cudaStreamWaitEvent(gather_rs_stream, this->gemm_start_event));
 
+    this->write_gemm_mark(stream);  // 3D sched: GEMM-start mark (one-shot)
     if (M_this_ep > 0) {
       gemm_op->run(args, this->workspace.defined() ? this->workspace.data_ptr() : nullptr, stream);
     } else {
@@ -4939,6 +4992,16 @@ GemmGroupedV2GatherRSOp::forward_gather_rs(
       std::move(a2av_unique_counts),
       std::move(a2av_wire_csr),
       std::move(a2av_reduce_csr));
+}
+torch::Tensor
+GemmGroupedV2GatherRSOp::gemm_start_mark() {
+  FLUX_CHECK(impl_ != nullptr) << "GemmGroupedV2GatherRSOp not initialized";
+  return impl_->gemm_start_mark();
+}
+void
+GemmGroupedV2GatherRSOp::set_gemm_start_mark(int64_t epoch) {
+  FLUX_CHECK(impl_ != nullptr) << "GemmGroupedV2GatherRSOp not initialized";
+  impl_->set_gemm_start_mark(epoch);
 }
 void
 GemmGroupedV2GatherRSOp::set_weight_gate(

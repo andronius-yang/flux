@@ -154,6 +154,10 @@ class GemmGroupedV2GatherRSOp {
       c10::optional<torch::Tensor> weight_signal,
       int64_t weight_signal_epoch,
       std::vector<int64_t> gate_of_expert);
+  // 3D scheduling: one-shot GEMM-start mark (device int64[1] written with
+  // `epoch` on the forward stream right before the l1 GEMM launches)
+  torch::Tensor gemm_start_mark();
+  void set_gemm_start_mark(int64_t epoch);
   torch::Tensor forward_gather_rs_triton_aot(
       torch::Tensor input,
       torch::Tensor weight,

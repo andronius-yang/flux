@@ -62,6 +62,10 @@ class GemmGroupedV2AGScatterOp {
       bool a2av_hier_compress = false);
   ~GemmGroupedV2AGScatterOp();
   void clear_buffers();
+  // 3D scheduling (2026-09-09): one-shot GEMM-start mark (device int64[1]
+  // written with `epoch` on the forward stream right before the GEMM launches)
+  torch::Tensor gemm_start_mark();
+  void set_gemm_start_mark(int64_t epoch);
   torch::Tensor forward(
       torch::Tensor inputs_shard,
       torch::Tensor weights,
