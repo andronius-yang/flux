@@ -307,3 +307,26 @@ cuStreamWaitValue64 (GEQ), so the NVLink block starts WITH the GEMM (w1)
 and WITH the l1 GEMM (w2); the l0 per-slot gate / l1 per-problem gate +
 in-wave moved-last cover the ~1 ms landing. Specs abl3d_gate3 ->
 abl3d_ab4 -> casestudy3d.
+
+## 10. Round 3 status (binary ths_op d3bb40c7 = a4f418de + GEMM-start mark)
+
+Gate-3 (capsule 20260909-102602, debug window 58113218): **late3** (both
+matrices gated on the l0 GEMM-start mark) 176/176 OK, 0 BAD. **dual3**
+(w1 on the l0 mark, w2 on the l1 mark) WEDGES in the first iteration's
+layer 1 on all 16 ranks (4 and 1 streams alike; the exchange was issued,
+every rank printed its "i0 l1" heartbeat and none returned). The l1
+per-problem gate was never actually exercised under spin before (in dual2
+the copies landed before the l1 GEMM started), so the wedge is specific to
+copies landing while the l1 GEMM (+ the combine's persistent pack /
+pre-reduce / reduce blocks, which fill the SM margin) runs. Hypotheses:
+(a) SM starvation of something the swap needs an SM for while every SM is
+held by the gated GEMM + persistent combine blocks; (b) a gate-map / index
+mismatch that only shows when a gated tile really has to wait. Diagnostic
+queued: `abl3d_gate3b` (dual3 with sm_margin 16, short idle timeout) in
+window 2 (job 58113504) after `casestudy3e` (late3 nsys rows) and
+`abl3d_ab5` (late3 vs early, isolated).
+
+Interim recommendation: **late3** = NVLink block starting WITH the l0 GEMM
+(under GEMM + dispatch puts), total_ms <= early (gate-mode 58.1 vs dual
+58.05 earlier; isolated A/B-5 pending); the two-sided (w2 under l1)
+variant needs the wedge resolved first.
