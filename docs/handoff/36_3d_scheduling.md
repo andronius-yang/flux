@@ -371,3 +371,62 @@ wait was enqueued BEFORE the forward that queues the memcpy. Round 3d:
 dual3 now arms the mark in issue_l1 and enqueues the w2 phase right AFTER
 the l1 forward (`issue_l1_post`), the l0 order. Gate-3d -> capture 3d ->
 A/B-6 on job 58114879.
+
+## 13. Round 3d — dual3 with the post-forward issue order (FINAL)
+
+Gate-3d (capsule 20260909-114553): dual3 4-stream / 1-stream 144/144 OK,
+0 BAD. **The wedge was the host order of the l1 mark wait vs the mark's
+memcpy**: enqueuing the movement streams' cuStreamWaitValue64 on the l1
+mark BEFORE the forward that queues the memcpy parks every rank in the
+first layer 1; enqueuing it right AFTER the forward (`issue_l1_post`, the
+l0 order) runs clean. (The l0 side never had this issue because the wait
+there is always enqueued after the l0 forward.) Keep this rule for any
+future mark-gated phase: arm before the forward, wait after it.
+
+### 13.1 Capture 3d timelines (capsule 20260909-115108, 6/6; medians over 16 ranks)
+
+| arm, case | l0 GEMM | l1 GEMM | NIC puts | w1 block | w2 block | under GEMM / NIC |
+|---|---|---|---|---|---|---|
+| dual3 4str, skewed iter33 | 7.6-24.4 | 30.8-41.2 | 7.3-51.5 | **7.5-8.1** | **30.8-31.4** | 1.5 / 0.6 (of 1.1 busy) |
+| dual3 4str, mild iter10 | 6.9-22.3 | 26.1-36.9 | 6.7-45.2 | 6.8-7.4 | 26.0-26.5 | 1.3 / 0.6 |
+| dual3 4str, efficient iter4 | 6.4-20.9 | 24.2-35.2 | 6.2-42.9 | 6.4-6.8 | 24.2-24.6 | 0.6 / 0.3 |
+| dual3 1str, skewed iter33 | 7.5-25.4 | 30.6-40.8 | 7.3-51.2 | 7.7-8.5 | 30.6-31.4 | 1.4 / 0.6 |
+
+Two separate NVLink blocks, one starting with the l0 GEMM (under the
+dispatch puts), one starting with the l1 GEMM; all swap busy time is
+under a GEMM. The w2 block is under compute only — the combine wire's
+first put starts after wave 0 of the l1 GEMM, by construction of the
+msplit cascade, so no inter-node put can overlap the first ms of l1.
+
+### 13.2 A/B-6 (capsule 20260909-115951, 8/8; RESET-EVERY base, isolated)
+
+| arm | S-C med | S-C mean | proLaw | plain med | l0 / l1 / place (S-C med) |
+|---|---|---|---|---|---|
+| early, 4 streams (host-gap issue, the 9/5 point) | 52.92 | 54.16 | 61.7 | 48.30 | 21.12 / 26.67 / 2.22 |
+| late3, 4 streams (both under l0) | **51.99** | **52.81** | 61.3 | **47.90** | 20.83 / 26.88 / 1.38 |
+| **dual3, 4 streams (w1 under l0, w2 under l1)** | 52.50 | 53.42 | 62.6 | 48.16 | 21.26 / 27.14 / 1.40 |
+| dual3, 1 stream | 53.37 | 53.86 | **61.2** | 48.27 | 21.44 / 27.18 / 1.38 |
+
+Verdict: dual3 (4 streams) is at or below the current host-gap issue
+point on every statistic (S-C -0.4 median / -0.7 mean, plain -0.1), with
+the copies genuinely under both GEMMs; the landing costs l0 +0.1 / l1
++0.5 ms and buys -0.8 ms of place bracket. late3 stays ~0.5 ms better
+(one-sided). Both satisfy "equal or lower total_ms".
+
+**Canonical case-study arm: `ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2`**
+(figure rows from capture 3d; `figs/case_study/case_study_cs3.{svg,drawio}`
+built with `--rows cs3` from the merged timeline JSON on PSCRATCH
+figs_data/case_study/timeline_cs3_merged.json).
+
+## 14. Ledger
+
+Capsules (worktree, uncommitted — human commits): gate 070206, A/B-1
+071236, A/B-2 072958, capture-3 074415, 3b 080251, gate-2 081315, A/B-3
+082135, 3c 083619, gate-3 102602 (2 stuck), 3e 112300, A/B-5 112822, gate3b
+113515 (stuck), gate3c 113951, gate-3d 114553, 3d 115108, A/B-6 115951.
+Binaries: a4f418de (l1 gate) -> d3bb40c7 (+ GEMM-start mark; kernels
+unchanged). Allocations: 58108015 (1:16), 58110152 (0:34), 58113218
+(0:30), 58113504 (0:30), 58114879 (~0:20) x 4 nodes = ~12.7 node-hours.
+Harness lesson: launch runners with setsid/nohup (background shells get
+killed under login-node memory pressure). QOS: interactive limit 2/user
+is shared with the other sessions' interactive jobs.

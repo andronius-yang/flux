@@ -164,7 +164,7 @@ def build(data, out):
 SIMPLE_ROWS = [r for r in ROWS if r[1] == "overlapped swap"]
 # capture 3 (2026-09-09, 3D scheduling, capsule 20260909-074415, binary a4f418de): the
 # 8-slot RESET-EVERY exchange, issue point = host gap (early) / sequential / 3D dual
-# (w1 under l0, w2 under l1). Select with --rows cs3; iteration labels via --eff-iter/--skew-iter.
+# (w1 under l0, w2 under l1; dual3 = GEMM-start-mark gated, capsule 20260909-115108). Select with --rows cs3; iteration labels via --eff-iter/--skew-iter.
 _RST = "ablation_l01_s2_swapall_rst_3d"
 ROWS_CS3 = [
     ("Efficient", "COMET (gated)",       f"l01_allgather_dense_{PLAIN}", "EFF"),
@@ -172,14 +172,14 @@ ROWS_CS3 = [
     ("Efficient", "swap in host gap",    f"{_RST}_early_str4_p2p_r2_{PLAIN}", "EFF"),
     ("Efficient", "sequential swap",     f"{_RST}_noov_str4_p2p_r2_{PLAIN}", "EFF"),
     ("Efficient", "3D swap (l0-done gate)", f"{_RST}_dual_str4_p2p_r2_{PLAIN}", "EFF"),
-    ("Efficient", "3D-scheduled swap",   f"{_RST}_dual2_str4_p2p_r2_{PLAIN}", "EFF"),
+    ("Efficient", "3D-scheduled swap",   f"{_RST}_dual3_str4_p2p_r2_{PLAIN}", "EFF"),
     ("Efficient", "swap under l0 GEMM",  f"{_RST}_late3_str4_p2p_r2_{PLAIN}", "EFF"),
     ("Skewed", "COMET (gated)",          f"l01_allgather_dense_{SCHED}", "SKEW"),
     ("Skewed", "COMET, overlapped",      f"l01_allgather_dense_nogate_c8_{SCHED}", "SKEW"),
     ("Skewed", "swap in host gap",       f"{_RST}_early_str4_p2p_r2_{SCHED}", "SKEW"),
     ("Skewed", "sequential swap",        f"{_RST}_noov_str4_p2p_r2_{SCHED}", "SKEW"),
     ("Skewed", "3D swap (l0-done gate)", f"{_RST}_dual_str4_p2p_r2_{SCHED}", "SKEW"),
-    ("Skewed", "3D-scheduled swap",      f"{_RST}_dual2_str4_p2p_r2_{SCHED}", "SKEW"),
+    ("Skewed", "3D-scheduled swap",      f"{_RST}_dual3_str4_p2p_r2_{SCHED}", "SKEW"),
     ("Skewed", "swap under l0 GEMM",     f"{_RST}_late3_str4_p2p_r2_{SCHED}", "SKEW"),
 ]
 
