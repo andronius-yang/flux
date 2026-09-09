@@ -148,7 +148,7 @@ def build(data, out):
     D.text(tx0 + tw, ay + 7, "ms", 5, "labels", "end", INK2)
     # legend: task colours, span tick, resource patterns
     ly_ = ay + AXIS_H + 1; lx = L_GUT
-    for key, lab in (("token", "Token Comm."), ("expert_comm", "Expert Comm. (dispatch)"), ("expert_comm_w2", "Expert Comm. (combine)"), ("comp", "Expert Comp."),
+    for key, lab in (("token", "Token Comm."), ("expert_comm", "Expert Comm. (disp.)"), ("expert_comm_w2", "Expert Comm. (comb.)"), ("comp", "Expert Comp."),
                      ("reduce", "Top-k Reduce"), ("plan", "Plan / Meta"), ("wait", "Wait")):
         D.rect(lx, ly_ + 1, 8, 4.5, COL[key], "bars"); D.text(lx + 10, ly_ + 5, lab, 5.2, "labels", color=INK2); lx += 10 + 2.75 * len(lab) + 7
     D.line(lx, ly_, lx, ly_ + 6.5, INK, "glyphs", 0.5); D.text(lx + 3, ly_ + 5, "iteration end", 5.2, "labels", color=INK2); lx += 3 + 2.75 * 13 + 9
