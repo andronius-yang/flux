@@ -1,7 +1,7 @@
 # CASE-STUDY capture 3 (2026-09-08, figs/case_study, 3D scheduling): the S-C dwell-4
 # schedule + plain lcb under nsys AND isolated, one binary (3dsched). Rows: overlapped
-# COMET (no-gate c8), gated COMET, OURS 8-slot exchange issued in the host gap (9/1
-# early), OURS sequential (noov), OURS 3D dual (w1 under l0 / w2 under l1). nsys = timelines
+# COMET (no-gate c8), gated COMET, OURS 8-slot exchange (RESET-EVERY: the full orbit fires every iteration)
+# issued in the host gap (early), sequential (noov), 3D dual (w1 under l0 / w2 under l1). nsys = timelines
 # + byte ledgers only, never latency (SCHEMA protocol rule 3); isolated = the latency.
 platform: perlmutter
 nodes: 4
@@ -26,7 +26,7 @@ extra_env:
 variants:
   - l01_allgather_dense_nogate_c8
   - l01_allgather_dense
-  - ablation_l01_s2_swapall_nr_3d_early_str4_p2p_r2
-  - ablation_l01_s2_swapall_nr_3d_noov_str4_p2p_r2
-  - ablation_l01_s2_swapall_nr_3d_dual_ml_str4_p2p_r2
-notes: "case-study 3 nsys+isolated 9.8: K2 4n b64 S-C dwell4 + plain lcb; COMET ovl/gated, OURS 8-slot early/noov/3D-dual (ml, 4 streams)"
+  - ablation_l01_s2_swapall_rst_3d_early_str4_p2p_r2
+  - ablation_l01_s2_swapall_rst_3d_noov_str4_p2p_r2
+  - ablation_l01_s2_swapall_rst_3d_dual_str4_p2p_r2
+notes: "case-study 3 nsys+isolated 9.8: K2 4n b64 S-C dwell4 + plain lcb; COMET ovl/gated, OURS 8-slot RESET-EVERY early/noov/3D-dual (4 streams, no l0 moved-last)"

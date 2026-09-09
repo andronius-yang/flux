@@ -1,8 +1,7 @@
-# 3D scheduling (2026-09-08) latency A/B on the case-study families (S-C dwell-4
-# schedule + plain lcb), K2 4n b64, ISOLATED (per-layer latency semantics). Same
-# binary, one capsule: early (9/1 ablation issue point, host-gap overlap) / noov
-# (sequential) / late (both matrices under l0) / dual (w1 under l0, w2 under l1)
-# x {1,4} movement streams x l0 moved-last, plus the overlapped COMET baseline.
+# 3D scheduling (2026-09-09) latency A/B-2 on the RESET-EVERY base: the placement is
+# restored to the oracle basis before every timed iteration, so every iteration carries
+# the full 8-slot composed orbit (the 9/2 nsys proxy) — the nr base converges and moves
+# ~nothing per iteration (A/B-1). Same binary, one capsule, isolated.
 platform: perlmutter
 nodes: 4
 shape: k2
@@ -18,8 +17,10 @@ timeout_s: 2400
 idle_timeout_s: 900
 retries: 1
 variants:
-  - ablation_l01_s2_swapall_nr_3d_early_str4_p2p_r2
-  - ablation_l01_s2_swapall_nr_3d_late_str4_p2p_r2
-  - ablation_l01_s2_swapall_nr_3d_dual_str4_p2p_r2
-  - ablation_l01_s2_swapall_nr_3d_dual_p2p_r2
-notes: "abl3d A/B-2 9.9: K2 4n b64 S-C d4 + plain lcb, isolated; late/dual WITHOUT l0 moved-last x streams, early anchor (supplement to abl3d_ab)"
+  - ablation_l01_s2_swapall_rst_3d_early_str4_p2p_r2
+  - ablation_l01_s2_swapall_rst_3d_noov_str4_p2p_r2
+  - ablation_l01_s2_swapall_rst_3d_late_str4_p2p_r2
+  - ablation_l01_s2_swapall_rst_3d_dual_str4_p2p_r2
+  - ablation_l01_s2_swapall_rst_3d_dual_p2p_r2
+  - ablation_l01_s2_swapall_rst_3d_dual_ml_str4_p2p_r2
+notes: "abl3d A/B-2 9.9: RESET-EVERY base (full 8-slot orbit every timed iteration), K2 4n b64 S-C d4 + plain lcb, isolated; early/noov/late/dual x streams, dual+l0-moved-last"
