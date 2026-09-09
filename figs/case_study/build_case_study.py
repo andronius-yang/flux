@@ -76,7 +76,8 @@ def lanes_of(it):
         if lane == "gpu" and GPU_SIDE_LANE and x["task"] in SIDE_TASKS: lane = "gpu2"
         if lane not in L: continue
         by = f" {x['bytes'] / 1e6:.0f} MB" if x.get("bytes") else ""
-        L[lane].append((x["t0"], x["t1"], ck, f"{x['task']}{by} {x['t0']:.2f}–{x['t1']:.2f} ms"))
+        ph = {"late": " [w1, dispatch side]", "l1": " [w2, combine side]", "early": " [host gap]"}.get(x.get("phase"), "")
+        L[lane].append((x["t0"], x["t1"], ck, f"{x['task']}{ph}{by} {x['t0']:.2f}–{x['t1']:.2f} ms"))
     for h in it.get("host_ranges", []):
         L["host"].append((h["t0"], h["t1"], "host", h["name"]))
     return L
@@ -159,12 +160,32 @@ def build(data, out):
 
 # --simple: only the OURS overlapped-swap rows (efficient + skewed) = 2 rows x 2 ranks
 SIMPLE_ROWS = [r for r in ROWS if r[1] == "overlapped swap"]
+# capture 3 (2026-09-09, 3D scheduling, capsule 20260909-074415, binary a4f418de): the
+# 8-slot RESET-EVERY exchange, issue point = host gap (early) / sequential / 3D dual
+# (w1 under l0, w2 under l1). Select with --rows cs3; iteration labels via --eff-iter/--skew-iter.
+_RST = "ablation_l01_s2_swapall_rst_3d"
+ROWS_CS3 = [
+    ("Efficient", "COMET (gated)",       f"l01_allgather_dense_{PLAIN}", "EFF"),
+    ("Efficient", "COMET, overlapped",   f"l01_allgather_dense_nogate_c8_{PLAIN}", "EFF"),
+    ("Efficient", "swap in host gap",    f"{_RST}_early_str4_p2p_r2_{PLAIN}", "EFF"),
+    ("Efficient", "sequential swap",     f"{_RST}_noov_str4_p2p_r2_{PLAIN}", "EFF"),
+    ("Efficient", "3D-scheduled swap",   f"{_RST}_dual_str4_p2p_r2_{PLAIN}", "EFF"),
+    ("Skewed", "COMET (gated)",          f"l01_allgather_dense_{SCHED}", "SKEW"),
+    ("Skewed", "COMET, overlapped",      f"l01_allgather_dense_nogate_c8_{SCHED}", "SKEW"),
+    ("Skewed", "swap in host gap",       f"{_RST}_early_str4_p2p_r2_{SCHED}", "SKEW"),
+    ("Skewed", "sequential swap",        f"{_RST}_noov_str4_p2p_r2_{SCHED}", "SKEW"),
+    ("Skewed", "3D-scheduled swap",      f"{_RST}_dual_str4_p2p_r2_{SCHED}", "SKEW"),
+]
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(); ap.add_argument("json"); ap.add_argument("--out", required=True)
+    ap.add_argument("--rows", choices=("cs2", "cs3"), default="cs2", help="row table: cs2 = 9/5 capture, cs3 = 9/9 3D-scheduling capture")
+    ap.add_argument("--eff-iter", default="iter4"); ap.add_argument("--skew-iter", default="iter33")
     ap.add_argument("--simple", action="store_true", help="OURS overlapped swap only: Efficient + Skewed, 2 ranks each")
     a = ap.parse_args()
-    if a.simple: ROWS[:] = SIMPLE_ROWS
+    if a.rows == "cs3":
+        ROWS[:] = [(t1, t2, cid, {"EFF": a.eff_iter, "SKEW": a.skew_iter}[itn]) for t1, t2, cid, itn in ROWS_CS3]
+    if a.simple: ROWS[:] = [r for r in ROWS if r[1] in ("overlapped swap", "3D-scheduled swap")]
     data = json.load(open(a.json))
     ledger, h, tmax = build(data, a.out)
     print(f"wrote {a.out}.svg/.drawio/_ranks.csv  ({TEXT_W:.0f} x {h:.1f} pt, shared scale 0..{tmax:.1f} ms)")

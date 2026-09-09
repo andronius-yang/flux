@@ -1,0 +1,23 @@
+# 3D scheduling (2026-09-08) correctness gates: composed 8-slot exchange with the
+# exchange issued under l0 (late) and split across l0/l1 (dual, NEW l1 per-problem
+# weight gate + in-wave moved-last). Reset-every proLaw severe cell = every timed
+# iteration is a full drift event (max gated tiles); --check_iters 1 validates each
+# iteration's l1 output against the reference. Gate-first: no timed cell before green.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering"
+budgets_mib: [64]
+modes: [isolated]
+iters: 8
+warmup_iters: 3
+skip_correctness: false
+timeout_s: 1800
+idle_timeout_s: 600
+retries: 0
+variants:
+  - ablation_l01_s2_swapall_rst_3d_dual2_str4_p2p_r2_gate
+  - ablation_l01_s2_swapall_rst_3d_dual2_p2p_r2_gate
+  - ablation_l01_s2_swapall_rst_3d_late2_str4_p2p_r2_gate
+notes: "abl3d gate-2 9.9: dual2 (w1 gated on l0-op start, w2 on l1-op start) + late2, str4 and 1-stream, reset-every proLaw, check_iters=1"

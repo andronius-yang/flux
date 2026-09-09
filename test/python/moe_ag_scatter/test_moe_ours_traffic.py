@@ -216,7 +216,7 @@ def parse_args():
                         " symmetric-heap staging + peer views, cudaMemcpy"
                         " over NVLink + zero-SM landed-signal wait")
     p.add_argument("--swap_issue", choices=("early", "late", "split",
-                                            "dual"),
+                                            "dual", "late2", "dual2"),
                    default="early",
                    help="where the exchange is enqueued: early = in the"
                         " place bracket right after the decision; late ="
@@ -552,9 +552,10 @@ def main():
                 " --swap_issue early")
             assert args.swap_rounds == "1" or args.swap_xport == "p2p", (
                 "--swap_rounds all needs --swap_xport p2p")
-            assert args.swap_issue != "dual" or args.swap_rounds == "all", (
-                "--swap_issue dual is implemented on the composed"
-                " (--swap_rounds all) lane only")
+            assert (args.swap_issue not in ("dual", "late2", "dual2")
+                    or args.swap_rounds == "all"), (
+                "--swap_issue dual/late2/dual2 are implemented on the"
+                " composed (--swap_rounds all) lane only")
             from flux.testing import ours_swap as oswap
             _load_g = torch.bincount(tk_dev.reshape(-1),
                                      minlength=args.G).cpu().long()
@@ -1704,6 +1705,8 @@ def main():
                 else:
                     gate_kw = lane.gate_kwargs()
             _hbp("l0")
+            if swap_lane is not None:
+                swap_lane.mark_l0_start()   # late2/dual2 device start point
             l0_out = runner.l0_forward(inputs_shard, gate_kwargs=gate_kw)
             # late plan-overlap (mode 2): the combine-meta host work runs
             # HERE, while the GPU executes the just-enqueued l0 — host stays
