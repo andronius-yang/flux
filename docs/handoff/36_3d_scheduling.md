@@ -430,3 +430,18 @@ unchanged). Allocations: 58108015 (1:16), 58110152 (0:34), 58113218
 Harness lesson: launch runners with setsid/nohup (background shells get
 killed under login-node memory pressure). QOS: interactive limit 2/user
 is shared with the other sessions' interactive jobs.
+
+## 15. Capture 4 = the v2 case-study source (capsule 20260909-124809, 20/20, one binary d3bb40c7)
+
+Rows: COMET overlapped / OURS 8-slot reset-every host-gap / sequential /
+3D (dual3, 4 streams), both cases, nsys + isolated. Figure
+`figs/case_study/case_study_v2.{svg,drawio,png}` (+ `_simple`), built with
+`build_case_study.py <timeline_20260909-124809.json> --rows cs3`; the 9/5
+`case_study.*` (v1, one-slot lane) is untouched. Same-capsule totals (S-C
+med / mean / proLaw; plain med): COMET ovl 52.21 / 52.63 / 55.4; 54.91 —
+host gap 52.99 / 53.62 / 59.9; 47.95 — sequential 54.09 / 56.69 / 65.6;
+48.11 — **3D 52.25 / 52.80 / 61.5; 47.54**. Timelines (rank medians): 3D
+w1 block 7.7-8.3 with the l0 GEMM at 7.7 and puts from 7.5; w2 block
+34.0-34.5 with the l1 GEMM at 34.0 (skewed iter33); efficient iter4: w1
+6.3-6.8 (GEMM 6.4), w2 24.4-24.7 (l1 GEMM 24.4). COMET rows within 1 ms of
+captures 2/3 (no platform drift). Total node-hours for the lane ~13.5.
