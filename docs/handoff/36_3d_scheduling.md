@@ -251,3 +251,31 @@ moved-last absorb the ~1 ms landing. Specs abl3d_gate2 -> abl3d_ab3 ->
 casestudy3c (job 58110152).
 
 ## 6. Case-study capture 3 — TBD
+
+## 8. Round 2 — device-gated issue (gate-2 20260909-081315 3/3, A/B-3 20260909-082135 12/12)
+
+Gate-2 (reset-every proLaw, check_iters=1): dual2 4-stream / dual2 1-stream
+/ late2 4-stream = 176/176 OK, 0 BAD each (the l1 per-problem gate holds
+with the copies landing under the l1 GEMM).
+
+A/B-3, RESET-EVERY base, K2 4n b64 isolated, rank-max per iteration:
+
+| arm | S-C med | S-C mean | proLaw | plain med | l0 / l1 / place (S-C med) |
+|---|---|---|---|---|---|
+| early, 4 streams (current issue point) | 52.66 | 53.65 | 60.4 | 47.84 | 20.52 / 26.77 / 2.23 |
+| dual (capture-3 semantics), 4 streams | 52.33 | 52.79 | 59.2 | 47.68 | 20.55 / 27.49 / 1.40 |
+| **late2**, 4 streams | **51.70** | **52.12** | 58.8 | **47.07** | 20.74 / 26.76 / 1.39 |
+| **dual2**, 4 streams | 52.26 | 52.53 | 59.6 | 47.48 | 20.78 / 27.16 / 1.47 |
+| **dual2**, 1 stream | 51.90 | 52.45 | **58.2** | 47.33 | 20.66 / 27.11 / 1.39 |
+| dual2 + l0 moved-last, 4 streams | 52.49 | 54.26 | 64.5 | 47.79 | 21.11 / 27.02 / 1.40 |
+
+Verdict: with the copies now genuinely under the GEMMs (§9), dual2 is at
+parity or better than the host-gap issue point on every statistic
+(S-C -0.4..-0.8 median / -1.1 mean; plain -0.4..-0.5; proLaw block -0.8..
+-2.2). The landing under the GEMM costs l0 +0.2 / l1 +0.4 ms (gated tiles
++ NVLink contention) and buys -0.8 ms of place bracket + ~-1 ms of plan
+bracket. late2 (both under l0) remains ~0.5 ms better than dual2 — the
+price of the two-sided picture. l0 moved-last is a loser again (+0.2 med,
++1.7 mean, +4.9 on proLaw). 1 vs 4 streams: 1 stream is marginally better
+on total (longer, thinner NVLink block: less contention with the token
+forwards); either is fine for the figure.
