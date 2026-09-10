@@ -25,10 +25,11 @@ CONFIG = dict(
     FIG_W=3.33, LEFT_IN=0.50, RIGHT_IN=0.45,     # right margin holds the colorbar + its label
     TOP_IN=0.05, BOT_IN=0.06,
     ROW_A_IN=0.52, ROW_B_IN=0.38,                # bar panel heights
-    GAP_AB_IN=0.50, GAP_BC_IN=0.40,   # AB holds (a) x label + sub-label + the (b) column titles              # x label + sub-label (+ map titles) between rows
+    GAP_AB_IN=0.50, GAP_BC_IN=0.52,   # AB holds (a) x label + sub-label + the (b) column titles;
+                                     # BC holds (b) tick labels + "GPU" + sub-label              # x label + sub-label (+ map titles) between rows
     BELOW_C_IN=0.42,                             # tick labels + "Receiver NIC" + sub-label under the maps
     HM_GAP_IN=0.14, CBAR_W_IN=0.07, CBAR_GAP_IN=0.05,
-    SUBLABEL_IN=dict(a=0.20, b=0.16, c=0.26),    # sub-label distance below each row's axes
+    SUBLABEL_IN=dict(a=0.20, b=0.28, c=0.26),    # sub-label distance below each row's axes
     HM_XLABEL_IN=0.14,                           # "Receiver NIC" below the maps (tick labels above it)
     # --- topics ---
     TOPICS=["livecodebench/execution", "mmlu/professional_law"],
@@ -40,7 +41,8 @@ CONFIG = dict(
     X_LOG=False, X_LOG_MIN=0.05,
     # --- (b) compute: amber family = "Expert Comp." in the later figures (#eda100) ---
     B_COLOR="#eda100", B_YLABEL="Normalized\ncompute", B_XLABEL="GPU",
-    B_YMAX=None,   # None = next 0.5 above the data max                 # None = next 0.5 above the data max
+    B_YMAX=None,   # None = next 0.5 above the data max
+    B_XLABEL_IN=0.14,   # "GPU" below the bars (tick labels above it), as HM_XLABEL_IN does for the maps                 # None = next 0.5 above the data max
     # --- (c) NIC traffic: blue family = "Token Comm." (#2a78d6) ---
     CMAP="Blues", VMIN=0.0, VMAX=None, NIC_ONLY=True,
     HM_XLABEL="Receiver NIC", HM_YLABEL="Sender NIC", CBAR_LABEL="Normalized traffic",
@@ -136,12 +138,17 @@ def main():
             ax.axvline(n * L - 0.5, **cfg["NODE_SEP"], zorder=3)
         ax.set_xlim(-0.5, W - 0.5); ax.set_ylim(0, bmax)     # == the maps' imshow x limits
         ax.set_title(cfg["TOPIC_NAMES"][t], fontsize=fs["title"], pad=2, color=ink)
-        ax.set_xticks([]); ax.set_yticks(list(np.arange(0, bmax + 1e-9, 1.0)))
-        ax.tick_params(labelsize=fs["tick"], pad=1.5)
+        ax.set_xticks(cfg["HM_MAJOR"]); ax.set_xticks(range(W), minor=True)   # a tick per GPU, labels at 0/4/8/12
+        ax.set_yticks(list(np.arange(0, bmax + 1e-9, 1.0)))
+        ax.tick_params(labelsize=fs["tick"], pad=1.5, length=1.6)
+        ax.tick_params(which="minor", length=1.0)
         for sp in ("top", "right"):
             ax.spines[sp].set_visible(False)
     ax_b[0].set_ylabel(cfg["B_YLABEL"], fontsize=fs["label"], labelpad=2)
     ax_b[1].tick_params(labelleft=False)
+    q0, q1 = ax_b[0].get_position(), ax_b[1].get_position()   # one shared x label, as under the maps
+    fig.text((q0.x0 + q1.x1) / 2, q0.y0 - cfg["B_XLABEL_IN"] / fh, cfg["B_XLABEL"],
+             ha="center", va="top", fontsize=fs["label"])
     for sp in ("top", "right"):
         ax_a.spines[sp].set_visible(False)
 

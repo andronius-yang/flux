@@ -90,7 +90,11 @@ the rejected alternatives: `intro_options.html` (options page, 2026-09-04).
   *i* (no gaps, no grouping). Topic is carried by the column title above
   the bars (the maps lost their own titles), so both columns use the one
   amber `#eda100` **[knob: B_COLOR]**. No uniform line in (b); the dashed
-  node separators stay.
+  node separators stay. (b) carries the same axis furniture as the maps —
+  a small tick per GPU, labels only at 0/4/8/12, and ONE shared "GPU"
+  label centered under both columns **[knob: B_XLABEL_IN]** — so the
+  resource is named on its own row (GPU vs NIC) even though the bars are
+  column-bound to the maps.
 
 - **v3.5 (2026-09-04, user)** — NIC semantics made exact **[knob:
   NIC_ONLY]**: the four same-node 4x4 blocks are zeroed (that traffic
