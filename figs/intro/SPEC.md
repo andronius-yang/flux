@@ -84,6 +84,13 @@ the rejected alternatives: `intro_options.html` (options page, 2026-09-04).
   because NIC ingress is the compute load minus its same-node share.
   Renders `intro_v4.*` (+ `--logx` companion `intro_v4_log.*`). v3.5.1
   generator preserved in git history (ecef228).
+  **(b) revised (user, 2026-09-10):** not one grouped chart — **two bar
+  charts, one per topic, on the SAME two columns as the maps**, each bar
+  width 1.0 on xlim [-0.5, 15.5] so bar *i* sits exactly over map column
+  *i* (no gaps, no grouping). Topic is carried by the column title above
+  the bars (the maps lost their own titles), so both columns use the one
+  amber `#eda100` **[knob: B_COLOR]**. No uniform line in (b); the dashed
+  node separators stay.
 
 - **v3.5 (2026-09-04, user)** — NIC semantics made exact **[knob:
   NIC_ONLY]**: the four same-node 4x4 blocks are zeroed (that traffic

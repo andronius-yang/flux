@@ -25,10 +25,10 @@ CONFIG = dict(
     FIG_W=3.33, LEFT_IN=0.50, RIGHT_IN=0.45,     # right margin holds the colorbar + its label
     TOP_IN=0.05, BOT_IN=0.06,
     ROW_A_IN=0.52, ROW_B_IN=0.38,                # bar panel heights
-    GAP_AB_IN=0.36, GAP_BC_IN=0.56,   # (b) sub-label must clear the map titles              # x label + sub-label (+ map titles) between rows
+    GAP_AB_IN=0.50, GAP_BC_IN=0.40,   # AB holds (a) x label + sub-label + the (b) column titles              # x label + sub-label (+ map titles) between rows
     BELOW_C_IN=0.42,                             # tick labels + "Receiver NIC" + sub-label under the maps
     HM_GAP_IN=0.14, CBAR_W_IN=0.07, CBAR_GAP_IN=0.05,
-    SUBLABEL_IN=dict(a=0.20, b=0.30, c=0.26),   # (b) has tick labels under it, so its sub-label sits lower    # sub-label distance below each row's axes
+    SUBLABEL_IN=dict(a=0.20, b=0.16, c=0.26),    # sub-label distance below each row's axes
     HM_XLABEL_IN=0.14,                           # "Receiver NIC" below the maps (tick labels above it)
     # --- topics ---
     TOPICS=["livecodebench/execution", "mmlu/professional_law"],
@@ -39,8 +39,8 @@ CONFIG = dict(
     A_COLOR="#4b5563", A_ALPHA=1.0, A_XLABEL="Expert ID", A_YLABEL="Normalized\ntoken count",
     X_LOG=False, X_LOG_MIN=0.05,
     # --- (b) compute: amber family = "Expert Comp." in the later figures (#eda100) ---
-    B_COLORS=["#eda100", "#a86f00"], B_YLABEL="Normalized\ncompute", B_XLABEL="GPU",
-    B_GROUP_W=0.78, B_YMAX=3.0,   # headroom for the legend above the 2.21x bar (both topics stay)                 # None = next 0.5 above the data max
+    B_COLOR="#eda100", B_YLABEL="Normalized\ncompute", B_XLABEL="GPU",
+    B_YMAX=None,   # None = next 0.5 above the data max                 # None = next 0.5 above the data max
     # --- (c) NIC traffic: blue family = "Token Comm." (#2a78d6) ---
     CMAP="Blues", VMIN=0.0, VMAX=None, NIC_ONLY=True,
     HM_XLABEL="Receiver NIC", HM_YLABEL="Sender NIC", CBAR_LABEL="Normalized traffic",
@@ -99,10 +99,11 @@ def main():
     X0, PW = cfg["LEFT_IN"] / fw, plot_w / fw
     def ax_at(top_in, h_in, x0=X0, w=PW):
         return fig.add_axes([x0, 1 - (top_in + h_in) / fh, w, h_in / fh])
+    COL_X = [X0, X0 + (side + cfg["HM_GAP_IN"]) / fw]        # the two topic columns; (b) and (c) share them
     y = cfg["TOP_IN"]
     ax_a = ax_at(y, cfg["ROW_A_IN"]); y += cfg["ROW_A_IN"] + cfg["GAP_AB_IN"]
-    ax_b = ax_at(y, cfg["ROW_B_IN"]); y += cfg["ROW_B_IN"] + cfg["GAP_BC_IN"]
-    ax_c = [ax_at(y, side, X0, side / fw), ax_at(y, side, X0 + (side + cfg["HM_GAP_IN"]) / fw, side / fw)]
+    ax_b = [ax_at(y, cfg["ROW_B_IN"], x, side / fw) for x in COL_X]; y += cfg["ROW_B_IN"] + cfg["GAP_BC_IN"]
+    ax_c = [ax_at(y, side, x, side / fw) for x in COL_X]
     ax_cb = ax_at(y, side, X0 + (2 * side + cfg["HM_GAP_IN"] + cfg["CBAR_GAP_IN"]) / fw, cfg["CBAR_W_IN"] / fw)
 
     # ---- (a) expert activation frequency, sorted ----
@@ -127,26 +128,22 @@ def main():
     ax_a.legend(fontsize=fs["legend"], frameon=False, loc="upper right", handlelength=1.0,
                 handletextpad=0.5, borderaxespad=0.2)
 
-    # ---- (b) per-GPU compute load, grouped bars, node separators ----
-    nb = len(cfg["B_TOPICS"]); bw = cfg["B_GROUP_W"] / nb; xs = np.arange(W)
+    # ---- (b) per-GPU compute load: one column per topic, bars column-aligned with the maps ----
     bmax = cfg["B_YMAX"] or float(np.ceil(max(C[t].max() for t in cfg["B_TOPICS"]) / 0.5) * 0.5)
-    for i, t in enumerate(cfg["B_TOPICS"]):
-        ax_b.bar(xs - cfg["B_GROUP_W"] / 2 + (i + 0.5) * bw, C[t], width=bw, color=cfg["B_COLORS"][i],
-                 linewidth=0, label=cfg["TOPIC_NAMES"][t])
-    for n in range(1, W // L):
-        ax_b.axvline(n * L - 0.5, **cfg["NODE_SEP"], zorder=0)
-    ax_b.axhline(1.0, **cfg["UNIFORM_LINE"], zorder=3)
-    ax_b.set_xlim(-0.6, W - 0.4); ax_b.set_ylim(0, bmax)
-    ax_b.set_xticks(cfg["HM_MAJOR"]); ax_b.set_xticks(range(W), minor=True)
-    ax_b.set_yticks([v for v in np.arange(0, bmax + 1e-9, 1.0)])
-    ax_b.set_xlabel(cfg["B_XLABEL"], fontsize=fs["label"], labelpad=2)
-    ax_b.set_ylabel(cfg["B_YLABEL"], fontsize=fs["label"], labelpad=2)
-    ax_b.tick_params(labelsize=fs["tick"], pad=1.5)
-    ax_b.legend(fontsize=fs["legend"], frameon=False, loc="upper right", ncol=2, handlelength=1.0,
-                handletextpad=0.5, borderaxespad=0.2, columnspacing=0.8)
-    for ax in (ax_a, ax_b):
+    for ax, t in zip(ax_b, cfg["B_TOPICS"]):
+        ax.bar(np.arange(W), C[t], width=1.0, color=cfg["B_COLOR"], linewidth=0)   # no gaps: bar i sits over map column i
+        for n in range(1, W // L):
+            ax.axvline(n * L - 0.5, **cfg["NODE_SEP"], zorder=3)
+        ax.set_xlim(-0.5, W - 0.5); ax.set_ylim(0, bmax)     # == the maps' imshow x limits
+        ax.set_title(cfg["TOPIC_NAMES"][t], fontsize=fs["title"], pad=2, color=ink)
+        ax.set_xticks([]); ax.set_yticks(list(np.arange(0, bmax + 1e-9, 1.0)))
+        ax.tick_params(labelsize=fs["tick"], pad=1.5)
         for sp in ("top", "right"):
             ax.spines[sp].set_visible(False)
+    ax_b[0].set_ylabel(cfg["B_YLABEL"], fontsize=fs["label"], labelpad=2)
+    ax_b[1].tick_params(labelleft=False)
+    for sp in ("top", "right"):
+        ax_a.spines[sp].set_visible(False)
 
     # ---- (c) NIC-to-NIC maps ----
     if cfg["NIC_ONLY"]:
@@ -163,7 +160,6 @@ def main():
             ax.axhline(n * L - .5, **cfg["NODE_LINE"]); ax.axvline(n * L - .5, **cfg["NODE_LINE"])
         for sp in ax.spines.values():
             sp.set_linewidth(cfg["HM_EDGE_LW"])
-        ax.set_title(cfg["TOPIC_NAMES"][t], fontsize=fs["title"], pad=2, color=ink)
         ax.set_xticks(cfg["HM_MAJOR"]); ax.set_yticks(cfg["HM_MAJOR"])
         ax.set_xticks(range(W), minor=True); ax.set_yticks(range(W), minor=True)
         ax.tick_params(labelsize=fs["tick"], pad=1.5, length=1.6)
@@ -181,17 +177,20 @@ def main():
              ha="center", va="top", fontsize=fs["label"])
 
     # ---- sub-labels centered under each row ----
-    for ax, key, lab in ((ax_a, "a", 0), (ax_b, "b", 1)):
-        p = ax.get_position()
-        fig.text((p.x0 + p.x1) / 2, p.y0 - cfg["SUBLABEL_IN"][key] / fh, cfg["PANEL_LABELS"][lab],
-                 fontsize=fs["panel"], va="top", ha="center")
+    pa = ax_a.get_position()
+    fig.text((pa.x0 + pa.x1) / 2, pa.y0 - cfg["SUBLABEL_IN"]["a"] / fh, cfg["PANEL_LABELS"][0],
+             fontsize=fs["panel"], va="top", ha="center")
+    b0, b1 = ax_b[0].get_position(), ax_b[1].get_position()
+    fig.text((b0.x0 + b1.x1) / 2, b0.y0 - cfg["SUBLABEL_IN"]["b"] / fh, cfg["PANEL_LABELS"][1],
+             fontsize=fs["panel"], va="top", ha="center")
     fig.text((p0.x0 + p1.x1) / 2, p0.y0 - cfg["SUBLABEL_IN"]["c"] / fh, cfg["PANEL_LABELS"][2],
              fontsize=fs["panel"], va="top", ha="center")
 
     for ext in ("pdf", "png"):
         fig.savefig(f"{cfg['OUT_STEM']}.{ext}", dpi=cfg["DPI"])
     print("wrote", cfg["OUT_STEM"], f"{fw:.2f}x{fh:.2f} in", "vmax %.2f" % vmax,
-          "compute max " + " ".join(f"{cfg['TOPIC_NAMES'][t]}={C[t].max():.2f}x" for t in cfg["B_TOPICS"]))
+          "compute max " + " ".join(f"{cfg['TOPIC_NAMES'][t]}={C[t].max():.2f}x" for t in cfg["B_TOPICS"]),
+          "| (b) bars aligned to (c) columns")
 
 if __name__ == "__main__":
     main()
