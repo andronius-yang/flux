@@ -3193,6 +3193,25 @@ VARIANTS["ours_l01_s1_gate_pv2_r2"] = dict(
     test_args=VARIANTS["ours_l01_s1_gate"]["test_args"]
               + ["--place_solver", "pv2", "--redundant_per_rank", "2"],
 )
+# ---- rotation-aligned static schedule (2026-09-11, knob
+# FLUX_A2AV_SCHED_ROT_ALIGN): the lb_union static schedule orders each remote
+# node's L window lanes by the gateway fan-out rotation arrival order for
+# this rank instead of own-lane-first (handoff 05 H1). A/B twins of the
+# main-perf OURS arm (same binary, knob on vs off) + the gate twin.
+VARIANTS["ours_l01_s1_pv2_r2_rotalign"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2"],
+    env=dict(VARIANTS["ours_l01_s1_pv2_r2"]["env"],
+             FLUX_A2AV_SCHED_ROT_ALIGN="1"),
+    requires=list(VARIANTS["ours_l01_s1_pv2_r2"].get("requires", []))
+             + ["FLUX_A2AV_SCHED_ROT_ALIGN"],
+)
+VARIANTS["ours_l01_s1_gate_pv2_r2_rotalign"] = dict(
+    VARIANTS["ours_l01_s1_gate_pv2_r2"],
+    env=dict(VARIANTS["ours_l01_s1_gate_pv2_r2"]["env"],
+             FLUX_A2AV_SCHED_ROT_ALIGN="1"),
+    requires=list(VARIANTS["ours_l01_s1_gate_pv2_r2"].get("requires", []))
+             + ["FLUX_A2AV_SCHED_ROT_ALIGN"],
+)
 # Byte-adaptive wave collapse (2026-08-29, binary tag
 # FLUX_A2AV_RS_WAVE_ADAPT_TAG): per-iteration host rule — run the legacy
 # single-gate GEMM (one weight pass) when (n_waves-1) weight re-read bytes

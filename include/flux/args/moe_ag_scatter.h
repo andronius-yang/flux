@@ -90,6 +90,13 @@ struct GemmGroupedV2AGScatterArguments {
   // a2av_ring mode: sends follow the reverse hierarchical ring, so the dense
   // static problem schedule is used instead of the dynamic tile-claimer buckets.
   bool a2av_ring_schedule = false;
+  // FLUX_A2AV_SCHED_ROT_ALIGN=1 (lb_union Tier B, 2026-09-11): order each
+  // remote node's L window lanes in the static schedule by the gateway
+  // fan-out ROTATION arrival order for this rank (dlg=(g+1+dn+dl)%L, see the
+  // union_bcast gateway forward) instead of the own-lane-first ring shift.
+  // Closes handoff 05's H1 (rotation anti-alignment). Own-node lanes keep
+  // the intra-node put order, which is already aligned.
+  bool a2av_rot_align = false;
   // FLUX_A2AV_SEG_GATE_BALLOT=1: legacy two-ballot (W<=64) process_tile
   // segment gate instead of the default W-unbounded predicate gate (A/B knob)
   bool seg_gate_ballot = false;

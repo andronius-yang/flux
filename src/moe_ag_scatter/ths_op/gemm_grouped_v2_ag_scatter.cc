@@ -423,6 +423,10 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // FLUX_A2AV_SEG_GATE_BALLOT=1: legacy two-ballot (W<=64) process_tile
   // segment gate instead of the default W-unbounded predicate gate (A/B knob)
   const bool seg_gate_ballot_;
+  // FLUX_A2AV_SCHED_ROT_ALIGN=1: static-schedule stage order of each remote
+  // node's window lanes follows the gateway fan-out rotation arrival order
+  // (args.a2av_rot_align; lb_union window keying only)
+  const bool sched_rot_align_;
   uint64_t run_id_ = 0;              // epoch value carried by the NVSHMEM signals
   int64_t max_recv_ntokens_ = 0;     // rows of the symmetric recv buffer
   int64_t max_stage_ntokens_ = 0;    // rows of the symmetric gateway staging buffer
@@ -755,6 +759,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                 0 &&
             a2av_hier_compress),
         seg_gate_ballot_(get_int_from_env("FLUX_A2AV_SEG_GATE_BALLOT", 0) != 0),
+        sched_rot_align_(get_int_from_env("FLUX_A2AV_SCHED_ROT_ALIGN", 0) != 0),
         // ring_mode barriers are CUDA-IPC based and intra-node only; multi-node
         // must take the NVSHMEM barrier (ring_mode = false)
         group_barrier(this->tp_group, nnodes == 1 && this->tp_group->get_size() > 8) {
@@ -4389,6 +4394,11 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         .tile_size_n = tile_N,
         .barrier_ptr = barrier_ptr};
     args.seg_gate_ballot = this->seg_gate_ballot_;
+    // rotation-aligned stage order applies only to the window-keyed
+    // (gating-cumsum) schedule: the lanes it reorders ARE the gateway windows
+    args.a2av_rot_align =
+        this->sched_rot_align_ && this->union_bcast_ && !this->relay_identity_ &&
+        this->a2av_gating_cumsum_.defined();
     if (a2av_dispatch_) {
       args.signal_ptr = reinterpret_cast<uint64_t *>(this->a2av_signal_buffer.data_ptr());
       args.signal_expected = this->run_id_;

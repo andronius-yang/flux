@@ -57,7 +57,8 @@ calc_sorted_problem_schedule_v2(
     int segment_end_this_tile = get_rank_id(m_end_this_tile);
     int stage_max = 0;
     for (int sid = segment_start_this_tile; sid <= segment_end_this_tile; sid++) {
-      int stage = shift_rank_to_order(sid, args.dist_env);
+      int stage = args.a2av_rot_align ? shift_lane_to_order_rot(sid, args.dist_env)
+                                      : shift_rank_to_order(sid, args.dist_env);
       int ntokens_this_rank =
           sid == 0 ? cumsum_this_rank[0] : (cumsum_this_rank[sid] - cumsum_this_rank[sid - 1]);
       if (ntokens_this_rank != 0) {
@@ -72,7 +73,8 @@ calc_sorted_problem_schedule_v2(
     int eid = i % ep_nexperts;
     int gid = (i / ep_nexperts) % num_groups;
     int stage = (i / ep_nexperts / num_groups) % tp_size;
-    int segment = revert_order_to_rank(stage, args.dist_env);
+    int segment = args.a2av_rot_align ? revert_order_to_lane_rot(stage, args.dist_env)
+                                      : revert_order_to_rank(stage, args.dist_env);
     const int *cumsum_this_rank = args.accum_per_rank_ptr + eid * tp_size;
     auto get_cumsum_this_rank_with_zero_pad = [=](int segment) {
       return segment == 0 ? 0 : cumsum_this_rank[segment - 1];

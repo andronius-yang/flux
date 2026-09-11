@@ -124,7 +124,7 @@ mechanism for the k4 e2e win until the union arm's wire path is attributed.
 | H2 (gateway round HOL → arrived-but-unsignaled / ordered-behind) | **confirmed** | rank-10 attribution: thin windows fired 326 µs, wavefront blocked until 3410 µs on the fat round |
 | H2b (relay round serialization delays later rounds) | **confirmed** | gateway 2's 2240 µs redistribution stall; fat window put second on the relay's NIC |
 | H4 (byte-balanced ≠ compute-balanced windows) | **confirmed by construction + measurement** | headroom 1.000 matrices starve; hot-node columns 3.73T starve while 12.27T columns don't |
-| H1 (rotation anti-alignment, own-lane window near-last) | **visible, small** | within-round fire ladders show schedule-first windows arriving mid-rotation; magnitude ≪ H2/H2b at these shapes |
+| H1 (rotation anti-alignment, own-lane window near-last) | **visible, small → CLOSED 2026-09-11** | within-round fire ladders show schedule-first windows arriving mid-rotation; magnitude ≪ H2/H2b at these shapes. Fixed by `FLUX_A2AV_SCHED_ROT_ALIGN` (static stage order follows the fan-out rotation per rank; insight ledger NR-17): 4n K2 l0 −1..−6.4 % b1..b64, l1 flat, gate green (capsules 20260911-075057 / 20260911-080007) |
 | H3 (pack coupling → clustered landings, NN=2) | **untested** | optional phase skipped; existing high-skew capture shows the 0.99-rank's 1.25 ms *local* pack block (rank 7), consistent but not dispositive |
 
 ## 5. What this buys the runtime-algorithm pitch

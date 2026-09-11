@@ -1,0 +1,22 @@
+# Rotation-aligned static schedule (FLUX_A2AV_SCHED_ROT_ALIGN, 2026-09-11)
+# latency A/B on the main-perf OURS arm: knob off vs on, same binary, one
+# capsule, isolated (per-layer latency semantics), main-perf budgets.
+platform: perlmutter
+nodes: 8
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 4, 16, 64]
+modes: [isolated]
+iters: 12
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 1500
+sm_margin: 8
+idle_timeout_s: 900
+retries: 1
+matrix_instance: "001"
+variants:
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s1_pv2_r2_rotalign
+notes: "rotalign A/B 9.11: K2 8n b1/4/16/64 lcb isolated, main-perf OURS arm knob off/on"

@@ -1048,3 +1048,32 @@ before the rebuild boundary. Canon guard stays as a permanent invariant.
 - Practical default from Phase 2: **eps in [0, 0.0625] on 4n-class
   fabrics**; the flat basin means the knob is forgiving at the tight end
   and punishing at the loose end (lcinf +26% at b64 per A2).
+
+## NR-17 — Window consume order aligned to the fan-out rotation (H1 closed)
+
+**Question.** The lb_union static schedule consumed each remote node's L
+windows own-lane-first while the gateway fan-out delivered them in the
+NR-06 rotation order (`dlg=(g+1+dn+dl)%L`), so a rank's fleet could park on
+its own-lane window while later-scheduled windows had already landed
+(handoff 05 H1, "visible, small", never fixed; node-to-node order was
+already aligned). Does aligning the schedule to the delivery order pay?
+
+**Verdict.** Yes, monotone in budget on layer 0 and never worse.
+`FLUX_A2AV_SCHED_ROT_ALIGN=1` (2026-09-11; `shift_lane_to_order_rot`,
+host-side table only, rotation kept): 4n K2 lcb isolated, one binary,
+capsule `20260911-080007_perlmutter_30297449` — l0 −1.0/−1.3/−3.9/−6.4 %
+at b1/b4/b16/b64 (b64: 19.19 → 17.96 ms), l1 flat, totals −0.4/+1.3/−0.6/
+−2.4 %. Gate `20260911-075057_perlmutter_3be47df1` green (check_iters 1,
+random payload). 8n (capsule `20260911-085902_perlmutter_4b3a99df`): on par,
+l0 −0.4/+1.7/+1.2/−0.3 %, totals −2.5/+1.0/−0.1/−1.3 %, all inside the
+per-cell IQR — the 4n layer-0 gain does not carry to 8n.
+
+**Scope.** lb_union window keying only (`union_bcast && !relay_identity`);
+the dynamic claimer and the non-window modes are untouched. Own-node lanes
+were already aligned with the intra-node put order.
+
+**Falsifier.** A shape where the four windows of a node land within one
+fan-out put of each other (then order cannot matter) — b1 is that regime
+and shows the expected null.
+
+**Confidence: measured (4n win, 8n null).** **Cost to re-test:** 8 cells per topology.

@@ -340,6 +340,44 @@ shift_rank_to_order(int rank, DistEnv const &dist_env) {
   return dist_env.local_rank_to_global_rank(local_rank_shift, node_idx_shift);
 }
 
+// Rotation-aligned lane<->stage maps for the lb_union window keying
+// (FLUX_A2AV_SCHED_ROT_ALIGN, 2026-09-11). Lane = ns*L + gl is the window
+// delivered by gateway (ns, gl). For a remote node at ring offset dn the
+// gateway visits destinations dlg = (gl + 1 + dn + dl) % L, so this rank
+// (my_lr) receives gateway gl's window at position dl = (my_lr - gl - 1 - dn)
+// mod L; that position is the stage inside the node's block. Own-node lanes
+// (dn == 0) keep the ring shift, which already matches the intra-node put
+// order (dlg = (my_lr - dl) % L on the sender).
+CUTLASS_HOST_DEVICE
+int
+shift_lane_to_order_rot(int lane, DistEnv const &dist_env) {
+  auto [node_idx, local_rank] = dist_env.global_rank_to_node_idx_local_rank(lane);
+  const int L = dist_env.local_world_size;
+  int dn = (node_idx - dist_env.node_idx + dist_env.nnodes) % dist_env.nnodes;
+  int pos;
+  if (dn == 0) {
+    pos = (local_rank - dist_env.local_rank + L) % L;
+  } else {
+    pos = ((dist_env.local_rank - local_rank - 1 - dn) % L + L) % L;
+  }
+  return dist_env.local_rank_to_global_rank(pos, dn);
+}
+
+CUTLASS_HOST_DEVICE
+int
+revert_order_to_lane_rot(int order, DistEnv const &dist_env) {
+  auto [dn, pos] = dist_env.global_rank_to_node_idx_local_rank(order);
+  const int L = dist_env.local_world_size;
+  int node_idx_origin = (dn + dist_env.node_idx) % dist_env.nnodes;
+  int gl;
+  if (dn == 0) {
+    gl = (pos + dist_env.local_rank) % L;
+  } else {
+    gl = ((dist_env.local_rank - 1 - dn - pos) % L + L) % L;
+  }
+  return dist_env.local_rank_to_global_rank(gl, node_idx_origin);
+}
+
 CUTLASS_HOST_DEVICE
 int
 revert_order_to_rank(int order, DistEnv const &dist_env) {
