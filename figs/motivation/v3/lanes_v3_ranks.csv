@@ -1,0 +1,13 @@
+panel,arm,rank,node,why,total_ms,nic_ms,nvlink_ms,wait_ms,barrier_at_ms,gemm_ms,expert_comm_ms,n_pulls,n_pulls_inter,iteration,capsule
+Inter-node communication bottleneck + Computation Imbalance,l01_nvshmem,7,1,longest inter-node wire,38.63,33.8,0.88,0.02,34.75,2.55,0.0,,,iter4,20260904-123815
+Inter-node communication bottleneck + Computation Imbalance,l01_nvshmem,11,2,shortest inter-node wire,38.76,16.98,0.76,17.6,35.39,2.11,0.0,,,iter4,20260904-123815
+Inter-node communication bottleneck + Computation Imbalance,l01_nvshmem,12,3,longest expert GEMM,48.72,22.73,0.54,12.03,35.41,8.53,0.0,,,iter4,20260904-123815
+Inter-node communication bottleneck + Computation Imbalance,l01_nvshmem,15,3,shortest expert GEMM,37.82,21.63,1.12,12.63,35.44,1.59,0.0,,,iter4,20260904-123815
+Communication Overlap + Computation Imbalance,l01_allgather_dense,4,1,longest inter-node wire,17.5,6.51,4.39,0.76,,7.17,0.0,,,iter4,20260904-123815
+Communication Overlap + Computation Imbalance,l01_allgather_dense,8,2,shortest inter-node wire,17.6,4.94,4.39,1.98,,4.21,0.0,,,iter4,20260904-123815
+Communication Overlap + Computation Imbalance,l01_allgather_dense,12,3,longest expert GEMM,17.41,5.48,4.39,1.07,,11.12,0.0,,,iter4,20260904-123815
+Communication Overlap + Computation Imbalance,l01_allgather_dense,15,3,shortest expert GEMM,17.49,5.72,4.46,0.81,,2.74,0.0,,,iter4,20260904-123815
+Expert communication bottleneck + Computation Balance,moonep_l01_nvshmem_getmem_bwire,3,0,longest expert pull,48.89,18.6,0.79,0.02,19.47,3.2,24.98,1,1,iter4,20260912-221306
+Expert communication bottleneck + Computation Balance,moonep_l01_nvshmem_getmem_bwire,12,3,shortest inter-node wire,26.65,11.17,0.98,7.19,19.4,3.12,2.83,1,1,iter4,20260912-221306
+Expert communication bottleneck + Computation Balance,moonep_l01_nvshmem_getmem_bwire,13,3,median expert pull,31.78,14.37,1.05,4.04,19.54,2.97,8.04,2,2,iter4,20260912-221306
+Expert communication bottleneck + Computation Balance,moonep_l01_nvshmem_getmem_bwire,14,3,one-expert pull over NVLink,24.12,14.19,0.82,3.95,19.05,3.16,0.74,1,0,iter4,20260912-221306

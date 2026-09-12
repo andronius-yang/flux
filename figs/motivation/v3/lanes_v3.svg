@@ -1,0 +1,177 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="504.0pt" height="130.0pt" viewBox="0 0 504.0 130.0" font-family="Helvetica, Arial, sans-serif">
+<defs><marker id="ah" viewBox="0 0 6 6" refX="5.5" refY="3" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0.5 L6,3 L0,5.5 z" fill="#8a2e24"/></marker></defs>
+<rect width="504.0" height="130.0" fill="#ffffff"/>
+<text x="99.33" y="17.50" font-size="6.5" text-anchor="middle" xml:space="preserve" font-weight="bold"><tspan fill="#c0392b">Inter-node communication bottleneck</tspan><tspan fill="#17191c"> +</tspan></text>
+<text x="99.33" y="25.00" font-size="6.5" text-anchor="middle" xml:space="preserve" font-weight="bold"><tspan fill="#c0392b">Computation Imbalance</tspan></text>
+<line x1="24.00" y1="30.50" x2="174.67" y2="30.50" stroke="#7d8289" stroke-width="0.5"/>
+<text x="22.00" y="32.20" font-size="4.2" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<line x1="24.00" y1="36.50" x2="174.67" y2="36.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="22.00" y="38.20" font-size="4.2" text-anchor="end" fill="#5a5e66">NVLink</text>
+<line x1="24.00" y1="42.50" x2="174.67" y2="42.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="22.00" y="44.20" font-size="4.2" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="24.00" y="28.00" width="102.52" height="5.00" fill="#2a78d6"><title>r7 inter token 0.00–33.81 ms</title></rect>
+<rect x="126.54" y="34.00" width="2.69" height="5.00" fill="#2a78d6"><title>r7 intra token 33.82–34.71 ms</title></rect>
+<rect x="133.40" y="40.00" width="7.73" height="5.00" fill="#eda100"><title>r7 gemm token 36.08–38.63 ms</title></rect>
+<line x1="128.65" y1="27.50" x2="128.65" y2="45.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="130.05" y1="27.50" x2="130.05" y2="45.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="24.00" y1="50.50" x2="174.67" y2="50.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="24.00" y1="56.50" x2="174.67" y2="56.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="24.00" y1="62.50" x2="174.67" y2="62.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="24.00" y="48.00" width="51.53" height="5.00" fill="#2a78d6"><title>r11 inter token 0.00–17.00 ms</title></rect>
+<rect x="75.54" y="54.00" width="2.34" height="5.00" fill="#2a78d6"><title>r11 intra token 17.00–17.77 ms</title></rect>
+<rect x="135.14" y="60.00" width="6.39" height="5.00" fill="#eda100"><title>r11 gemm token 36.66–38.76 ms</title></rect>
+<line x1="130.61" y1="47.50" x2="130.61" y2="65.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="132.01" y1="47.50" x2="132.01" y2="65.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="24.00" y1="70.50" x2="174.67" y2="70.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="24.00" y1="76.50" x2="174.67" y2="76.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="24.00" y1="82.50" x2="174.67" y2="82.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="25.69" y="68.00" width="68.95" height="5.00" fill="#2a78d6"><title>r12 inter token 0.56–23.30 ms</title></rect>
+<rect x="24.00" y="74.00" width="1.67" height="5.00" fill="#2a78d6"><title>r12 intra token 0.00–0.55 ms</title></rect>
+<rect x="145.86" y="80.00" width="25.85" height="5.00" fill="#eda100"><title>r12 gemm token 40.19–48.72 ms</title></rect>
+<line x1="130.65" y1="67.50" x2="130.65" y2="85.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="132.05" y1="67.50" x2="132.05" y2="85.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="24.00" y1="90.50" x2="174.67" y2="90.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="24.00" y1="96.50" x2="174.67" y2="96.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="24.00" y1="102.50" x2="174.67" y2="102.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="24.00" y="88.00" width="65.63" height="5.00" fill="#2a78d6"><title>r15 inter token 0.00–21.65 ms</title></rect>
+<rect x="89.65" y="94.00" width="3.45" height="5.00" fill="#2a78d6"><title>r15 intra token 21.65–22.79 ms</title></rect>
+<rect x="133.86" y="100.00" width="4.82" height="5.00" fill="#eda100"><title>r15 gemm token 36.24–37.82 ms</title></rect>
+<line x1="130.76" y1="87.50" x2="130.76" y2="105.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="132.16" y1="87.50" x2="132.16" y2="105.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="24.00" y1="108.00" x2="174.67" y2="108.00" stroke="#5a5e66" stroke-width="0.5"/>
+<line x1="24.00" y1="108.00" x2="24.00" y2="109.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="24.00" y="115.00" font-size="5" text-anchor="middle" fill="#5a5e66">0</text>
+<line x1="54.32" y1="108.00" x2="54.32" y2="109.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="54.32" y="115.00" font-size="5" text-anchor="middle" fill="#5a5e66">10</text>
+<line x1="84.64" y1="108.00" x2="84.64" y2="109.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="84.64" y="115.00" font-size="5" text-anchor="middle" fill="#5a5e66">20</text>
+<line x1="114.96" y1="108.00" x2="114.96" y2="109.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="114.96" y="115.00" font-size="5" text-anchor="middle" fill="#5a5e66">30</text>
+<line x1="145.28" y1="108.00" x2="145.28" y2="109.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="145.28" y="115.00" font-size="5" text-anchor="middle" fill="#5a5e66">40</text>
+<text x="174.67" y="115.00" font-size="5" text-anchor="end" fill="#5a5e66">ms</text>
+<text x="264.00" y="17.50" font-size="6.5" text-anchor="middle" xml:space="preserve" font-weight="bold"><tspan fill="#17191c">Communication Overlap +</tspan></text>
+<text x="264.00" y="25.00" font-size="6.5" text-anchor="middle" xml:space="preserve" font-weight="bold"><tspan fill="#c0392b">Computation Imbalance</tspan></text>
+<line x1="188.67" y1="30.50" x2="339.33" y2="30.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="188.67" y1="36.50" x2="339.33" y2="36.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="188.67" y1="42.50" x2="339.33" y2="42.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="188.67" y="28.00" width="40.50" height="5.00" fill="#2a78d6"><title>r4 inter token 0.00–4.82 ms</title></rect>
+<rect x="233.12" y="28.00" width="14.28" height="5.00" fill="#2a78d6"><title>r4 inter token 5.30–7.00 ms</title></rect>
+<rect x="188.75" y="34.00" width="9.40" height="5.00" fill="#2a78d6"><title>r4 intra token 0.01–1.13 ms</title></rect>
+<rect x="215.36" y="34.00" width="9.36" height="5.00" fill="#2a78d6"><title>r4 intra token 3.18–4.29 ms</title></rect>
+<rect x="233.25" y="34.00" width="9.44" height="5.00" fill="#2a78d6"><title>r4 intra token 5.31–6.44 ms</title></rect>
+<rect x="247.94" y="34.00" width="9.48" height="5.00" fill="#2a78d6"><title>r4 intra token 7.06–8.19 ms</title></rect>
+<rect x="248.19" y="40.00" width="60.21" height="5.00" fill="#eda100"><title>r4 gemm token 7.09–14.26 ms</title></rect>
+<line x1="188.67" y1="50.50" x2="339.33" y2="50.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="188.67" y1="56.50" x2="339.33" y2="56.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="188.67" y1="62.50" x2="339.33" y2="62.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="188.67" y="48.00" width="13.46" height="5.00" fill="#2a78d6"><title>r8 inter token 0.00–1.60 ms</title></rect>
+<rect x="205.52" y="48.00" width="12.41" height="5.00" fill="#2a78d6"><title>r8 inter token 2.01–3.49 ms</title></rect>
+<rect x="220.58" y="48.00" width="15.63" height="5.00" fill="#2a78d6"><title>r8 inter token 3.80–5.66 ms</title></rect>
+<rect x="188.77" y="54.00" width="9.46" height="5.00" fill="#2a78d6"><title>r8 intra token 0.01–1.14 ms</title></rect>
+<rect x="205.56" y="54.00" width="9.36" height="5.00" fill="#2a78d6"><title>r8 intra token 2.01–3.13 ms</title></rect>
+<rect x="220.72" y="54.00" width="9.38" height="5.00" fill="#2a78d6"><title>r8 intra token 3.82–4.94 ms</title></rect>
+<rect x="244.70" y="54.00" width="9.38" height="5.00" fill="#2a78d6"><title>r8 intra token 6.68–7.79 ms</title></rect>
+<rect x="244.84" y="60.00" width="35.33" height="5.00" fill="#eda100"><title>r8 gemm token 6.69–10.90 ms</title></rect>
+<line x1="188.67" y1="70.50" x2="339.33" y2="70.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="188.67" y1="76.50" x2="339.33" y2="76.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="188.67" y1="82.50" x2="339.33" y2="82.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="188.67" y="68.00" width="16.92" height="5.00" fill="#2a78d6"><title>r12 inter token 0.00–2.02 ms</title></rect>
+<rect x="205.86" y="68.00" width="14.09" height="5.00" fill="#2a78d6"><title>r12 inter token 2.05–3.73 ms</title></rect>
+<rect x="224.29" y="68.00" width="15.02" height="5.00" fill="#2a78d6"><title>r12 inter token 4.24–6.03 ms</title></rect>
+<rect x="188.77" y="74.00" width="9.46" height="5.00" fill="#2a78d6"><title>r12 intra token 0.01–1.14 ms</title></rect>
+<rect x="205.95" y="74.00" width="9.39" height="5.00" fill="#2a78d6"><title>r12 intra token 2.06–3.18 ms</title></rect>
+<rect x="224.38" y="74.00" width="9.38" height="5.00" fill="#2a78d6"><title>r12 intra token 4.25–5.37 ms</title></rect>
+<rect x="241.11" y="74.00" width="9.42" height="5.00" fill="#2a78d6"><title>r12 intra token 6.25–7.37 ms</title></rect>
+<rect x="241.36" y="80.00" width="93.38" height="5.00" fill="#eda100"><title>r12 gemm token 6.28–17.40 ms</title></rect>
+<line x1="188.67" y1="90.50" x2="339.33" y2="90.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="188.67" y1="96.50" x2="339.33" y2="96.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="188.67" y1="102.50" x2="339.33" y2="102.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="188.67" y="88.00" width="16.78" height="5.00" fill="#2a78d6"><title>r15 inter token 0.00–2.00 ms</title></rect>
+<rect x="206.44" y="88.00" width="31.36" height="5.00" fill="#2a78d6"><title>r15 inter token 2.12–5.85 ms</title></rect>
+<rect x="188.78" y="94.00" width="9.44" height="5.00" fill="#2a78d6"><title>r15 intra token 0.01–1.14 ms</title></rect>
+<rect x="206.50" y="94.00" width="9.42" height="5.00" fill="#2a78d6"><title>r15 intra token 2.12–3.25 ms</title></rect>
+<rect x="224.11" y="94.00" width="9.46" height="5.00" fill="#2a78d6"><title>r15 intra token 4.22–5.35 ms</title></rect>
+<rect x="240.88" y="94.00" width="9.92" height="5.00" fill="#2a78d6"><title>r15 intra token 6.22–7.40 ms</title></rect>
+<rect x="241.00" y="100.00" width="22.98" height="5.00" fill="#eda100"><title>r15 gemm token 6.23–8.97 ms</title></rect>
+<line x1="188.67" y1="108.00" x2="339.33" y2="108.00" stroke="#5a5e66" stroke-width="0.5"/>
+<line x1="188.67" y1="108.00" x2="188.67" y2="109.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="188.67" y="115.00" font-size="5" text-anchor="middle" fill="#5a5e66">0</text>
+<line x1="230.64" y1="108.00" x2="230.64" y2="109.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="230.64" y="115.00" font-size="5" text-anchor="middle" fill="#5a5e66">5</text>
+<line x1="272.61" y1="108.00" x2="272.61" y2="109.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="272.61" y="115.00" font-size="5" text-anchor="middle" fill="#5a5e66">10</text>
+<line x1="314.59" y1="108.00" x2="314.59" y2="109.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="314.59" y="115.00" font-size="5" text-anchor="middle" fill="#5a5e66">15</text>
+<text x="339.33" y="115.00" font-size="5" text-anchor="end" fill="#5a5e66">ms</text>
+<text x="428.67" y="17.50" font-size="6.5" text-anchor="middle" xml:space="preserve" font-weight="bold"><tspan fill="#c0392b">Expert communication bottleneck</tspan><tspan fill="#17191c"> +</tspan></text>
+<text x="428.67" y="25.00" font-size="6.5" text-anchor="middle" xml:space="preserve" font-weight="bold"><tspan fill="#17191c">Computation Balance</tspan></text>
+<line x1="353.33" y1="30.50" x2="504.00" y2="30.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="353.33" y1="36.50" x2="504.00" y2="36.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="353.33" y1="42.50" x2="504.00" y2="42.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="353.33" y="28.00" width="56.27" height="5.00" fill="#2a78d6"><title>r3 inter token 0.00–18.62 ms</title></rect>
+<rect x="415.53" y="28.00" width="75.47" height="5.00" fill="#1baf7a"><title>r3 inter expert 20.58–45.56 ms</title></rect>
+<rect x="409.61" y="34.00" width="2.40" height="5.00" fill="#2a78d6"><title>r3 intra token 18.63–19.42 ms</title></rect>
+<rect x="491.02" y="40.00" width="10.02" height="5.00" fill="#eda100"><title>r3 gemm token 45.57–48.89 ms</title></rect>
+<line x1="411.47" y1="27.50" x2="411.47" y2="45.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="412.87" y1="27.50" x2="412.87" y2="45.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="353.33" y1="50.50" x2="504.00" y2="50.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="353.33" y1="56.50" x2="504.00" y2="56.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="353.33" y1="62.50" x2="504.00" y2="62.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="356.35" y="48.00" width="33.83" height="5.00" fill="#2a78d6"><title>r12 inter token 1.00–12.19 ms</title></rect>
+<rect x="415.51" y="48.00" width="8.54" height="5.00" fill="#1baf7a"><title>r12 inter expert 20.58–23.40 ms</title></rect>
+<rect x="353.33" y="54.00" width="3.00" height="5.00" fill="#2a78d6"><title>r12 intra token 0.00–0.99 ms</title></rect>
+<rect x="424.08" y="60.00" width="9.79" height="5.00" fill="#eda100"><title>r12 gemm token 23.41–26.65 ms</title></rect>
+<line x1="411.27" y1="47.50" x2="411.27" y2="65.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="412.67" y1="47.50" x2="412.67" y2="65.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="353.33" y1="70.50" x2="504.00" y2="70.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="353.33" y1="76.50" x2="504.00" y2="76.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="353.33" y1="82.50" x2="504.00" y2="82.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="356.01" y="68.00" width="43.49" height="5.00" fill="#2a78d6"><title>r13 inter token 0.89–15.28 ms</title></rect>
+<rect x="415.72" y="68.00" width="24.29" height="5.00" fill="#1baf7a"><title>r13 inter expert 20.65–28.69 ms</title></rect>
+<rect x="353.33" y="74.00" width="2.67" height="5.00" fill="#2a78d6"><title>r13 intra token 0.00–0.88 ms</title></rect>
+<rect x="399.51" y="74.00" width="0.54" height="5.00" fill="#2a78d6"><title>r13 intra token 15.28–15.46 ms</title></rect>
+<rect x="440.03" y="80.00" width="9.34" height="5.00" fill="#eda100"><title>r13 gemm token 28.69–31.78 ms</title></rect>
+<line x1="411.68" y1="67.50" x2="411.68" y2="85.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="413.08" y1="67.50" x2="413.08" y2="85.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="353.33" y1="90.50" x2="504.00" y2="90.50" stroke="#7d8289" stroke-width="0.5"/>
+<line x1="353.33" y1="96.50" x2="504.00" y2="96.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<line x1="353.33" y1="102.50" x2="504.00" y2="102.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<rect x="354.17" y="88.00" width="42.95" height="5.00" fill="#2a78d6"><title>r14 inter token 0.28–14.49 ms</title></rect>
+<rect x="353.33" y="94.00" width="0.81" height="5.00" fill="#2a78d6"><title>r14 intra token 0.00–0.27 ms</title></rect>
+<rect x="397.12" y="94.00" width="1.69" height="5.00" fill="#2a78d6"><title>r14 intra token 14.49–15.05 ms</title></rect>
+<rect x="414.08" y="94.00" width="2.24" height="5.00" fill="#1baf7a"><title>r14 intra expert 20.10–20.84 ms</title></rect>
+<rect x="416.33" y="100.00" width="9.88" height="5.00" fill="#eda100"><title>r14 gemm token 20.85–24.12 ms</title></rect>
+<line x1="410.18" y1="87.50" x2="410.18" y2="105.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="411.58" y1="87.50" x2="411.58" y2="105.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="353.33" y1="108.00" x2="504.00" y2="108.00" stroke="#5a5e66" stroke-width="0.5"/>
+<line x1="353.33" y1="108.00" x2="353.33" y2="109.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="353.33" y="115.00" font-size="5" text-anchor="middle" fill="#5a5e66">0</text>
+<line x1="383.55" y1="108.00" x2="383.55" y2="109.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="383.55" y="115.00" font-size="5" text-anchor="middle" fill="#5a5e66">10</text>
+<line x1="413.77" y1="108.00" x2="413.77" y2="109.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="413.77" y="115.00" font-size="5" text-anchor="middle" fill="#5a5e66">20</text>
+<line x1="443.98" y1="108.00" x2="443.98" y2="109.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="443.98" y="115.00" font-size="5" text-anchor="middle" fill="#5a5e66">30</text>
+<line x1="474.20" y1="108.00" x2="474.20" y2="109.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="474.20" y="115.00" font-size="5" text-anchor="middle" fill="#5a5e66">40</text>
+<text x="504.00" y="115.00" font-size="5" text-anchor="end" fill="#5a5e66">ms</text>
+<path d="M171.58,15.30 L218.15,15.30" fill="none" stroke="#8a2e24" stroke-width="0.6" marker-end="url(#ah)"/>
+<path d="M306.08,22.80 L390.35,22.80" fill="none" stroke="#8a2e24" stroke-width="0.6" marker-end="url(#ah)"/>
+<path d="M141.42,22.00 Q265.88,-10.00 388.85,20.20" fill="none" stroke="#8a2e24" stroke-width="0.6" marker-end="url(#ah)"/>
+<rect x="24.00" y="119.00" width="8.00" height="4.50" fill="#2a78d6"></rect>
+<text x="34.00" y="123.00" font-size="5.5" text-anchor="start" fill="#5a5e66">Token Comm.</text>
+<rect x="74.90" y="119.00" width="8.00" height="4.50" fill="#1baf7a"></rect>
+<text x="84.90" y="123.00" font-size="5.5" text-anchor="start" fill="#5a5e66">Expert Comm.</text>
+<rect x="128.70" y="119.00" width="8.00" height="4.50" fill="#eda100"></rect>
+<text x="138.70" y="123.00" font-size="5.5" text-anchor="start" fill="#5a5e66">Expert Comp.</text>
+<line x1="182.50" y1="118.00" x2="182.50" y2="124.50" stroke="#17191c" stroke-width="0.6"/>
+<line x1="184.00" y1="118.00" x2="184.00" y2="124.50" stroke="#17191c" stroke-width="0.6"/>
+<text x="186.50" y="123.00" font-size="5.5" text-anchor="start" fill="#5a5e66">Barrier</text>
+<line x1="222.80" y1="121.20" x2="234.80" y2="121.20" stroke="#7d8289" stroke-width="0.6"/>
+<text x="236.80" y="123.00" font-size="5.5" text-anchor="start" fill="#5a5e66">NIC RDMA</text>
+<line x1="269.00" y1="121.20" x2="281.00" y2="121.20" stroke="#7d8289" stroke-width="0.6" stroke-dasharray="2,1.5"/>
+<text x="283.00" y="123.00" font-size="5.5" text-anchor="start" fill="#5a5e66">NVLink</text>
+<line x1="309.40" y1="121.20" x2="321.40" y2="121.20" stroke="#7d8289" stroke-width="0.6" stroke-dasharray="0.6,1.2"/>
+<text x="323.40" y="123.00" font-size="5.5" text-anchor="start" fill="#5a5e66">GPU</text>
+</svg>

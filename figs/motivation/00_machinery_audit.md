@@ -193,3 +193,27 @@ kwarg `weight_place_wire`, variant twin `eplb_l01_nvplace`, heap sizing in
   this inside its barrier quiet (13.05–13.34 equalized).
 - Page rebuilt from both capsules (EPLB panel = exposed wire; section
   "Same EPLB step, two dispatch wires" shows the a2a twin on the same ranks).
+
+## 7. v3: MoonEP replaces EPLB in panel 3 (2026-09-12, user-directed)
+
+- Arm `moonep_l01_nvshmem_getmem` (authentic: replicated plan, staged a2a
+  dispatch, per-batch getmem pull of w1+w2 for every assigned redundant
+  expert, serialized before the GEMM) + exposed-wire twin
+  `moonep_l01_nvshmem_getmem_bwire` (`--dispatch_wire blocking_ring`, port
+  of the EPLB side lane into `MoonEPLayer0Runner`: symmetric send/recv
+  panels, one blocking put per destination in ring order for rows AND fp32
+  probs, ONE world barrier; plan/pack/place/prefetch/GEMM/combine
+  unchanged; heap term in `moonep_getmem_sym_size`). Driver records
+  `moonep_prefetch_pairs` per rank so the figure assigns the pull to the
+  NIC or NVLink lane from the home's node.
+- nsys names: token puts `nvshmemi_proxy_rma_entrypoint_blocking` /
+  memcpy10; pull = `weight_prefetch_getmem_kernel` (issue only, 0.01 ms
+  off-node; the whole copy when on-node) + `nvshmemi_proxy_quiet_entrypoint`
+  (carries the off-node transfer); barrier `barrier_on_stream_kernel_*`;
+  GEMM `Kernel2` per segment (24 + B launches).
+- Capsule `20260912-221306_perlmutter_363dd11a` (4n, prolaw L18 b16+b32,
+  4/4 ok, correctness on). Compute balance is structural (planner fills
+  every rank to S*K rows: 1.02x vs 3.03x raw); the pull length is set by
+  the hot home's egress fan-out (rank 12 serves 9 pulls, 7 off-node ->
+  24–25 ms each at b32, 20.4–20.6 at b16), not by the puller's bytes.
+  Numbers in `v3/SPEC_v3.md`.
