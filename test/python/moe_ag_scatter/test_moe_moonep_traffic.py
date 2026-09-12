@@ -466,6 +466,15 @@ def parse_args():
     parser.add_argument("--profile", default=False, action="store_true")
     parser.add_argument("--token_padding", type=int, default=128,
                         help="MoonEP segment padding (segments pad to this)")
+    parser.add_argument("--dispatch_wire", default="a2a",
+                        choices=["a2a", "blocking_ring"],
+                        help="nvshmem transport only: a2a = staged"
+                        " All2AllSingle kernel (nbi puts, completion in the"
+                        " team barriers — the port's wire); blocking_ring ="
+                        " one blocking putmem_on_stream per destination in"
+                        " ring order + world barrier (EXPOSED per-put"
+                        " spans/bytes in nsys; motivation-figure side lane,"
+                        " never a latency arm)")
     parser.add_argument("--transport", default="nvshmem",
                         choices=["nccl", "nvshmem"],
                         help="dispatch a2av transport. Default nvshmem: flux's"
@@ -529,6 +538,9 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     init_ep_group(DIST_ENV.WORLD_SIZE)
+    assert not (args.dispatch_wire == "blocking_ring"
+                and args.transport != "nvshmem"), (
+        "--dispatch_wire blocking_ring needs --transport nvshmem")
     if args.transport == "nvshmem" or args.prefetch_transport == "getmem":
         # the one-sided All2AllSingle / getmem weight home need the flux
         # shm / NVSHMEM heap
@@ -602,6 +614,8 @@ if __name__ == "__main__":
     )
     if args.transport == "nvshmem":
         runner.enable_nvshmem(DIST_ENV.LOCAL_WORLD_SIZE, args.num_comm_sm)
+        if args.dispatch_wire == "blocking_ring":
+            runner.enable_blocking_ring_wire()
     if args.prefetch_transport == "getmem":
         # collective (symmetric weight-home alloc); runs after enable_nvshmem
         # so all ranks perform the same symmetric allocations in the same
@@ -743,6 +757,7 @@ if __name__ == "__main__":
             moonep_wire_bytes=wire_bytes,
             moonep_prefetch=not args.no_prefetch,
             moonep_transport=args.transport,
+            moonep_dispatch_wire=args.dispatch_wire,
             moonep_prefetch_transport=args.prefetch_transport,
             moonep_prefetch_chunk_bytes=args.prefetch_chunk_bytes,
             moonep_prefetch_impl=args.prefetch_impl,
@@ -750,6 +765,12 @@ if __name__ == "__main__":
             moonep_shared_comm_stream=bool(args.shared_comm_stream),
         )
     RECORDER.emit_info(moonep_prefetch_recv_bytes=runner.prefetch_recv_bytes())
+    # per-rank pull ledger (slot, expert, home rank) — lets a timeline
+    # figure put each rank's getmem span on the NIC or NVLink lane by the
+    # home's node without re-running the planner (motivation v3, 2026-09-12)
+    RECORDER.emit_info(moonep_prefetch_pairs=[
+        (b, e, home) for d, b, e, home in runner.prefetch_pairs if d == rank
+    ])
     if args.layers == "l01":
         # w2 shares the pair list, so the same byte count again (2-of-3
         # matrices vs upstream's 3 — see the walkthrough deviation note)

@@ -75,7 +75,8 @@ def main():
         cell["recorded"] = {m: {str(r): v for r, v in d.items()} for m, d in per.items()}
         cell["info"] = {k: {str(r): v for r, v in d.items()} for k, d in info.items()
                         if k in ("gemm_rows_per_rank", "eplb_weight_place_sends", "eplb_weight_place_bytes", "eplb_imbalance_before",
-                                 "eplb_imbalance_after", "eplb_rehomed_slots", "eplb_remote_frac", "eplb_wire_bytes", "eplb_replicas_total")}
+                                 "eplb_imbalance_after", "eplb_rehomed_slots", "eplb_remote_frac", "eplb_wire_bytes", "eplb_replicas_total",
+                                 "moonep_prefetch_pairs", "moonep_prefetch_recv_bytes", "moonep_z_matrix", "moonep_dispatch_wire")}
         for rep in sorted(glob.glob(os.path.join(row["nsys_path"], "*.nsys-rep"))):
             nid = int(re.search(r"node(\d+)_", os.path.basename(rep)).group(1))
             db = sqlite3.connect(export(rep, a.out, row["cell_id"])); cur = db.cursor()

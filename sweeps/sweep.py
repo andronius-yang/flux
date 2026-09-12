@@ -807,6 +807,12 @@ def moonep_getmem_sym_size(matrix_path, plat, spec, variant):
         vals = [int(x) for x in toks[1 : 1 + w * w]]
         max_pair_bytes = max(vals)
         staging = 2 * w * max_pair_bytes + 2 * w * (max_pair_bytes // 1024)
+        if "--dispatch_wire" in ta and ta[ta.index("--dispatch_wire") + 1] == "blocking_ring":
+            # exposed-wire side lane: symmetric send panel (max row sum;
+            # dedup only shrinks it) + recv panel (max column) + fp32 probs
+            max_row_bytes = max(sum(vals[src * w + dst] for dst in range(w)) for src in range(w))
+            max_col_bytes = max(sum(vals[src * w + dst] for src in range(w)) for dst in range(w))
+            staging += int((max_row_bytes + max_col_bytes) * (1 + 4 / chunk))
     sym_g = max(2, math.ceil(2 * (staging + home) / (1 << 30)))
     sym_max = plat.get("sym_size_max_g")
     if sym_max:

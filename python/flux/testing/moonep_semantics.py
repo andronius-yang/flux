@@ -899,6 +899,10 @@ class MoonEPLayer0Runner:
         # / enable_getmem_prefetch() after construction; NCCL on either path
         # is the explicit opt-out the historical sweep arms pin.
         self.transport = "nccl"
+        # Dispatch wire on the nvshmem transport: "a2a" (staged
+        # All2AllSingle) or "blocking_ring" (motivation-figure side lane,
+        # enable_blocking_ring_wire).
+        self.dispatch_wire = "a2a"
         # Weight-movement path: "nccl" (batch_isend_irecv, declared port
         # artifact) until enable_getmem_prefetch() swaps in the one-sided
         # pull. weight_home is the symmetric-heap shard once enabled; the
@@ -1129,8 +1133,92 @@ class MoonEPLayer0Runner:
         w = route_weights[self.send_entry_row, self.send_entry_k]
         self.wsend_buf.copy_(w)
 
+    # -- exposed dispatch wire (motivation-figure side lane, 2026-09-12) --
+    #
+    # Mirrors eplb_semantics.enable_blocking_ring_wire: one BLOCKING
+    # nvshmemx_putmem_on_stream per destination in ring order
+    # ((rank+1..rank+W-1) % W) for the dedup'd representative rows AND the
+    # per-entry fp32 route weights, self block = device copy, ONE world
+    # barrier as the fence (wire rule 6a). Every put is its own device span
+    # (P2P copy intra-node, proxy RMA kernel inter-node) with known bytes,
+    # so the per-rank token-wire time is visible in nsys instead of hiding
+    # inside the a2a kernel's team barriers. Pack, plan, placement, prefetch
+    # and GEMM are byte-identical to the a2a arm (same source-major recv
+    # layout as all_to_all_single). Instrumented lane: never quote its
+    # latency against the a2a arm.
+    def enable_blocking_ring_wire(self):
+        import flux  # GPU-side only
+        assert self.transport == "nvshmem", "blocking ring wire needs the nvshmem transport"
+        cfg = self.cfg
+        rows, ents = self._pair_count_matrices()  # [R, R] replicated (rows = reps, ents = entries)
+        rows = rows.tolist(); ents = ents.tolist()
+        R = cfg.R; me = self.rank
+        self._bw_cnt_h = [int(rows[me][d]) for d in range(R)]
+        self._bw_cnt_w = [int(ents[me][d]) for d in range(R)]
+        self._bw_soff_h = [sum(self._bw_cnt_h[:d]) for d in range(R)]
+        self._bw_soff_w = [sum(self._bw_cnt_w[:d]) for d in range(R)]
+        self._bw_doff_h = [sum(int(rows[s][d]) for s in range(me)) for d in range(R)]
+        self._bw_doff_w = [sum(int(ents[s][d]) for s in range(me)) for d in range(R)]
+        assert sum(self._bw_cnt_h) == self.n_send, (sum(self._bw_cnt_h), self.n_send)
+        assert sum(self._bw_cnt_w) == cfg.N, (sum(self._bw_cnt_w), cfg.N)
+        assert sum(int(rows[s][me]) for s in range(R)) == self.n_recv
+        assert sum(int(ents[s][me]) for s in range(R)) == self.n_ent_recv
+        # symmetric panels: identical shapes on every PE (collective alloc);
+        # send rows = reps per rank (varies with dedup -> max over ranks),
+        # recv = max column; entries are S*K per rank by construction
+        send_max = max(sum(int(rows[s][d]) for d in range(R)) for s in range(R))
+        recv_max = max(sum(int(rows[s][d]) for s in range(R)) for d in range(R))
+        wrecv_max = max(sum(int(ents[s][d]) for s in range(R)) for d in range(R))
+        H = cfg.H
+        self._bw_send = flux.nvshmem_create_tensor([max(send_max, 1), H], self.dtype)
+        self._bw_recv = flux.nvshmem_create_tensor([max(recv_max, 1), H], self.dtype)
+        self._bw_wsend = flux.nvshmem_create_tensor([cfg.N], torch.float32)
+        self._bw_wrecv = flux.nvshmem_create_tensor([max(wrecv_max, 1)], torch.float32)
+        # pack writes straight into the symmetric send panels; place reads
+        # the symmetric recv panels (source-major, same layout as a2a)
+        self.send_buf = self._bw_send[:self.n_send]
+        self.wsend_buf = self._bw_wsend
+        self.recv_buf = self._bw_recv[:self.n_recv]
+        self.wrecv_buf = self._bw_wrecv[:self.n_ent_recv]
+        self._bw_row_bytes = H * self.dtype.itemsize
+        self.dispatch_wire = "blocking_ring"
+
+    def _a2av_blocking_ring(self):
+        import flux
+        R = self.cfg.R; me = self.rank
+        assert list(self.lay.send_counts) == self._bw_cnt_h, "per-iteration send counts drifted from the wire matrix"
+        assert list(self.lay.send_entry_counts) == self._bw_cnt_w, "per-iteration entry counts drifted from the wire matrix"
+        stream = torch.cuda.current_stream().cuda_stream
+        rb = self._bw_row_bytes
+        for off in range(1, R):
+            d = (me + off) % R
+            ch, cw = self._bw_cnt_h[d], self._bw_cnt_w[d]
+            if not ch and not cw:
+                continue
+            with torch.cuda.nvtx.range(f"disp_put pe{d} {ch * rb + cw * 4}B"):
+                if ch:
+                    flux.nvshmem_putmem_on_stream(
+                        self._bw_recv.data_ptr() + self._bw_doff_h[d] * rb,
+                        self._bw_send.data_ptr() + self._bw_soff_h[d] * rb,
+                        ch * rb, d, stream)
+                if cw:
+                    flux.nvshmem_putmem_on_stream(
+                        self._bw_wrecv.data_ptr() + self._bw_doff_w[d] * 4,
+                        self._bw_wsend.data_ptr() + self._bw_soff_w[d] * 4,
+                        cw * 4, d, stream)
+        ch, cw = self._bw_cnt_h[me], self._bw_cnt_w[me]
+        if ch:
+            so, do = self._bw_soff_h[me], self._bw_doff_h[me]
+            self._bw_recv[do:do + ch].copy_(self._bw_send[so:so + ch])
+        if cw:
+            so, do = self._bw_soff_w[me], self._bw_doff_w[me]
+            self._bw_wrecv[do:do + cw].copy_(self._bw_wsend[so:so + cw])
+        flux.nvshmem_barrier_all_on_stream(stream)
+
     def a2av(self):
         """Wire: representative rows + per-entry route weights."""
+        if self.transport == "nvshmem" and self.dispatch_wire == "blocking_ring":
+            return self._a2av_blocking_ring()
         if self.transport == "nvshmem":
             self._a2a_hidden.forward(
                 self.send_buf, self.recv_buf,

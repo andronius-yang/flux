@@ -167,6 +167,22 @@ VARIANTS = {
         env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
         requires=[],
     ),
+    # Motivation-figure side lane (2026-09-12): the authentic journey with
+    # the dispatch wire EXPOSED — blocking putmem_on_stream per destination
+    # in ring order + world barrier instead of the staged a2a kernel (whose
+    # nbi puts complete inside its team barriers and hide every
+    # per-destination span). Plan, pack, placement, prefetch, GEMM, combine
+    # byte-identical to moonep_l01_nvshmem_getmem. Instrumented: never
+    # quote its latency.
+    "moonep_l01_nvshmem_getmem_bwire": dict(
+        comm_pattern="moonep_balanced_a2av",
+        driver="moonep",
+        layer="l01",
+        test_args=["--transport", "nvshmem", "--prefetch_transport", "getmem",
+                   "--layers", "l01", "--dispatch_wire", "blocking_ring"],
+        env={"CUDA_DEVICE_MAX_CONNECTIONS": "8"},
+        requires=["nvshmem_putmem_on_stream"],
+    ),
     # MERGED ARM (our-optimization ablation, never quotable as MoonEP
     # behavior): the MoonEP plan drives the FUSED GemmGroupedV2AGScatterOp
     # through the virtual expert space (flux.testing.moonep_fused_map) —

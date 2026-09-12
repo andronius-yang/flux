@@ -1,0 +1,30 @@
+# Motivation figure v3 (2026-09-12): panel 3 = authentic MoonEP journey
+# (per-batch redundant-expert prefetch, destination-side getmem pull) on the
+# SAME dataset as the v2 ring/COMET panels (capsule 20260904-123815: K2
+# professional_law layer 18, b16 + b32, nsys isolated). Two arms: the
+# authentic wire (staged a2a kernel) and its EXPOSED-wire twin (blocking
+# ring puts + world barrier, per-put spans/bytes visible in nsys). Plan,
+# placement, prefetch, GEMM, combine byte-identical across the twins.
+# Correctness ON (bitwise dispatch rows + prefetch slot check prove the
+# wire). The twin is instrumented: never quote its latency.
+platform: perlmutter
+nodes: 4
+shape: k2
+variants: [moonep_l01_nvshmem_getmem, moonep_l01_nvshmem_getmem_bwire]
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=18;sem=homog;dslots=64:32"
+budgets_mib: [16, 32]
+modes: [nsys]
+extra_env:
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+matrix_instance: "001"
+skip_correctness: false
+sm_margin: 8
+n_split_l1: 7
+timeout_s: 2400
+idle_timeout_s: 600
+retries: 0
+notes: "motivation v3 panel 3: authentic MoonEP + exposed-wire twin, K2 professional_law L18, 4n b16+b32, nsys isolated"
