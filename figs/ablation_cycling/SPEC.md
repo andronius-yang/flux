@@ -101,9 +101,10 @@ reads as a reported miss rather than a typo.
 ## 4. Text
 
 - Group labels **[knob: GROUPS]** under each group, ONE line, 6 pt,
-  primary ink: `Predictable load` / `Shifting load` (REV 0.2). The label
-  names the one variable the groups vary — whether the served load matches
-  the load the placement was solved on — in the paper's vocabulary.
+  primary ink: `Specialization` / `Drift` (REV 0.4; REV 0.2 had
+  `Predictable load` / `Shifting load`). The label names how the served
+  load relates to the load the placement was solved on — in the paper's
+  vocabulary.
   Scenario codes (S-A/S-C), topic names and rep counts are caption
   material, never figure text; the mechanism argument is body text.
 - Y label `Total latency (ms)` 6.5 pt. No x title.
@@ -154,10 +155,12 @@ preview), deterministic PDFs (fixed metadata, `pdf.fonttype 42`).
 baseline against token comm comp overlap, expert placement & routing,
 and expert-dispatch overlap optimizations. Performed on Kimi K2 traces on
 a 4-node, 16-GPU cluster with 64 MiB of tokens per GPU across two
-scenarios." Scenario definitions (predictable load = placement solved on
-the previous window of the 8-topic mix, evaluated on professional law;
-shifting load = 8 topics cycled 4 iterations each, professional law
-withheld from the basis; 4 / 3 runs) and the verB 0.98x miss are body
+scenarios." Scenario definitions (Specialization = placement solved on
+the previous window of the 8-topic mix, evaluated on professional law —
+demand concentrates on one known request class while placement reflects a
+broader historical mixture; Drift = 8 topics cycled 4 iterations each,
+professional law withheld from the basis — demand changes across classes
+and includes one absent from the placement history; 4 / 3 runs) and the verB 0.98x miss are body
 text. Optimization names must match the legend verbatim.
 
 ## 8. Revision log
@@ -184,3 +187,13 @@ text. Optimization names must match the legend verbatim.
   well as the layer-0 dispatch, so "dispatch" undersold it). Caption
   (§7) switched to the user's summary style: components + setup only,
   scenario definitions live in the text; terms match the legend verbatim.
+- **REV 0.4 (2026-09-13)** — scenario rename (user + postdoc ruling):
+  group labels `Predictable load` / `Shifting load` → `Specialization` /
+  `Drift`. Specialization: demand concentrates on one known request class
+  while placement reflects a broader historical mixture (imbalance stays
+  possible despite prior exposure). Drift: demand changes across classes
+  and includes one absent from the placement history (adaptation to
+  incomplete history). Both differ from the main experiment, which serves
+  earlier demand of the same class; "Predictable" implied a closer match
+  than the experiment provides. Same rename applied to the case-study
+  figure (`figs/case_study`, CS_v2). Numbers unchanged.

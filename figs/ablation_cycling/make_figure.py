@@ -41,8 +41,8 @@ KNOBS = dict(
     INCLUDE_SEQ=False,                            # insert the sequential-swap twin before the last bar
     SEQ_TEXT="+ expert dispatch, un-overlapped",
     GROUPS=[                                      # (group label, figure_src panel prefix, topic, statistic)
-        ("Predictable load", "A:", "proLaw", "mean over 16 timed iters"),
-        ("Shifting load", "B:", "ALL", "whole-schedule mean, mean over reps"),
+        ("Specialization", "A:", "proLaw", "mean over 16 timed iters"),
+        ("Drift", "B:", "ALL", "whole-schedule mean, mean over reps"),
     ],
     ARM_ROWS={                                    # tidy_arm names in figure_src.csv, per panel prefix
         "COMET": {"A:": "COMET", "B:": "COMET"},
