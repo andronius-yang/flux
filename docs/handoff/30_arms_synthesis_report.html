@@ -1,0 +1,103 @@
+<title>Six-Arm Synthesis</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#F6F8F7; --surface:#FFFFFF; --ink:#1B211F; --muted:#5A6662;
+  --accent:#0E7A6C; --accent-soft:#E3F0ED; --win:#0E7A6C; --win-bg:#E3F0ED;
+  --flag:#9A5B08; --flag-bg:#F7EBD8; --fail:#94322A; --fail-bg:#F6E4E1;
+  --line:#DCE3E0; --code:#EEF2F0;
+}
+:root:not([data-theme="light"]){}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#111514; --surface:#181D1B; --ink:#E3E9E6; --muted:#93A09B;
+    --accent:#43BFA8; --accent-soft:#1C2E2A; --win:#43BFA8; --win-bg:#1C2E2A;
+    --flag:#D9A054; --flag-bg:#2E2517; --fail:#D97F72; --fail-bg:#2E1B18;
+    --line:#2A322F; --code:#20262A;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#111514; --surface:#181D1B; --ink:#E3E9E6; --muted:#93A09B;
+  --accent:#43BFA8; --accent-soft:#1C2E2A; --win:#43BFA8; --win-bg:#1C2E2A;
+  --flag:#D9A054; --flag-bg:#2E2517; --fail:#D97F72; --fail-bg:#2E1B18;
+  --line:#2A322F; --code:#20262A;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:15px/1.6 "IBM Plex Sans",system-ui,sans-serif;margin:0;padding:0 20px 64px}
+main{max-width:860px;margin:0 auto}
+header{padding:44px 0 10px;border-bottom:2px solid var(--ink);margin-bottom:8px}
+.eyebrow{font:600 11px/1 "IBM Plex Mono",monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin:0 0 10px}
+h1{font-size:34px;line-height:1.12;font-weight:700;margin:0 0 10px;text-wrap:balance}
+.sub{color:var(--muted);max-width:64ch;margin:0 0 18px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;padding:14px 0 18px}
+.chip{font:500 12px/1 "IBM Plex Mono",monospace;border:1px solid var(--line);border-radius:3px;padding:6px 9px;background:var(--surface);color:var(--muted)}
+.chip b{color:var(--ink);font-weight:600}
+h2{font-size:19px;font-weight:700;margin:40px 0 6px;text-wrap:balance}
+h2 .n{color:var(--accent);font:600 13px "IBM Plex Mono",monospace;margin-right:8px}
+p{max-width:68ch}
+.note{color:var(--muted);font-size:13px;max-width:72ch}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:4px;background:var(--surface);margin:14px 0 4px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{padding:7px 11px;text-align:right;border-bottom:1px solid var(--line);white-space:nowrap;font-variant-numeric:tabular-nums}
+td{font-family:"IBM Plex Mono",monospace;font-size:12.5px}
+th{font:600 11px/1.3 "IBM Plex Sans",sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+th:first-child,td:first-child{text-align:left;font-family:"IBM Plex Sans",sans-serif;font-size:13px;font-weight:500}
+tr:last-child td{border-bottom:none}
+td.win{background:var(--win-bg);color:var(--win);font-weight:600}
+td.flag{background:var(--flag-bg);color:var(--flag);font-weight:600}
+.legend{display:flex;gap:16px;font-size:12px;color:var(--muted);padding:6px 2px}
+.sw{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:5px}
+.finding{border-left:3px solid var(--accent);padding:2px 0 2px 14px;margin:14px 0;max-width:70ch}
+.finding b:first-child{display:block;margin-bottom:2px}
+.flagbox{border-left:3px solid var(--flag);background:var(--flag-bg);padding:10px 14px;border-radius:0 4px 4px 0;max-width:70ch;font-size:13.5px}
+code{font-family:"IBM Plex Mono",monospace;font-size:12.5px;background:var(--code);padding:1px 5px;border-radius:3px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin:14px 0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:12px 14px;font-size:13.5px}
+.card h3{margin:0 0 6px;font-size:13px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);font-weight:600}
+footer{margin-top:44px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px}
+</style>
+<main>
+<header>
+<p class="eyebrow">Flux / Comet · Perlmutter · 2026-08-30 · handoff 30</p>
+<h1>Six-Arm Synthesis</h1>
+<p class="sub">One binary, one day: the combined OURS stack measured against its own constituents (slipstream-only comm, placement/routing-only) and the strongest baselines — K2 &amp; Qwen routing, 4/8/16 nodes, budgets 1–64&nbsp;MiB, isolated mode, slack parity r2.</p>
+</header>
+<div class="chips">
+<span class="chip">binary <b>1b5593d4</b> · 8/29 comm canon</span>
+<span class="chip"><b>38+8</b> capsules · <b>266/266</b> cells ok (post-regather)</span>
+<span class="chip"><b>~30.2</b> node-hours · ~0 idle</span>
+<span class="chip">anchors <b>all in band</b> · drift &lt;3% vs 8/29</span>
+<span class="chip">deterministic=<b>0</b> everywhere</span>
+</div>
+
+<h2><span class="n">01</span>Headline — plan-inclusive total_ms (max-rank, median of 10)</h2>
+<p class="note">Each cell: b1&nbsp;/&nbsp;b8. Green = best arm at that budget. Full budget ladder and mechanism columns (e2e, l0, l1, plan) in the tidy CSV.</p>
+<div class="tablewrap"><table>
+<tr><th>topo · model</th><th>COMET</th><th>Slipstream-only</th><th>Place/route-only</th><th>OURS s1</th><th>OURS s2 (swap)</th><th>OURS direct-wire</th><th>EPLB</th></tr>
+<tr><td>4n K2</td><td>4.02 / 9.55</td><td><span class="win">3.95</span> / 9.70</td><td>6.14 / 11.72</td><td>4.01 / <b>8.99</b></td><td>5.00 / 10.08</td><td>6.17 / 20.10</td><td>—</td></tr>
+<tr><td>4n Qwen</td><td>4.45 / 8.65</td><td>3.07 / 8.72</td><td>5.28 / 9.91</td><td class="win">3.00 / 6.75</td><td>3.93 / 7.73</td><td>4.88 / 18.37</td><td>—</td></tr>
+<tr><td>8n K2</td><td>6.80 / 16.58</td><td>5.60 / 13.99</td><td>8.07 / 14.58</td><td class="win">5.68 / 12.40</td><td>7.08 / 13.28</td><td>6.13 / 23.15</td><td>—</td></tr>
+<tr><td>8n Qwen</td><td>7.35 / 17.28</td><td>5.23 / 13.89</td><td>7.63 / 13.68</td><td class="win">5.35 / 10.37</td><td>6.25 / 11.14</td><td>5.61 / 23.79</td><td>—</td></tr>
+<tr><td>16n K2</td><td>15.58 / 34.67</td><td>12.88 / 22.77</td><td>15.12 / 22.96</td><td>12.61 / <b>20.42</b></td><td>14.02 / 21.85</td><td class="win">7.22 / 27.84</td><td>9.87 / 32.56</td></tr>
+<tr><td>16n Qwen</td><td>16.95 / 34.90</td><td>12.36 / 22.89</td><td>15.23 / 21.63</td><td>12.33 / <b>17.63</b></td><td>13.43 / 18.98</td><td class="win">6.83 / 28.70</td><td>8.30 / 30.51</td></tr>
+</table></div>
+<div class="legend"><span><span class="sw" style="background:var(--win-bg);border:1px solid var(--win)"></span>best at budget</span><span><b>bold</b> = best at b8</span></div>
+
+<h2><span class="n">02</span>What the synthesis shows</h2>
+<div class="finding"><b>OURS-s1 is the canonical winner from 8n up.</b> It beats both of its own constituents everywhere they win separately — placement+routing and the slipstream combine compose. Qwen: −22% vs COMET at 4n b8, −40% at 8n b8, −49% at 16n b8.</div>
+<div class="finding"><b>16n b1/b2 belongs to the direct wire.</b> Our plan lane over EPLB's staged All2AllSingle transport wins b1 by −25% (K2) / −18% (Qwen) against EPLB itself, and beats every fused arm — the handoff-29 registered prediction confirmed almost exactly (predicted 7.5–8.5, measured 7.22–7.49). Fused reclaims from b4.</div>
+<div class="finding"><b>s2 = a ~1–1.6 ms insurance premium.</b> Always-solve + forced swap every iteration matches s1's e2e (movement fully overlapped) and pays only solve + host apply/issue on total. On this static eval distribution it buys nothing; at 16n K2 the forced swap develops an intermittent stall tail (e2e max 120 ms, median clean).</div>
+<div class="finding"><b>Placement-only never beats comm-only at 4n/8n.</b> Its ~2.1–2.5 ms plan bracket outweighs transport gains at low hop counts; the two draw level at 16n b8+. Placement value scales with hops, comm value with bytes.</div>
+
+<h2><span class="n">03</span>Flags &amp; failures (recorded, not debugged)</h2>
+<div class="flagbox"><b>Intermittent stall — reproduced:</b> Qwen 16n OURS-s1 b16 stalls ~350–450 ms inside the op bracket in a fraction of iterations (5/10 in the original run, 1–2/10 in the regather; plan lane normal). Dataset now carries the regather median 26.06 with the flag. Mild echo in K2 16n s2 b8. Open RCA candidate.</div>
+<div class="grid2">
+<div class="card"><h3>dwire 16n b32/b64 — RESOLVED</h3>One root cause: <code>All2AllSingle</code> ctor NVSHMEM_MALLOC (the b32 "wedge" was ranks blocked in the collective ctor). Fixed by demand pair-sizing with a <b>pair-level</b> cushion (the recv-side sum cushion was 9× oversize). All four cells regathered green.</div>
+<div class="card"><h3>llc 16n b64 — RESOLVED</h3>The pre-skip was stale: fixed since 8/25–27 (demand recv sizing + hidden-A2A skip); ran green as-is on both models (K2 102.1 / Qwen 92.9).</div>
+<div class="card"><h3>Ops incidents (no data impact)</h3>Harness reaped a backgrounded pending salloc (60 min queue lost → setsid detach); <code>-I120</code> self-cancels queued sallocs; one shared-log filename collision → lane prefixes.</div>
+</div>
+
+<h2><span class="n">04</span>Provenance</h2>
+<p class="note">Branch <code>pv2</code> @ <code>ab03abb</code>, fresh build (cuda 12.4 pins), <code>libflux_cuda_ths_op.so</code> sha <code>1b5593d4e917214e</code>; wave-adapt 48 + combine-idx ON as binary defaults (8/29 canon), chunk/pieces present but off (handoff 28). COMET gate anchors within −3.5…+6.2% of handoff 18 at all three topologies; llc and s2 capsules within 3% of their 8/29 same-canon references. Dataset: <code>docs/handoff/30_arms_synthesis_results_tidy.csv</code> (266 rows, all ok; regather details in handoff 30 §8) + figure tables + campaign md; 38 capsules staged under <code>sweeps/results/runs/</code>. Never mix against pre-8/29 wave-path capsules.</p>
+<footer>Handoff 30 · six-arm synthesis campaign · Perlmutter m5350_g · 2.60 + 5.94 + 17.4 + 4.3 (regather) ≈ 30.2 node-hours · lanes 4N/8N/16N, gate-first, zero idle burns</footer>
+</main>
