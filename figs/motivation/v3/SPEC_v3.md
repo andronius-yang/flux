@@ -41,9 +41,15 @@ Panels 1–2: K2 mmlu/professional_law layer 18, b32, middle timed window
 (iter4), capsule 20260904-123815 (unchanged from v2). Panel 3: same routing
 and budget, capsule `20260912-221306_perlmutter_363dd11a` (job 58247219,
 4/4 ok, bitwise + allclose green on all 16 ranks, deterministic 0; binary
-ths_op 6d3261d1 — NOT the v2 capsules' 505e4bed, main was rebuilt since
-2026-09-04, so panels 1–2 and panel 3 come from two builds; each panel has
-its own axis and no cross-panel latency is quoted — SCHEMA rule 4), cell
+actually executed = the main checkout's installed libs, ths_op d3bb40c7 +
+libflux_cuda a0c60c75 (the 3D-scheduling / prered-knob build; launch.sh puts
+the CWD tree first on PYTHONPATH). The capsule manifest's `flux_libs`
+(6d3261d1 / c50f0a90) is WRONG: the runner's login-side probe imports
+`flux` through the conda env's editable pointer, which has pointed at the
+flux-rotalign worktree since 2026-09-11 00:49, so it hashed that worktree's
+build. Either way NOT the v2 panels' 505e4bed: panels 1–2 and panel 3 come
+from two builds; each panel has its own axis and no cross-panel latency is
+quoted — SCHEMA rule 4), cell
 `moonep_l01_nvshmem_getmem_bwire_trace-2ce8ee_b32_k8_nsys`, iter4. Ranks
 r3 r12 r13 r14 (longest pull / shortest inter-node wire / median pull /
 one-expert pull over NVLink). Time origin per rank = first dispatch wire event.

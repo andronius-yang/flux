@@ -217,3 +217,11 @@ kwarg `weight_place_wire`, variant twin `eplb_l01_nvplace`, heap sizing in
   the hot home's egress fan-out (rank 12 serves 9 pulls, 7 off-node ->
   24–25 ms each at b32, 20.4–20.6 at b16), not by the puller's bytes.
   Numbers in `v3/SPEC_v3.md`.
+- PROVENANCE CORRECTION (2026-09-12 pm): capsule 20260912-221306's manifest
+  `flux_libs` hashes the flux-rotalign worktree build (6d3261d1/c50f0a90)
+  because the conda env's editable `flux` install points there since
+  2026-09-11 00:49 and `sweep.py`'s capability probe imports without
+  launch.sh's PYTHONPATH; the job itself ran the main checkout's installed
+  d3bb40c7 (ths_op) + a0c60c75 (libflux_cuda). Any capsule run from the main
+  checkout after that timestamp has the same manifest defect until the probe
+  is made to honor the CWD tree (or the editable pointer is reset to main).
