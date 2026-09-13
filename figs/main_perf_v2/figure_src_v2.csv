@@ -1,0 +1,17 @@
+nodes,model,row_id,row_label,budget_mib,total_ms,stat,arm_variant,impl,capsule,cell_id,l0_ms,l1_ms,sigma_kernel,ledger_total_ms,delta_pct
+4,K2,ours12,1+2,1,3.154,iter_max_median,ours_l01_s1_pv2_r2,ours,20260911-070236_perlmutter_df8db495,ours_l01_s1_pv2_r2_trace-610042_b1_k8_isolated,1.597,1.583,shipped,3.998,-21.1
+4,K2,ours12,1+2,2,3.671,iter_max_median,ours_l01_s1_pv2_r2,ours,20260911-070236_perlmutter_df8db495,ours_l01_s1_pv2_r2_trace-610042_b2_k8_isolated,1.872,1.835,shipped,4.681,-21.6
+4,K2,ours12,1+2,4,4.921,iter_max_median,ours_l01_s1_pv2_r2,ours,20260911-070236_perlmutter_df8db495,ours_l01_s1_pv2_r2_trace-610042_b4_k8_isolated,2.361,2.586,shipped,6.050,-18.7
+4,K2,ours12,1+2,16,12.345,iter_max_median,ours_l01_s1_pv2_r2,ours,20260911-070236_perlmutter_df8db495,ours_l01_s1_pv2_r2_trace-610042_b16_k8_isolated,5.753,6.554,shipped,14.411,-14.3
+4,K2,ours12,1+2,1,3.195,iter_max_median,ours_l01_s1_pv2_r2_prs,ours,20260911-063901_perlmutter_6092094c,ours_l01_s1_pv2_r2_prs_trace-610042_b1_k8_isolated,1.636,1.588,stream,3.998,-20.1
+4,K2,ours12,1+2,2,3.740,iter_max_median,ours_l01_s1_pv2_r2_prs,ours,20260911-063901_perlmutter_6092094c,ours_l01_s1_pv2_r2_prs_trace-610042_b2_k8_isolated,1.892,1.881,stream,4.681,-20.1
+4,K2,ours12,1+2,4,5.103,iter_max_median,ours_l01_s1_pv2_r2_prs,ours,20260911-063901_perlmutter_6092094c,ours_l01_s1_pv2_r2_prs_trace-610042_b4_k8_isolated,2.432,2.704,stream,6.050,-15.6
+4,K2,ours12,1+2,16,12.733,iter_max_median,ours_l01_s1_pv2_r2_prs,ours,20260911-063901_perlmutter_6092094c,ours_l01_s1_pv2_r2_prs_trace-610042_b16_k8_isolated,6.204,6.523,stream,14.411,-11.6
+4,Qwen,ours12,1+2,1,2.288,iter_max_median,ours_l01_s1_pv2_r2,ours,20260911-070505_perlmutter_bee4d538,ours_l01_s1_pv2_r2_trace-a2e8ab_b1_k8_isolated,1.185,1.112,shipped,3.019,-24.2
+4,Qwen,ours12,1+2,2,2.740,iter_max_median,ours_l01_s1_pv2_r2,ours,20260911-070505_perlmutter_bee4d538,ours_l01_s1_pv2_r2_trace-a2e8ab_b2_k8_isolated,1.369,1.408,shipped,3.785,-27.6
+4,Qwen,ours12,1+2,4,3.707,iter_max_median,ours_l01_s1_pv2_r2,ours,20260911-070505_perlmutter_bee4d538,ours_l01_s1_pv2_r2_trace-a2e8ab_b4_k8_isolated,1.784,1.959,shipped,4.712,-21.3
+4,Qwen,ours12,1+2,16,9.953,iter_max_median,ours_l01_s1_pv2_r2,ours,20260911-070505_perlmutter_bee4d538,ours_l01_s1_pv2_r2_trace-a2e8ab_b16_k8_isolated,4.413,5.556,shipped,11.716,-15.1
+4,Qwen,ours12,1+2,1,2.262,iter_max_median,ours_l01_s1_pv2_r2_prs,ours,20260911-064208_perlmutter_3dc46fa5,ours_l01_s1_pv2_r2_prs_trace-a2e8ab_b1_k8_isolated,1.156,1.116,stream,3.019,-25.1
+4,Qwen,ours12,1+2,2,2.679,iter_max_median,ours_l01_s1_pv2_r2_prs,ours,20260911-064208_perlmutter_3dc46fa5,ours_l01_s1_pv2_r2_prs_trace-a2e8ab_b2_k8_isolated,1.329,1.370,stream,3.785,-29.2
+4,Qwen,ours12,1+2,4,3.681,iter_max_median,ours_l01_s1_pv2_r2_prs,ours,20260911-064208_perlmutter_3dc46fa5,ours_l01_s1_pv2_r2_prs_trace-a2e8ab_b4_k8_isolated,1.745,1.991,stream,4.712,-21.9
+4,Qwen,ours12,1+2,16,10.226,iter_max_median,ours_l01_s1_pv2_r2_prs,ours,20260911-064208_perlmutter_3dc46fa5,ours_l01_s1_pv2_r2_prs_trace-a2e8ab_b16_k8_isolated,4.761,5.483,stream,11.716,-12.7

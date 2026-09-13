@@ -185,14 +185,30 @@ ROWS_CS3 = [
     ("Skewed", "swap under l0 GEMM",     f"{_RST}_late3_str4_p2p_r2_{SCHED}", "SKEW"),
 ]
 
+# v2 recapture (2026-09-11, capsule 20260911-064254, knob binary a0c60c75, streaming Σ ON in every
+# OURS row via FLUX_A2AV_RS_PRERED_STREAM=1; figs/main_perf_v2 ruling: ADDITION, provisional).
+# Select with --rows cs3v2. COMET overlapped is the only baseline row (no gated COMET, no dual).
+ROWS_CS3V2 = [
+    ("Efficient", "COMET, overlapped",   f"l01_allgather_dense_nogate_c8_{PLAIN}", "EFF"),
+    ("Efficient", "swap in host gap",    f"{_RST}_early_str4_prs_p2p_r2_{PLAIN}", "EFF"),
+    ("Efficient", "sequential swap",     f"{_RST}_noov_str4_prs_p2p_r2_{PLAIN}", "EFF"),
+    ("Efficient", "3D-scheduled swap",   f"{_RST}_dual3_str4_prs_p2p_r2_{PLAIN}", "EFF"),
+    ("Efficient", "swap under l0 GEMM",  f"{_RST}_late3_str4_prs_p2p_r2_{PLAIN}", "EFF"),
+    ("Skewed", "COMET, overlapped",      f"l01_allgather_dense_nogate_c8_{SCHED}", "SKEW"),
+    ("Skewed", "swap in host gap",       f"{_RST}_early_str4_prs_p2p_r2_{SCHED}", "SKEW"),
+    ("Skewed", "sequential swap",        f"{_RST}_noov_str4_prs_p2p_r2_{SCHED}", "SKEW"),
+    ("Skewed", "3D-scheduled swap",      f"{_RST}_dual3_str4_prs_p2p_r2_{SCHED}", "SKEW"),
+    ("Skewed", "swap under l0 GEMM",     f"{_RST}_late3_str4_prs_p2p_r2_{SCHED}", "SKEW"),
+]
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(); ap.add_argument("json"); ap.add_argument("--out", required=True)
-    ap.add_argument("--rows", choices=("cs2", "cs3"), default="cs2", help="row table: cs2 = 9/5 capture, cs3 = 9/9 3D-scheduling capture")
+    ap.add_argument("--rows", choices=("cs2", "cs3", "cs3v2"), default="cs2", help="row table: cs2 = 9/5 capture, cs3 = 9/9 3D-scheduling capture, cs3v2 = 9/11 streaming-Σ recapture (figs/main_perf_v2)")
     ap.add_argument("--eff-iter", default="iter4"); ap.add_argument("--skew-iter", default="iter33")
     ap.add_argument("--simple", action="store_true", help="OURS overlapped swap only: Efficient + Skewed, 2 ranks each")
     a = ap.parse_args()
-    if a.rows == "cs3":
-        ROWS[:] = [(t1, t2, cid, {"EFF": a.eff_iter, "SKEW": a.skew_iter}[itn]) for t1, t2, cid, itn in ROWS_CS3]
+    if a.rows in ("cs3", "cs3v2"):
+        ROWS[:] = [(t1, t2, cid, {"EFF": a.eff_iter, "SKEW": a.skew_iter}[itn]) for t1, t2, cid, itn in (ROWS_CS3 if a.rows == "cs3" else ROWS_CS3V2)]
     if a.simple: ROWS[:] = [r for r in ROWS if r[1] in ("overlapped swap", "3D-scheduled swap")]
     data = json.load(open(a.json))
     ledger, h, tmax = build(data, a.out)

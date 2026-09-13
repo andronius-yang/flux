@@ -1,0 +1,1558 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="504.0pt" height="502.0pt" viewBox="0 0 504.0 502.0" font-family="Helvetica, Arial, sans-serif">
+<rect width="504.0" height="502.0" fill="#ffffff"/>
+<text x="3.00" y="10.00" font-size="6.5" text-anchor="start" fill="#17191c" font-weight="bold">Efficient</text>
+<text x="3.00" y="17.00" font-size="5.2" text-anchor="start" fill="#5a5e66">COMET, overlapped</text>
+<line x1="58.00" y1="5.10" x2="500.00" y2="5.10" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="6.60" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="67.78" y="3.00" width="21.62" height="4.20" fill="#2a78d6"><title>r4 nic.put 1.43–4.60 ms</title></rect>
+<rect x="92.95" y="3.00" width="29.44" height="4.20" fill="#2a78d6"><title>r4 nic.put 5.12–9.43 ms</title></rect>
+<rect x="127.22" y="3.00" width="31.25" height="4.20" fill="#2a78d6"><title>r4 nic.put 10.14–14.72 ms</title></rect>
+<rect x="306.07" y="3.00" width="113.23" height="4.20" fill="#2a78d6"><title>r4 nic.put 36.34–52.92 ms</title></rect>
+<rect x="316.76" y="3.00" width="102.53" height="4.20" fill="#2a78d6"><title>r4 nic.put 37.90–52.92 ms</title></rect>
+<rect x="326.90" y="3.00" width="92.39" height="4.20" fill="#2a78d6"><title>r4 nic.put 39.39–52.92 ms</title></rect>
+<rect x="350.57" y="3.00" width="68.71" height="4.20" fill="#2a78d6"><title>r4 nic.put 42.86–52.92 ms</title></rect>
+<rect x="364.22" y="3.00" width="55.07" height="4.20" fill="#2a78d6"><title>r4 nic.put 44.85–52.92 ms</title></rect>
+<rect x="388.80" y="3.00" width="30.48" height="4.20" fill="#2a78d6"><title>r4 nic.put 48.46–52.92 ms</title></rect>
+<line x1="58.00" y1="10.10" x2="500.00" y2="10.10" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="11.60" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="67.84" y="8.00" width="4.88" height="4.20" fill="#2a78d6"><title>r4 nvlink.token 67 MB 1.44–2.16 ms</title></rect>
+<rect x="72.92" y="8.00" width="5.18" height="4.20" fill="#2a78d6"><title>r4 nvlink.token 67 MB 2.18–2.94 ms</title></rect>
+<rect x="78.21" y="8.00" width="4.89" height="4.20" fill="#2a78d6"><title>r4 nvlink.token 67 MB 2.96–3.68 ms</title></rect>
+<rect x="93.04" y="8.00" width="4.88" height="4.20" fill="#2a78d6"><title>r4 nvlink.token 67 MB 5.13–5.85 ms</title></rect>
+<rect x="98.03" y="8.00" width="5.14" height="4.20" fill="#2a78d6"><title>r4 nvlink.token 67 MB 5.86–6.62 ms</title></rect>
+<rect x="103.27" y="8.00" width="4.89" height="4.20" fill="#2a78d6"><title>r4 nvlink.token 67 MB 6.63–7.35 ms</title></rect>
+<rect x="127.29" y="8.00" width="4.88" height="4.20" fill="#2a78d6"><title>r4 nvlink.token 67 MB 10.15–10.86 ms</title></rect>
+<rect x="132.28" y="8.00" width="5.16" height="4.20" fill="#2a78d6"><title>r4 nvlink.token 67 MB 10.88–11.64 ms</title></rect>
+<rect x="137.54" y="8.00" width="4.89" height="4.20" fill="#2a78d6"><title>r4 nvlink.token 67 MB 11.65–12.37 ms</title></rect>
+<rect x="158.63" y="8.00" width="4.89" height="4.20" fill="#2a78d6"><title>r4 nvlink.token 67 MB 14.74–15.46 ms</title></rect>
+<rect x="163.61" y="8.00" width="5.33" height="4.20" fill="#2a78d6"><title>r4 nvlink.token 67 MB 15.47–16.25 ms</title></rect>
+<rect x="168.99" y="8.00" width="4.88" height="4.20" fill="#2a78d6"><title>r4 nvlink.token 67 MB 16.26–16.97 ms</title></rect>
+<line x1="58.00" y1="15.10" x2="500.00" y2="15.10" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="16.60" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.62" y="13.00" width="2.56" height="4.20" fill="#2f8f9d"><title>r4 plan.comm 0.09–0.47 ms</title></rect>
+<rect x="61.28" y="13.00" width="1.64" height="4.20" fill="#2f8f9d"><title>r4 plan.compute 0.48–0.72 ms</title></rect>
+<rect x="62.96" y="13.00" width="0.57" height="4.20" fill="#2f8f9d"><title>r4 plan.compute 0.73–0.81 ms</title></rect>
+<rect x="63.54" y="13.00" width="1.13" height="4.20" fill="#2f8f9d"><title>r4 plan.compute 0.81–0.98 ms</title></rect>
+<rect x="65.36" y="13.00" width="0.51" height="4.20" fill="#2a78d6"><title>r4 copy.d2d 67 MB 1.08–1.15 ms</title></rect>
+<rect x="65.88" y="13.00" width="1.89" height="4.20" fill="#c9c8c0"><title>r4 barrier 1.15–1.43 ms</title></rect>
+<rect x="67.79" y="13.00" width="0.47" height="4.20" fill="#2f8f9d"><title>r4 plan.compute 1.43–1.50 ms</title></rect>
+<rect x="68.29" y="13.00" width="0.48" height="4.20" fill="#2f8f9d"><title>r4 plan.compute 1.51–1.58 ms</title></rect>
+<rect x="68.88" y="13.00" width="0.36" height="4.20" fill="#2f8f9d"><title>r4 plan.compute 1.59–1.65 ms</title></rect>
+<rect x="69.25" y="13.00" width="114.57" height="4.20" fill="#eda100"><title>r4 gemm.l0 1.65–18.43 ms</title></rect>
+<rect x="89.42" y="13.00" width="3.51" height="4.20" fill="#c9c8c0"><title>r4 barrier 4.60–5.12 ms</title></rect>
+<rect x="122.41" y="13.00" width="4.80" height="4.20" fill="#c9c8c0"><title>r4 barrier 9.44–10.14 ms</title></rect>
+<rect x="183.85" y="13.00" width="21.81" height="4.20" fill="#c9c8c0"><title>r4 barrier 18.43–21.63 ms</title></rect>
+<rect x="205.69" y="13.00" width="2.22" height="4.20" fill="#2f8f9d"><title>r4 misc 21.63–21.96 ms</title></rect>
+<rect x="208.00" y="13.00" width="1.08" height="4.20" fill="#c9c8c0"><title>r4 barrier 21.97–22.13 ms</title></rect>
+<rect x="209.14" y="13.00" width="103.40" height="4.20" fill="#eda100"><title>r4 gemm.l1 22.14–37.28 ms</title></rect>
+<rect x="415.12" y="13.00" width="5.64" height="4.20" fill="#c9c8c0"><title>r4 barrier 52.31–53.14 ms</title></rect>
+<line x1="58.00" y1="20.10" x2="500.00" y2="20.10" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="21.60" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="209.13" y="18.00" width="200.14" height="4.20" fill="#c8553d"><title>r4 combine.gather_rs 22.14–51.45 ms</title></rect>
+<rect x="409.59" y="18.00" width="2.54" height="4.20" fill="#c8553d"><title>r4 combine.reduce 51.50–51.87 ms</title></rect>
+<rect x="412.52" y="18.00" width="2.59" height="4.20" fill="#c8553d"><title>r4 combine.reduce 51.93–52.31 ms</title></rect>
+<line x1="420.80" y1="2.60" x2="420.80" y2="22.60" stroke="#17191c" stroke-width="0.5"/>
+<line x1="58.00" y1="26.80" x2="500.00" y2="26.80" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="28.30" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="68.09" y="24.70" width="33.59" height="4.20" fill="#2a78d6"><title>r8 nic.put 1.48–6.40 ms</title></rect>
+<rect x="107.47" y="24.70" width="33.93" height="4.20" fill="#2a78d6"><title>r8 nic.put 7.25–12.22 ms</title></rect>
+<rect x="141.51" y="24.70" width="24.61" height="4.20" fill="#2a78d6"><title>r8 nic.put 12.23–15.84 ms</title></rect>
+<rect x="278.73" y="24.70" width="51.72" height="4.20" fill="#2a78d6"><title>r8 nic.put 32.33–39.91 ms</title></rect>
+<rect x="289.89" y="24.70" width="40.56" height="4.20" fill="#2a78d6"><title>r8 nic.put 33.97–39.91 ms</title></rect>
+<rect x="301.37" y="24.70" width="29.03" height="4.20" fill="#2a78d6"><title>r8 nic.put 35.65–39.90 ms</title></rect>
+<rect x="332.61" y="24.70" width="63.30" height="4.20" fill="#2a78d6"><title>r8 nic.put 40.23–49.50 ms</title></rect>
+<rect x="343.68" y="24.70" width="52.25" height="4.20" fill="#2a78d6"><title>r8 nic.put 41.85–49.50 ms</title></rect>
+<rect x="354.54" y="24.70" width="41.38" height="4.20" fill="#2a78d6"><title>r8 nic.put 43.44–49.50 ms</title></rect>
+<line x1="58.00" y1="31.80" x2="500.00" y2="31.80" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="33.30" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="68.11" y="29.70" width="4.88" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 67 MB 1.48–2.20 ms</title></rect>
+<rect x="73.12" y="29.70" width="5.17" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 67 MB 2.21–2.97 ms</title></rect>
+<rect x="78.38" y="29.70" width="4.89" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 67 MB 2.98–3.70 ms</title></rect>
+<rect x="107.49" y="29.70" width="4.89" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 67 MB 7.25–7.96 ms</title></rect>
+<rect x="112.47" y="29.70" width="5.17" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 67 MB 7.98–8.74 ms</title></rect>
+<rect x="117.78" y="29.70" width="4.88" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 67 MB 8.76–9.47 ms</title></rect>
+<rect x="141.59" y="29.70" width="5.00" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 67 MB 12.24–12.98 ms</title></rect>
+<rect x="146.66" y="29.70" width="5.12" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 67 MB 12.99–13.74 ms</title></rect>
+<rect x="151.90" y="29.70" width="4.88" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 67 MB 13.75–14.47 ms</title></rect>
+<rect x="166.87" y="29.70" width="4.89" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 67 MB 15.95–16.66 ms</title></rect>
+<rect x="171.81" y="29.70" width="5.36" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 67 MB 16.67–17.45 ms</title></rect>
+<rect x="177.24" y="29.70" width="5.05" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 67 MB 17.47–18.21 ms</title></rect>
+<line x1="58.00" y1="36.80" x2="500.00" y2="36.80" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="38.30" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.72" y="34.70" width="2.51" height="4.20" fill="#2f8f9d"><title>r8 plan.comm 0.10–0.47 ms</title></rect>
+<rect x="61.32" y="34.70" width="1.99" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 0.49–0.78 ms</title></rect>
+<rect x="63.35" y="34.70" width="0.61" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 0.78–0.87 ms</title></rect>
+<rect x="63.97" y="34.70" width="1.15" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 0.87–1.04 ms</title></rect>
+<rect x="65.88" y="34.70" width="0.52" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 67 MB 1.15–1.23 ms</title></rect>
+<rect x="66.41" y="34.70" width="1.67" height="4.20" fill="#c9c8c0"><title>r8 barrier 1.23–1.48 ms</title></rect>
+<rect x="68.08" y="34.70" width="0.45" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 1.48–1.54 ms</title></rect>
+<rect x="69.03" y="34.70" width="120.69" height="4.20" fill="#eda100"><title>r8 gemm.l0 1.62–19.29 ms</title></rect>
+<rect x="101.69" y="34.70" width="5.74" height="4.20" fill="#c9c8c0"><title>r8 barrier 6.40–7.24 ms</title></rect>
+<rect x="166.13" y="34.70" width="0.66" height="4.20" fill="#c9c8c0"><title>r8 barrier 15.84–15.94 ms</title></rect>
+<rect x="189.73" y="34.70" width="16.40" height="4.20" fill="#c9c8c0"><title>r8 barrier 19.30–21.70 ms</title></rect>
+<rect x="206.17" y="34.70" width="1.03" height="4.20" fill="#2f8f9d"><title>r8 misc 21.70–21.86 ms</title></rect>
+<rect x="207.30" y="34.70" width="2.08" height="4.20" fill="#c9c8c0"><title>r8 barrier 21.87–22.17 ms</title></rect>
+<rect x="209.38" y="34.70" width="34.82" height="4.20" fill="#eda100"><title>r8 gemm.l1 22.17–27.27 ms</title></rect>
+<rect x="371.76" y="34.70" width="24.32" height="4.20" fill="#c9c8c0"><title>r8 barrier 45.96–49.52 ms</title></rect>
+<rect x="396.08" y="34.70" width="9.10" height="4.20" fill="#c9c8c0"><title>r8 barrier 49.52–50.86 ms</title></rect>
+<rect x="406.03" y="34.70" width="15.20" height="4.20" fill="#c9c8c0"><title>r8 barrier 50.98–53.21 ms</title></rect>
+<line x1="58.00" y1="41.80" x2="500.00" y2="41.80" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="43.30" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="230.49" y="39.70" width="139.38" height="4.20" fill="#c8553d"><title>r8 combine.gather_rs 25.27–45.68 ms</title></rect>
+<rect x="370.01" y="39.70" width="1.70" height="4.20" fill="#c8553d"><title>r8 combine.reduce 45.70–45.95 ms</title></rect>
+<rect x="405.19" y="39.70" width="0.83" height="4.20" fill="#c8553d"><title>r8 combine.reduce 50.86–50.98 ms</title></rect>
+<line x1="421.27" y1="24.30" x2="421.27" y2="44.30" stroke="#17191c" stroke-width="0.5"/>
+<text x="3.00" y="57.90" font-size="6.5" text-anchor="start" fill="#17191c" font-weight="bold">Efficient</text>
+<text x="3.00" y="64.90" font-size="5.2" text-anchor="start" fill="#5a5e66">swap in host gap</text>
+<line x1="58.00" y1="53.00" x2="500.00" y2="53.00" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="54.50" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="105.59" y="50.90" width="18.88" height="4.20" fill="#2a78d6"><title>r9 nic.put 6.97–9.74 ms</title></rect>
+<rect x="124.49" y="50.90" width="23.18" height="4.20" fill="#2a78d6"><title>r9 nic.put 9.74–13.14 ms</title></rect>
+<rect x="147.70" y="50.90" width="26.16" height="4.20" fill="#2a78d6"><title>r9 nic.put 13.14–16.97 ms</title></rect>
+<rect x="253.81" y="50.90" width="58.15" height="4.20" fill="#2a78d6"><title>r9 nic.put 28.68–37.20 ms</title></rect>
+<rect x="269.45" y="50.90" width="42.52" height="4.20" fill="#2a78d6"><title>r9 nic.put 30.97–37.20 ms</title></rect>
+<rect x="284.30" y="50.90" width="27.67" height="4.20" fill="#2a78d6"><title>r9 nic.put 33.15–37.20 ms</title></rect>
+<line x1="58.00" y1="58.00" x2="500.00" y2="58.00" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="59.50" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="69.39" y="55.90" width="2.36" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [host gap] 29 MB 1.67–2.01 ms</title></rect>
+<rect x="72.14" y="55.90" width="2.14" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [host gap] 29 MB 2.07–2.38 ms</title></rect>
+<rect x="97.07" y="55.90" width="6.83" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 38 MB 5.72–6.72 ms</title></rect>
+<rect x="105.13" y="55.90" width="3.29" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 44 MB 6.90–7.39 ms</title></rect>
+<rect x="108.59" y="55.90" width="4.98" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 28 MB 7.41–8.14 ms</title></rect>
+<rect x="127.73" y="55.90" width="3.77" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 10.21–10.77 ms</title></rect>
+<rect x="131.63" y="55.90" width="3.80" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 10.79–11.34 ms</title></rect>
+<rect x="136.93" y="55.90" width="9.28" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 11.56–12.92 ms</title></rect>
+<rect x="147.97" y="55.90" width="4.13" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 13.18–13.78 ms</title></rect>
+<rect x="153.54" y="55.90" width="9.20" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 13.99–15.34 ms</title></rect>
+<rect x="162.93" y="55.90" width="9.34" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 15.37–16.74 ms</title></rect>
+<rect x="173.76" y="55.90" width="9.06" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 16.96–18.28 ms</title></rect>
+<rect x="182.95" y="55.90" width="9.07" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 18.30–19.63 ms</title></rect>
+<rect x="192.16" y="55.90" width="3.79" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 19.65–20.21 ms</title></rect>
+<rect x="236.39" y="55.90" width="5.25" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 30 MB 26.13–26.90 ms</title></rect>
+<rect x="241.66" y="55.90" width="5.28" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 29 MB 26.90–27.68 ms</title></rect>
+<rect x="241.73" y="55.90" width="2.52" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 30 MB 26.91–27.28 ms</title></rect>
+<rect x="257.63" y="55.90" width="5.65" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 31 MB 29.24–30.07 ms</title></rect>
+<rect x="263.32" y="55.90" width="5.90" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 34 MB 30.08–30.94 ms</title></rect>
+<rect x="263.39" y="55.90" width="2.31" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 31 MB 30.09–30.42 ms</title></rect>
+<rect x="274.93" y="55.90" width="5.80" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 33 MB 31.78–32.62 ms</title></rect>
+<rect x="280.76" y="55.90" width="5.60" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 32 MB 32.63–33.45 ms</title></rect>
+<rect x="280.85" y="55.90" width="2.37" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 32 MB 32.64–32.99 ms</title></rect>
+<rect x="289.57" y="55.90" width="3.20" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 43 MB 33.92–34.39 ms</title></rect>
+<rect x="289.59" y="55.90" width="7.77" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 43 MB 33.92–35.06 ms</title></rect>
+<rect x="297.40" y="55.90" width="7.60" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 43 MB 35.07–36.18 ms</title></rect>
+<line x1="58.00" y1="63.00" x2="500.00" y2="63.00" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="64.50" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.90" y="60.90" width="0.93" height="4.20" fill="#2f8f9d"><title>r9 plan.comm 0.13–0.27 ms</title></rect>
+<rect x="74.58" y="60.90" width="0.95" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 2.43–2.57 ms</title></rect>
+<rect x="76.85" y="60.90" width="3.90" height="4.20" fill="#2f8f9d"><title>r9 plan.comm 2.76–3.33 ms</title></rect>
+<rect x="81.05" y="60.90" width="1.42" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 3.38–3.58 ms</title></rect>
+<rect x="82.51" y="60.90" width="0.64" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 3.59–3.68 ms</title></rect>
+<rect x="83.16" y="60.90" width="1.14" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 3.69–3.85 ms</title></rect>
+<rect x="87.14" y="60.90" width="2.72" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 4.27–4.67 ms</title></rect>
+<rect x="91.01" y="60.90" width="1.73" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 4.83–5.09 ms</title></rect>
+<rect x="92.75" y="60.90" width="1.23" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 5.09–5.27 ms</title></rect>
+<rect x="94.00" y="60.90" width="1.50" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 5.27–5.49 ms</title></rect>
+<rect x="95.51" y="60.90" width="1.12" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 5.49–5.66 ms</title></rect>
+<rect x="96.65" y="60.90" width="2.33" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 5.66–6.00 ms</title></rect>
+<rect x="96.65" y="60.90" width="0.34" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 31 MB 5.66–5.71 ms</title></rect>
+<rect x="99.10" y="60.90" width="2.35" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 6.02–6.37 ms</title></rect>
+<rect x="99.31" y="60.90" width="0.60" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 55 MB 6.05–6.14 ms</title></rect>
+<rect x="101.54" y="60.90" width="2.30" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 6.38–6.71 ms</title></rect>
+<rect x="101.97" y="60.90" width="0.45" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 51 MB 6.44–6.51 ms</title></rect>
+<rect x="105.04" y="60.90" width="0.52" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 6.89–6.97 ms</title></rect>
+<rect x="105.05" y="60.90" width="0.51" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 53 MB 6.89–6.97 ms</title></rect>
+<rect x="105.60" y="60.90" width="100.32" height="4.20" fill="#eda100"><title>r9 gemm.l0 6.97–21.67 ms</title></rect>
+<rect x="135.54" y="60.90" width="1.24" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 52 MB 11.36–11.54 ms</title></rect>
+<rect x="152.22" y="60.90" width="1.25" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 52 MB 13.80–13.99 ms</title></rect>
+<rect x="172.40" y="60.90" width="1.25" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 52 MB 16.76–16.94 ms</title></rect>
+<rect x="206.33" y="60.90" width="3.83" height="4.20" fill="#c9c8c0"><title>r9 barrier 21.73–22.29 ms</title></rect>
+<rect x="210.19" y="60.90" width="1.46" height="4.20" fill="#2f8f9d"><title>r9 misc 22.29–22.51 ms</title></rect>
+<rect x="211.76" y="60.90" width="4.00" height="4.20" fill="#2f8f9d"><title>r9 misc 22.52–23.11 ms</title></rect>
+<rect x="215.87" y="60.90" width="2.12" height="4.20" fill="#c9c8c0"><title>r9 barrier 23.12–23.44 ms</title></rect>
+<rect x="218.01" y="60.90" width="70.91" height="4.20" fill="#eda100"><title>r9 gemm.l1 23.44–33.82 ms</title></rect>
+<rect x="235.77" y="60.90" width="0.55" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 31 MB 26.04–26.12 ms</title></rect>
+<rect x="257.05" y="60.90" width="0.51" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 32 MB 29.16–29.23 ms</title></rect>
+<rect x="274.47" y="60.90" width="0.35" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 33 MB 31.71–31.76 ms</title></rect>
+<rect x="289.06" y="60.90" width="0.43" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 45 MB 33.85–33.91 ms</title></rect>
+<rect x="335.37" y="60.90" width="20.05" height="4.20" fill="#c9c8c0"><title>r9 barrier 40.63–43.57 ms</title></rect>
+<line x1="58.00" y1="68.00" x2="500.00" y2="68.00" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="69.50" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="218.23" y="65.90" width="70.84" height="4.20" fill="#c8553d"><title>r9 combine.pack 23.47–33.85 ms</title></rect>
+<rect x="218.27" y="65.90" width="66.01" height="4.20" fill="#c8553d"><title>r9 combine.prereduce 23.48–33.15 ms</title></rect>
+<rect x="290.04" y="65.90" width="1.18" height="4.20" fill="#c8553d"><title>r9 combine.reduce 33.99–34.16 ms</title></rect>
+<rect x="293.93" y="65.90" width="7.05" height="4.20" fill="#c8553d"><title>r9 combine.reduce 34.56–35.59 ms</title></rect>
+<rect x="315.60" y="65.90" width="19.75" height="4.20" fill="#c8553d"><title>r9 combine.reduce 37.73–40.63 ms</title></rect>
+<line x1="355.44" y1="50.50" x2="355.44" y2="70.50" stroke="#17191c" stroke-width="0.5"/>
+<line x1="58.00" y1="74.70" x2="500.00" y2="74.70" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="76.20" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="102.25" y="72.60" width="25.68" height="4.20" fill="#2a78d6"><title>r0 nic.put 6.48–10.24 ms</title></rect>
+<rect x="127.97" y="72.60" width="20.09" height="4.20" fill="#2a78d6"><title>r0 nic.put 10.25–13.19 ms</title></rect>
+<rect x="148.09" y="72.60" width="22.33" height="4.20" fill="#2a78d6"><title>r0 nic.put 13.20–16.47 ms</title></rect>
+<rect x="258.93" y="72.60" width="67.86" height="4.20" fill="#2a78d6"><title>r0 nic.put 29.43–39.37 ms</title></rect>
+<rect x="267.89" y="72.60" width="58.91" height="4.20" fill="#2a78d6"><title>r0 nic.put 30.75–39.37 ms</title></rect>
+<rect x="284.01" y="72.60" width="42.79" height="4.20" fill="#2a78d6"><title>r0 nic.put 33.11–39.37 ms</title></rect>
+<line x1="58.00" y1="79.70" x2="500.00" y2="79.70" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="81.20" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="97.35" y="77.60" width="2.63" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 35 MB 5.76–6.15 ms</title></rect>
+<rect x="97.39" y="77.60" width="2.27" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 31 MB 5.77–6.10 ms</title></rect>
+<rect x="102.39" y="77.60" width="2.60" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 36 MB 6.50–6.88 ms</title></rect>
+<rect x="128.22" y="77.60" width="3.73" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 51 MB 10.29–10.83 ms</title></rect>
+<rect x="132.09" y="77.60" width="3.72" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 51 MB 10.85–11.40 ms</title></rect>
+<rect x="137.26" y="77.60" width="3.77" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 51 MB 11.61–12.16 ms</title></rect>
+<rect x="142.12" y="77.60" width="3.74" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 51 MB 12.32–12.87 ms</title></rect>
+<rect x="147.60" y="77.60" width="4.10" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 51 MB 13.13–13.73 ms</title></rect>
+<rect x="151.79" y="77.60" width="3.74" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 51 MB 13.74–14.29 ms</title></rect>
+<rect x="173.31" y="77.60" width="3.79" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 52 MB 16.89–17.45 ms</title></rect>
+<rect x="177.30" y="77.60" width="4.01" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 52 MB 17.47–18.06 ms</title></rect>
+<rect x="181.41" y="77.60" width="3.77" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 52 MB 18.08–18.63 ms</title></rect>
+<rect x="233.36" y="77.60" width="2.22" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 24 MB 25.69–26.01 ms</title></rect>
+<rect x="233.36" y="77.60" width="1.92" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 25 MB 25.69–25.97 ms</title></rect>
+<rect x="233.37" y="77.60" width="2.02" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 25 MB 25.69–25.98 ms</title></rect>
+<rect x="248.36" y="77.60" width="1.70" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 23 MB 27.88–28.13 ms</title></rect>
+<rect x="248.36" y="77.60" width="1.85" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 24 MB 27.88–28.16 ms</title></rect>
+<rect x="248.36" y="77.60" width="1.85" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 23 MB 27.88–28.16 ms</title></rect>
+<rect x="264.73" y="77.60" width="2.03" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 27 MB 30.28–30.58 ms</title></rect>
+<rect x="264.73" y="77.60" width="2.17" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 27 MB 30.28–30.60 ms</title></rect>
+<rect x="264.73" y="77.60" width="2.26" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 26 MB 30.28–30.61 ms</title></rect>
+<rect x="282.94" y="77.60" width="4.07" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 56 MB 32.95–33.55 ms</title></rect>
+<rect x="282.94" y="77.60" width="4.22" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 57 MB 32.95–33.57 ms</title></rect>
+<rect x="282.95" y="77.60" width="4.01" height="4.20" fill="#2a78d6"><title>r0 nvlink.token 54 MB 32.95–33.54 ms</title></rect>
+<line x1="58.00" y1="84.70" x2="500.00" y2="84.70" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="86.20" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.89" y="82.60" width="1.38" height="4.20" fill="#2f8f9d"><title>r0 plan.comm 0.13–0.33 ms</title></rect>
+<rect x="69.70" y="82.60" width="0.73" height="4.20" fill="#2f8f9d"><title>r0 plan.compute 1.71–1.82 ms</title></rect>
+<rect x="71.66" y="82.60" width="9.44" height="4.20" fill="#2f8f9d"><title>r0 plan.comm 2.00–3.38 ms</title></rect>
+<rect x="81.41" y="82.60" width="1.51" height="4.20" fill="#2f8f9d"><title>r0 plan.compute 3.43–3.65 ms</title></rect>
+<rect x="82.96" y="82.60" width="0.59" height="4.20" fill="#2f8f9d"><title>r0 plan.compute 3.66–3.74 ms</title></rect>
+<rect x="83.56" y="82.60" width="1.14" height="4.20" fill="#2f8f9d"><title>r0 plan.compute 3.74–3.91 ms</title></rect>
+<rect x="87.52" y="82.60" width="2.70" height="4.20" fill="#2f8f9d"><title>r0 plan.compute 4.32–4.72 ms</title></rect>
+<rect x="91.32" y="82.60" width="1.48" height="4.20" fill="#2f8f9d"><title>r0 plan.compute 4.88–5.10 ms</title></rect>
+<rect x="92.82" y="82.60" width="1.39" height="4.20" fill="#2f8f9d"><title>r0 plan.compute 5.10–5.30 ms</title></rect>
+<rect x="94.23" y="82.60" width="1.20" height="4.20" fill="#2f8f9d"><title>r0 plan.compute 5.31–5.48 ms</title></rect>
+<rect x="95.43" y="82.60" width="1.39" height="4.20" fill="#2f8f9d"><title>r0 plan.compute 5.48–5.69 ms</title></rect>
+<rect x="96.84" y="82.60" width="2.36" height="4.20" fill="#2f8f9d"><title>r0 plan.compute 5.69–6.04 ms</title></rect>
+<rect x="96.88" y="82.60" width="0.34" height="4.20" fill="#2a78d6"><title>r0 copy.d2d 38 MB 5.70–5.75 ms</title></rect>
+<rect x="99.35" y="82.60" width="2.39" height="4.20" fill="#2f8f9d"><title>r0 plan.compute 6.06–6.41 ms</title></rect>
+<rect x="99.35" y="82.60" width="0.69" height="4.20" fill="#2a78d6"><title>r0 copy.d2d 53 MB 6.06–6.16 ms</title></rect>
+<rect x="101.77" y="82.60" width="0.38" height="4.20" fill="#2a78d6"><title>r0 copy.d2d 52 MB 6.41–6.47 ms</title></rect>
+<rect x="102.14" y="82.60" width="3.41" height="4.20" fill="#2f8f9d"><title>r0 plan.compute 6.47–6.97 ms</title></rect>
+<rect x="107.72" y="82.60" width="92.64" height="4.20" fill="#eda100"><title>r0 gemm.l0 7.28–20.85 ms</title></rect>
+<rect x="135.96" y="82.60" width="1.21" height="4.20" fill="#2a78d6"><title>r0 copy.d2d 51 MB 11.42–11.60 ms</title></rect>
+<rect x="145.96" y="82.60" width="1.55" height="4.20" fill="#2a78d6"><title>r0 copy.d2d 51 MB 12.88–13.11 ms</title></rect>
+<rect x="172.04" y="82.60" width="1.18" height="4.20" fill="#2a78d6"><title>r0 copy.d2d 52 MB 16.70–16.88 ms</title></rect>
+<rect x="201.19" y="82.60" width="10.01" height="4.20" fill="#c9c8c0"><title>r0 barrier 20.98–22.44 ms</title></rect>
+<rect x="211.25" y="82.60" width="1.38" height="4.20" fill="#2f8f9d"><title>r0 misc 22.45–22.65 ms</title></rect>
+<rect x="212.78" y="82.60" width="3.78" height="4.20" fill="#2f8f9d"><title>r0 misc 22.67–23.23 ms</title></rect>
+<rect x="216.70" y="82.60" width="1.98" height="4.20" fill="#c9c8c0"><title>r0 barrier 23.25–23.54 ms</title></rect>
+<rect x="218.69" y="82.60" width="63.71" height="4.20" fill="#eda100"><title>r0 gemm.l1 23.54–32.87 ms</title></rect>
+<rect x="232.79" y="82.60" width="0.49" height="4.20" fill="#2a78d6"><title>r0 copy.d2d 25 MB 25.60–25.67 ms</title></rect>
+<rect x="247.90" y="82.60" width="0.41" height="4.20" fill="#2a78d6"><title>r0 copy.d2d 24 MB 27.82–27.88 ms</title></rect>
+<rect x="264.33" y="82.60" width="0.35" height="4.20" fill="#2a78d6"><title>r0 copy.d2d 26 MB 30.22–30.27 ms</title></rect>
+<rect x="282.48" y="82.60" width="0.42" height="4.20" fill="#2a78d6"><title>r0 copy.d2d 56 MB 32.88–32.94 ms</title></rect>
+<line x1="58.00" y1="89.70" x2="500.00" y2="89.70" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="91.20" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="218.91" y="87.60" width="63.55" height="4.20" fill="#c8553d"><title>r0 combine.pack 23.57–32.88 ms</title></rect>
+<rect x="218.98" y="87.60" width="65.04" height="4.20" fill="#c8553d"><title>r0 combine.prereduce 23.58–33.11 ms</title></rect>
+<rect x="290.04" y="87.60" width="0.94" height="4.20" fill="#c8553d"><title>r0 combine.reduce 33.99–34.13 ms</title></rect>
+<rect x="303.43" y="87.60" width="3.66" height="4.20" fill="#c8553d"><title>r0 combine.reduce 35.95–36.49 ms</title></rect>
+<rect x="334.02" y="87.60" width="20.64" height="4.20" fill="#c8553d"><title>r0 combine.reduce 40.43–43.46 ms</title></rect>
+<line x1="354.82" y1="72.20" x2="354.82" y2="92.20" stroke="#17191c" stroke-width="0.5"/>
+<text x="3.00" y="105.80" font-size="6.5" text-anchor="start" fill="#17191c" font-weight="bold">Efficient</text>
+<text x="3.00" y="112.80" font-size="5.2" text-anchor="start" fill="#5a5e66">sequential swap</text>
+<line x1="58.00" y1="100.90" x2="500.00" y2="100.90" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="102.40" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="107.56" y="98.80" width="22.06" height="4.20" fill="#2a78d6"><title>r13 nic.put 7.26–10.49 ms</title></rect>
+<rect x="129.65" y="98.80" width="22.35" height="4.20" fill="#2a78d6"><title>r13 nic.put 10.50–13.77 ms</title></rect>
+<rect x="152.03" y="98.80" width="19.62" height="4.20" fill="#2a78d6"><title>r13 nic.put 13.77–16.65 ms</title></rect>
+<rect x="253.61" y="98.80" width="66.63" height="4.20" fill="#2a78d6"><title>r13 nic.put 28.65–38.41 ms</title></rect>
+<rect x="269.65" y="98.80" width="50.59" height="4.20" fill="#2a78d6"><title>r13 nic.put 31.00–38.41 ms</title></rect>
+<rect x="282.28" y="98.80" width="37.96" height="4.20" fill="#2a78d6"><title>r13 nic.put 32.85–38.41 ms</title></rect>
+<line x1="58.00" y1="105.90" x2="500.00" y2="105.90" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="107.40" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="69.04" y="103.80" width="2.16" height="4.20" fill="#1baf7a"><title>r13 nvlink.swap [host gap] 29 MB 1.62–1.93 ms</title></rect>
+<rect x="72.39" y="103.80" width="2.14" height="4.20" fill="#1baf7a"><title>r13 nvlink.swap [host gap] 29 MB 2.11–2.42 ms</title></rect>
+<rect x="106.29" y="103.80" width="2.99" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 40 MB 7.07–7.51 ms</title></rect>
+<rect x="107.71" y="103.80" width="2.63" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 35 MB 7.28–7.67 ms</title></rect>
+<rect x="109.52" y="103.80" width="6.39" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 36 MB 7.55–8.48 ms</title></rect>
+<rect x="127.22" y="103.80" width="9.26" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 53 MB 10.14–11.50 ms</title></rect>
+<rect x="136.62" y="103.80" width="3.87" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 53 MB 11.52–12.08 ms</title></rect>
+<rect x="141.74" y="103.80" width="3.89" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 53 MB 12.27–12.83 ms</title></rect>
+<rect x="148.63" y="103.80" width="4.15" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 53 MB 13.28–13.88 ms</title></rect>
+<rect x="154.13" y="103.80" width="3.88" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 53 MB 14.08–14.65 ms</title></rect>
+<rect x="158.16" y="103.80" width="9.47" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 53 MB 14.67–16.06 ms</title></rect>
+<rect x="180.94" y="103.80" width="4.08" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 53 MB 18.01–18.61 ms</title></rect>
+<rect x="185.11" y="103.80" width="9.27" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 53 MB 18.62–19.98 ms</title></rect>
+<rect x="194.55" y="103.80" width="3.85" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 53 MB 20.00–20.57 ms</title></rect>
+<rect x="240.04" y="103.80" width="2.27" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 31 MB 26.66–27.00 ms</title></rect>
+<rect x="240.04" y="103.80" width="5.37" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 30 MB 26.67–27.45 ms</title></rect>
+<rect x="245.51" y="103.80" width="2.27" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 30 MB 27.47–27.80 ms</title></rect>
+<rect x="258.32" y="103.80" width="2.03" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 28 MB 29.34–29.64 ms</title></rect>
+<rect x="258.32" y="103.80" width="4.87" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 27 MB 29.34–30.06 ms</title></rect>
+<rect x="263.29" y="103.80" width="2.03" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 28 MB 30.07–30.37 ms</title></rect>
+<rect x="275.22" y="103.80" width="2.09" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 29 MB 31.82–32.12 ms</title></rect>
+<rect x="275.22" y="103.80" width="4.73" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 27 MB 31.82–32.51 ms</title></rect>
+<rect x="280.06" y="103.80" width="2.01" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 28 MB 32.53–32.82 ms</title></rect>
+<rect x="295.40" y="103.80" width="3.61" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 49 MB 34.77–35.30 ms</title></rect>
+<rect x="295.40" y="103.80" width="3.61" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 49 MB 34.77–35.30 ms</title></rect>
+<rect x="299.14" y="103.80" width="8.77" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 49 MB 35.32–36.61 ms</title></rect>
+<line x1="58.00" y1="110.90" x2="500.00" y2="110.90" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="112.40" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.97" y="108.80" width="0.51" height="4.20" fill="#2f8f9d"><title>r13 plan.comm 0.14–0.22 ms</title></rect>
+<rect x="76.26" y="108.80" width="0.74" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 2.68–2.78 ms</title></rect>
+<rect x="78.27" y="108.80" width="2.67" height="4.20" fill="#2f8f9d"><title>r13 plan.comm 2.97–3.36 ms</title></rect>
+<rect x="81.25" y="108.80" width="1.62" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 3.41–3.64 ms</title></rect>
+<rect x="82.91" y="108.80" width="0.62" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 3.65–3.74 ms</title></rect>
+<rect x="83.54" y="108.80" width="1.14" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 3.74–3.91 ms</title></rect>
+<rect x="87.52" y="108.80" width="2.70" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 4.32–4.72 ms</title></rect>
+<rect x="91.33" y="108.80" width="1.58" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 4.88–5.11 ms</title></rect>
+<rect x="92.92" y="108.80" width="1.48" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 5.12–5.33 ms</title></rect>
+<rect x="94.42" y="108.80" width="1.38" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 5.33–5.54 ms</title></rect>
+<rect x="95.82" y="108.80" width="1.45" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 5.54–5.75 ms</title></rect>
+<rect x="97.29" y="108.80" width="2.22" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 5.76–6.08 ms</title></rect>
+<rect x="99.62" y="108.80" width="2.39" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 6.10–6.45 ms</title></rect>
+<rect x="100.82" y="108.80" width="0.46" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 51 MB 6.27–6.34 ms</title></rect>
+<rect x="102.09" y="108.80" width="2.04" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 6.46–6.76 ms</title></rect>
+<rect x="105.79" y="108.80" width="101.94" height="4.20" fill="#eda100"><title>r13 gemm.l0 7.00–21.93 ms</title></rect>
+<rect x="106.24" y="108.80" width="1.27" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 51 MB 7.07–7.25 ms</title></rect>
+<rect x="140.58" y="108.80" width="1.08" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 53 MB 12.10–12.25 ms</title></rect>
+<rect x="152.92" y="108.80" width="1.11" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 53 MB 13.90–14.07 ms</title></rect>
+<rect x="179.44" y="108.80" width="1.39" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 53 MB 17.79–17.99 ms</title></rect>
+<rect x="208.47" y="108.80" width="4.86" height="4.20" fill="#c9c8c0"><title>r13 barrier 22.04–22.75 ms</title></rect>
+<rect x="213.38" y="108.80" width="1.42" height="4.20" fill="#2f8f9d"><title>r13 misc 22.76–22.97 ms</title></rect>
+<rect x="214.90" y="108.80" width="3.88" height="4.20" fill="#2f8f9d"><title>r13 misc 22.98–23.55 ms</title></rect>
+<rect x="218.90" y="108.80" width="2.51" height="4.20" fill="#c9c8c0"><title>r13 barrier 23.57–23.94 ms</title></rect>
+<rect x="221.43" y="108.80" width="73.31" height="4.20" fill="#eda100"><title>r13 gemm.l1 23.94–34.68 ms</title></rect>
+<rect x="239.42" y="108.80" width="0.53" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 30 MB 26.57–26.65 ms</title></rect>
+<rect x="257.69" y="108.80" width="0.52" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 27 MB 29.25–29.33 ms</title></rect>
+<rect x="294.86" y="108.80" width="0.45" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 49 MB 34.70–34.76 ms</title></rect>
+<rect x="351.49" y="108.80" width="5.85" height="4.20" fill="#c9c8c0"><title>r13 barrier 42.99–43.85 ms</title></rect>
+<line x1="58.00" y1="115.90" x2="500.00" y2="115.90" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="117.40" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="221.66" y="113.80" width="73.19" height="4.20" fill="#c8553d"><title>r13 combine.pack 23.97–34.69 ms</title></rect>
+<rect x="221.69" y="113.80" width="60.58" height="4.20" fill="#c8553d"><title>r13 combine.prereduce 23.98–32.85 ms</title></rect>
+<rect x="295.92" y="113.80" width="1.05" height="4.20" fill="#c8553d"><title>r13 combine.reduce 34.85–35.00 ms</title></rect>
+<rect x="310.45" y="113.80" width="8.14" height="4.20" fill="#c8553d"><title>r13 combine.reduce 36.98–38.17 ms</title></rect>
+<rect x="332.03" y="113.80" width="19.43" height="4.20" fill="#c8553d"><title>r13 combine.reduce 40.14–42.99 ms</title></rect>
+<line x1="357.36" y1="98.40" x2="357.36" y2="118.40" stroke="#17191c" stroke-width="0.5"/>
+<line x1="58.00" y1="122.60" x2="500.00" y2="122.60" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="124.10" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="107.91" y="120.50" width="19.95" height="4.20" fill="#2a78d6"><title>r1 nic.put 7.31–10.23 ms</title></rect>
+<rect x="127.90" y="120.50" width="20.94" height="4.20" fill="#2a78d6"><title>r1 nic.put 10.24–13.31 ms</title></rect>
+<rect x="148.89" y="120.50" width="23.35" height="4.20" fill="#2a78d6"><title>r1 nic.put 13.31–16.73 ms</title></rect>
+<rect x="255.20" y="120.50" width="77.67" height="4.20" fill="#2a78d6"><title>r1 nic.put 28.89–40.26 ms</title></rect>
+<rect x="269.82" y="120.50" width="63.05" height="4.20" fill="#2a78d6"><title>r1 nic.put 31.03–40.26 ms</title></rect>
+<rect x="285.50" y="120.50" width="47.38" height="4.20" fill="#2a78d6"><title>r1 nic.put 33.32–40.26 ms</title></rect>
+<line x1="58.00" y1="127.60" x2="500.00" y2="127.60" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="129.10" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="69.60" y="125.50" width="2.39" height="4.20" fill="#1baf7a"><title>r1 nvlink.swap [host gap] 29 MB 1.70–2.05 ms</title></rect>
+<rect x="72.40" y="125.50" width="2.14" height="4.20" fill="#1baf7a"><title>r1 nvlink.swap [host gap] 29 MB 2.11–2.42 ms</title></rect>
+<rect x="102.95" y="125.50" width="2.21" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 30 MB 6.58–6.91 ms</title></rect>
+<rect x="107.47" y="125.50" width="2.78" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 37 MB 7.25–7.65 ms</title></rect>
+<rect x="110.38" y="125.50" width="6.21" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 36 MB 7.67–8.58 ms</title></rect>
+<rect x="128.13" y="125.50" width="8.94" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 51 MB 10.27–11.58 ms</title></rect>
+<rect x="137.24" y="125.50" width="3.76" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 51 MB 11.61–12.16 ms</title></rect>
+<rect x="142.40" y="125.50" width="3.75" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 51 MB 12.36–12.91 ms</title></rect>
+<rect x="152.48" y="125.50" width="3.73" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 51 MB 13.84–14.39 ms</title></rect>
+<rect x="157.54" y="125.50" width="3.75" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 51 MB 14.58–15.13 ms</title></rect>
+<rect x="161.46" y="125.50" width="8.96" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 51 MB 15.15–16.47 ms</title></rect>
+<rect x="173.12" y="125.50" width="3.75" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 52 MB 16.86–17.41 ms</title></rect>
+<rect x="177.03" y="125.50" width="9.08" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 52 MB 17.44–18.77 ms</title></rect>
+<rect x="186.22" y="125.50" width="3.77" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 52 MB 18.78–19.33 ms</title></rect>
+<rect x="241.80" y="125.50" width="2.39" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 33 MB 26.92–27.27 ms</title></rect>
+<rect x="241.81" y="125.50" width="5.71" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 31 MB 26.92–27.76 ms</title></rect>
+<rect x="247.63" y="125.50" width="2.22" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 31 MB 27.78–28.10 ms</title></rect>
+<rect x="258.27" y="125.50" width="1.68" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 23 MB 29.34–29.58 ms</title></rect>
+<rect x="258.27" y="125.50" width="4.07" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 23 MB 29.34–29.93 ms</title></rect>
+<rect x="262.42" y="125.50" width="1.81" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 22 MB 29.94–30.21 ms</title></rect>
+<rect x="272.67" y="125.50" width="1.80" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 24 MB 31.45–31.71 ms</title></rect>
+<rect x="272.67" y="125.50" width="4.23" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 24 MB 31.45–32.07 ms</title></rect>
+<rect x="277.02" y="125.50" width="1.84" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 25 MB 32.08–32.35 ms</title></rect>
+<rect x="288.91" y="125.50" width="3.49" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 47 MB 33.82–34.33 ms</title></rect>
+<rect x="288.91" y="125.50" width="3.65" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 47 MB 33.82–34.36 ms</title></rect>
+<rect x="292.71" y="125.50" width="8.52" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 49 MB 34.38–35.63 ms</title></rect>
+<line x1="58.00" y1="132.60" x2="500.00" y2="132.60" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="134.10" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.91" y="130.50" width="1.13" height="4.20" fill="#2f8f9d"><title>r1 plan.comm 0.13–0.30 ms</title></rect>
+<rect x="75.71" y="130.50" width="0.75" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 2.59–2.70 ms</title></rect>
+<rect x="77.66" y="130.50" width="4.00" height="4.20" fill="#2f8f9d"><title>r1 plan.comm 2.88–3.47 ms</title></rect>
+<rect x="81.97" y="130.50" width="1.40" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 3.51–3.72 ms</title></rect>
+<rect x="83.41" y="130.50" width="0.60" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 3.72–3.81 ms</title></rect>
+<rect x="84.02" y="130.50" width="1.14" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 3.81–3.98 ms</title></rect>
+<rect x="88.56" y="130.50" width="2.72" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 4.48–4.87 ms</title></rect>
+<rect x="92.41" y="130.50" width="1.44" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 5.04–5.25 ms</title></rect>
+<rect x="93.87" y="130.50" width="1.39" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 5.25–5.46 ms</title></rect>
+<rect x="95.28" y="130.50" width="1.17" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 5.46–5.63 ms</title></rect>
+<rect x="96.46" y="130.50" width="1.40" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 5.63–5.84 ms</title></rect>
+<rect x="97.87" y="130.50" width="2.31" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 5.84–6.18 ms</title></rect>
+<rect x="97.88" y="130.50" width="0.36" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 35 MB 5.84–5.89 ms</title></rect>
+<rect x="100.28" y="130.50" width="2.08" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 6.19–6.50 ms</title></rect>
+<rect x="102.38" y="130.50" width="0.43" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 52 MB 6.50–6.56 ms</title></rect>
+<rect x="102.75" y="130.50" width="3.41" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 6.56–7.05 ms</title></rect>
+<rect x="107.38" y="130.50" width="0.50" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 55 MB 7.23–7.31 ms</title></rect>
+<rect x="108.17" y="130.50" width="87.60" height="4.20" fill="#eda100"><title>r1 gemm.l0 7.35–20.18 ms</title></rect>
+<rect x="141.12" y="130.50" width="1.20" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 51 MB 12.18–12.35 ms</title></rect>
+<rect x="156.33" y="130.50" width="1.11" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 51 MB 14.40–14.56 ms</title></rect>
+<rect x="171.85" y="130.50" width="1.17" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 52 MB 16.68–16.85 ms</title></rect>
+<rect x="196.51" y="130.50" width="17.85" height="4.20" fill="#c9c8c0"><title>r1 barrier 20.29–22.90 ms</title></rect>
+<rect x="214.40" y="130.50" width="1.34" height="4.20" fill="#2f8f9d"><title>r1 misc 22.91–23.10 ms</title></rect>
+<rect x="215.88" y="130.50" width="3.67" height="4.20" fill="#2f8f9d"><title>r1 misc 23.13–23.66 ms</title></rect>
+<rect x="219.67" y="130.50" width="2.31" height="4.20" fill="#c9c8c0"><title>r1 barrier 23.68–24.02 ms</title></rect>
+<rect x="222.00" y="130.50" width="66.17" height="4.20" fill="#eda100"><title>r1 gemm.l1 24.02–33.72 ms</title></rect>
+<rect x="241.17" y="130.50" width="0.54" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 32 MB 26.83–26.91 ms</title></rect>
+<rect x="257.73" y="130.50" width="0.45" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 23 MB 29.26–29.32 ms</title></rect>
+<rect x="272.23" y="130.50" width="0.36" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 24 MB 31.38–31.43 ms</title></rect>
+<rect x="288.28" y="130.50" width="0.52" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 47 MB 33.73–33.81 ms</title></rect>
+<line x1="58.00" y1="137.60" x2="500.00" y2="137.60" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="139.10" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="222.22" y="135.50" width="66.07" height="4.20" fill="#c8553d"><title>r1 combine.pack 24.05–33.73 ms</title></rect>
+<rect x="222.25" y="135.50" width="63.23" height="4.20" fill="#c8553d"><title>r1 combine.prereduce 24.06–33.32 ms</title></rect>
+<rect x="294.07" y="135.50" width="0.81" height="4.20" fill="#c8553d"><title>r1 combine.reduce 34.58–34.70 ms</title></rect>
+<rect x="309.38" y="135.50" width="6.21" height="4.20" fill="#c8553d"><title>r1 combine.reduce 36.82–37.73 ms</title></rect>
+<rect x="336.45" y="135.50" width="20.29" height="4.20" fill="#c8553d"><title>r1 combine.reduce 40.79–43.76 ms</title></rect>
+<line x1="356.89" y1="120.10" x2="356.89" y2="140.10" stroke="#17191c" stroke-width="0.5"/>
+<text x="3.00" y="153.70" font-size="6.5" text-anchor="start" fill="#17191c" font-weight="bold">Efficient</text>
+<text x="3.00" y="160.70" font-size="5.2" text-anchor="start" fill="#5a5e66">3D-scheduled swap</text>
+<line x1="58.00" y1="148.80" x2="500.00" y2="148.80" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="150.30" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="100.18" y="146.70" width="18.57" height="4.20" fill="#2a78d6"><title>r9 nic.put 6.18–8.90 ms</title></rect>
+<rect x="118.78" y="146.70" width="21.93" height="4.20" fill="#2a78d6"><title>r9 nic.put 8.90–12.11 ms</title></rect>
+<rect x="140.76" y="146.70" width="26.69" height="4.20" fill="#2a78d6"><title>r9 nic.put 12.12–16.03 ms</title></rect>
+<rect x="239.26" y="146.70" width="74.35" height="4.20" fill="#2a78d6"><title>r9 nic.put 26.55–37.44 ms</title></rect>
+<rect x="256.76" y="146.70" width="56.87" height="4.20" fill="#2a78d6"><title>r9 nic.put 29.11–37.44 ms</title></rect>
+<rect x="276.13" y="146.70" width="37.49" height="4.20" fill="#2a78d6"><title>r9 nic.put 31.95–37.44 ms</title></rect>
+<line x1="58.00" y1="153.80" x2="500.00" y2="153.80" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="155.30" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="90.55" y="151.70" width="6.80" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 38 MB 4.77–5.76 ms</title></rect>
+<rect x="99.68" y="151.70" width="3.29" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 44 MB 6.10–6.59 ms</title></rect>
+<rect x="100.31" y="151.70" width="5.14" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 6.20–6.95 ms</title></rect>
+<rect x="105.53" y="151.70" width="4.99" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 28 MB 6.96–7.69 ms</title></rect>
+<rect x="121.55" y="151.70" width="3.77" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 9.31–9.86 ms</title></rect>
+<rect x="125.49" y="151.70" width="3.78" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 9.89–10.44 ms</title></rect>
+<rect x="130.72" y="151.70" width="9.08" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 10.65–11.98 ms</title></rect>
+<rect x="141.17" y="151.70" width="3.81" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 12.18–12.74 ms</title></rect>
+<rect x="146.58" y="151.70" width="9.28" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 12.98–14.34 ms</title></rect>
+<rect x="156.03" y="151.70" width="9.30" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 14.36–15.72 ms</title></rect>
+<rect x="166.74" y="151.70" width="9.18" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 15.93–17.27 ms</title></rect>
+<rect x="176.08" y="151.70" width="9.08" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 17.30–18.63 ms</title></rect>
+<rect x="185.32" y="151.70" width="3.78" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 52 MB 18.65–19.20 ms</title></rect>
+<rect x="211.41" y="151.70" width="5.14" height="4.20" fill="#0d6e4c"><title>r9 nvlink.swap [w2, combine side] 29 MB 22.47–23.22 ms</title></rect>
+<rect x="227.52" y="151.70" width="5.15" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 29 MB 24.83–25.59 ms</title></rect>
+<rect x="232.69" y="151.70" width="5.23" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 30 MB 25.59–26.35 ms</title></rect>
+<rect x="238.01" y="151.70" width="2.21" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 30 MB 26.37–26.69 ms</title></rect>
+<rect x="246.89" y="151.70" width="5.46" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 31 MB 27.67–28.47 ms</title></rect>
+<rect x="252.39" y="151.70" width="5.94" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 34 MB 28.47–29.34 ms</title></rect>
+<rect x="252.50" y="151.70" width="2.56" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 31 MB 28.49–28.86 ms</title></rect>
+<rect x="267.28" y="151.70" width="5.79" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 33 MB 30.66–31.50 ms</title></rect>
+<rect x="273.12" y="151.70" width="5.63" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 32 MB 31.51–32.34 ms</title></rect>
+<rect x="273.19" y="151.70" width="2.48" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 32 MB 31.52–31.88 ms</title></rect>
+<rect x="281.51" y="151.70" width="3.19" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 43 MB 32.74–33.21 ms</title></rect>
+<rect x="281.53" y="151.70" width="7.58" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 43 MB 32.74–33.85 ms</title></rect>
+<rect x="289.13" y="151.70" width="7.43" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 43 MB 33.86–34.95 ms</title></rect>
+<line x1="58.00" y1="158.80" x2="500.00" y2="158.80" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="160.30" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.98" y="156.70" width="0.89" height="4.20" fill="#2f8f9d"><title>r9 plan.comm 0.14–0.27 ms</title></rect>
+<rect x="69.70" y="156.70" width="0.73" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 1.71–1.82 ms</title></rect>
+<rect x="71.68" y="156.70" width="2.63" height="4.20" fill="#2f8f9d"><title>r9 plan.comm 2.00–2.39 ms</title></rect>
+<rect x="74.62" y="156.70" width="1.42" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 2.43–2.64 ms</title></rect>
+<rect x="76.08" y="156.70" width="0.62" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 2.65–2.74 ms</title></rect>
+<rect x="76.71" y="156.70" width="1.14" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 2.74–2.91 ms</title></rect>
+<rect x="80.72" y="156.70" width="2.72" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 3.33–3.73 ms</title></rect>
+<rect x="84.57" y="156.70" width="1.74" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 3.89–4.15 ms</title></rect>
+<rect x="86.32" y="156.70" width="1.22" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 4.15–4.33 ms</title></rect>
+<rect x="87.55" y="156.70" width="1.50" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 4.33–4.55 ms</title></rect>
+<rect x="89.06" y="156.70" width="1.11" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 4.55–4.71 ms</title></rect>
+<rect x="90.41" y="156.70" width="3.49" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 4.75–5.26 ms</title></rect>
+<rect x="94.01" y="156.70" width="2.31" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 5.27–5.61 ms</title></rect>
+<rect x="94.01" y="156.70" width="0.59" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 55 MB 5.28–5.36 ms</title></rect>
+<rect x="96.42" y="156.70" width="2.31" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 5.63–5.97 ms</title></rect>
+<rect x="96.43" y="156.70" width="0.45" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 51 MB 5.63–5.70 ms</title></rect>
+<rect x="99.62" y="156.70" width="0.52" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 53 MB 6.10–6.17 ms</title></rect>
+<rect x="100.57" y="156.70" width="99.86" height="4.20" fill="#eda100"><title>r9 gemm.l0 6.24–20.86 ms</title></rect>
+<rect x="110.65" y="156.70" width="0.72" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 7.71–7.82 ms</title></rect>
+<rect x="129.34" y="156.70" width="1.27" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 52 MB 10.45–10.64 ms</title></rect>
+<rect x="145.11" y="156.70" width="1.31" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 52 MB 12.76–12.95 ms</title></rect>
+<rect x="165.44" y="156.70" width="1.19" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 52 MB 15.74–15.91 ms</title></rect>
+<rect x="201.13" y="156.70" width="2.22" height="4.20" fill="#c9c8c0"><title>r9 barrier 20.97–21.29 ms</title></rect>
+<rect x="203.41" y="156.70" width="1.46" height="4.20" fill="#2f8f9d"><title>r9 misc 21.30–21.51 ms</title></rect>
+<rect x="205.00" y="156.70" width="4.01" height="4.20" fill="#2f8f9d"><title>r9 misc 21.53–22.12 ms</title></rect>
+<rect x="209.21" y="156.70" width="1.94" height="4.20" fill="#c9c8c0"><title>r9 barrier 22.15–22.43 ms</title></rect>
+<rect x="211.42" y="156.70" width="69.52" height="4.20" fill="#eda100"><title>r9 gemm.l1 22.47–32.66 ms</title></rect>
+<rect x="216.64" y="156.70" width="0.49" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 23.24–23.31 ms</title></rect>
+<rect x="226.88" y="156.70" width="0.57" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 31 MB 24.74–24.82 ms</title></rect>
+<rect x="246.26" y="156.70" width="0.57" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 32 MB 27.58–27.66 ms</title></rect>
+<rect x="266.59" y="156.70" width="0.61" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 33 MB 30.55–30.64 ms</title></rect>
+<rect x="281.02" y="156.70" width="0.43" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 45 MB 32.67–32.73 ms</title></rect>
+<rect x="329.16" y="156.70" width="19.82" height="4.20" fill="#c9c8c0"><title>r9 barrier 39.72–42.62 ms</title></rect>
+<line x1="58.00" y1="163.80" x2="500.00" y2="163.80" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="165.30" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="211.38" y="161.70" width="69.63" height="4.20" fill="#c8553d"><title>r9 combine.pack 22.47–32.67 ms</title></rect>
+<rect x="211.42" y="161.70" width="64.70" height="4.20" fill="#c8553d"><title>r9 combine.prereduce 22.47–31.95 ms</title></rect>
+<rect x="284.03" y="161.70" width="0.77" height="4.20" fill="#c8553d"><title>r9 combine.reduce 33.11–33.22 ms</title></rect>
+<rect x="287.29" y="161.70" width="5.11" height="4.20" fill="#c8553d"><title>r9 combine.reduce 33.59–34.33 ms</title></rect>
+<rect x="309.22" y="161.70" width="19.92" height="4.20" fill="#c8553d"><title>r9 combine.reduce 36.80–39.72 ms</title></rect>
+<line x1="349.00" y1="146.30" x2="349.00" y2="166.30" stroke="#17191c" stroke-width="0.5"/>
+<line x1="58.00" y1="170.50" x2="500.00" y2="170.50" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="172.00" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="100.44" y="168.40" width="20.39" height="4.20" fill="#2a78d6"><title>r3 nic.put 6.22–9.20 ms</title></rect>
+<rect x="120.85" y="168.40" width="24.29" height="4.20" fill="#2a78d6"><title>r3 nic.put 9.21–12.77 ms</title></rect>
+<rect x="145.22" y="168.40" width="22.30" height="4.20" fill="#2a78d6"><title>r3 nic.put 12.78–16.04 ms</title></rect>
+<rect x="242.82" y="168.40" width="65.41" height="4.20" fill="#2a78d6"><title>r3 nic.put 27.07–36.65 ms</title></rect>
+<rect x="256.86" y="168.40" width="51.37" height="4.20" fill="#2a78d6"><title>r3 nic.put 29.13–36.65 ms</title></rect>
+<rect x="274.66" y="168.40" width="33.57" height="4.20" fill="#2a78d6"><title>r3 nic.put 31.74–36.65 ms</title></rect>
+<line x1="58.00" y1="175.50" x2="500.00" y2="175.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="177.00" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="90.91" y="173.40" width="2.63" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 36 MB 4.82–5.21 ms</title></rect>
+<rect x="90.91" y="173.40" width="2.83" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 38 MB 4.82–5.23 ms</title></rect>
+<rect x="99.74" y="173.40" width="2.29" height="4.20" fill="#1baf7a"><title>r3 nvlink.swap [w1, dispatch side] 29 MB 6.11–6.45 ms</title></rect>
+<rect x="99.96" y="173.40" width="2.39" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 30 MB 6.15–6.50 ms</title></rect>
+<rect x="128.41" y="173.40" width="3.76" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 51 MB 10.31–10.86 ms</title></rect>
+<rect x="132.33" y="173.40" width="3.74" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 51 MB 10.89–11.44 ms</title></rect>
+<rect x="138.43" y="173.40" width="3.77" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 51 MB 11.78–12.33 ms</title></rect>
+<rect x="147.10" y="173.40" width="4.11" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 51 MB 13.05–13.65 ms</title></rect>
+<rect x="153.49" y="173.40" width="3.82" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 51 MB 13.99–14.55 ms</title></rect>
+<rect x="157.50" y="173.40" width="3.76" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 51 MB 14.57–15.13 ms</title></rect>
+<rect x="167.43" y="173.40" width="3.96" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 52 MB 16.03–16.61 ms</title></rect>
+<rect x="171.56" y="173.40" width="3.78" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 52 MB 16.63–17.19 ms</title></rect>
+<rect x="175.46" y="173.40" width="3.76" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 52 MB 17.21–17.76 ms</title></rect>
+<rect x="212.10" y="173.40" width="2.34" height="4.20" fill="#0d6e4c"><title>r3 nvlink.swap [w2, combine side] 29 MB 22.57–22.92 ms</title></rect>
+<rect x="225.42" y="173.40" width="1.94" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 26 MB 24.52–24.81 ms</title></rect>
+<rect x="225.43" y="173.40" width="1.88" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 25 MB 24.52–24.80 ms</title></rect>
+<rect x="225.43" y="173.40" width="1.86" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 25 MB 24.53–24.80 ms</title></rect>
+<rect x="240.09" y="173.40" width="1.97" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 27 MB 26.67–26.96 ms</title></rect>
+<rect x="240.09" y="173.40" width="2.14" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 26 MB 26.67–26.98 ms</title></rect>
+<rect x="240.09" y="173.40" width="1.95" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 26 MB 26.67–26.96 ms</title></rect>
+<rect x="257.97" y="173.40" width="2.23" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 30 MB 29.29–29.62 ms</title></rect>
+<rect x="257.97" y="173.40" width="2.40" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 32 MB 29.29–29.64 ms</title></rect>
+<rect x="257.97" y="173.40" width="2.52" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 31 MB 29.29–29.66 ms</title></rect>
+<rect x="273.86" y="173.40" width="3.57" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 46 MB 31.62–32.14 ms</title></rect>
+<rect x="273.87" y="173.40" width="3.38" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 44 MB 31.62–32.12 ms</title></rect>
+<rect x="273.87" y="173.40" width="3.53" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 46 MB 31.62–32.14 ms</title></rect>
+<line x1="58.00" y1="180.50" x2="500.00" y2="180.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="182.00" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.93" y="178.40" width="1.13" height="4.20" fill="#2f8f9d"><title>r3 plan.comm 0.14–0.30 ms</title></rect>
+<rect x="70.03" y="178.40" width="0.74" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 1.76–1.87 ms</title></rect>
+<rect x="72.00" y="178.40" width="2.55" height="4.20" fill="#2f8f9d"><title>r3 plan.comm 2.05–2.42 ms</title></rect>
+<rect x="74.85" y="178.40" width="1.47" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 2.47–2.68 ms</title></rect>
+<rect x="76.37" y="178.40" width="0.62" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 2.69–2.78 ms</title></rect>
+<rect x="77.00" y="178.40" width="1.14" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 2.78–2.95 ms</title></rect>
+<rect x="81.00" y="178.40" width="2.72" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 3.37–3.77 ms</title></rect>
+<rect x="84.88" y="178.40" width="1.50" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 3.94–4.16 ms</title></rect>
+<rect x="86.39" y="178.40" width="1.41" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 4.16–4.36 ms</title></rect>
+<rect x="87.85" y="178.40" width="1.17" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 4.37–4.54 ms</title></rect>
+<rect x="89.06" y="178.40" width="1.39" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 4.55–4.75 ms</title></rect>
+<rect x="90.46" y="178.40" width="2.27" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 4.75–5.09 ms</title></rect>
+<rect x="90.47" y="178.40" width="0.36" height="4.20" fill="#2a78d6"><title>r3 copy.d2d 35 MB 4.76–4.81 ms</title></rect>
+<rect x="92.89" y="178.40" width="2.31" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 5.11–5.45 ms</title></rect>
+<rect x="93.96" y="178.40" width="0.48" height="4.20" fill="#2a78d6"><title>r3 copy.d2d 52 MB 5.27–5.34 ms</title></rect>
+<rect x="95.34" y="178.40" width="2.20" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 5.47–5.79 ms</title></rect>
+<rect x="97.78" y="178.40" width="0.48" height="4.20" fill="#2a78d6"><title>r3 copy.d2d 52 MB 5.83–5.90 ms</title></rect>
+<rect x="99.91" y="178.40" width="0.48" height="4.20" fill="#2a78d6"><title>r3 copy.d2d 55 MB 6.14–6.21 ms</title></rect>
+<rect x="100.33" y="178.40" width="91.44" height="4.20" fill="#eda100"><title>r3 gemm.l0 6.20–19.59 ms</title></rect>
+<rect x="112.03" y="178.40" width="1.36" height="4.20" fill="#2a78d6"><title>r3 copy.d2d 29 MB 7.91–8.11 ms</title></rect>
+<rect x="136.24" y="178.40" width="2.05" height="4.20" fill="#2a78d6"><title>r3 copy.d2d 51 MB 11.46–11.76 ms</title></rect>
+<rect x="151.33" y="178.40" width="1.99" height="4.20" fill="#2a78d6"><title>r3 copy.d2d 51 MB 13.67–13.96 ms</title></rect>
+<rect x="165.35" y="178.40" width="2.01" height="4.20" fill="#2a78d6"><title>r3 copy.d2d 52 MB 15.72–16.02 ms</title></rect>
+<rect x="192.55" y="178.40" width="11.87" height="4.20" fill="#c9c8c0"><title>r3 barrier 19.71–21.45 ms</title></rect>
+<rect x="204.48" y="178.40" width="1.35" height="4.20" fill="#2f8f9d"><title>r3 misc 21.46–21.65 ms</title></rect>
+<rect x="205.98" y="178.40" width="3.67" height="4.20" fill="#2f8f9d"><title>r3 misc 21.68–22.21 ms</title></rect>
+<rect x="209.86" y="178.40" width="1.96" height="4.20" fill="#c9c8c0"><title>r3 barrier 22.24–22.53 ms</title></rect>
+<rect x="212.09" y="178.40" width="61.26" height="4.20" fill="#eda100"><title>r3 gemm.l1 22.57–31.54 ms</title></rect>
+<rect x="217.43" y="178.40" width="0.46" height="4.20" fill="#2a78d6"><title>r3 copy.d2d 29 MB 23.35–23.42 ms</title></rect>
+<rect x="224.96" y="178.40" width="0.40" height="4.20" fill="#2a78d6"><title>r3 copy.d2d 26 MB 24.46–24.51 ms</title></rect>
+<rect x="239.53" y="178.40" width="0.46" height="4.20" fill="#2a78d6"><title>r3 copy.d2d 27 MB 26.59–26.66 ms</title></rect>
+<rect x="257.32" y="178.40" width="0.54" height="4.20" fill="#2a78d6"><title>r3 copy.d2d 31 MB 29.20–29.27 ms</title></rect>
+<rect x="273.45" y="178.40" width="0.35" height="4.20" fill="#2a78d6"><title>r3 copy.d2d 46 MB 31.56–31.61 ms</title></rect>
+<rect x="338.87" y="178.40" width="9.86" height="4.20" fill="#c9c8c0"><title>r3 barrier 41.14–42.59 ms</title></rect>
+<line x1="58.00" y1="185.50" x2="500.00" y2="185.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="187.00" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="212.05" y="183.40" width="61.37" height="4.20" fill="#c8553d"><title>r3 combine.pack 22.57–31.55 ms</title></rect>
+<rect x="212.09" y="183.40" width="62.56" height="4.20" fill="#c8553d"><title>r3 combine.prereduce 22.57–31.73 ms</title></rect>
+<rect x="287.39" y="183.40" width="0.36" height="4.20" fill="#c8553d"><title>r3 combine.reduce 33.60–33.65 ms</title></rect>
+<rect x="287.78" y="183.40" width="1.19" height="4.20" fill="#c8553d"><title>r3 combine.reduce 33.66–33.83 ms</title></rect>
+<rect x="295.46" y="183.40" width="5.52" height="4.20" fill="#c8553d"><title>r3 combine.reduce 34.78–35.59 ms</title></rect>
+<rect x="318.58" y="183.40" width="20.27" height="4.20" fill="#c8553d"><title>r3 combine.reduce 38.17–41.14 ms</title></rect>
+<line x1="348.76" y1="168.00" x2="348.76" y2="188.00" stroke="#17191c" stroke-width="0.5"/>
+<text x="3.00" y="201.60" font-size="6.5" text-anchor="start" fill="#17191c" font-weight="bold">Efficient</text>
+<text x="3.00" y="208.60" font-size="5.2" text-anchor="start" fill="#5a5e66">swap under l0 GEMM</text>
+<line x1="58.00" y1="196.70" x2="500.00" y2="196.70" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="198.20" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="93.45" y="194.60" width="19.04" height="4.20" fill="#2a78d6"><title>r8 nic.put 5.19–7.98 ms</title></rect>
+<rect x="112.54" y="194.60" width="22.89" height="4.20" fill="#2a78d6"><title>r8 nic.put 7.99–11.34 ms</title></rect>
+<rect x="135.48" y="194.60" width="26.97" height="4.20" fill="#2a78d6"><title>r8 nic.put 11.35–15.30 ms</title></rect>
+<rect x="256.32" y="194.60" width="64.34" height="4.20" fill="#2a78d6"><title>r8 nic.put 29.05–38.47 ms</title></rect>
+<rect x="276.05" y="194.60" width="44.60" height="4.20" fill="#2a78d6"><title>r8 nic.put 31.94–38.47 ms</title></rect>
+<rect x="294.71" y="194.60" width="25.95" height="4.20" fill="#2a78d6"><title>r8 nic.put 34.67–38.47 ms</title></rect>
+<line x1="58.00" y1="201.70" x2="500.00" y2="201.70" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="203.20" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="91.44" y="199.60" width="2.24" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 30 MB 4.90–5.23 ms</title></rect>
+<rect x="91.45" y="199.60" width="2.07" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 28 MB 4.90–5.20 ms</title></rect>
+<rect x="91.47" y="199.60" width="2.80" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 38 MB 4.90–5.31 ms</title></rect>
+<rect x="117.46" y="199.60" width="3.77" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 52 MB 8.71–9.26 ms</title></rect>
+<rect x="121.46" y="199.60" width="3.75" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 52 MB 9.30–9.84 ms</title></rect>
+<rect x="126.61" y="199.60" width="3.80" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 52 MB 10.05–10.61 ms</title></rect>
+<rect x="146.71" y="199.60" width="3.80" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 52 MB 12.99–13.55 ms</title></rect>
+<rect x="152.00" y="199.60" width="3.85" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 52 MB 13.77–14.33 ms</title></rect>
+<rect x="156.03" y="199.60" width="3.82" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 52 MB 14.36–14.92 ms</title></rect>
+<rect x="174.61" y="199.60" width="3.81" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 52 MB 17.08–17.64 ms</title></rect>
+<rect x="178.59" y="199.60" width="3.79" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 52 MB 17.66–18.22 ms</title></rect>
+<rect x="182.49" y="199.60" width="4.00" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 52 MB 18.24–18.82 ms</title></rect>
+<rect x="231.23" y="199.60" width="1.82" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 22 MB 25.37–25.64 ms</title></rect>
+<rect x="231.23" y="199.60" width="1.64" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 22 MB 25.37–25.62 ms</title></rect>
+<rect x="231.23" y="199.60" width="1.64" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 21 MB 25.38–25.62 ms</title></rect>
+<rect x="246.96" y="199.60" width="1.87" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 25 MB 27.68–27.95 ms</title></rect>
+<rect x="246.96" y="199.60" width="2.05" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 24 MB 27.68–27.98 ms</title></rect>
+<rect x="246.96" y="199.60" width="1.88" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 24 MB 27.68–27.95 ms</title></rect>
+<rect x="263.56" y="199.60" width="1.94" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 25 MB 30.11–30.39 ms</title></rect>
+<rect x="263.56" y="199.60" width="1.98" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 27 MB 30.11–30.40 ms</title></rect>
+<rect x="263.56" y="199.60" width="2.01" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 27 MB 30.11–30.40 ms</title></rect>
+<rect x="283.14" y="199.60" width="4.40" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 60 MB 32.98–33.62 ms</title></rect>
+<rect x="283.14" y="199.60" width="4.51" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 62 MB 32.98–33.64 ms</title></rect>
+<rect x="283.14" y="199.60" width="4.37" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 60 MB 32.98–33.62 ms</title></rect>
+<line x1="58.00" y1="206.70" x2="500.00" y2="206.70" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="208.20" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.86" y="204.60" width="1.17" height="4.20" fill="#2f8f9d"><title>r8 plan.comm 0.13–0.30 ms</title></rect>
+<rect x="69.42" y="204.60" width="0.72" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 1.67–1.78 ms</title></rect>
+<rect x="71.39" y="204.60" width="3.39" height="4.20" fill="#2f8f9d"><title>r8 plan.comm 1.96–2.46 ms</title></rect>
+<rect x="75.07" y="204.60" width="1.59" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 2.50–2.73 ms</title></rect>
+<rect x="76.71" y="204.60" width="0.64" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 2.74–2.83 ms</title></rect>
+<rect x="77.35" y="204.60" width="1.14" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 2.83–3.00 ms</title></rect>
+<rect x="81.33" y="204.60" width="2.72" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 3.42–3.82 ms</title></rect>
+<rect x="85.23" y="204.60" width="1.74" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 3.99–4.24 ms</title></rect>
+<rect x="86.97" y="204.60" width="1.19" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 4.24–4.42 ms</title></rect>
+<rect x="88.19" y="204.60" width="1.50" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 4.42–4.64 ms</title></rect>
+<rect x="89.72" y="204.60" width="1.11" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 4.65–4.81 ms</title></rect>
+<rect x="90.85" y="204.60" width="2.45" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 4.81–5.17 ms</title></rect>
+<rect x="90.88" y="204.60" width="0.47" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 45 MB 4.82–4.89 ms</title></rect>
+<rect x="93.44" y="204.60" width="2.44" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 5.19–5.55 ms</title></rect>
+<rect x="95.99" y="204.60" width="2.89" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 5.57–5.99 ms</title></rect>
+<rect x="101.05" y="204.60" width="107.40" height="4.20" fill="#eda100"><title>r8 gemm.l0 6.31–22.04 ms</title></rect>
+<rect x="125.32" y="204.60" width="1.20" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 52 MB 9.86–10.04 ms</title></rect>
+<rect x="150.64" y="204.60" width="1.25" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 52 MB 13.57–13.75 ms</title></rect>
+<rect x="173.29" y="204.60" width="1.23" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 52 MB 16.89–17.07 ms</title></rect>
+<rect x="209.39" y="204.60" width="1.41" height="4.20" fill="#2f8f9d"><title>r8 misc 22.18–22.38 ms</title></rect>
+<rect x="210.89" y="204.60" width="3.83" height="4.20" fill="#2f8f9d"><title>r8 misc 22.40–22.96 ms</title></rect>
+<rect x="214.84" y="204.60" width="2.48" height="4.20" fill="#c9c8c0"><title>r8 barrier 22.97–23.34 ms</title></rect>
+<rect x="217.33" y="204.60" width="65.03" height="4.20" fill="#eda100"><title>r8 gemm.l1 23.34–32.86 ms</title></rect>
+<rect x="230.73" y="204.60" width="0.39" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 21 MB 25.30–25.36 ms</title></rect>
+<rect x="246.39" y="204.60" width="0.50" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 24 MB 27.60–27.67 ms</title></rect>
+<rect x="282.44" y="204.60" width="0.61" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 60 MB 32.88–32.97 ms</title></rect>
+<rect x="342.25" y="204.60" width="7.95" height="4.20" fill="#c9c8c0"><title>r8 barrier 41.64–42.80 ms</title></rect>
+<line x1="58.00" y1="211.70" x2="500.00" y2="211.70" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="213.20" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="217.56" y="209.60" width="64.88" height="4.20" fill="#c8553d"><title>r8 combine.pack 23.37–32.88 ms</title></rect>
+<rect x="217.59" y="209.60" width="77.11" height="4.20" fill="#c8553d"><title>r8 combine.prereduce 23.38–34.67 ms</title></rect>
+<rect x="291.30" y="209.60" width="0.82" height="4.20" fill="#c8553d"><title>r8 combine.reduce 34.17–34.29 ms</title></rect>
+<rect x="298.24" y="209.60" width="6.46" height="4.20" fill="#c8553d"><title>r8 combine.reduce 35.19–36.14 ms</title></rect>
+<rect x="322.26" y="209.60" width="19.97" height="4.20" fill="#c8553d"><title>r8 combine.reduce 38.71–41.63 ms</title></rect>
+<line x1="350.22" y1="194.20" x2="350.22" y2="214.20" stroke="#17191c" stroke-width="0.5"/>
+<line x1="58.00" y1="218.40" x2="500.00" y2="218.40" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="219.90" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="103.26" y="216.30" width="22.98" height="4.20" fill="#2a78d6"><title>r1 nic.put 6.63–10.00 ms</title></rect>
+<rect x="126.26" y="216.30" width="21.78" height="4.20" fill="#2a78d6"><title>r1 nic.put 10.00–13.19 ms</title></rect>
+<rect x="148.05" y="216.30" width="21.89" height="4.20" fill="#2a78d6"><title>r1 nic.put 13.19–16.40 ms</title></rect>
+<rect x="250.45" y="216.30" width="68.03" height="4.20" fill="#2a78d6"><title>r1 nic.put 28.19–38.15 ms</title></rect>
+<rect x="265.22" y="216.30" width="53.25" height="4.20" fill="#2a78d6"><title>r1 nic.put 30.35–38.15 ms</title></rect>
+<rect x="281.23" y="216.30" width="37.24" height="4.20" fill="#2a78d6"><title>r1 nic.put 32.70–38.15 ms</title></rect>
+<line x1="58.00" y1="223.40" x2="500.00" y2="223.40" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="224.90" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="97.01" y="221.30" width="2.21" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 30 MB 5.71–6.04 ms</title></rect>
+<rect x="100.82" y="221.30" width="5.14" height="4.20" fill="#1baf7a"><title>r1 nvlink.swap [w1, dispatch side] 29 MB 6.27–7.03 ms</title></rect>
+<rect x="102.00" y="221.30" width="2.72" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 37 MB 6.45–6.84 ms</title></rect>
+<rect x="106.04" y="221.30" width="6.21" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 36 MB 7.04–7.95 ms</title></rect>
+<rect x="113.26" y="221.30" width="5.14" height="4.20" fill="#1baf7a"><title>r1 nvlink.swap [w1, dispatch side] 29 MB 8.09–8.85 ms</title></rect>
+<rect x="123.25" y="221.30" width="8.94" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 51 MB 9.56–10.87 ms</title></rect>
+<rect x="132.37" y="221.30" width="3.77" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 51 MB 10.89–11.45 ms</title></rect>
+<rect x="137.40" y="221.30" width="3.72" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 51 MB 11.63–12.18 ms</title></rect>
+<rect x="141.30" y="221.30" width="3.78" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 51 MB 12.20–12.76 ms</title></rect>
+<rect x="146.82" y="221.30" width="3.74" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 51 MB 13.01–13.56 ms</title></rect>
+<rect x="150.67" y="221.30" width="8.95" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 51 MB 13.57–14.88 ms</title></rect>
+<rect x="172.28" y="221.30" width="3.99" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 52 MB 16.74–17.32 ms</title></rect>
+<rect x="176.44" y="221.30" width="9.02" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 52 MB 17.35–18.67 ms</title></rect>
+<rect x="185.59" y="221.30" width="3.76" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 52 MB 18.69–19.24 ms</title></rect>
+<rect x="236.07" y="221.30" width="2.40" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 33 MB 26.08–26.44 ms</title></rect>
+<rect x="236.07" y="221.30" width="5.47" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 31 MB 26.08–26.88 ms</title></rect>
+<rect x="241.65" y="221.30" width="2.24" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 31 MB 26.90–27.23 ms</title></rect>
+<rect x="251.41" y="221.30" width="1.73" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 23 MB 28.33–28.58 ms</title></rect>
+<rect x="251.41" y="221.30" width="4.04" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 23 MB 28.33–28.92 ms</title></rect>
+<rect x="255.57" y="221.30" width="1.77" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 22 MB 28.94–29.20 ms</title></rect>
+<rect x="267.03" y="221.30" width="2.04" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 24 MB 30.62–30.92 ms</title></rect>
+<rect x="267.03" y="221.30" width="4.33" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 24 MB 30.62–31.25 ms</title></rect>
+<rect x="271.50" y="221.30" width="1.86" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 25 MB 31.27–31.55 ms</title></rect>
+<rect x="283.53" y="221.30" width="3.78" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 47 MB 33.04–33.59 ms</title></rect>
+<rect x="283.53" y="221.30" width="3.94" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 47 MB 33.04–33.61 ms</title></rect>
+<rect x="287.57" y="221.30" width="9.34" height="4.20" fill="#2a78d6"><title>r1 nvlink.token 49 MB 33.63–35.00 ms</title></rect>
+<line x1="58.00" y1="228.40" x2="500.00" y2="228.40" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="229.90" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.97" y="226.30" width="1.37" height="4.20" fill="#2f8f9d"><title>r1 plan.comm 0.14–0.34 ms</title></rect>
+<rect x="70.19" y="226.30" width="0.75" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 1.79–1.89 ms</title></rect>
+<rect x="72.28" y="226.30" width="2.91" height="4.20" fill="#2f8f9d"><title>r1 plan.comm 2.09–2.52 ms</title></rect>
+<rect x="75.49" y="226.30" width="1.40" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 2.56–2.77 ms</title></rect>
+<rect x="76.93" y="226.30" width="0.62" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 2.77–2.86 ms</title></rect>
+<rect x="77.55" y="226.30" width="1.14" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 2.86–3.03 ms</title></rect>
+<rect x="81.49" y="226.30" width="2.72" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 3.44–3.84 ms</title></rect>
+<rect x="85.37" y="226.30" width="1.44" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 4.01–4.22 ms</title></rect>
+<rect x="86.81" y="226.30" width="1.39" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 4.22–4.42 ms</title></rect>
+<rect x="88.21" y="226.30" width="1.18" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 4.43–4.60 ms</title></rect>
+<rect x="89.41" y="226.30" width="1.40" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 4.60–4.81 ms</title></rect>
+<rect x="90.84" y="226.30" width="2.29" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 4.81–5.14 ms</title></rect>
+<rect x="90.85" y="226.30" width="0.37" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 35 MB 4.81–4.87 ms</title></rect>
+<rect x="93.22" y="226.30" width="2.10" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 5.16–5.47 ms</title></rect>
+<rect x="95.34" y="226.30" width="0.45" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 52 MB 5.47–5.54 ms</title></rect>
+<rect x="95.72" y="226.30" width="3.32" height="4.20" fill="#2f8f9d"><title>r1 plan.compute 5.52–6.01 ms</title></rect>
+<rect x="101.02" y="226.30" width="92.34" height="4.20" fill="#eda100"><title>r1 gemm.l0 6.30–19.83 ms</title></rect>
+<rect x="101.92" y="226.30" width="1.29" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 55 MB 6.43–6.62 ms</title></rect>
+<rect x="112.38" y="226.30" width="0.71" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 29 MB 7.96–8.07 ms</title></rect>
+<rect x="118.58" y="226.30" width="0.65" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 29 MB 8.87–8.97 ms</title></rect>
+<rect x="136.24" y="226.30" width="1.08" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 51 MB 11.46–11.62 ms</title></rect>
+<rect x="145.22" y="226.30" width="1.51" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 51 MB 12.78–13.00 ms</title></rect>
+<rect x="171.08" y="226.30" width="1.07" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 52 MB 16.56–16.72 ms</title></rect>
+<rect x="194.15" y="226.30" width="16.53" height="4.20" fill="#c9c8c0"><title>r1 barrier 19.94–22.36 ms</title></rect>
+<rect x="210.71" y="226.30" width="1.34" height="4.20" fill="#2f8f9d"><title>r1 misc 22.37–22.57 ms</title></rect>
+<rect x="212.15" y="226.30" width="3.67" height="4.20" fill="#2f8f9d"><title>r1 misc 22.58–23.12 ms</title></rect>
+<rect x="215.94" y="226.30" width="2.14" height="4.20" fill="#c9c8c0"><title>r1 barrier 23.13–23.45 ms</title></rect>
+<rect x="218.27" y="226.30" width="64.59" height="4.20" fill="#eda100"><title>r1 gemm.l1 23.48–32.94 ms</title></rect>
+<rect x="235.44" y="226.30" width="0.52" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 32 MB 25.99–26.07 ms</title></rect>
+<rect x="250.85" y="226.30" width="0.47" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 23 MB 28.25–28.32 ms</title></rect>
+<rect x="266.49" y="226.30" width="0.41" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 24 MB 30.54–30.60 ms</title></rect>
+<rect x="282.99" y="226.30" width="0.46" height="4.20" fill="#2a78d6"><title>r1 copy.d2d 47 MB 32.96–33.02 ms</title></rect>
+<line x1="58.00" y1="233.40" x2="500.00" y2="233.40" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="234.90" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="218.27" y="231.30" width="64.71" height="4.20" fill="#c8553d"><title>r1 combine.pack 23.48–32.95 ms</title></rect>
+<rect x="218.30" y="231.30" width="62.92" height="4.20" fill="#c8553d"><title>r1 combine.prereduce 23.48–32.70 ms</title></rect>
+<rect x="289.05" y="231.30" width="0.94" height="4.20" fill="#c8553d"><title>r1 combine.reduce 33.84–33.98 ms</title></rect>
+<rect x="300.56" y="231.30" width="5.79" height="4.20" fill="#c8553d"><title>r1 combine.reduce 35.53–36.38 ms</title></rect>
+<rect x="329.13" y="231.30" width="20.47" height="4.20" fill="#c8553d"><title>r1 combine.reduce 39.72–42.71 ms</title></rect>
+<line x1="349.76" y1="215.90" x2="349.76" y2="235.90" stroke="#17191c" stroke-width="0.5"/>
+<text x="3.00" y="249.50" font-size="6.5" text-anchor="start" fill="#17191c" font-weight="bold">Skewed</text>
+<text x="3.00" y="256.50" font-size="5.2" text-anchor="start" fill="#5a5e66">COMET, overlapped</text>
+<line x1="58.00" y1="244.60" x2="500.00" y2="244.60" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="246.10" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="67.70" y="242.50" width="29.05" height="4.20" fill="#2a78d6"><title>r3 nic.put 1.42–5.68 ms</title></rect>
+<rect x="105.14" y="242.50" width="35.72" height="4.20" fill="#2a78d6"><title>r3 nic.put 6.90–12.14 ms</title></rect>
+<rect x="140.98" y="242.50" width="24.65" height="4.20" fill="#2a78d6"><title>r3 nic.put 12.15–15.77 ms</title></rect>
+<rect x="288.17" y="242.50" width="77.16" height="4.20" fill="#2a78d6"><title>r3 nic.put 33.72–45.02 ms</title></rect>
+<rect x="307.87" y="242.50" width="57.45" height="4.20" fill="#2a78d6"><title>r3 nic.put 36.60–45.02 ms</title></rect>
+<rect x="322.82" y="242.50" width="42.51" height="4.20" fill="#2a78d6"><title>r3 nic.put 38.79–45.02 ms</title></rect>
+<rect x="368.74" y="242.50" width="44.12" height="4.20" fill="#2a78d6"><title>r3 nic.put 45.52–51.98 ms</title></rect>
+<rect x="383.53" y="242.50" width="29.35" height="4.20" fill="#2a78d6"><title>r3 nic.put 47.68–51.98 ms</title></rect>
+<rect x="398.25" y="242.50" width="14.65" height="4.20" fill="#2a78d6"><title>r3 nic.put 49.84–51.99 ms</title></rect>
+<line x1="58.00" y1="249.60" x2="500.00" y2="249.60" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="251.10" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="67.77" y="247.50" width="5.05" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 67 MB 1.43–2.17 ms</title></rect>
+<rect x="72.97" y="247.50" width="5.16" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 67 MB 2.19–2.95 ms</title></rect>
+<rect x="78.31" y="247.50" width="4.89" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 67 MB 2.97–3.69 ms</title></rect>
+<rect x="105.20" y="247.50" width="4.96" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 67 MB 6.91–7.64 ms</title></rect>
+<rect x="110.24" y="247.50" width="5.16" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 67 MB 7.65–8.41 ms</title></rect>
+<rect x="115.51" y="247.50" width="4.89" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 67 MB 8.42–9.14 ms</title></rect>
+<rect x="141.04" y="247.50" width="4.89" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 67 MB 12.16–12.88 ms</title></rect>
+<rect x="146.01" y="247.50" width="5.14" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 67 MB 12.89–13.65 ms</title></rect>
+<rect x="151.24" y="247.50" width="4.90" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 67 MB 13.66–14.38 ms</title></rect>
+<rect x="165.95" y="247.50" width="4.89" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 67 MB 15.81–16.53 ms</title></rect>
+<rect x="170.94" y="247.50" width="5.35" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 67 MB 16.54–17.33 ms</title></rect>
+<rect x="176.37" y="247.50" width="5.19" height="4.20" fill="#2a78d6"><title>r3 nvlink.token 67 MB 17.34–18.10 ms</title></rect>
+<line x1="58.00" y1="254.60" x2="500.00" y2="254.60" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="256.10" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.55" y="252.50" width="2.49" height="4.20" fill="#2f8f9d"><title>r3 plan.comm 0.08–0.44 ms</title></rect>
+<rect x="61.13" y="252.50" width="1.92" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 0.46–0.74 ms</title></rect>
+<rect x="63.10" y="252.50" width="0.61" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 0.75–0.84 ms</title></rect>
+<rect x="63.72" y="252.50" width="1.14" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 0.84–1.00 ms</title></rect>
+<rect x="65.57" y="252.50" width="0.51" height="4.20" fill="#2a78d6"><title>r3 copy.d2d 67 MB 1.11–1.18 ms</title></rect>
+<rect x="66.09" y="252.50" width="1.59" height="4.20" fill="#c9c8c0"><title>r3 barrier 1.19–1.42 ms</title></rect>
+<rect x="67.70" y="252.50" width="0.47" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 1.42–1.49 ms</title></rect>
+<rect x="68.18" y="252.50" width="1.49" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 1.49–1.71 ms</title></rect>
+<rect x="69.87" y="252.50" width="0.44" height="4.20" fill="#2f8f9d"><title>r3 plan.compute 1.74–1.80 ms</title></rect>
+<rect x="70.33" y="252.50" width="132.85" height="4.20" fill="#eda100"><title>r3 gemm.l0 1.81–21.27 ms</title></rect>
+<rect x="96.76" y="252.50" width="8.35" height="4.20" fill="#c9c8c0"><title>r3 barrier 5.68–6.90 ms</title></rect>
+<rect x="203.52" y="252.50" width="3.11" height="4.20" fill="#2f8f9d"><title>r3 misc 21.32–21.77 ms</title></rect>
+<rect x="206.71" y="252.50" width="1.11" height="4.20" fill="#c9c8c0"><title>r3 barrier 21.78–21.94 ms</title></rect>
+<rect x="207.83" y="252.50" width="107.41" height="4.20" fill="#eda100"><title>r3 gemm.l1 21.95–37.68 ms</title></rect>
+<line x1="58.00" y1="259.60" x2="500.00" y2="259.60" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="261.10" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="268.41" y="257.50" width="148.17" height="4.20" fill="#c8553d"><title>r3 combine.gather_rs 30.82–52.53 ms</title></rect>
+<rect x="416.66" y="257.50" width="0.78" height="4.20" fill="#c8553d"><title>r3 combine.reduce 52.54–52.65 ms</title></rect>
+<rect x="417.52" y="257.50" width="0.77" height="4.20" fill="#c8553d"><title>r3 combine.reduce 52.66–52.78 ms</title></rect>
+<line x1="418.45" y1="242.10" x2="418.45" y2="262.10" stroke="#17191c" stroke-width="0.5"/>
+<line x1="58.00" y1="266.30" x2="500.00" y2="266.30" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="267.80" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="67.60" y="264.20" width="23.28" height="4.20" fill="#2a78d6"><title>r5 nic.put 1.41–4.82 ms</title></rect>
+<rect x="93.57" y="264.20" width="28.32" height="4.20" fill="#2a78d6"><title>r5 nic.put 5.21–9.36 ms</title></rect>
+<rect x="122.00" y="264.20" width="25.56" height="4.20" fill="#2a78d6"><title>r5 nic.put 9.37–13.12 ms</title></rect>
+<rect x="266.84" y="264.20" width="47.91" height="4.20" fill="#2a78d6"><title>r5 nic.put 30.59–37.61 ms</title></rect>
+<rect x="277.22" y="264.20" width="37.57" height="4.20" fill="#2a78d6"><title>r5 nic.put 32.11–37.61 ms</title></rect>
+<rect x="288.38" y="264.20" width="26.40" height="4.20" fill="#2a78d6"><title>r5 nic.put 33.75–37.61 ms</title></rect>
+<rect x="318.70" y="264.20" width="55.85" height="4.20" fill="#2a78d6"><title>r5 nic.put 38.19–46.37 ms</title></rect>
+<rect x="329.76" y="264.20" width="44.81" height="4.20" fill="#2a78d6"><title>r5 nic.put 39.81–46.37 ms</title></rect>
+<rect x="340.66" y="264.20" width="33.91" height="4.20" fill="#2a78d6"><title>r5 nic.put 41.40–46.37 ms</title></rect>
+<line x1="58.00" y1="271.30" x2="500.00" y2="271.30" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="272.80" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="67.63" y="269.20" width="4.89" height="4.20" fill="#2a78d6"><title>r5 nvlink.token 67 MB 1.41–2.13 ms</title></rect>
+<rect x="72.61" y="269.20" width="5.17" height="4.20" fill="#2a78d6"><title>r5 nvlink.token 67 MB 2.14–2.90 ms</title></rect>
+<rect x="77.85" y="269.20" width="4.90" height="4.20" fill="#2a78d6"><title>r5 nvlink.token 67 MB 2.91–3.63 ms</title></rect>
+<rect x="93.68" y="269.20" width="4.89" height="4.20" fill="#2a78d6"><title>r5 nvlink.token 67 MB 5.23–5.94 ms</title></rect>
+<rect x="98.67" y="269.20" width="5.15" height="4.20" fill="#2a78d6"><title>r5 nvlink.token 67 MB 5.96–6.71 ms</title></rect>
+<rect x="103.90" y="269.20" width="4.89" height="4.20" fill="#2a78d6"><title>r5 nvlink.token 67 MB 6.72–7.44 ms</title></rect>
+<rect x="122.07" y="269.20" width="4.89" height="4.20" fill="#2a78d6"><title>r5 nvlink.token 67 MB 9.38–10.10 ms</title></rect>
+<rect x="127.02" y="269.20" width="5.14" height="4.20" fill="#2a78d6"><title>r5 nvlink.token 67 MB 10.11–10.86 ms</title></rect>
+<rect x="132.28" y="269.20" width="4.89" height="4.20" fill="#2a78d6"><title>r5 nvlink.token 67 MB 10.88–11.60 ms</title></rect>
+<rect x="151.18" y="269.20" width="4.89" height="4.20" fill="#2a78d6"><title>r5 nvlink.token 67 MB 13.65–14.37 ms</title></rect>
+<rect x="156.13" y="269.20" width="5.13" height="4.20" fill="#2a78d6"><title>r5 nvlink.token 67 MB 14.37–15.13 ms</title></rect>
+<rect x="161.34" y="269.20" width="4.89" height="4.20" fill="#2a78d6"><title>r5 nvlink.token 67 MB 15.14–15.85 ms</title></rect>
+<line x1="58.00" y1="276.30" x2="500.00" y2="276.30" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="277.80" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.55" y="274.20" width="2.67" height="4.20" fill="#2f8f9d"><title>r5 plan.comm 0.08–0.47 ms</title></rect>
+<rect x="61.32" y="274.20" width="2.03" height="4.20" fill="#2f8f9d"><title>r5 plan.compute 0.49–0.78 ms</title></rect>
+<rect x="63.39" y="274.20" width="0.59" height="4.20" fill="#2f8f9d"><title>r5 plan.compute 0.79–0.88 ms</title></rect>
+<rect x="63.98" y="274.20" width="1.14" height="4.20" fill="#2f8f9d"><title>r5 plan.compute 0.88–1.04 ms</title></rect>
+<rect x="65.79" y="274.20" width="0.51" height="4.20" fill="#2a78d6"><title>r5 copy.d2d 67 MB 1.14–1.22 ms</title></rect>
+<rect x="66.31" y="274.20" width="1.27" height="4.20" fill="#c9c8c0"><title>r5 barrier 1.22–1.40 ms</title></rect>
+<rect x="67.59" y="274.20" width="0.46" height="4.20" fill="#2f8f9d"><title>r5 plan.compute 1.40–1.47 ms</title></rect>
+<rect x="68.48" y="274.20" width="102.84" height="4.20" fill="#eda100"><title>r5 gemm.l0 1.53–16.60 ms</title></rect>
+<rect x="90.92" y="274.20" width="2.64" height="4.20" fill="#c9c8c0"><title>r5 barrier 4.82–5.21 ms</title></rect>
+<rect x="147.57" y="274.20" width="3.50" height="4.20" fill="#c9c8c0"><title>r5 barrier 13.12–13.63 ms</title></rect>
+<rect x="171.33" y="274.20" width="32.58" height="4.20" fill="#c9c8c0"><title>r5 barrier 16.60–21.37 ms</title></rect>
+<rect x="203.94" y="274.20" width="0.90" height="4.20" fill="#2f8f9d"><title>r5 misc 21.38–21.51 ms</title></rect>
+<rect x="204.93" y="274.20" width="2.90" height="4.20" fill="#c9c8c0"><title>r5 barrier 21.52–21.95 ms</title></rect>
+<rect x="207.84" y="274.20" width="31.40" height="4.20" fill="#eda100"><title>r5 gemm.l1 21.95–26.55 ms</title></rect>
+<rect x="357.96" y="274.20" width="30.43" height="4.20" fill="#c9c8c0"><title>r5 barrier 43.94–48.40 ms</title></rect>
+<rect x="388.40" y="274.20" width="4.31" height="4.20" fill="#c9c8c0"><title>r5 barrier 48.40–49.03 ms</title></rect>
+<rect x="393.57" y="274.20" width="25.27" height="4.20" fill="#c9c8c0"><title>r5 barrier 49.15–52.86 ms</title></rect>
+<line x1="58.00" y1="281.30" x2="500.00" y2="281.30" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="282.80" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="226.16" y="279.20" width="129.94" height="4.20" fill="#c8553d"><title>r5 combine.gather_rs 24.63–43.67 ms</title></rect>
+<rect x="356.28" y="279.20" width="1.67" height="4.20" fill="#c8553d"><title>r5 combine.reduce 43.69–43.94 ms</title></rect>
+<rect x="392.74" y="279.20" width="0.82" height="4.20" fill="#c8553d"><title>r5 combine.reduce 49.03–49.15 ms</title></rect>
+<line x1="418.89" y1="263.80" x2="418.89" y2="283.80" stroke="#17191c" stroke-width="0.5"/>
+<text x="3.00" y="297.40" font-size="6.5" text-anchor="start" fill="#17191c" font-weight="bold">Skewed</text>
+<text x="3.00" y="304.40" font-size="5.2" text-anchor="start" fill="#5a5e66">swap in host gap</text>
+<line x1="58.00" y1="292.50" x2="500.00" y2="292.50" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="294.00" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="166.82" y="290.40" width="40.68" height="4.20" fill="#2a78d6"><title>r8 nic.put 15.94–21.90 ms</title></rect>
+<rect x="207.54" y="290.40" width="32.62" height="4.20" fill="#2a78d6"><title>r8 nic.put 21.90–26.68 ms</title></rect>
+<rect x="240.18" y="290.40" width="15.99" height="4.20" fill="#2a78d6"><title>r8 nic.put 26.69–29.03 ms</title></rect>
+<rect x="372.79" y="290.40" width="87.34" height="4.20" fill="#2a78d6"><title>r8 nic.put 46.11–58.90 ms</title></rect>
+<rect x="397.96" y="290.40" width="62.19" height="4.20" fill="#2a78d6"><title>r8 nic.put 49.80–58.91 ms</title></rect>
+<rect x="424.66" y="290.40" width="35.49" height="4.20" fill="#2a78d6"><title>r8 nic.put 53.71–58.91 ms</title></rect>
+<line x1="58.00" y1="297.50" x2="500.00" y2="297.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="299.00" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="75.85" y="295.40" width="3.93" height="4.20" fill="#1baf7a"><title>r8 nvlink.swap [host gap] 29 MB 2.61–3.19 ms</title></rect>
+<rect x="76.27" y="295.40" width="3.88" height="4.20" fill="#1baf7a"><title>r8 nvlink.swap [host gap] 29 MB 2.68–3.24 ms</title></rect>
+<rect x="76.64" y="295.40" width="2.65" height="4.20" fill="#1baf7a"><title>r8 nvlink.swap [host gap] 29 MB 2.73–3.12 ms</title></rect>
+<rect x="76.99" y="295.40" width="6.33" height="4.20" fill="#1baf7a"><title>r8 nvlink.swap [host gap] 29 MB 2.78–3.71 ms</title></rect>
+<rect x="83.77" y="295.40" width="6.72" height="4.20" fill="#1baf7a"><title>r8 nvlink.swap [host gap] 29 MB 3.78–4.76 ms</title></rect>
+<rect x="84.23" y="295.40" width="4.09" height="4.20" fill="#1baf7a"><title>r8 nvlink.swap [host gap] 29 MB 3.84–4.44 ms</title></rect>
+<rect x="84.41" y="295.40" width="2.70" height="4.20" fill="#1baf7a"><title>r8 nvlink.swap [host gap] 29 MB 3.87–4.26 ms</title></rect>
+<rect x="84.47" y="295.40" width="4.07" height="4.20" fill="#1baf7a"><title>r8 nvlink.swap [host gap] 29 MB 3.88–4.47 ms</title></rect>
+<rect x="138.17" y="295.40" width="3.33" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 45 MB 11.74–12.23 ms</title></rect>
+<rect x="138.22" y="295.40" width="6.77" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 39 MB 11.75–12.74 ms</title></rect>
+<rect x="166.89" y="295.40" width="3.74" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 51 MB 15.95–16.50 ms</title></rect>
+<rect x="173.10" y="295.40" width="5.01" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 16.86–17.59 ms</title></rect>
+<rect x="178.34" y="295.40" width="11.59" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 17.63–19.32 ms</title></rect>
+<rect x="191.56" y="295.40" width="4.81" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 19.56–20.27 ms</title></rect>
+<rect x="196.58" y="295.40" width="11.54" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 20.30–21.99 ms</title></rect>
+<rect x="210.11" y="295.40" width="4.80" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 22.28–22.98 ms</title></rect>
+<rect x="215.05" y="295.40" width="4.79" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 23.00–23.71 ms</title></rect>
+<rect x="222.30" y="295.40" width="4.78" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 24.07–24.77 ms</title></rect>
+<rect x="227.23" y="295.40" width="4.78" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 24.79–25.49 ms</title></rect>
+<rect x="232.16" y="295.40" width="11.44" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 25.51–27.19 ms</title></rect>
+<rect x="336.42" y="295.40" width="8.30" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 46 MB 40.78–42.00 ms</title></rect>
+<rect x="336.43" y="295.40" width="3.75" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 47 MB 40.78–41.33 ms</title></rect>
+<rect x="336.43" y="295.40" width="3.53" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 48 MB 40.78–41.30 ms</title></rect>
+<rect x="367.59" y="295.40" width="3.64" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 50 MB 45.35–45.88 ms</title></rect>
+<rect x="367.59" y="295.40" width="3.72" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 51 MB 45.35–45.89 ms</title></rect>
+<rect x="367.59" y="295.40" width="8.87" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 51 MB 45.35–46.65 ms</title></rect>
+<rect x="389.52" y="295.40" width="3.33" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 45 MB 48.56–49.05 ms</title></rect>
+<rect x="389.52" y="295.40" width="3.43" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 47 MB 48.56–49.06 ms</title></rect>
+<rect x="389.52" y="295.40" width="8.13" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 46 MB 48.56–49.75 ms</title></rect>
+<rect x="403.94" y="295.40" width="3.89" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 53 MB 50.67–51.24 ms</title></rect>
+<rect x="403.95" y="295.40" width="3.93" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 54 MB 50.67–51.25 ms</title></rect>
+<rect x="403.95" y="295.40" width="9.35" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 54 MB 50.67–52.04 ms</title></rect>
+<line x1="58.00" y1="302.50" x2="500.00" y2="302.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="304.00" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.86" y="300.40" width="0.66" height="4.20" fill="#2f8f9d"><title>r8 plan.comm 0.13–0.22 ms</title></rect>
+<rect x="86.94" y="300.40" width="0.61" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 4.24–4.33 ms</title></rect>
+<rect x="91.71" y="300.40" width="28.44" height="4.20" fill="#2f8f9d"><title>r8 plan.comm 4.94–9.10 ms</title></rect>
+<rect x="120.48" y="300.40" width="1.79" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 9.15–9.41 ms</title></rect>
+<rect x="122.31" y="300.40" width="0.63" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 9.42–9.51 ms</title></rect>
+<rect x="122.95" y="300.40" width="1.15" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 9.51–9.68 ms</title></rect>
+<rect x="126.96" y="300.40" width="2.72" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 10.10–10.50 ms</title></rect>
+<rect x="130.77" y="300.40" width="1.62" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 10.66–10.90 ms</title></rect>
+<rect x="132.41" y="300.40" width="1.98" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 10.90–11.19 ms</title></rect>
+<rect x="134.43" y="300.40" width="1.77" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 11.19–11.45 ms</title></rect>
+<rect x="136.24" y="300.40" width="1.54" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 11.46–11.69 ms</title></rect>
+<rect x="138.08" y="300.40" width="3.43" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 11.73–12.23 ms</title></rect>
+<rect x="141.62" y="300.40" width="2.24" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 12.25–12.58 ms</title></rect>
+<rect x="144.00" y="300.40" width="1.87" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 12.60–12.87 ms</title></rect>
+<rect x="146.04" y="300.40" width="0.46" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 47 MB 12.90–12.96 ms</title></rect>
+<rect x="148.26" y="300.40" width="131.56" height="4.20" fill="#eda100"><title>r8 gemm.l0 13.22–32.49 ms</title></rect>
+<rect x="190.03" y="300.40" width="1.44" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 66 MB 19.34–19.55 ms</title></rect>
+<rect x="208.22" y="300.40" width="1.71" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 66 MB 22.00–22.25 ms</title></rect>
+<rect x="219.98" y="300.40" width="2.23" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 66 MB 23.73–24.05 ms</title></rect>
+<rect x="280.52" y="300.40" width="18.40" height="4.20" fill="#c9c8c0"><title>r8 barrier 32.59–35.29 ms</title></rect>
+<rect x="298.95" y="300.40" width="2.08" height="4.20" fill="#2f8f9d"><title>r8 misc 35.29–35.60 ms</title></rect>
+<rect x="301.14" y="300.40" width="5.71" height="4.20" fill="#2f8f9d"><title>r8 misc 35.62–36.45 ms</title></rect>
+<rect x="306.96" y="300.40" width="2.69" height="4.20" fill="#c9c8c0"><title>r8 barrier 36.47–36.86 ms</title></rect>
+<rect x="309.67" y="300.40" width="93.57" height="4.20" fill="#eda100"><title>r8 gemm.l1 36.86–50.57 ms</title></rect>
+<rect x="335.55" y="300.40" width="0.76" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 46 MB 40.66–40.77 ms</title></rect>
+<rect x="366.94" y="300.40" width="0.60" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 50 MB 45.25–45.34 ms</title></rect>
+<rect x="388.91" y="300.40" width="0.49" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 47 MB 48.47–48.54 ms</title></rect>
+<rect x="403.32" y="300.40" width="0.54" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 54 MB 50.58–50.66 ms</title></rect>
+<rect x="460.16" y="300.40" width="22.70" height="4.20" fill="#c9c8c0"><title>r8 barrier 58.91–62.23 ms</title></rect>
+<line x1="58.00" y1="307.50" x2="500.00" y2="307.50" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="309.00" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="309.91" y="305.40" width="93.40" height="4.20" fill="#c8553d"><title>r8 combine.pack 36.90–50.58 ms</title></rect>
+<rect x="309.96" y="305.40" width="114.70" height="4.20" fill="#c8553d"><title>r8 combine.prereduce 36.91–53.71 ms</title></rect>
+<rect x="420.52" y="305.40" width="0.79" height="4.20" fill="#c8553d"><title>r8 combine.reduce 53.10–53.22 ms</title></rect>
+<rect x="421.34" y="305.40" width="9.42" height="4.20" fill="#c8553d"><title>r8 combine.reduce 53.22–54.60 ms</title></rect>
+<rect x="430.80" y="305.40" width="24.61" height="4.20" fill="#c8553d"><title>r8 combine.reduce 54.61–58.21 ms</title></rect>
+<line x1="482.89" y1="290.00" x2="482.89" y2="310.00" stroke="#17191c" stroke-width="0.5"/>
+<line x1="58.00" y1="314.20" x2="500.00" y2="314.20" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="315.70" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="146.36" y="312.10" width="33.32" height="4.20" fill="#2a78d6"><title>r14 nic.put 12.94–17.82 ms</title></rect>
+<rect x="179.69" y="312.10" width="31.01" height="4.20" fill="#2a78d6"><title>r14 nic.put 17.83–22.37 ms</title></rect>
+<rect x="210.75" y="312.10" width="30.49" height="4.20" fill="#2a78d6"><title>r14 nic.put 22.37–26.84 ms</title></rect>
+<rect x="335.02" y="312.10" width="71.73" height="4.20" fill="#2a78d6"><title>r14 nic.put 40.58–51.09 ms</title></rect>
+<rect x="346.90" y="312.10" width="59.85" height="4.20" fill="#2a78d6"><title>r14 nic.put 42.32–51.09 ms</title></rect>
+<rect x="358.86" y="312.10" width="47.90" height="4.20" fill="#2a78d6"><title>r14 nic.put 44.07–51.09 ms</title></rect>
+<line x1="58.00" y1="319.20" x2="500.00" y2="319.20" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="320.70" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="75.39" y="317.10" width="2.36" height="4.20" fill="#1baf7a"><title>r14 nvlink.swap [host gap] 29 MB 2.55–2.89 ms</title></rect>
+<rect x="76.16" y="317.10" width="2.17" height="4.20" fill="#1baf7a"><title>r14 nvlink.swap [host gap] 29 MB 2.66–2.98 ms</title></rect>
+<rect x="76.51" y="317.10" width="2.16" height="4.20" fill="#1baf7a"><title>r14 nvlink.swap [host gap] 29 MB 2.71–3.03 ms</title></rect>
+<rect x="77.80" y="317.10" width="2.18" height="4.20" fill="#1baf7a"><title>r14 nvlink.swap [host gap] 29 MB 2.90–3.22 ms</title></rect>
+<rect x="80.92" y="317.10" width="2.16" height="4.20" fill="#1baf7a"><title>r14 nvlink.swap [host gap] 29 MB 3.36–3.67 ms</title></rect>
+<rect x="81.24" y="317.10" width="2.16" height="4.20" fill="#1baf7a"><title>r14 nvlink.swap [host gap] 29 MB 3.40–3.72 ms</title></rect>
+<rect x="81.57" y="317.10" width="2.16" height="4.20" fill="#1baf7a"><title>r14 nvlink.swap [host gap] 29 MB 3.45–3.77 ms</title></rect>
+<rect x="83.14" y="317.10" width="2.18" height="4.20" fill="#1baf7a"><title>r14 nvlink.swap [host gap] 29 MB 3.68–4.00 ms</title></rect>
+<rect x="140.43" y="317.10" width="2.20" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 24 MB 12.07–12.40 ms</title></rect>
+<rect x="146.46" y="317.10" width="2.36" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 32 MB 12.96–13.30 ms</title></rect>
+<rect x="149.03" y="317.10" width="1.84" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 25 MB 13.33–13.60 ms</title></rect>
+<rect x="158.70" y="317.10" width="3.59" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 48 MB 14.75–15.28 ms</title></rect>
+<rect x="162.40" y="317.10" width="3.54" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 48 MB 15.29–15.81 ms</title></rect>
+<rect x="167.33" y="317.10" width="3.54" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 48 MB 16.02–16.53 ms</title></rect>
+<rect x="178.15" y="317.10" width="3.53" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 49 MB 17.60–18.12 ms</title></rect>
+<rect x="183.06" y="317.10" width="3.55" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 49 MB 18.32–18.84 ms</title></rect>
+<rect x="186.70" y="317.10" width="3.76" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 49 MB 18.85–19.40 ms</title></rect>
+<rect x="262.53" y="317.10" width="3.77" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 47 MB 29.96–30.51 ms</title></rect>
+<rect x="266.45" y="317.10" width="3.58" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 47 MB 30.53–31.06 ms</title></rect>
+<rect x="270.23" y="317.10" width="3.42" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 47 MB 31.09–31.59 ms</title></rect>
+<rect x="323.91" y="317.10" width="1.72" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 23 MB 38.95–39.20 ms</title></rect>
+<rect x="323.98" y="317.10" width="1.78" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 24 MB 38.96–39.22 ms</title></rect>
+<rect x="325.86" y="317.10" width="1.74" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 24 MB 39.24–39.49 ms</title></rect>
+<rect x="337.61" y="317.10" width="1.89" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 22 MB 40.96–41.23 ms</title></rect>
+<rect x="337.69" y="317.10" width="1.75" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 23 MB 40.97–41.23 ms</title></rect>
+<rect x="339.54" y="317.10" width="1.68" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 23 MB 41.24–41.49 ms</title></rect>
+<rect x="351.60" y="317.10" width="1.67" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 22 MB 43.01–43.25 ms</title></rect>
+<rect x="351.61" y="317.10" width="1.69" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 23 MB 43.01–43.26 ms</title></rect>
+<rect x="353.40" y="317.10" width="1.76" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 22 MB 43.27–43.53 ms</title></rect>
+<rect x="361.30" y="317.10" width="2.23" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 30 MB 44.43–44.75 ms</title></rect>
+<rect x="361.30" y="317.10" width="2.24" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 30 MB 44.43–44.76 ms</title></rect>
+<rect x="363.67" y="317.10" width="2.18" height="4.20" fill="#2a78d6"><title>r14 nvlink.token 30 MB 44.77–45.09 ms</title></rect>
+<line x1="58.00" y1="324.20" x2="500.00" y2="324.20" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="325.70" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.86" y="322.10" width="0.56" height="4.20" fill="#2f8f9d"><title>r14 plan.comm 0.13–0.21 ms</title></rect>
+<rect x="80.05" y="322.10" width="0.35" height="4.20" fill="#2a78d6"><title>r14 copy.d2d 29 MB 3.23–3.28 ms</title></rect>
+<rect x="80.32" y="322.10" width="0.35" height="4.20" fill="#2a78d6"><title>r14 copy.d2d 29 MB 3.27–3.32 ms</title></rect>
+<rect x="80.59" y="322.10" width="0.36" height="4.20" fill="#2a78d6"><title>r14 copy.d2d 29 MB 3.31–3.36 ms</title></rect>
+<rect x="86.85" y="322.10" width="1.26" height="4.20" fill="#2f8f9d"><title>r14 plan.compute 4.23–4.41 ms</title></rect>
+<rect x="89.32" y="322.10" width="30.93" height="4.20" fill="#2f8f9d"><title>r14 plan.comm 4.59–9.12 ms</title></rect>
+<rect x="120.56" y="322.10" width="1.82" height="4.20" fill="#2f8f9d"><title>r14 plan.compute 9.16–9.43 ms</title></rect>
+<rect x="122.42" y="322.10" width="0.63" height="4.20" fill="#2f8f9d"><title>r14 plan.compute 9.44–9.53 ms</title></rect>
+<rect x="123.05" y="322.10" width="1.14" height="4.20" fill="#2f8f9d"><title>r14 plan.compute 9.53–9.70 ms</title></rect>
+<rect x="127.05" y="322.10" width="2.71" height="4.20" fill="#2f8f9d"><title>r14 plan.compute 10.12–10.51 ms</title></rect>
+<rect x="130.89" y="322.10" width="1.27" height="4.20" fill="#2f8f9d"><title>r14 plan.compute 10.68–10.86 ms</title></rect>
+<rect x="132.17" y="322.10" width="0.93" height="4.20" fill="#2f8f9d"><title>r14 plan.compute 10.87–11.00 ms</title></rect>
+<rect x="133.12" y="322.10" width="1.03" height="4.20" fill="#2f8f9d"><title>r14 plan.compute 11.00–11.15 ms</title></rect>
+<rect x="134.18" y="322.10" width="1.00" height="4.20" fill="#2f8f9d"><title>r14 plan.compute 11.16–11.30 ms</title></rect>
+<rect x="135.19" y="322.10" width="2.74" height="4.20" fill="#2f8f9d"><title>r14 plan.compute 11.31–11.71 ms</title></rect>
+<rect x="137.95" y="322.10" width="0.49" height="4.20" fill="#2a78d6"><title>r14 copy.d2d 65 MB 11.71–11.78 ms</title></rect>
+<rect x="138.42" y="322.10" width="3.36" height="4.20" fill="#2f8f9d"><title>r14 plan.compute 11.78–12.27 ms</title></rect>
+<rect x="141.80" y="322.10" width="0.43" height="4.20" fill="#2a78d6"><title>r14 copy.d2d 54 MB 12.28–12.34 ms</title></rect>
+<rect x="142.22" y="322.10" width="3.44" height="4.20" fill="#2f8f9d"><title>r14 plan.compute 12.34–12.84 ms</title></rect>
+<rect x="145.79" y="322.10" width="0.50" height="4.20" fill="#2a78d6"><title>r14 copy.d2d 56 MB 12.86–12.93 ms</title></rect>
+<rect x="147.83" y="322.10" width="128.73" height="4.20" fill="#eda100"><title>r14 gemm.l0 13.16–32.01 ms</title></rect>
+<rect x="166.08" y="322.10" width="1.15" height="4.20" fill="#2a78d6"><title>r14 copy.d2d 48 MB 15.83–16.00 ms</title></rect>
+<rect x="181.86" y="322.10" width="1.11" height="4.20" fill="#2a78d6"><title>r14 copy.d2d 49 MB 18.14–18.31 ms</title></rect>
+<rect x="261.30" y="322.10" width="1.12" height="4.20" fill="#2a78d6"><title>r14 copy.d2d 47 MB 29.78–29.94 ms</title></rect>
+<rect x="277.34" y="322.10" width="21.81" height="4.20" fill="#c9c8c0"><title>r14 barrier 32.13–35.32 ms</title></rect>
+<rect x="299.20" y="322.10" width="1.05" height="4.20" fill="#2f8f9d"><title>r14 misc 35.33–35.48 ms</title></rect>
+<rect x="300.41" y="322.10" width="2.86" height="4.20" fill="#2f8f9d"><title>r14 misc 35.51–35.93 ms</title></rect>
+<rect x="303.41" y="322.10" width="5.86" height="4.20" fill="#c9c8c0"><title>r14 barrier 35.95–36.81 ms</title></rect>
+<rect x="309.51" y="322.10" width="51.37" height="4.20" fill="#eda100"><title>r14 gemm.l1 36.84–44.36 ms</title></rect>
+<rect x="323.47" y="322.10" width="0.37" height="4.20" fill="#2a78d6"><title>r14 copy.d2d 23 MB 38.89–38.94 ms</title></rect>
+<rect x="337.17" y="322.10" width="0.38" height="4.20" fill="#2a78d6"><title>r14 copy.d2d 22 MB 40.89–40.95 ms</title></rect>
+<rect x="351.13" y="322.10" width="0.37" height="4.20" fill="#2a78d6"><title>r14 copy.d2d 23 MB 42.94–42.99 ms</title></rect>
+<rect x="448.16" y="322.10" width="35.20" height="4.20" fill="#c9c8c0"><title>r14 barrier 57.15–62.31 ms</title></rect>
+<line x1="58.00" y1="329.20" x2="500.00" y2="329.20" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="330.70" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="309.50" y="327.10" width="51.43" height="4.20" fill="#c8553d"><title>r14 combine.pack 36.84–44.37 ms</title></rect>
+<rect x="309.54" y="327.10" width="49.31" height="4.20" fill="#c8553d"><title>r14 combine.prereduce 36.85–44.07 ms</title></rect>
+<rect x="412.56" y="327.10" width="0.46" height="4.20" fill="#c8553d"><title>r14 combine.reduce 51.94–52.00 ms</title></rect>
+<rect x="413.04" y="327.10" width="3.34" height="4.20" fill="#c8553d"><title>r14 combine.reduce 52.01–52.50 ms</title></rect>
+<rect x="429.16" y="327.10" width="18.98" height="4.20" fill="#c8553d"><title>r14 combine.reduce 54.37–57.15 ms</title></rect>
+<line x1="483.39" y1="311.70" x2="483.39" y2="331.70" stroke="#17191c" stroke-width="0.5"/>
+<text x="3.00" y="345.30" font-size="6.5" text-anchor="start" fill="#17191c" font-weight="bold">Skewed</text>
+<text x="3.00" y="352.30" font-size="5.2" text-anchor="start" fill="#5a5e66">sequential swap</text>
+<line x1="58.00" y1="340.40" x2="500.00" y2="340.40" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="341.90" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="176.38" y="338.30" width="28.86" height="4.20" fill="#2a78d6"><title>r8 nic.put 17.34–21.57 ms</title></rect>
+<rect x="205.27" y="338.30" width="23.93" height="4.20" fill="#2a78d6"><title>r8 nic.put 21.57–25.08 ms</title></rect>
+<rect x="229.24" y="338.30" width="22.42" height="4.20" fill="#2a78d6"><title>r8 nic.put 25.08–28.37 ms</title></rect>
+<rect x="371.83" y="338.30" width="96.61" height="4.20" fill="#2a78d6"><title>r8 nic.put 45.97–60.12 ms</title></rect>
+<rect x="392.48" y="338.30" width="75.96" height="4.20" fill="#2a78d6"><title>r8 nic.put 48.99–60.12 ms</title></rect>
+<rect x="421.02" y="338.30" width="47.42" height="4.20" fill="#2a78d6"><title>r8 nic.put 53.18–60.12 ms</title></rect>
+<line x1="58.00" y1="345.40" x2="500.00" y2="345.40" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="346.90" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="75.77" y="343.30" width="3.89" height="4.20" fill="#1baf7a"><title>r8 nvlink.swap [host gap] 29 MB 2.60–3.17 ms</title></rect>
+<rect x="76.18" y="343.30" width="3.90" height="4.20" fill="#1baf7a"><title>r8 nvlink.swap [host gap] 29 MB 2.66–3.23 ms</title></rect>
+<rect x="76.55" y="343.30" width="2.63" height="4.20" fill="#1baf7a"><title>r8 nvlink.swap [host gap] 29 MB 2.72–3.10 ms</title></rect>
+<rect x="76.90" y="343.30" width="6.32" height="4.20" fill="#1baf7a"><title>r8 nvlink.swap [host gap] 29 MB 2.77–3.70 ms</title></rect>
+<rect x="83.68" y="343.30" width="6.74" height="4.20" fill="#1baf7a"><title>r8 nvlink.swap [host gap] 29 MB 3.76–4.75 ms</title></rect>
+<rect x="83.84" y="343.30" width="3.83" height="4.20" fill="#1baf7a"><title>r8 nvlink.swap [host gap] 29 MB 3.78–4.35 ms</title></rect>
+<rect x="84.14" y="343.30" width="2.70" height="4.20" fill="#1baf7a"><title>r8 nvlink.swap [host gap] 29 MB 3.83–4.22 ms</title></rect>
+<rect x="84.36" y="343.30" width="3.81" height="4.20" fill="#1baf7a"><title>r8 nvlink.swap [host gap] 29 MB 3.86–4.42 ms</title></rect>
+<rect x="165.38" y="343.30" width="7.14" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 39 MB 15.73–16.77 ms</title></rect>
+<rect x="165.39" y="343.30" width="3.45" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 45 MB 15.73–16.24 ms</title></rect>
+<rect x="176.50" y="343.30" width="3.75" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 51 MB 17.36–17.91 ms</title></rect>
+<rect x="199.82" y="343.30" width="4.77" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 20.77–21.47 ms</title></rect>
+<rect x="204.78" y="343.30" width="11.45" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 21.50–23.18 ms</title></rect>
+<rect x="217.78" y="343.30" width="4.78" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 23.40–24.10 ms</title></rect>
+<rect x="222.79" y="343.30" width="11.51" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 24.14–25.82 ms</title></rect>
+<rect x="236.21" y="343.30" width="4.78" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 26.10–26.81 ms</title></rect>
+<rect x="241.17" y="343.30" width="4.78" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 26.83–27.53 ms</title></rect>
+<rect x="248.68" y="343.30" width="4.76" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 27.93–28.63 ms</title></rect>
+<rect x="253.62" y="343.30" width="4.76" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 28.65–29.35 ms</title></rect>
+<rect x="258.49" y="343.30" width="11.59" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 66 MB 29.37–31.07 ms</title></rect>
+<rect x="337.93" y="343.30" width="3.72" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 47 MB 41.00–41.55 ms</title></rect>
+<rect x="337.94" y="343.30" width="8.48" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 46 MB 41.00–42.25 ms</title></rect>
+<rect x="337.94" y="343.30" width="3.52" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 48 MB 41.01–41.52 ms</title></rect>
+<rect x="368.92" y="343.30" width="3.64" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 50 MB 45.54–46.08 ms</title></rect>
+<rect x="368.92" y="343.30" width="3.87" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 51 MB 45.54–46.11 ms</title></rect>
+<rect x="368.92" y="343.30" width="8.88" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 51 MB 45.54–46.84 ms</title></rect>
+<rect x="390.82" y="343.30" width="3.33" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 45 MB 48.75–49.24 ms</title></rect>
+<rect x="390.82" y="343.30" width="3.43" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 47 MB 48.75–49.25 ms</title></rect>
+<rect x="390.82" y="343.30" width="8.16" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 46 MB 48.75–49.95 ms</title></rect>
+<rect x="404.98" y="343.30" width="3.92" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 53 MB 50.83–51.40 ms</title></rect>
+<rect x="404.99" y="343.30" width="3.97" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 54 MB 50.83–51.41 ms</title></rect>
+<rect x="404.99" y="343.30" width="9.36" height="4.20" fill="#2a78d6"><title>r8 nvlink.token 54 MB 50.83–52.20 ms</title></rect>
+<line x1="58.00" y1="350.40" x2="500.00" y2="350.40" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="351.90" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.85" y="348.30" width="0.77" height="4.20" fill="#2f8f9d"><title>r8 plan.comm 0.12–0.24 ms</title></rect>
+<rect x="115.52" y="348.30" width="0.61" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 8.42–8.51 ms</title></rect>
+<rect x="117.38" y="348.30" width="29.91" height="4.20" fill="#2f8f9d"><title>r8 plan.comm 8.70–13.08 ms</title></rect>
+<rect x="147.59" y="348.30" width="1.72" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 13.12–13.37 ms</title></rect>
+<rect x="149.35" y="348.30" width="0.64" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 13.38–13.47 ms</title></rect>
+<rect x="149.99" y="348.30" width="1.15" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 13.48–13.64 ms</title></rect>
+<rect x="153.99" y="348.30" width="2.72" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 14.06–14.46 ms</title></rect>
+<rect x="157.88" y="348.30" width="1.61" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 14.63–14.87 ms</title></rect>
+<rect x="159.52" y="348.30" width="1.98" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 14.87–15.16 ms</title></rect>
+<rect x="161.53" y="348.30" width="1.78" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 15.16–15.43 ms</title></rect>
+<rect x="163.36" y="348.30" width="1.52" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 15.43–15.66 ms</title></rect>
+<rect x="164.90" y="348.30" width="2.45" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 15.66–16.02 ms</title></rect>
+<rect x="164.94" y="348.30" width="0.36" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 41 MB 15.67–15.72 ms</title></rect>
+<rect x="167.52" y="348.30" width="2.26" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 16.04–16.37 ms</title></rect>
+<rect x="169.90" y="348.30" width="1.86" height="4.20" fill="#2f8f9d"><title>r8 plan.compute 16.39–16.66 ms</title></rect>
+<rect x="171.91" y="348.30" width="0.50" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 47 MB 16.69–16.76 ms</title></rect>
+<rect x="174.30" y="348.30" width="125.22" height="4.20" fill="#eda100"><title>r8 gemm.l0 17.04–35.38 ms</title></rect>
+<rect x="216.32" y="348.30" width="1.40" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 66 MB 23.19–23.40 ms</title></rect>
+<rect x="234.39" y="348.30" width="1.73" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 66 MB 25.84–26.09 ms</title></rect>
+<rect x="246.46" y="348.30" width="2.15" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 66 MB 27.61–27.92 ms</title></rect>
+<rect x="300.41" y="348.30" width="2.08" height="4.20" fill="#2f8f9d"><title>r8 misc 35.51–35.81 ms</title></rect>
+<rect x="302.58" y="348.30" width="5.70" height="4.20" fill="#2f8f9d"><title>r8 misc 35.83–36.66 ms</title></rect>
+<rect x="308.40" y="348.30" width="2.84" height="4.20" fill="#c9c8c0"><title>r8 barrier 36.68–37.09 ms</title></rect>
+<rect x="311.26" y="348.30" width="93.04" height="4.20" fill="#eda100"><title>r8 gemm.l1 37.10–50.73 ms</title></rect>
+<rect x="337.06" y="348.30" width="0.78" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 46 MB 40.88–40.99 ms</title></rect>
+<rect x="368.19" y="348.30" width="0.62" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 50 MB 45.44–45.53 ms</title></rect>
+<rect x="390.19" y="348.30" width="0.52" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 47 MB 48.66–48.74 ms</title></rect>
+<rect x="404.38" y="348.30" width="0.52" height="4.20" fill="#2a78d6"><title>r8 copy.d2d 54 MB 50.74–50.81 ms</title></rect>
+<rect x="468.47" y="348.30" width="22.65" height="4.20" fill="#c9c8c0"><title>r8 barrier 60.13–63.44 ms</title></rect>
+<line x1="58.00" y1="355.40" x2="500.00" y2="355.40" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="356.90" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="311.49" y="353.30" width="92.89" height="4.20" fill="#c8553d"><title>r8 combine.pack 37.13–50.74 ms</title></rect>
+<rect x="311.54" y="353.30" width="109.48" height="4.20" fill="#c8553d"><title>r8 combine.prereduce 37.14–53.18 ms</title></rect>
+<rect x="417.43" y="353.30" width="0.95" height="4.20" fill="#c8553d"><title>r8 combine.reduce 52.65–52.79 ms</title></rect>
+<rect x="418.43" y="353.30" width="11.36" height="4.20" fill="#c8553d"><title>r8 combine.reduce 52.80–54.46 ms</title></rect>
+<rect x="434.14" y="353.30" width="25.95" height="4.20" fill="#c8553d"><title>r8 combine.reduce 55.10–58.90 ms</title></rect>
+<line x1="491.15" y1="337.90" x2="491.15" y2="357.90" stroke="#17191c" stroke-width="0.5"/>
+<line x1="58.00" y1="362.10" x2="500.00" y2="362.10" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="363.60" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="169.04" y="360.00" width="31.01" height="4.20" fill="#2a78d6"><title>r12 nic.put 16.27–20.81 ms</title></rect>
+<rect x="200.07" y="360.00" width="25.70" height="4.20" fill="#2a78d6"><title>r12 nic.put 20.81–24.57 ms</title></rect>
+<rect x="225.79" y="360.00" width="21.77" height="4.20" fill="#2a78d6"><title>r12 nic.put 24.58–27.77 ms</title></rect>
+<rect x="340.88" y="360.00" width="93.47" height="4.20" fill="#2a78d6"><title>r12 nic.put 41.44–55.13 ms</title></rect>
+<rect x="353.46" y="360.00" width="80.89" height="4.20" fill="#2a78d6"><title>r12 nic.put 43.28–55.13 ms</title></rect>
+<rect x="364.90" y="360.00" width="69.44" height="4.20" fill="#2a78d6"><title>r12 nic.put 44.95–55.13 ms</title></rect>
+<line x1="58.00" y1="367.10" x2="500.00" y2="367.10" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="368.60" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="76.00" y="365.00" width="3.92" height="4.20" fill="#1baf7a"><title>r12 nvlink.swap [host gap] 29 MB 2.64–3.21 ms</title></rect>
+<rect x="76.44" y="365.00" width="3.97" height="4.20" fill="#1baf7a"><title>r12 nvlink.swap [host gap] 29 MB 2.70–3.28 ms</title></rect>
+<rect x="76.82" y="365.00" width="5.17" height="4.20" fill="#1baf7a"><title>r12 nvlink.swap [host gap] 29 MB 2.76–3.51 ms</title></rect>
+<rect x="82.48" y="365.00" width="3.85" height="4.20" fill="#1baf7a"><title>r12 nvlink.swap [host gap] 29 MB 3.59–4.15 ms</title></rect>
+<rect x="82.93" y="365.00" width="5.16" height="4.20" fill="#1baf7a"><title>r12 nvlink.swap [host gap] 29 MB 3.65–4.41 ms</title></rect>
+<rect x="83.01" y="365.00" width="3.82" height="4.20" fill="#1baf7a"><title>r12 nvlink.swap [host gap] 29 MB 3.66–4.22 ms</title></rect>
+<rect x="162.32" y="365.00" width="4.63" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 25 MB 15.28–15.96 ms</title></rect>
+<rect x="162.32" y="365.00" width="2.14" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 26 MB 15.28–15.59 ms</title></rect>
+<rect x="169.07" y="365.00" width="1.79" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 24 MB 16.27–16.53 ms</title></rect>
+<rect x="183.38" y="365.00" width="3.54" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 48 MB 18.37–18.88 ms</title></rect>
+<rect x="187.16" y="365.00" width="8.45" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 48 MB 18.92–20.16 ms</title></rect>
+<rect x="196.98" y="365.00" width="3.58" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 48 MB 20.36–20.88 ms</title></rect>
+<rect x="213.49" y="365.00" width="8.49" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 49 MB 22.78–24.02 ms</title></rect>
+<rect x="223.33" y="365.00" width="3.55" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 49 MB 24.22–24.74 ms</title></rect>
+<rect x="227.01" y="365.00" width="3.58" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 49 MB 24.76–25.28 ms</title></rect>
+<rect x="252.65" y="365.00" width="3.69" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 47 MB 28.51–29.05 ms</title></rect>
+<rect x="256.52" y="365.00" width="3.43" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 47 MB 29.08–29.58 ms</title></rect>
+<rect x="260.03" y="365.00" width="8.31" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 47 MB 29.59–30.81 ms</title></rect>
+<rect x="319.37" y="365.00" width="1.13" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 14 MB 38.29–38.45 ms</title></rect>
+<rect x="319.37" y="365.00" width="2.50" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 14 MB 38.29–38.65 ms</title></rect>
+<rect x="319.37" y="365.00" width="1.03" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 14 MB 38.29–38.44 ms</title></rect>
+<rect x="330.45" y="365.00" width="1.24" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 17 MB 39.91–40.09 ms</title></rect>
+<rect x="330.45" y="365.00" width="1.32" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 16 MB 39.91–40.10 ms</title></rect>
+<rect x="330.45" y="365.00" width="3.19" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 17 MB 39.91–40.38 ms</title></rect>
+<rect x="341.06" y="365.00" width="1.30" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 14 MB 41.46–41.65 ms</title></rect>
+<rect x="341.06" y="365.00" width="1.31" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 14 MB 41.46–41.65 ms</title></rect>
+<rect x="341.06" y="365.00" width="2.78" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 15 MB 41.46–41.87 ms</title></rect>
+<rect x="357.09" y="365.00" width="8.12" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 46 MB 43.81–45.00 ms</title></rect>
+<rect x="357.09" y="365.00" width="3.26" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 44 MB 43.81–44.29 ms</title></rect>
+<rect x="357.09" y="365.00" width="3.28" height="4.20" fill="#2a78d6"><title>r12 nvlink.token 45 MB 43.81–44.29 ms</title></rect>
+<line x1="58.00" y1="372.10" x2="500.00" y2="372.10" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="373.60" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.95" y="370.00" width="0.58" height="4.20" fill="#2f8f9d"><title>r12 plan.comm 0.14–0.22 ms</title></rect>
+<rect x="82.30" y="370.00" width="0.34" height="4.20" fill="#2a78d6"><title>r12 copy.d2d 29 MB 3.56–3.61 ms</title></rect>
+<rect x="89.65" y="370.00" width="1.03" height="4.20" fill="#2f8f9d"><title>r12 plan.compute 4.64–4.79 ms</title></rect>
+<rect x="91.96" y="370.00" width="55.25" height="4.20" fill="#2f8f9d"><title>r12 plan.comm 4.97–13.07 ms</title></rect>
+<rect x="147.52" y="370.00" width="1.71" height="4.20" fill="#2f8f9d"><title>r12 plan.compute 13.11–13.36 ms</title></rect>
+<rect x="149.27" y="370.00" width="0.60" height="4.20" fill="#2f8f9d"><title>r12 plan.compute 13.37–13.46 ms</title></rect>
+<rect x="149.87" y="370.00" width="1.15" height="4.20" fill="#2f8f9d"><title>r12 plan.compute 13.46–13.63 ms</title></rect>
+<rect x="153.90" y="370.00" width="2.71" height="4.20" fill="#2f8f9d"><title>r12 plan.compute 14.05–14.44 ms</title></rect>
+<rect x="157.69" y="370.00" width="1.29" height="4.20" fill="#2f8f9d"><title>r12 plan.compute 14.60–14.79 ms</title></rect>
+<rect x="158.99" y="370.00" width="0.95" height="4.20" fill="#2f8f9d"><title>r12 plan.compute 14.79–14.93 ms</title></rect>
+<rect x="159.95" y="370.00" width="1.03" height="4.20" fill="#2f8f9d"><title>r12 plan.compute 14.93–15.08 ms</title></rect>
+<rect x="160.99" y="370.00" width="0.99" height="4.20" fill="#2f8f9d"><title>r12 plan.compute 15.09–15.23 ms</title></rect>
+<rect x="162.23" y="370.00" width="3.96" height="4.20" fill="#2f8f9d"><title>r12 plan.compute 15.27–15.85 ms</title></rect>
+<rect x="166.32" y="370.00" width="2.18" height="4.20" fill="#2f8f9d"><title>r12 plan.compute 15.87–16.19 ms</title></rect>
+<rect x="168.53" y="370.00" width="0.45" height="4.20" fill="#2a78d6"><title>r12 copy.d2d 55 MB 16.19–16.26 ms</title></rect>
+<rect x="168.96" y="370.00" width="3.49" height="4.20" fill="#2f8f9d"><title>r12 plan.compute 16.25–16.76 ms</title></rect>
+<rect x="174.28" y="370.00" width="99.41" height="4.20" fill="#eda100"><title>r12 gemm.l0 17.03–31.60 ms</title></rect>
+<rect x="195.72" y="370.00" width="1.15" height="4.20" fill="#2a78d6"><title>r12 copy.d2d 48 MB 20.17–20.34 ms</title></rect>
+<rect x="222.09" y="370.00" width="1.14" height="4.20" fill="#2a78d6"><title>r12 copy.d2d 49 MB 24.04–24.20 ms</title></rect>
+<rect x="251.42" y="370.00" width="1.14" height="4.20" fill="#2a78d6"><title>r12 copy.d2d 47 MB 28.33–28.50 ms</title></rect>
+<rect x="274.50" y="370.00" width="26.58" height="4.20" fill="#c9c8c0"><title>r12 barrier 31.71–35.61 ms</title></rect>
+<rect x="301.11" y="370.00" width="0.96" height="4.20" fill="#2f8f9d"><title>r12 misc 35.61–35.75 ms</title></rect>
+<rect x="302.18" y="370.00" width="2.60" height="4.20" fill="#2f8f9d"><title>r12 misc 35.77–36.15 ms</title></rect>
+<rect x="304.91" y="370.00" width="5.73" height="4.20" fill="#c9c8c0"><title>r12 barrier 36.17–37.01 ms</title></rect>
+<rect x="310.83" y="370.00" width="45.80" height="4.20" fill="#eda100"><title>r12 gemm.l1 37.03–43.74 ms</title></rect>
+<rect x="454.95" y="370.00" width="36.35" height="4.20" fill="#c9c8c0"><title>r12 barrier 58.15–63.47 ms</title></rect>
+<line x1="58.00" y1="377.10" x2="500.00" y2="377.10" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="378.60" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="310.83" y="375.00" width="45.86" height="4.20" fill="#c8553d"><title>r12 combine.pack 37.03–43.75 ms</title></rect>
+<rect x="310.88" y="375.00" width="54.03" height="4.20" fill="#c8553d"><title>r12 combine.prereduce 37.04–44.96 ms</title></rect>
+<rect x="413.25" y="375.00" width="0.52" height="4.20" fill="#c8553d"><title>r12 combine.reduce 52.04–52.11 ms</title></rect>
+<rect x="413.80" y="375.00" width="4.55" height="4.20" fill="#c8553d"><title>r12 combine.reduce 52.12–52.78 ms</title></rect>
+<rect x="436.11" y="375.00" width="18.82" height="4.20" fill="#c8553d"><title>r12 combine.reduce 55.39–58.14 ms</title></rect>
+<line x1="491.33" y1="359.60" x2="491.33" y2="379.60" stroke="#17191c" stroke-width="0.5"/>
+<text x="3.00" y="393.20" font-size="6.5" text-anchor="start" fill="#17191c" font-weight="bold">Skewed</text>
+<text x="3.00" y="400.20" font-size="5.2" text-anchor="start" fill="#5a5e66">3D-scheduled swap</text>
+<line x1="58.00" y1="388.30" x2="500.00" y2="388.30" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="389.80" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="124.07" y="386.20" width="23.74" height="4.20" fill="#2a78d6"><title>r9 nic.put 9.68–13.15 ms</title></rect>
+<rect x="147.83" y="386.20" width="32.61" height="4.20" fill="#2a78d6"><title>r9 nic.put 13.16–17.93 ms</title></rect>
+<rect x="180.49" y="386.20" width="18.39" height="4.20" fill="#2a78d6"><title>r9 nic.put 17.94–20.64 ms</title></rect>
+<rect x="305.78" y="386.20" width="100.95" height="4.20" fill="#2a78d6"><title>r9 nic.put 36.29–51.08 ms</title></rect>
+<rect x="336.59" y="386.20" width="70.12" height="4.20" fill="#2a78d6"><title>r9 nic.put 40.81–51.08 ms</title></rect>
+<rect x="366.18" y="386.20" width="40.54" height="4.20" fill="#2a78d6"><title>r9 nic.put 45.14–51.08 ms</title></rect>
+<line x1="58.00" y1="393.30" x2="500.00" y2="393.30" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="394.80" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="125.14" y="391.20" width="7.09" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 41 MB 9.83–10.87 ms</title></rect>
+<rect x="125.15" y="391.20" width="3.30" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 45 MB 9.84–10.32 ms</title></rect>
+<rect x="127.54" y="391.20" width="2.16" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 10.19–10.50 ms</title></rect>
+<rect x="129.74" y="391.20" width="2.16" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 10.51–10.83 ms</title></rect>
+<rect x="131.94" y="391.20" width="2.16" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 10.83–11.15 ms</title></rect>
+<rect x="132.38" y="391.20" width="5.13" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 10.89–11.65 ms</title></rect>
+<rect x="134.13" y="391.20" width="2.16" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 11.15–11.47 ms</title></rect>
+<rect x="136.31" y="391.20" width="2.81" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 39 MB 11.47–11.88 ms</title></rect>
+<rect x="137.54" y="391.20" width="5.13" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 11.65–12.40 ms</title></rect>
+<rect x="140.41" y="391.20" width="4.80" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 12.07–12.77 ms</title></rect>
+<rect x="145.25" y="391.20" width="2.16" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 12.78–13.10 ms</title></rect>
+<rect x="145.39" y="391.20" width="11.78" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 12.80–14.53 ms</title></rect>
+<rect x="147.44" y="391.20" width="2.13" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 13.10–13.41 ms</title></rect>
+<rect x="159.18" y="391.20" width="4.78" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 14.82–15.52 ms</title></rect>
+<rect x="164.21" y="391.20" width="11.44" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 15.56–17.23 ms</title></rect>
+<rect x="177.91" y="391.20" width="4.76" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 17.56–18.26 ms</title></rect>
+<rect x="182.92" y="391.20" width="4.78" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 18.30–19.00 ms</title></rect>
+<rect x="189.94" y="391.20" width="4.76" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 19.33–20.02 ms</title></rect>
+<rect x="194.89" y="391.20" width="4.78" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 20.05–20.75 ms</title></rect>
+<rect x="199.84" y="391.20" width="11.44" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 20.78–22.45 ms</title></rect>
+<rect x="253.63" y="391.20" width="2.36" height="4.20" fill="#0d6e4c"><title>r9 nvlink.swap [w2, combine side] 29 MB 28.66–29.00 ms</title></rect>
+<rect x="253.67" y="391.20" width="5.39" height="4.20" fill="#0d6e4c"><title>r9 nvlink.swap [w2, combine side] 29 MB 28.66–29.45 ms</title></rect>
+<rect x="256.02" y="391.20" width="2.17" height="4.20" fill="#0d6e4c"><title>r9 nvlink.swap [w2, combine side] 29 MB 29.01–29.32 ms</title></rect>
+<rect x="258.22" y="391.20" width="2.17" height="4.20" fill="#0d6e4c"><title>r9 nvlink.swap [w2, combine side] 29 MB 29.33–29.65 ms</title></rect>
+<rect x="259.09" y="391.20" width="5.13" height="4.20" fill="#0d6e4c"><title>r9 nvlink.swap [w2, combine side] 29 MB 29.46–30.21 ms</title></rect>
+<rect x="260.42" y="391.20" width="2.15" height="4.20" fill="#0d6e4c"><title>r9 nvlink.swap [w2, combine side] 29 MB 29.65–29.97 ms</title></rect>
+<rect x="264.29" y="391.20" width="2.14" height="4.20" fill="#0d6e4c"><title>r9 nvlink.swap [w2, combine side] 29 MB 30.22–30.53 ms</title></rect>
+<rect x="266.48" y="391.20" width="2.16" height="4.20" fill="#0d6e4c"><title>r9 nvlink.swap [w2, combine side] 29 MB 30.54–30.85 ms</title></rect>
+<rect x="293.36" y="391.20" width="4.09" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 56 MB 34.48–35.08 ms</title></rect>
+<rect x="293.37" y="391.20" width="4.18" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 57 MB 34.48–35.09 ms</title></rect>
+<rect x="297.68" y="391.20" width="9.98" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 57 MB 35.11–36.57 ms</title></rect>
+<rect x="322.13" y="391.20" width="4.23" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 58 MB 38.69–39.31 ms</title></rect>
+<rect x="322.13" y="391.20" width="4.09" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 56 MB 38.69–39.29 ms</title></rect>
+<rect x="326.36" y="391.20" width="10.06" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 58 MB 39.31–40.78 ms</title></rect>
+<rect x="353.14" y="391.20" width="4.09" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 56 MB 43.23–43.83 ms</title></rect>
+<rect x="353.14" y="391.20" width="4.13" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 56 MB 43.23–43.84 ms</title></rect>
+<rect x="357.43" y="391.20" width="9.96" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 57 MB 43.86–45.32 ms</title></rect>
+<rect x="371.68" y="391.20" width="4.47" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 58 MB 45.95–46.60 ms</title></rect>
+<rect x="371.68" y="391.20" width="10.03" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 57 MB 45.95–47.42 ms</title></rect>
+<rect x="381.85" y="391.20" width="4.44" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 58 MB 47.44–48.09 ms</title></rect>
+<line x1="58.00" y1="398.30" x2="500.00" y2="398.30" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="399.80" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="59.05" y="396.20" width="0.47" height="4.20" fill="#2f8f9d"><title>r9 plan.comm 0.15–0.22 ms</title></rect>
+<rect x="76.45" y="396.20" width="0.60" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 2.70–2.79 ms</title></rect>
+<rect x="78.25" y="396.20" width="8.36" height="4.20" fill="#2f8f9d"><title>r9 plan.comm 2.97–4.19 ms</title></rect>
+<rect x="86.91" y="396.20" width="1.93" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 4.23–4.52 ms</title></rect>
+<rect x="88.88" y="396.20" width="0.64" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 4.52–4.62 ms</title></rect>
+<rect x="89.52" y="396.20" width="1.13" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 4.62–4.78 ms</title></rect>
+<rect x="93.58" y="396.20" width="2.72" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 5.21–5.61 ms</title></rect>
+<rect x="97.45" y="396.20" width="1.59" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 5.78–6.01 ms</title></rect>
+<rect x="99.04" y="396.20" width="1.99" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 6.01–6.30 ms</title></rect>
+<rect x="101.04" y="396.20" width="1.75" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 6.30–6.56 ms</title></rect>
+<rect x="102.79" y="396.20" width="1.51" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 6.56–6.78 ms</title></rect>
+<rect x="104.32" y="396.20" width="2.16" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 6.78–7.10 ms</title></rect>
+<rect x="106.55" y="396.20" width="2.26" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 7.11–7.44 ms</title></rect>
+<rect x="108.88" y="396.20" width="1.83" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 7.45–7.72 ms</title></rect>
+<rect x="122.39" y="396.20" width="0.40" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 9.43–9.49 ms</title></rect>
+<rect x="122.83" y="396.20" width="0.68" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 9.50–9.60 ms</title></rect>
+<rect x="122.84" y="396.20" width="0.67" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 54 MB 9.50–9.60 ms</title></rect>
+<rect x="123.54" y="396.20" width="0.50" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 56 MB 9.60–9.67 ms</title></rect>
+<rect x="124.57" y="396.20" width="0.47" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 51 MB 9.75–9.82 ms</title></rect>
+<rect x="125.00" y="396.20" width="0.42" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 9.81–9.88 ms</title></rect>
+<rect x="125.43" y="396.20" width="112.08" height="4.20" fill="#eda100"><title>r9 gemm.l0 9.88–26.29 ms</title></rect>
+<rect x="149.72" y="396.20" width="0.74" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 13.44–13.54 ms</title></rect>
+<rect x="150.44" y="396.20" width="0.75" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 13.54–13.65 ms</title></rect>
+<rect x="151.16" y="396.20" width="0.76" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 13.65–13.76 ms</title></rect>
+<rect x="151.89" y="396.20" width="0.73" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 13.75–13.86 ms</title></rect>
+<rect x="152.60" y="396.20" width="0.73" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 13.86–13.96 ms</title></rect>
+<rect x="153.30" y="396.20" width="0.73" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 13.96–14.07 ms</title></rect>
+<rect x="154.00" y="396.20" width="0.73" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 14.06–14.17 ms</title></rect>
+<rect x="154.71" y="396.20" width="0.73" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 14.17–14.27 ms</title></rect>
+<rect x="157.30" y="396.20" width="1.76" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 66 MB 14.55–14.80 ms</title></rect>
+<rect x="175.73" y="396.20" width="2.03" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 66 MB 17.24–17.54 ms</title></rect>
+<rect x="187.89" y="396.20" width="1.93" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 66 MB 19.03–19.31 ms</title></rect>
+<rect x="238.19" y="396.20" width="5.40" height="4.20" fill="#c9c8c0"><title>r9 barrier 26.39–27.19 ms</title></rect>
+<rect x="243.62" y="396.20" width="2.40" height="4.20" fill="#2f8f9d"><title>r9 misc 27.19–27.54 ms</title></rect>
+<rect x="246.20" y="396.20" width="6.60" height="4.20" fill="#2f8f9d"><title>r9 misc 27.57–28.53 ms</title></rect>
+<rect x="252.98" y="396.20" width="0.39" height="4.20" fill="#c9c8c0"><title>r9 barrier 28.56–28.62 ms</title></rect>
+<rect x="253.62" y="396.20" width="117.35" height="4.20" fill="#eda100"><title>r9 gemm.l1 28.65–45.84 ms</title></rect>
+<rect x="268.74" y="396.20" width="0.37" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 30.87–30.92 ms</title></rect>
+<rect x="269.09" y="396.20" width="0.43" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 30.92–30.98 ms</title></rect>
+<rect x="269.51" y="396.20" width="0.43" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 30.98–31.04 ms</title></rect>
+<rect x="269.93" y="396.20" width="0.41" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 31.04–31.10 ms</title></rect>
+<rect x="270.32" y="396.20" width="0.43" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 31.10–31.16 ms</title></rect>
+<rect x="270.73" y="396.20" width="0.44" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 31.16–31.23 ms</title></rect>
+<rect x="271.16" y="396.20" width="0.36" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 31.22–31.28 ms</title></rect>
+<rect x="271.51" y="396.20" width="0.37" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 31.28–31.33 ms</title></rect>
+<rect x="292.32" y="396.20" width="0.91" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 57 MB 34.32–34.46 ms</title></rect>
+<rect x="321.05" y="396.20" width="1.00" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 57 MB 38.53–38.68 ms</title></rect>
+<rect x="351.98" y="396.20" width="1.06" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 56 MB 43.06–43.22 ms</title></rect>
+<rect x="371.09" y="396.20" width="0.50" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 58 MB 45.86–45.93 ms</title></rect>
+<rect x="407.43" y="396.20" width="44.74" height="4.20" fill="#c9c8c0"><title>r9 barrier 51.18–57.74 ms</title></rect>
+<line x1="58.00" y1="403.30" x2="500.00" y2="403.30" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="404.80" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="253.58" y="401.20" width="117.50" height="4.20" fill="#c8553d"><title>r9 combine.pack 28.65–45.86 ms</title></rect>
+<rect x="253.62" y="401.20" width="112.54" height="4.20" fill="#c8553d"><title>r9 combine.prereduce 28.65–45.14 ms</title></rect>
+<rect x="372.26" y="401.20" width="1.07" height="4.20" fill="#c8553d"><title>r9 combine.reduce 46.03–46.19 ms</title></rect>
+<rect x="373.38" y="401.20" width="9.93" height="4.20" fill="#c8553d"><title>r9 combine.reduce 46.20–47.65 ms</title></rect>
+<rect x="383.35" y="401.20" width="24.06" height="4.20" fill="#c8553d"><title>r9 combine.reduce 47.66–51.18 ms</title></rect>
+<line x1="452.18" y1="385.80" x2="452.18" y2="405.80" stroke="#17191c" stroke-width="0.5"/>
+<line x1="58.00" y1="410.00" x2="500.00" y2="410.00" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="411.50" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="110.84" y="407.90" width="29.77" height="4.20" fill="#2a78d6"><title>r13 nic.put 7.74–12.10 ms</title></rect>
+<rect x="140.66" y="407.90" width="23.30" height="4.20" fill="#2a78d6"><title>r13 nic.put 12.11–15.52 ms</title></rect>
+<rect x="164.97" y="407.90" width="25.89" height="4.20" fill="#2a78d6"><title>r13 nic.put 15.67–19.46 ms</title></rect>
+<rect x="277.32" y="407.90" width="69.13" height="4.20" fill="#2a78d6"><title>r13 nic.put 32.13–42.25 ms</title></rect>
+<rect x="291.04" y="407.90" width="55.42" height="4.20" fill="#2a78d6"><title>r13 nic.put 34.14–42.25 ms</title></rect>
+<rect x="305.11" y="407.90" width="41.35" height="4.20" fill="#2a78d6"><title>r13 nic.put 36.20–42.25 ms</title></rect>
+<line x1="58.00" y1="415.00" x2="500.00" y2="415.00" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="416.50" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="105.51" y="412.90" width="2.42" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 33 MB 6.96–7.31 ms</title></rect>
+<rect x="108.11" y="412.90" width="4.54" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 25 MB 7.34–8.01 ms</title></rect>
+<rect x="110.91" y="412.90" width="1.90" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 25 MB 7.75–8.03 ms</title></rect>
+<rect x="112.85" y="412.90" width="2.17" height="4.20" fill="#1baf7a"><title>r13 nvlink.swap [w1, dispatch side] 29 MB 8.03–8.35 ms</title></rect>
+<rect x="132.51" y="412.90" width="3.52" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 48 MB 10.91–11.43 ms</title></rect>
+<rect x="136.23" y="412.90" width="8.62" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 48 MB 11.46–12.72 ms</title></rect>
+<rect x="146.27" y="412.90" width="3.73" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 48 MB 12.93–13.48 ms</title></rect>
+<rect x="155.28" y="412.90" width="8.48" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 49 MB 14.25–15.49 ms</title></rect>
+<rect x="165.09" y="412.90" width="3.55" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 49 MB 15.69–16.21 ms</title></rect>
+<rect x="168.80" y="412.90" width="8.50" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 49 MB 16.23–17.48 ms</title></rect>
+<rect x="199.91" y="412.90" width="3.45" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 47 MB 20.79–21.29 ms</title></rect>
+<rect x="203.52" y="412.90" width="8.20" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 47 MB 21.32–22.52 ms</title></rect>
+<rect x="211.87" y="412.90" width="8.22" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 47 MB 22.54–23.74 ms</title></rect>
+<rect x="254.31" y="412.90" width="2.43" height="4.20" fill="#0d6e4c"><title>r13 nvlink.swap [w2, combine side] 29 MB 28.76–29.11 ms</title></rect>
+<rect x="268.06" y="412.90" width="4.09" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 23 MB 30.77–31.37 ms</title></rect>
+<rect x="268.06" y="412.90" width="1.69" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 23 MB 30.77–31.02 ms</title></rect>
+<rect x="272.26" y="412.90" width="1.91" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 24 MB 31.39–31.67 ms</title></rect>
+<rect x="281.50" y="412.90" width="1.63" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 22 MB 32.74–32.98 ms</title></rect>
+<rect x="281.50" y="412.90" width="3.88" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 22 MB 32.74–33.31 ms</title></rect>
+<rect x="285.51" y="412.90" width="1.59" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 22 MB 33.33–33.56 ms</title></rect>
+<rect x="295.34" y="412.90" width="1.73" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 22 MB 34.77–35.02 ms</title></rect>
+<rect x="295.34" y="412.90" width="3.75" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 21 MB 34.77–35.31 ms</title></rect>
+<rect x="299.18" y="412.90" width="1.68" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 22 MB 35.33–35.58 ms</title></rect>
+<rect x="304.62" y="412.90" width="2.14" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 29 MB 36.12–36.44 ms</title></rect>
+<rect x="304.62" y="412.90" width="2.20" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 30 MB 36.12–36.45 ms</title></rect>
+<rect x="307.01" y="412.90" width="5.04" height="4.20" fill="#2a78d6"><title>r13 nvlink.token 29 MB 36.48–37.21 ms</title></rect>
+<line x1="58.00" y1="420.00" x2="500.00" y2="420.00" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="421.50" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.85" y="417.90" width="0.67" height="4.20" fill="#2f8f9d"><title>r13 plan.comm 0.12–0.22 ms</title></rect>
+<rect x="76.08" y="417.90" width="1.09" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 2.65–2.81 ms</title></rect>
+<rect x="78.38" y="417.90" width="7.95" height="4.20" fill="#2f8f9d"><title>r13 plan.comm 2.99–4.15 ms</title></rect>
+<rect x="86.63" y="417.90" width="1.76" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 4.19–4.45 ms</title></rect>
+<rect x="88.43" y="417.90" width="0.61" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 4.46–4.55 ms</title></rect>
+<rect x="89.05" y="417.90" width="1.15" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 4.55–4.72 ms</title></rect>
+<rect x="92.97" y="417.90" width="2.71" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 5.12–5.52 ms</title></rect>
+<rect x="96.83" y="417.90" width="1.28" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 5.69–5.88 ms</title></rect>
+<rect x="98.12" y="417.90" width="0.91" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 5.88–6.01 ms</title></rect>
+<rect x="99.06" y="417.90" width="1.01" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 6.01–6.16 ms</title></rect>
+<rect x="100.08" y="417.90" width="0.98" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 6.16–6.31 ms</title></rect>
+<rect x="101.24" y="417.90" width="3.96" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 6.33–6.91 ms</title></rect>
+<rect x="105.32" y="417.90" width="2.49" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 6.93–7.30 ms</title></rect>
+<rect x="105.49" y="417.90" width="0.65" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 65 MB 6.96–7.05 ms</title></rect>
+<rect x="107.93" y="417.90" width="2.24" height="4.20" fill="#2f8f9d"><title>r13 plan.compute 7.31–7.64 ms</title></rect>
+<rect x="110.29" y="417.90" width="0.52" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 56 MB 7.66–7.73 ms</title></rect>
+<rect x="112.37" y="417.90" width="101.74" height="4.20" fill="#eda100"><title>r13 gemm.l0 7.96–22.87 ms</title></rect>
+<rect x="115.22" y="417.90" width="0.86" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 29 MB 8.38–8.51 ms</title></rect>
+<rect x="144.97" y="417.90" width="1.21" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 48 MB 12.74–12.92 ms</title></rect>
+<rect x="163.85" y="417.90" width="1.13" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 49 MB 15.51–15.67 ms</title></rect>
+<rect x="198.58" y="417.90" width="1.22" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 47 MB 20.59–20.77 ms</title></rect>
+<rect x="220.83" y="417.90" width="22.79" height="4.20" fill="#c9c8c0"><title>r13 barrier 23.85–27.19 ms</title></rect>
+<rect x="243.65" y="417.90" width="1.02" height="4.20" fill="#2f8f9d"><title>r13 misc 27.19–27.34 ms</title></rect>
+<rect x="244.79" y="417.90" width="2.80" height="4.20" fill="#2f8f9d"><title>r13 misc 27.36–27.77 ms</title></rect>
+<rect x="247.77" y="417.90" width="6.29" height="4.20" fill="#c9c8c0"><title>r13 barrier 27.80–28.72 ms</title></rect>
+<rect x="254.32" y="417.90" width="49.79" height="4.20" fill="#eda100"><title>r13 gemm.l1 28.76–36.05 ms</title></rect>
+<rect x="256.88" y="417.90" width="0.47" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 29 MB 29.13–29.20 ms</title></rect>
+<rect x="267.57" y="417.90" width="0.42" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 24 MB 30.70–30.76 ms</title></rect>
+<rect x="281.05" y="417.90" width="0.37" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 22 MB 32.67–32.73 ms</title></rect>
+<rect x="294.85" y="417.90" width="0.40" height="4.20" fill="#2a78d6"><title>r13 copy.d2d 23 MB 34.69–34.75 ms</title></rect>
+<rect x="389.56" y="417.90" width="62.87" height="4.20" fill="#c9c8c0"><title>r13 barrier 48.57–57.78 ms</title></rect>
+<line x1="58.00" y1="425.00" x2="500.00" y2="425.00" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="426.50" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="254.28" y="422.90" width="49.91" height="4.20" fill="#c8553d"><title>r13 combine.pack 28.75–36.06 ms</title></rect>
+<rect x="254.32" y="422.90" width="50.80" height="4.20" fill="#c8553d"><title>r13 combine.prereduce 28.76–36.20 ms</title></rect>
+<rect x="365.29" y="422.90" width="0.42" height="4.20" fill="#c8553d"><title>r13 combine.reduce 45.01–45.07 ms</title></rect>
+<rect x="365.74" y="422.90" width="3.55" height="4.20" fill="#c8553d"><title>r13 combine.reduce 45.08–45.60 ms</title></rect>
+<rect x="370.80" y="422.90" width="18.74" height="4.20" fill="#c8553d"><title>r13 combine.reduce 45.82–48.56 ms</title></rect>
+<line x1="452.45" y1="407.50" x2="452.45" y2="427.50" stroke="#17191c" stroke-width="0.5"/>
+<text x="3.00" y="441.10" font-size="6.5" text-anchor="start" fill="#17191c" font-weight="bold">Skewed</text>
+<text x="3.00" y="448.10" font-size="5.2" text-anchor="start" fill="#5a5e66">swap under l0 GEMM</text>
+<line x1="58.00" y1="436.20" x2="500.00" y2="436.20" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="437.70" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="110.55" y="434.10" width="17.64" height="4.20" fill="#2a78d6"><title>r9 nic.put 7.70–10.28 ms</title></rect>
+<rect x="128.21" y="434.10" width="28.95" height="4.20" fill="#2a78d6"><title>r9 nic.put 10.28–14.53 ms</title></rect>
+<rect x="159.02" y="434.10" width="26.33" height="4.20" fill="#2a78d6"><title>r9 nic.put 14.80–18.65 ms</title></rect>
+<rect x="306.97" y="434.10" width="99.55" height="4.20" fill="#2a78d6"><title>r9 nic.put 36.47–51.05 ms</title></rect>
+<rect x="336.87" y="434.10" width="69.65" height="4.20" fill="#2a78d6"><title>r9 nic.put 40.85–51.05 ms</title></rect>
+<rect x="359.54" y="434.10" width="46.99" height="4.20" fill="#2a78d6"><title>r9 nic.put 44.17–51.05 ms</title></rect>
+<line x1="58.00" y1="441.20" x2="500.00" y2="441.20" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="442.70" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="111.12" y="439.10" width="3.38" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 45 MB 7.78–8.28 ms</title></rect>
+<rect x="111.15" y="439.10" width="2.99" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 41 MB 7.78–8.22 ms</title></rect>
+<rect x="113.19" y="439.10" width="5.14" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 8.08–8.84 ms</title></rect>
+<rect x="118.40" y="439.10" width="5.14" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 8.85–9.60 ms</title></rect>
+<rect x="123.56" y="439.10" width="5.13" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 9.60–10.35 ms</title></rect>
+<rect x="128.72" y="439.10" width="6.73" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 39 MB 10.36–11.34 ms</title></rect>
+<rect x="135.48" y="439.10" width="6.84" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 11.35–12.35 ms</title></rect>
+<rect x="139.04" y="439.10" width="7.51" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 11.87–12.97 ms</title></rect>
+<rect x="142.32" y="439.10" width="4.29" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 12.35–12.98 ms</title></rect>
+<rect x="146.62" y="439.10" width="4.31" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 12.98–13.61 ms</title></rect>
+<rect x="146.66" y="439.10" width="4.26" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 12.99–13.61 ms</title></rect>
+<rect x="146.84" y="439.10" width="11.59" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 13.01–14.71 ms</title></rect>
+<rect x="150.98" y="439.10" width="2.18" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 13.62–13.94 ms</title></rect>
+<rect x="157.72" y="439.10" width="2.18" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 14.61–14.93 ms</title></rect>
+<rect x="159.21" y="439.10" width="5.15" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 14.83–15.58 ms</title></rect>
+<rect x="159.93" y="439.10" width="2.18" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 14.93–15.25 ms</title></rect>
+<rect x="160.98" y="439.10" width="4.96" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 15.08–15.81 ms</title></rect>
+<rect x="162.16" y="439.10" width="2.18" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 15.26–15.58 ms</title></rect>
+<rect x="164.40" y="439.10" width="2.19" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 15.59–15.91 ms</title></rect>
+<rect x="164.48" y="439.10" width="5.15" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 15.60–16.35 ms</title></rect>
+<rect x="169.67" y="439.10" width="11.52" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 16.36–18.04 ms</title></rect>
+<rect x="169.71" y="439.10" width="2.14" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 16.36–16.68 ms</title></rect>
+<rect x="181.28" y="439.10" width="2.15" height="4.20" fill="#1baf7a"><title>r9 nvlink.swap [w1, dispatch side] 29 MB 18.06–18.37 ms</title></rect>
+<rect x="183.81" y="439.10" width="4.83" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 18.43–19.14 ms</title></rect>
+<rect x="188.83" y="439.10" width="11.74" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 19.16–20.88 ms</title></rect>
+<rect x="202.78" y="439.10" width="4.76" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 21.21–21.91 ms</title></rect>
+<rect x="207.73" y="439.10" width="11.45" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 21.93–23.61 ms</title></rect>
+<rect x="219.33" y="439.10" width="11.54" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 66 MB 23.63–25.32 ms</title></rect>
+<rect x="285.95" y="439.10" width="4.10" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 56 MB 33.39–33.99 ms</title></rect>
+<rect x="285.95" y="439.10" width="4.36" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 57 MB 33.39–34.03 ms</title></rect>
+<rect x="290.49" y="439.10" width="9.98" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 57 MB 34.05–35.52 ms</title></rect>
+<rect x="316.41" y="439.10" width="4.09" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 56 MB 37.85–38.45 ms</title></rect>
+<rect x="316.41" y="439.10" width="4.23" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 58 MB 37.85–38.47 ms</title></rect>
+<rect x="320.60" y="439.10" width="10.05" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 58 MB 38.47–39.94 ms</title></rect>
+<rect x="344.78" y="439.10" width="4.11" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 56 MB 42.01–42.61 ms</title></rect>
+<rect x="344.78" y="439.10" width="4.14" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 56 MB 42.01–42.61 ms</title></rect>
+<rect x="349.07" y="439.10" width="9.91" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 57 MB 42.64–44.09 ms</title></rect>
+<rect x="359.69" y="439.10" width="4.27" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 58 MB 44.19–44.82 ms</title></rect>
+<rect x="359.69" y="439.10" width="10.01" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 57 MB 44.19–45.66 ms</title></rect>
+<rect x="369.78" y="439.10" width="4.22" height="4.20" fill="#2a78d6"><title>r9 nvlink.token 58 MB 45.67–46.29 ms</title></rect>
+<line x1="58.00" y1="446.20" x2="500.00" y2="446.20" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="447.70" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="58.93" y="444.10" width="1.27" height="4.20" fill="#2f8f9d"><title>r9 plan.comm 0.14–0.32 ms</title></rect>
+<rect x="76.73" y="444.10" width="0.61" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 2.74–2.83 ms</title></rect>
+<rect x="78.52" y="444.10" width="7.90" height="4.20" fill="#2f8f9d"><title>r9 plan.comm 3.01–4.16 ms</title></rect>
+<rect x="86.73" y="444.10" width="1.93" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 4.21–4.49 ms</title></rect>
+<rect x="88.70" y="444.10" width="0.63" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 4.50–4.59 ms</title></rect>
+<rect x="89.34" y="444.10" width="1.13" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 4.59–4.76 ms</title></rect>
+<rect x="93.32" y="444.10" width="2.71" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 5.17–5.57 ms</title></rect>
+<rect x="97.12" y="444.10" width="1.59" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 5.73–5.96 ms</title></rect>
+<rect x="98.72" y="444.10" width="1.99" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 5.96–6.26 ms</title></rect>
+<rect x="100.71" y="444.10" width="1.75" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 6.26–6.51 ms</title></rect>
+<rect x="102.47" y="444.10" width="1.50" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 6.51–6.73 ms</title></rect>
+<rect x="103.98" y="444.10" width="2.15" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 6.74–7.05 ms</title></rect>
+<rect x="106.20" y="444.10" width="2.25" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 7.06–7.39 ms</title></rect>
+<rect x="108.52" y="444.10" width="2.59" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 7.40–7.78 ms</title></rect>
+<rect x="109.08" y="444.10" width="0.47" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 54 MB 7.48–7.55 ms</title></rect>
+<rect x="110.01" y="444.10" width="0.52" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 56 MB 7.62–7.69 ms</title></rect>
+<rect x="110.63" y="444.10" width="0.43" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 51 MB 7.71–7.77 ms</title></rect>
+<rect x="111.54" y="444.10" width="0.42" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 7.84–7.90 ms</title></rect>
+<rect x="112.04" y="444.10" width="0.43" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 7.92–7.98 ms</title></rect>
+<rect x="113.18" y="444.10" width="0.43" height="4.20" fill="#2f8f9d"><title>r9 plan.compute 8.08–8.15 ms</title></rect>
+<rect x="113.63" y="444.10" width="129.76" height="4.20" fill="#eda100"><title>r9 gemm.l0 8.15–27.15 ms</title></rect>
+<rect x="153.28" y="444.10" width="0.74" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 13.96–14.07 ms</title></rect>
+<rect x="154.00" y="444.10" width="0.75" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 14.06–14.17 ms</title></rect>
+<rect x="154.72" y="444.10" width="0.75" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 14.17–14.28 ms</title></rect>
+<rect x="155.44" y="444.10" width="0.75" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 14.27–14.38 ms</title></rect>
+<rect x="156.16" y="444.10" width="0.74" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 14.38–14.49 ms</title></rect>
+<rect x="156.88" y="444.10" width="0.73" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 14.48–14.59 ms</title></rect>
+<rect x="157.60" y="444.10" width="0.73" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 14.59–14.70 ms</title></rect>
+<rect x="158.31" y="444.10" width="0.73" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 14.69–14.80 ms</title></rect>
+<rect x="159.03" y="444.10" width="1.77" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 66 MB 14.80–15.06 ms</title></rect>
+<rect x="181.31" y="444.10" width="2.34" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 66 MB 18.06–18.41 ms</title></rect>
+<rect x="183.61" y="444.10" width="0.93" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 18.40–18.54 ms</title></rect>
+<rect x="184.51" y="444.10" width="0.89" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 18.53–18.66 ms</title></rect>
+<rect x="185.39" y="444.10" width="0.92" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 18.66–18.80 ms</title></rect>
+<rect x="186.29" y="444.10" width="0.99" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 18.79–18.94 ms</title></rect>
+<rect x="187.26" y="444.10" width="1.02" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 18.93–19.08 ms</title></rect>
+<rect x="188.25" y="444.10" width="1.15" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 19.08–19.25 ms</title></rect>
+<rect x="189.37" y="444.10" width="1.18" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 19.24–19.42 ms</title></rect>
+<rect x="190.53" y="444.10" width="1.12" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 29 MB 19.41–19.58 ms</title></rect>
+<rect x="200.70" y="444.10" width="1.98" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 66 MB 20.90–21.19 ms</title></rect>
+<rect x="244.00" y="444.10" width="5.76" height="4.20" fill="#c9c8c0"><title>r9 barrier 27.25–28.09 ms</title></rect>
+<rect x="249.80" y="444.10" width="2.40" height="4.20" fill="#2f8f9d"><title>r9 misc 28.10–28.45 ms</title></rect>
+<rect x="252.30" y="444.10" width="6.60" height="4.20" fill="#2f8f9d"><title>r9 misc 28.46–29.43 ms</title></rect>
+<rect x="259.49" y="444.10" width="99.54" height="4.20" fill="#eda100"><title>r9 gemm.l1 29.51–44.10 ms</title></rect>
+<rect x="284.89" y="444.10" width="1.00" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 57 MB 33.23–33.38 ms</title></rect>
+<rect x="315.25" y="444.10" width="1.07" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 57 MB 37.68–37.84 ms</title></rect>
+<rect x="344.07" y="444.10" width="0.59" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 56 MB 41.90–41.99 ms</title></rect>
+<rect x="359.09" y="444.10" width="0.56" height="4.20" fill="#2a78d6"><title>r9 copy.d2d 58 MB 44.10–44.19 ms</title></rect>
+<rect x="406.55" y="444.10" width="26.87" height="4.20" fill="#c9c8c0"><title>r9 barrier 51.06–54.99 ms</title></rect>
+<line x1="58.00" y1="451.20" x2="500.00" y2="451.20" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="452.70" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="259.49" y="449.10" width="99.59" height="4.20" fill="#c8553d"><title>r9 combine.pack 29.51–44.10 ms</title></rect>
+<rect x="259.55" y="449.10" width="99.65" height="4.20" fill="#c8553d"><title>r9 combine.prereduce 29.52–44.12 ms</title></rect>
+<rect x="361.84" y="449.10" width="0.84" height="4.20" fill="#c8553d"><title>r9 combine.reduce 44.51–44.63 ms</title></rect>
+<rect x="362.70" y="449.10" width="7.55" height="4.20" fill="#c8553d"><title>r9 combine.reduce 44.63–45.74 ms</title></rect>
+<rect x="370.27" y="449.10" width="19.09" height="4.20" fill="#c8553d"><title>r9 combine.reduce 45.74–48.54 ms</title></rect>
+<line x1="433.44" y1="433.70" x2="433.44" y2="453.70" stroke="#17191c" stroke-width="0.5"/>
+<line x1="58.00" y1="457.90" x2="500.00" y2="457.90" stroke="#7d8289" stroke-width="0.5"/>
+<text x="56.00" y="459.40" font-size="3.6" text-anchor="end" fill="#5a5e66">NIC RDMA</text>
+<rect x="109.20" y="455.80" width="23.68" height="4.20" fill="#2a78d6"><title>r6 nic.put 7.50–10.97 ms</title></rect>
+<rect x="132.91" y="455.80" width="18.24" height="4.20" fill="#2a78d6"><title>r6 nic.put 10.97–13.64 ms</title></rect>
+<rect x="151.21" y="455.80" width="25.23" height="4.20" fill="#2a78d6"><title>r6 nic.put 13.65–17.35 ms</title></rect>
+<rect x="293.13" y="455.80" width="79.48" height="4.20" fill="#2a78d6"><title>r6 nic.put 34.44–46.08 ms</title></rect>
+<rect x="305.41" y="455.80" width="67.21" height="4.20" fill="#2a78d6"><title>r6 nic.put 36.24–46.09 ms</title></rect>
+<rect x="321.66" y="455.80" width="50.96" height="4.20" fill="#2a78d6"><title>r6 nic.put 38.62–46.09 ms</title></rect>
+<line x1="58.00" y1="462.90" x2="500.00" y2="462.90" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="2,1.5"/>
+<text x="56.00" y="464.40" font-size="3.6" text-anchor="end" fill="#5a5e66">NVLink</text>
+<rect x="105.09" y="460.80" width="2.32" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 31 MB 6.90–7.24 ms</title></rect>
+<rect x="109.30" y="460.80" width="1.99" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 27 MB 7.51–7.81 ms</title></rect>
+<rect x="111.46" y="460.80" width="1.91" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 26 MB 7.83–8.11 ms</title></rect>
+<rect x="115.21" y="460.80" width="2.17" height="4.20" fill="#1baf7a"><title>r6 nvlink.swap [w1, dispatch side] 29 MB 8.38–8.70 ms</title></rect>
+<rect x="118.69" y="460.80" width="2.15" height="4.20" fill="#1baf7a"><title>r6 nvlink.swap [w1, dispatch side] 29 MB 8.89–9.21 ms</title></rect>
+<rect x="131.75" y="460.80" width="4.01" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 55 MB 10.80–11.39 ms</title></rect>
+<rect x="135.92" y="460.80" width="4.16" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 55 MB 11.41–12.02 ms</title></rect>
+<rect x="141.64" y="460.80" width="4.12" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 55 MB 12.25–12.86 ms</title></rect>
+<rect x="162.55" y="460.80" width="3.98" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 55 MB 15.31–15.90 ms</title></rect>
+<rect x="167.92" y="460.80" width="3.98" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 55 MB 16.10–16.69 ms</title></rect>
+<rect x="172.07" y="460.80" width="4.17" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 55 MB 16.71–17.32 ms</title></rect>
+<rect x="192.81" y="460.80" width="4.03" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 55 MB 19.75–20.34 ms</title></rect>
+<rect x="196.97" y="460.80" width="4.01" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 55 MB 20.36–20.94 ms</title></rect>
+<rect x="201.14" y="460.80" width="3.99" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 55 MB 20.97–21.55 ms</title></rect>
+<rect x="276.22" y="460.80" width="1.98" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 27 MB 31.96–32.25 ms</title></rect>
+<rect x="276.24" y="460.80" width="2.29" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 27 MB 31.97–32.30 ms</title></rect>
+<rect x="278.67" y="460.80" width="1.87" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 26 MB 32.32–32.60 ms</title></rect>
+<rect x="294.60" y="460.80" width="1.99" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 27 MB 34.66–34.95 ms</title></rect>
+<rect x="294.61" y="460.80" width="2.09" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 28 MB 34.66–34.97 ms</title></rect>
+<rect x="296.76" y="460.80" width="2.05" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 28 MB 34.97–35.27 ms</title></rect>
+<rect x="307.14" y="460.80" width="1.85" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 25 MB 36.49–36.77 ms</title></rect>
+<rect x="307.21" y="460.80" width="1.87" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 25 MB 36.50–36.78 ms</title></rect>
+<rect x="309.22" y="460.80" width="1.91" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 26 MB 36.80–37.08 ms</title></rect>
+<rect x="316.66" y="460.80" width="2.52" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 34 MB 37.89–38.26 ms</title></rect>
+<rect x="316.67" y="460.80" width="2.54" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 34 MB 37.89–38.26 ms</title></rect>
+<rect x="319.31" y="460.80" width="2.44" height="4.20" fill="#2a78d6"><title>r6 nvlink.token 34 MB 38.28–38.63 ms</title></rect>
+<line x1="58.00" y1="467.90" x2="500.00" y2="467.90" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="469.40" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU</text>
+<rect x="78.97" y="465.80" width="1.02" height="4.20" fill="#2f8f9d"><title>r6 plan.compute 3.07–3.22 ms</title></rect>
+<rect x="81.55" y="465.80" width="4.59" height="4.20" fill="#2f8f9d"><title>r6 plan.comm 3.45–4.12 ms</title></rect>
+<rect x="86.44" y="465.80" width="1.90" height="4.20" fill="#2f8f9d"><title>r6 plan.compute 4.17–4.44 ms</title></rect>
+<rect x="88.38" y="465.80" width="0.60" height="4.20" fill="#2f8f9d"><title>r6 plan.compute 4.45–4.54 ms</title></rect>
+<rect x="88.99" y="465.80" width="1.14" height="4.20" fill="#2f8f9d"><title>r6 plan.compute 4.54–4.71 ms</title></rect>
+<rect x="93.48" y="465.80" width="2.71" height="4.20" fill="#2f8f9d"><title>r6 plan.compute 5.20–5.59 ms</title></rect>
+<rect x="97.32" y="465.80" width="1.09" height="4.20" fill="#2f8f9d"><title>r6 plan.compute 5.76–5.92 ms</title></rect>
+<rect x="98.42" y="465.80" width="1.20" height="4.20" fill="#2f8f9d"><title>r6 plan.compute 5.92–6.10 ms</title></rect>
+<rect x="99.63" y="465.80" width="1.07" height="4.20" fill="#2f8f9d"><title>r6 plan.compute 6.10–6.25 ms</title></rect>
+<rect x="100.72" y="465.80" width="1.03" height="4.20" fill="#2f8f9d"><title>r6 plan.compute 6.26–6.41 ms</title></rect>
+<rect x="101.96" y="465.80" width="3.43" height="4.20" fill="#2f8f9d"><title>r6 plan.compute 6.44–6.94 ms</title></rect>
+<rect x="105.41" y="465.80" width="0.49" height="4.20" fill="#2a78d6"><title>r6 copy.d2d 56 MB 6.95–7.02 ms</title></rect>
+<rect x="105.83" y="465.80" width="2.94" height="4.20" fill="#2f8f9d"><title>r6 plan.compute 7.01–7.44 ms</title></rect>
+<rect x="108.80" y="465.80" width="0.36" height="4.20" fill="#2a78d6"><title>r6 copy.d2d 48 MB 7.44–7.49 ms</title></rect>
+<rect x="109.14" y="465.80" width="4.06" height="4.20" fill="#2f8f9d"><title>r6 plan.compute 7.49–8.08 ms</title></rect>
+<rect x="115.45" y="465.80" width="96.28" height="4.20" fill="#eda100"><title>r6 gemm.l0 8.42–22.52 ms</title></rect>
+<rect x="117.55" y="465.80" width="0.96" height="4.20" fill="#2a78d6"><title>r6 copy.d2d 29 MB 8.72–8.86 ms</title></rect>
+<rect x="121.06" y="465.80" width="0.90" height="4.20" fill="#2a78d6"><title>r6 copy.d2d 29 MB 9.24–9.37 ms</title></rect>
+<rect x="140.23" y="465.80" width="1.29" height="4.20" fill="#2a78d6"><title>r6 copy.d2d 55 MB 12.04–12.23 ms</title></rect>
+<rect x="166.62" y="465.80" width="1.23" height="4.20" fill="#2a78d6"><title>r6 copy.d2d 55 MB 15.91–16.09 ms</title></rect>
+<rect x="191.33" y="465.80" width="1.32" height="4.20" fill="#2a78d6"><title>r6 copy.d2d 55 MB 19.53–19.72 ms</title></rect>
+<rect x="212.51" y="465.80" width="37.63" height="4.20" fill="#c9c8c0"><title>r6 barrier 22.63–28.14 ms</title></rect>
+<rect x="250.17" y="465.80" width="1.21" height="4.20" fill="#2f8f9d"><title>r6 misc 28.15–28.33 ms</title></rect>
+<rect x="251.53" y="465.80" width="3.30" height="4.20" fill="#2f8f9d"><title>r6 misc 28.35–28.83 ms</title></rect>
+<rect x="254.97" y="465.80" width="4.95" height="4.20" fill="#c9c8c0"><title>r6 barrier 28.85–29.58 ms</title></rect>
+<rect x="259.92" y="465.80" width="56.22" height="4.20" fill="#eda100"><title>r6 gemm.l1 29.58–37.81 ms</title></rect>
+<rect x="275.58" y="465.80" width="0.54" height="4.20" fill="#2a78d6"><title>r6 copy.d2d 26 MB 31.87–31.95 ms</title></rect>
+<rect x="294.03" y="465.80" width="0.49" height="4.20" fill="#2a78d6"><title>r6 copy.d2d 28 MB 34.57–34.65 ms</title></rect>
+<rect x="430.78" y="465.80" width="1.96" height="4.20" fill="#c9c8c0"><title>r6 barrier 54.60–54.89 ms</title></rect>
+<line x1="58.00" y1="472.90" x2="500.00" y2="472.90" stroke="#7d8289" stroke-width="0.5" stroke-dasharray="0.6,1.2"/>
+<text x="56.00" y="474.40" font-size="3.6" text-anchor="end" fill="#5a5e66">GPU (side)</text>
+<rect x="260.16" y="470.80" width="56.06" height="4.20" fill="#c8553d"><title>r6 combine.pack 29.61–37.82 ms</title></rect>
+<rect x="260.18" y="470.80" width="61.48" height="4.20" fill="#c8553d"><title>r6 combine.prereduce 29.61–38.62 ms</title></rect>
+<rect x="328.65" y="470.80" width="0.55" height="4.20" fill="#c8553d"><title>r6 combine.reduce 39.64–39.73 ms</title></rect>
+<rect x="408.81" y="470.80" width="21.94" height="4.20" fill="#c8553d"><title>r6 combine.reduce 51.39–54.60 ms</title></rect>
+<line x1="432.75" y1="455.40" x2="432.75" y2="475.40" stroke="#17191c" stroke-width="0.5"/>
+<line x1="58.00" y1="477.00" x2="500.00" y2="477.00" stroke="#5a5e66" stroke-width="0.5"/>
+<line x1="58.00" y1="477.00" x2="58.00" y2="478.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="58.00" y="484.00" font-size="5" text-anchor="middle" fill="#5a5e66">0</text>
+<line x1="194.54" y1="477.00" x2="194.54" y2="478.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="194.54" y="484.00" font-size="5" text-anchor="middle" fill="#5a5e66">20</text>
+<line x1="331.07" y1="477.00" x2="331.07" y2="478.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="331.07" y="484.00" font-size="5" text-anchor="middle" fill="#5a5e66">40</text>
+<line x1="467.61" y1="477.00" x2="467.61" y2="478.80" stroke="#5a5e66" stroke-width="0.5"/>
+<text x="467.61" y="484.00" font-size="5" text-anchor="middle" fill="#5a5e66">60</text>
+<text x="500.00" y="484.00" font-size="5" text-anchor="end" fill="#5a5e66">ms</text>
+<rect x="58.00" y="490.00" width="8.00" height="4.50" fill="#2a78d6"></rect>
+<text x="68.00" y="494.00" font-size="5.2" text-anchor="start" fill="#5a5e66">Token Comm.</text>
+<rect x="105.25" y="490.00" width="8.00" height="4.50" fill="#1baf7a"></rect>
+<text x="115.25" y="494.00" font-size="5.2" text-anchor="start" fill="#5a5e66">Expert Comm. (disp.)</text>
+<rect x="177.25" y="490.00" width="8.00" height="4.50" fill="#0d6e4c"></rect>
+<text x="187.25" y="494.00" font-size="5.2" text-anchor="start" fill="#5a5e66">Expert Comm. (comb.)</text>
+<rect x="249.25" y="490.00" width="8.00" height="4.50" fill="#eda100"></rect>
+<text x="259.25" y="494.00" font-size="5.2" text-anchor="start" fill="#5a5e66">Expert Comp.</text>
+<rect x="299.25" y="490.00" width="8.00" height="4.50" fill="#c8553d"></rect>
+<text x="309.25" y="494.00" font-size="5.2" text-anchor="start" fill="#5a5e66">Top-k Reduce</text>
+<rect x="349.25" y="490.00" width="8.00" height="4.50" fill="#2f8f9d"></rect>
+<text x="359.25" y="494.00" font-size="5.2" text-anchor="start" fill="#5a5e66">Plan / Meta</text>
+<rect x="396.50" y="490.00" width="8.00" height="4.50" fill="#c9c8c0"></rect>
+<text x="406.50" y="494.00" font-size="5.2" text-anchor="start" fill="#5a5e66">Wait</text>
+<line x1="424.50" y1="489.00" x2="424.50" y2="495.50" stroke="#17191c" stroke-width="0.5"/>
+<text x="427.50" y="494.00" font-size="5.2" text-anchor="start" fill="#5a5e66">iteration end</text>
+<line x1="472.25" y1="492.20" x2="484.25" y2="492.20" stroke="#7d8289" stroke-width="0.6"/>
+<text x="486.25" y="494.00" font-size="5.2" text-anchor="start" fill="#5a5e66">NIC RDMA</text>
+<line x1="515.25" y1="492.20" x2="527.25" y2="492.20" stroke="#7d8289" stroke-width="0.6" stroke-dasharray="2,1.5"/>
+<text x="529.25" y="494.00" font-size="5.2" text-anchor="start" fill="#5a5e66">NVLink</text>
+<line x1="552.75" y1="492.20" x2="564.75" y2="492.20" stroke="#7d8289" stroke-width="0.6" stroke-dasharray="0.6,1.2"/>
+<text x="566.75" y="494.00" font-size="5.2" text-anchor="start" fill="#5a5e66">GPU</text>
+</svg>
