@@ -22,15 +22,16 @@ CONFIG = dict(
     SRC=os.path.join(HERE, "figure_src.csv"),
     OUT_STEM=os.path.join(HERE, "intro_v4"),
     # --- geometry, inches (USENIX column 3.33 in). Height is DERIVED from the stack below. ---
-    FIG_W=3.33, LEFT_IN=0.50, RIGHT_IN=0.45,     # right margin holds the colorbar + its label
-    TOP_IN=0.05, BOT_IN=0.06,
-    ROW_A_IN=0.52, ROW_B_IN=0.38,                # bar panel heights
-    GAP_AB_IN=0.50, GAP_BC_IN=0.52,   # AB holds (a) x label + sub-label + the (b) column titles;
+    FIG_W=3.33, LEFT_IN=0.54, RIGHT_IN=0.31,     # LEFT holds every "Normalized ..." label (incl. the colorbar);
+                                                 # RIGHT holds the Sender NIC scale
+    TOP_IN=0.12, BOT_IN=0.06,   # TOP: the rotated two-line (a) y label is taller than its own row
+    ROW_A_IN=0.46, ROW_B_IN=0.34,                # bar panel heights
+    GAP_AB_IN=0.40, GAP_BC_IN=0.42,   # AB holds (a) x label + sub-label + the (b) column titles;
                                      # BC holds (b) tick labels + "GPU" + sub-label              # x label + sub-label (+ map titles) between rows
-    BELOW_C_IN=0.42,                             # tick labels + "Receiver NIC" + sub-label under the maps
+    BELOW_C_IN=0.36,                             # tick labels + "Receiver NIC" + sub-label under the maps
     HM_GAP_IN=0.14, CBAR_W_IN=0.07, CBAR_GAP_IN=0.05,
-    SUBLABEL_IN=dict(a=0.20, b=0.28, c=0.26),    # sub-label distance below each row's axes
-    HM_XLABEL_IN=0.14,                           # "Receiver NIC" below the maps (tick labels above it)
+    SUBLABEL_IN=dict(a=0.17, b=0.24, c=0.23),    # sub-label distance below each row's axes
+    HM_XLABEL_IN=0.12,                           # "Receiver NIC" below the maps (tick labels above it)
     # --- topics ---
     TOPICS=["livecodebench/execution", "mmlu/professional_law"],
     TOPIC_NAMES={"livecodebench/execution": "LiveCodeBench", "mmlu/professional_law": "MMLU prof. law"},
@@ -42,7 +43,7 @@ CONFIG = dict(
     # --- (b) compute: amber family = "Expert Comp." in the later figures (#eda100) ---
     B_COLOR="#eda100", B_YLABEL="Normalized\ncompute", B_XLABEL="GPU",
     B_YMAX=None,   # None = next 0.5 above the data max
-    B_XLABEL_IN=0.14,   # "GPU" below the bars (tick labels above it), as HM_XLABEL_IN does for the maps                 # None = next 0.5 above the data max
+    B_XLABEL_IN=0.12,   # "GPU" below the bars (tick labels above it), as HM_XLABEL_IN does for the maps                 # None = next 0.5 above the data max
     # --- (c) NIC traffic: blue family = "Token Comm." (#2a78d6) ---
     CMAP="Blues", VMIN=0.0, VMAX=None, NIC_ONLY=True,
     HM_XLABEL="Receiver NIC", HM_YLABEL="Sender NIC", CBAR_LABEL="Normalized traffic",
@@ -106,7 +107,7 @@ def main():
     ax_a = ax_at(y, cfg["ROW_A_IN"]); y += cfg["ROW_A_IN"] + cfg["GAP_AB_IN"]
     ax_b = [ax_at(y, cfg["ROW_B_IN"], x, side / fw) for x in COL_X]; y += cfg["ROW_B_IN"] + cfg["GAP_BC_IN"]
     ax_c = [ax_at(y, side, x, side / fw) for x in COL_X]
-    ax_cb = ax_at(y, side, X0 + (2 * side + cfg["HM_GAP_IN"] + cfg["CBAR_GAP_IN"]) / fw, cfg["CBAR_W_IN"] / fw)
+    ax_cb = ax_at(y, side, X0 - (cfg["CBAR_GAP_IN"] + cfg["CBAR_W_IN"]) / fw, cfg["CBAR_W_IN"] / fw)
 
     # ---- (a) expert activation frequency, sorted ----
     ids = np.arange(G)
@@ -171,9 +172,12 @@ def main():
         ax.set_xticks(range(W), minor=True); ax.set_yticks(range(W), minor=True)
         ax.tick_params(labelsize=fs["tick"], pad=1.5, length=1.6)
         ax.tick_params(which="minor", length=1.0)
-    ax_c[0].set_ylabel(cfg["HM_YLABEL"], fontsize=fs["label"], labelpad=2)
-    ax_c[1].tick_params(labelleft=False)
+    ax_c[0].tick_params(labelleft=False)          # the Sender NIC scale moves to the right edge, so the
+    ax_c[1].yaxis.tick_right()                    # left edge of every row carries a "Normalized ..." label
+    ax_c[1].yaxis.set_label_position("right")
+    ax_c[1].set_ylabel(cfg["HM_YLABEL"], fontsize=fs["label"], labelpad=2)
     cb = fig.colorbar(im, cax=ax_cb)
+    cb.ax.yaxis.set_ticks_position("left"); cb.ax.yaxis.set_label_position("left")
     cb.set_label(cfg["CBAR_LABEL"], fontsize=fs["label"], labelpad=2)
     cb.ax.tick_params(labelsize=fs["cbar"], pad=1.5, length=1.5)
     cb.outline.set_linewidth(0.5)

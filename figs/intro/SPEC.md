@@ -95,6 +95,14 @@ the rejected alternatives: `intro_options.html` (options page, 2026-09-04).
   label centered under both columns **[knob: B_XLABEL_IN]** — so the
   resource is named on its own row (GPU vs NIC) even though the bars are
   column-bound to the maps.
+  **v4 spacing + scale sides (user, 2026-09-13):** rows compressed again
+  (ROW_A 0.52->0.46, ROW_B 0.38->0.34, GAP_AB 0.50->0.40, GAP_BC
+  0.52->0.42, BELOW_C 0.42->0.36, sub-label offsets trimmed) — figure
+  **3.33 x 3.33 in**, was 3.57. In (c) the colorbar moves to the LEFT of
+  the maps (ticks and label on its left) and the Sender NIC scale to the
+  RIGHT of the right-hand map, so every row carries its "Normalized ..."
+  label on the left edge. TOP_IN 0.05->0.12: (a)'s rotated two-line y
+  label is taller than its own shortened row and was clipping the page.
 
 - **v3.5 (2026-09-04, user)** — NIC semantics made exact **[knob:
   NIC_ONLY]**: the four same-node 4x4 blocks are zeroed (that traffic
