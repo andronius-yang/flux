@@ -202,3 +202,36 @@ Build: `build_case_study.py <json> --rows cs3 --template cs_v3 --out figs/case_s
    combine_meta_op` slivers; Drift r9 also shows two `swap.issue_l1` bands
    just before the l0 GEMM. GPU-idle gaps with no host range stay white.
    Legend gains a hatched `Host` swatch after `Wait`.
+
+## CS_v4 (2026-09-13) — one Plan / Metadata block, and the NVLink concurrency question
+
+Build: `build_case_study.py <json> --rows cs3 --template cs_v4 --out figs/case_study/CS_v4`
+(= cs_v3 + `PLAN_MERGE`). Plan-coloured GPU-lane kernels closer than 3 ms are
+drawn as one block: the pre-GEMM plan phase becomes a single bracket
+(Predictable 0.14–6.28 ms, 14 kernels; Drift r9 0.12–8.18 ms, 17 kernels) and
+the l0->l1 combine-plan pair a second short block (0.5–1.4 ms). Only Host
+bands >= 0.3 ms are hatched on top of it, which leaves exactly one per rank:
+`swap.d2h/decide/apply_tables/prepare` (Predictable 0.3–1.5 ms, Drift
+0.3–2.5 ms). The merged block is a phase bracket, not kernel-busy time: it
+spans the sub-0.3 ms host slivers and the NCCL allgather that runs on its
+own stream. Ranks csv identical to CS_v2.
+
+**Is the close blue/green alternation on the Drift NVLink lane serial?**
+Mostly yes. Measured on the drawn ranks (`nvlink.token` >= 0.05 ms vs
+`nvlink.swap`):
+
+| rank | swap copies (streams) | swap ∩ token overlap | swap self-overlap | token Σ vs union |
+|---|---|---|---|---|
+| Drift r9 `iter33` | 16 on 4 streams (8 dispatch-side, 8 combine-side) | 1.76 ms over 4 pairs, of 11.9 ms swap | depth 2 in the second dispatch wave (14.7–15.8 ms); first wave back-to-back 8.76→12.23 | 24.2 vs 21.3 ms (depth 2) |
+| Drift r12 `iter33` | 6 on 3 streams | 0 | depth 2 (7.68–8.43 ∥ 7.69–8.33) | 12.4 vs 10.1 ms (depth 3) |
+| Predictable r1 `iter4` | 2 on 1 stream | 0 | 1 | 15.1 vs 13.6 ms (depth 2) |
+| Predictable r8 `iter4` | 0 | — | — | 10.6 vs 7.1 ms (depth 3) |
+
+So the swap copies are issued on 4 streams but the first dispatch-side wave
+lands back-to-back (copy-engine / NVLink serialization), the second wave has
+2-deep overlap, and only 1.8 ms of swap time on r9 coincides with a token
+copy (drawn green-on-top, so that blue is hidden). The larger masking is
+within blue: token copies from 3–4 receive streams overlap 2–3 deep, and the
+single lane shows their union (2.3–3.5 ms less than the summed durations).
+The lane is a resource-busy view, not a stream view; the caption should say
+"NVLink busy" rather than imply serial issue.

@@ -65,6 +65,14 @@ TEMPLATE_GUT = 16.0
 DROP_D2D = False
 HOST_HATCH = False
 HOST_MERGE_MS = 0.06               # host-hatch bands closer than this are merged (one band per host phase, not per range)
+# --template cs_v4 (2026-09-13, user): cs_v3 + the Plan / Metadata kernels are drawn as ONE block per cluster
+# (plan-coloured GPU-lane events closer than PLAN_MERGE_GAP_MS are merged: the pre-GEMM plan phase becomes a
+# single block, the small l0->l1 combine-plan cluster a second one) and only Host bands >= HOST_MIN_MS are
+# hatched on top of it (the sub-0.3 ms host slivers would re-fragment the block). The merged block spans host
+# gaps and the concurrent NCCL allgather stream; it is a phase bracket, not a kernel-busy measurement.
+PLAN_MERGE = False
+PLAN_MERGE_GAP_MS = 3.0
+HOST_MIN_MS = 0.0                  # cs_v4: 0.3
 COL["host_bg"] = "#ececea"         # hatch underlay (lighter than Wait #c9c8c0); hatch lines use COL["host"]
 
 
@@ -200,7 +208,7 @@ def build(data, out):
     lanes = ["nic", "nvlink", "gpu"] + (["gpu2"] if GPU_SIDE_LANE else []) + (["host"] if HOST_LANE else [])
     rank_h = len(lanes) * LANE_H + (len(lanes) - 1) * LANE_GAP
     row_h = 2 * rank_h + RANK_GAP
-    tpl = TEMPLATE in ("cs_v1", "cs_v3"); v3 = TEMPLATE == "cs_v3"
+    tpl = TEMPLATE in ("cs_v1", "cs_v3", "cs_v4"); v3 = TEMPLATE in ("cs_v3", "cs_v4")
     gut = TEMPLATE_GUT if tpl else L_GUT
     tx0 = gut; tw = TEXT_W - gut - R_PAD
     rows = []
@@ -225,6 +233,12 @@ def build(data, out):
         yy = y
         for ri, (r, why) in enumerate(chosen):
             it = c["ranks"][r]["iters"][itn]; L = lanes_of(it)
+            if PLAN_MERGE:
+                plan = sorted(e for e in L["gpu"] if e[2] == "plan"); rest = [e for e in L["gpu"] if e[2] != "plan"]; cl = []
+                for a, b, ck, title in plan:
+                    if cl and a - cl[-1][1] < PLAN_MERGE_GAP_MS: cl[-1] = (cl[-1][0], max(cl[-1][1], b), cl[-1][2] + 1)
+                    else: cl.append((a, b, 1))
+                L["gpu"] = rest + [(a, b, "plan", f"plan / metadata phase ({n} kernels) {a:.2f}–{b:.2f} ms") for a, b, n in cl]
             ly = {ln: yy + i * (LANE_H + LANE_GAP) for i, ln in enumerate(lanes)}
             for ln in lanes:
                 cy = ly[ln] + LANE_H / 2
@@ -239,6 +253,7 @@ def build(data, out):
             if HOST_HATCH:
                 # cs_v3: hatched Host bands on the GPU lane where the device is idle inside a host range
                 for (a, b, names) in host_bands(it):
+                    if b - a < HOST_MIN_MS: continue
                     D.hrect(tx0 + a * sc, ly["gpu"], (b - a) * sc, LANE_H, "bars", f"r{r} host {', '.join(names)} {a:.2f}–{b:.2f} ms")
             # rank span tick (end of device work)
             ex = tx0 + S[r]["end"] * sc
@@ -324,13 +339,15 @@ if __name__ == "__main__":
     ap.add_argument("--rows", choices=("cs2", "cs3", "cs3v2"), default="cs2", help="row table: cs2 = 9/5 capture, cs3 = 9/9 3D-scheduling capture, cs3v2 = 9/11 streaming-Σ recapture (figs/main_perf_v2)")
     ap.add_argument("--eff-iter", default="iter4"); ap.add_argument("--skew-iter", default="iter33")
     ap.add_argument("--simple", action="store_true", help="OURS overlapped swap only: Efficient + Skewed, 2 ranks each")
-    ap.add_argument("--template", choices=("cs_v1", "cs_v3"), default=None,
+    ap.add_argument("--template", choices=("cs_v1", "cs_v3", "cs_v4"), default=None,
                     help="cs_v1 = the user's pruned CS_v1.drawio style (implies --simple: 3D-scheduled swap rows only, vertical Predictable/Drift labels, no row/lane labels, one green, expert comm on top, flat draw.io); "
-                         "cs_v3 = cs_v1 + no device-to-device copies drawn + hatched Host bands in GPU-idle host phases + legend 'Plan / Metadata' / 'Host' (2026-09-13 review)")
+                         "cs_v3 = cs_v1 + no device-to-device copies drawn + hatched Host bands in GPU-idle host phases + legend 'Plan / Metadata' / 'Host' (2026-09-13 review); "
+                         "cs_v4 = cs_v3 + one Plan / Metadata block per cluster (pre-GEMM phase merged), Host bands >= 0.3 ms only")
     a = ap.parse_args()
     if a.template:
         TEMPLATE = a.template; a.simple = True
-        if a.template == "cs_v3": DROP_D2D = True; HOST_HATCH = True
+        if a.template in ("cs_v3", "cs_v4"): DROP_D2D = True; HOST_HATCH = True
+        if a.template == "cs_v4": PLAN_MERGE = True; HOST_MIN_MS = 0.3
     if a.rows in ("cs3", "cs3v2"):
         ROWS[:] = [(t1, t2, cid, {"EFF": a.eff_iter, "SKEW": a.skew_iter}[itn]) for t1, t2, cid, itn in (ROWS_CS3 if a.rows == "cs3" else ROWS_CS3V2)]
     if a.simple: ROWS[:] = [r for r in ROWS if r[1] in ("overlapped swap", "3D-scheduled swap")]
