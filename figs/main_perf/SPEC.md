@@ -59,6 +59,15 @@ groups (see §7):
 | 6 | COMET | `comet` |
 | 7 | **Ours** | best-of (§2.2) |
 
+**Naming note (convention since 2026-09-04, commit 947cd68):** the reference
+arm is labeled **"A2AV+GEMM"** in the legend and in the "speedup vs" wording;
+earlier drafts said "NVSHMEM A2AV+GEMM". "NVSHMEM" was dropped deliberately
+across all figures: it names the transport library the arms share, not a
+distinguishing method, so the label now says what the baseline *is* — a plain
+all-to-all-v dispatch/combine plus an un-overlapped grouped GEMM. The arm
+itself is unchanged (`l01_nvshmem`, `row_id nvshmem_gemm`), and
+`figure_src.csv` keeps the originally recorded row labels verbatim.
+
 ### 2.2 The "Ours" bar — best-of selection (data rule)
 
 Per (subfigure, budget) group, Ours = min total_ms over the available ours

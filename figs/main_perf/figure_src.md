@@ -63,6 +63,12 @@ The CSV row labels are figure-facing names, NOT arm keys. The mapping
 | ours12 | 1+2 | `ours_l01_s1_pv2_r2` | full system: slipstream overlap + s1 placement/routing, r2 slack parity |
 | ours12_dispatch | 1+2 + expert dispatch (re-solve every iteration no expert movement) | `ours_l01_s2_swap_force_p2p_r2` | s2 methodology arm: placement re-solved every iteration, forced overlapped P2P expert swaps (handoff 25/27) |
 
+**Naming note (2026-09-04, commit 947cd68):** in the rendered figure the
+`nvshmem_gemm` row is labeled **"A2AV+GEMM"**, not "NVSHMEM A2AV+GEMM" — the
+"NVSHMEM" prefix was dropped as a cross-figure convention (it is the shared
+transport library, not a distinguishing method). The arm and this file's
+`row_label` column are unchanged; only the legend text differs.
+
 ## Discrepancy ledger (recorded grid vs. capsule authority)
 
 1. **4n K2 FAST b16: recorded 16.13 is a transcription error** (duplicate of
