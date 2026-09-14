@@ -1,6 +1,6 @@
 # Main performance figure — aesthetic & architecture spec
 
-Status: REV 3 (2026-09-03, +8 nodes, 3x2 layout, Qwen left / K2 right — see §9). Aesthetics unchanged from REV 2.1. Data authority: `figure_src.csv` (+
+Status: REV 3.1 (2026-09-14; truncated-bar values carry the ms unit — see §9). Aesthetics unchanged from REV 2.1. Data authority: `figure_src.csv` (+
 `figure_src.md` provenance). Generator: `make_figure.py` (matplotlib, to be
 written after this spec is approved). Every value marked **[knob]** is a
 parameter in the generator's single `CONFIG` block — nothing aesthetic is
@@ -85,7 +85,8 @@ FAST at 16n (183–227 ms) would flatten every other bar. Mechanism
 - Any bar exceeding the y-limit is drawn to the limit and visually broken:
   two short parallel diagonal white slashes across the bar near its top (the
   standard broken-bar glyph), and the **true value printed vertically inside
-  the bar just below the glyph** (e.g. "193", normal weight, on a solid
+  the bar just below the glyph WITH its unit** (e.g. "193 ms" — REV 3.1,
+  postdoc: the bare number read as a speedup; normal weight, on a solid
   window in the bar's own color so the hatch never crosses the digits) —
   REV 2 moved it inside so the ceiling band above the axes stays empty.
   Slash geometry (rise, gap, linewidth) **[knob: BREAK_MARK]**.
@@ -309,6 +310,8 @@ labels), secondary `#52514e` (in-axes model tags), muted `#898781`
      above short bars; the tallest bars host their label on a solid window
      of their own color. Truncated FAST bars show their true value inside
      instead of a ratio.
+- **REV 3.1 (2026-09-14) — postdoc:** truncated FAST bars print `"{:.0f} ms"`
+  instead of a bare number, so the value cannot be misread as a speedup ratio.
 - **REV 3 (2026-09-03) — postdoc: add 8 nodes.** 100/100 offline 8n values
   authenticated against capsules; layout becomes 3 rows (4/8/16 nodes) x
   2 columns (models, full names); y shared per ROW; every panel keeps the

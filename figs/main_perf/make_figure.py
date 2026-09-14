@@ -70,7 +70,7 @@ CONFIG = dict(
                     halfw=0.52,               # slash half-width, frac of bar w
                                               # (<0.55 keeps it inside the slot)
                     lw=1.2, color="white"),
-    TRUNC_LABEL_FMT="{:.0f}",                 # true value, inside truncated bar
+    TRUNC_LABEL_FMT="{:.0f} ms",              # true value + unit, inside truncated bar
     # ---- speedup annotations (SPEC 2.4) ----
     SPEEDUP=dict(
         on=True,
