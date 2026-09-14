@@ -171,3 +171,34 @@ Drift `iter33`: 16/16 ranks move 56–448 MB, GEMM spread 1.91x (44.5 vs
 The green blocks in the Predictable row therefore show the swap mechanism
 idling cheaply under balanced demand, not a claim that the main experiment
 moves experts.
+
+## CS_v3 (2026-09-13) — evidence fixes from the postdoc review of CS_v2
+
+Same data as CS_v2 (capture 4, `timeline_20260909-124809.json`, rows/ranks/
+iterations unchanged; `CS_v3_ranks.csv` is byte-identical to `CS_v2_ranks.csv`).
+Style = the user's hand-adjusted `CS_v2_hand.drawio` (diffed against the
+generated CS_v2: identical except the legend label `Plan / Meta` ->
+`Plan / Metadata`; its scenario label predates the Predictable ruling).
+Build: `build_case_study.py <json> --rows cs3 --template cs_v3 --out figs/case_study/CS_v3`.
+
+1. **No device-to-device copies drawn.** The GPU lane aggregates every CUDA
+   stream, so a `copy.d2d` painted over the GEMM never showed an interrupted
+   GEMM (the GEMM runs on stream 7/17; the copies sit on the a2av receive
+   streams and on the swap stream). The extractor classes every d2d memcpy
+   as `copy.d2d` -> Token Comm. blue, which also swept up the local copies
+   that install received expert weights (Predictable r1 `iter4`: two d2d on
+   stream 36 at 8.18 ms right after the 58 MB `nvlink.swap` on the same
+   stream). Counts in the drawn ranks: r8 10 copies / 0.94 ms (6 inside a
+   GEMM), r1 14 / 1.31 ms (8 inside a GEMM). The figure claims no on-GPU
+   memory-movement resource, so all of them are omitted (`DROP_D2D`); the
+   extractor is unchanged and still reports them in the summary.
+2. **Host bands.** The opening GPU gap is now hatched grey = **Host**:
+   intervals where no device kernel or copy runs on any stream AND a host
+   NVTX range (`plan.*` / `swap.*`) is open, merged when closer than 0.06 ms
+   (`host_bands`). In every drawn rank the first band is
+   `swap.d2h + swap.decide + swap.apply_tables + swap.prepare`
+   (Predictable 0.3–1.5 ms, Drift 0.3–2.5 ms), followed by `plan.route`,
+   the kstats/xchg allgather gap, and `derive_routed_meta / m_this_host /
+   combine_meta_op` slivers; Drift r9 also shows two `swap.issue_l1` bands
+   just before the l0 GEMM. GPU-idle gaps with no host range stay white.
+   Legend gains a hatched `Host` swatch after `Wait`.

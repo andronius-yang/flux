@@ -55,28 +55,52 @@ LANE_LABEL = {"nic": "NIC RDMA", "nvlink": "NVLink", "gpu": "GPU", "gpu2": "GPU 
 TEMPLATE = None
 SCENARIO_NAME = {"Efficient": "Predictable", "Skewed": "Drift"}  # 2026-09-13 ruling, see 00_data_note.md "Scenario naming"
 TEMPLATE_GUT = 16.0
+# --template cs_v3 (2026-09-13, postdoc review of CS_v2): cs_v1 style (+ the user's hand-edited legend label
+# "Plan / Metadata") with two evidence fixes — (a) device-to-device copies are NOT drawn: the GPU lane
+# aggregates every stream, so a copy.d2d painted over the GEMM never showed an interrupted GEMM, and the
+# extractor cannot tell dispatch staging copies from the local copies that install received expert weights
+# (no on-GPU memory-movement resource is claimed by the figure); (b) GPU-lane idle gaps that coincide with a
+# host NVTX range (plan.* / swap.*: decide, derive_routed_meta, combine_meta_op, issue ...) are hatched grey
+# = "Host" (host-side decision / plan derivation / issue while the device stream is empty), with a legend entry.
+DROP_D2D = False
+HOST_HATCH = False
+HOST_MERGE_MS = 0.06               # host-hatch bands closer than this are merged (one band per host phase, not per range)
+COL["host_bg"] = "#ececea"         # hatch underlay (lighter than Wait #c9c8c0); hatch lines use COL["host"]
 
 
 class Doc(V2.Doc):
     """v2 Doc + vertical (rotated -90) text, optional flat draw.io"""
     flat = False
 
+    EXTRA = ("vtext", "hrect")
+
     def vtext(self, x, y, s, size, layer, color=INK, bold=True):
         self.items.append(("vtext", x, y, s, size, layer, color, bold))
 
+    def hrect(self, x, y, w, h, layer, title=""):
+        """hatched grey block (Host): light underlay + diagonal lines; draw.io twin uses fillStyle=hatch"""
+        self.items.append(("hrect", x, y, w, h, layer, title))
+
     def svg(self):
-        items = self.items; self.items = [it for it in items if it[0] != "vtext"]
+        items = self.items; self.items = [it for it in items if it[0] not in self.EXTRA]
         out = super().svg().rsplit("</svg>", 1)[0]; self.items = items
+        if any(it[0] == "hrect" for it in items):
+            out += (f'\n<defs><pattern id="hosthatch" patternUnits="userSpaceOnUse" width="1.6" height="1.6" patternTransform="rotate(45)">'
+                    f'<rect width="1.6" height="1.6" fill="{COL["host_bg"]}"/><line x1="0" y1="0" x2="0" y2="1.6" stroke="{COL["host"]}" stroke-width="0.45"/></pattern></defs>')
         for it in items:
             if it[0] == "vtext":
                 _, x, y, s_, size, layer, c, bold = it
                 out += (f'\n<text x="{x:.2f}" y="{y:.2f}" font-size="{size}" text-anchor="middle" fill="{c}" transform="rotate(-90 {x:.2f} {y:.2f})"'
                         + (' font-weight="bold"' if bold else "") + f'>{html.escape(s_)}</text>')
+            elif it[0] == "hrect":
+                _, x, y, w, h, layer, title = it
+                out += (f'\n<rect x="{x:.2f}" y="{y:.2f}" width="{max(w, 0.3):.2f}" height="{h:.2f}" fill="url(#hosthatch)">'
+                        + (f"<title>{html.escape(title)}</title>" if title else "") + "</rect>")
         return out + "\n</svg>"
 
     def drawio(self):
         S = 1.0 / 0.75
-        items = self.items; self.items = [it for it in items if it[0] != "vtext"]
+        items = self.items; self.items = [it for it in items if it[0] not in self.EXTRA]
         base = super().drawio(); self.items = items
         extra = []
         for i, it in enumerate(items):
@@ -86,6 +110,11 @@ class Doc(V2.Doc):
                 st = f"text;html=1;fontSize={size * S:.1f};fontFamily=Helvetica;fontColor={c};align=left;verticalAlign=middle;whiteSpace=nowrap;" + ("fontStyle=1;" if bold else "") + "rotation=-90;"
                 extra.append(f'<mxCell id="v{i}" value="{html.escape(s_, quote=True)}" style="{st}" vertex="1" parent="1">'
                              f'<mxGeometry x="{x * S - w / 2:.2f}" y="{y * S - hh / 2:.2f}" width="{w:.2f}" height="{hh:.2f}" as="geometry"/></mxCell>')
+            elif it[0] == "hrect":
+                _, x, y, w, h, layer, title = it
+                geo = f'<mxGeometry x="{x * S:.2f}" y="{y * S:.2f}" width="{max(w, 0.3) * S:.2f}" height="{h * S:.2f}" as="geometry"/>'
+                extra.append(f'<mxCell id="hb{i}" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor={COL["host_bg"]};strokeColor=none;" vertex="1" parent="1">{geo}</mxCell>')
+                extra.append(f'<mxCell id="hh{i}" value="" style="rounded=0;whiteSpace=wrap;html=1;fillStyle=hatch;fillColor={COL["host"]};strokeColor=none;" vertex="1" parent="1">{geo}</mxCell>')
         base = base.replace("</root>", "".join(extra) + "</root>")
         if self.flat:
             base = re.sub(r'<mxCell id="L\d+" value="[a-z]+" style="locked=0" parent="0"/>', "", base)
@@ -115,6 +144,7 @@ def lanes_of(it):
     L = {k: [] for k in ("nic", "nvlink", "gpu", "gpu2", "host")}
     for x in it["events"]:
         if x["t1"] - x["t0"] < 0.05 and x["task"] not in ("nvlink.swap",): continue
+        if DROP_D2D and x["task"] == "copy.d2d": continue   # cs_v3: local copies are not evidence (see template note)
         ck = TASK_COL.get(x["task"])
         if ck is None: continue                       # host-side copies etc.
         if x["task"] == "nvlink.swap" and x.get("phase") == "l1": ck = "expert_comm_w2"
@@ -128,6 +158,29 @@ def lanes_of(it):
     for h in it.get("host_ranges", []):
         L["host"].append((h["t0"], h["t1"], "host", h["name"]))
     return L
+
+
+def host_bands(it):
+    """cs_v3 Host hatch: GPU-lane idle gaps (no device kernel/copy on ANY stream, copies incl.) that lie inside
+    a host NVTX range (plan.* / swap.*), merged when closer than HOST_MERGE_MS -> [(t0, t1, names)]."""
+    busy = sorted((x["t0"], x["t1"]) for x in it["events"] if x["lane"] in ("gpu", "wait"))
+    gaps = []; cur = 0.0
+    for a, b in busy:
+        if a > cur + 0.02: gaps.append((cur, a))
+        cur = max(cur, b)
+    hr = sorted(it.get("host_ranges", []), key=lambda h: h["t0"])
+    raw = []
+    for a, b in gaps:
+        for h in hr:
+            lo, hi = max(a, h["t0"]), min(b, h["t1"])
+            if hi - lo > 0.02: raw.append((lo, hi, h["name"]))
+    raw.sort(); out = []
+    for lo, hi, nm in raw:
+        if out and lo - out[-1][1] < HOST_MERGE_MS:
+            out[-1] = (out[-1][0], max(out[-1][1], hi), out[-1][2] + ([nm] if nm not in out[-1][2] else []))
+        else:
+            out.append((lo, hi, [nm]))
+    return out
 
 
 def story(it):
@@ -147,7 +200,7 @@ def build(data, out):
     lanes = ["nic", "nvlink", "gpu"] + (["gpu2"] if GPU_SIDE_LANE else []) + (["host"] if HOST_LANE else [])
     rank_h = len(lanes) * LANE_H + (len(lanes) - 1) * LANE_GAP
     row_h = 2 * rank_h + RANK_GAP
-    tpl = TEMPLATE == "cs_v1"
+    tpl = TEMPLATE in ("cs_v1", "cs_v3"); v3 = TEMPLATE == "cs_v3"
     gut = TEMPLATE_GUT if tpl else L_GUT
     tx0 = gut; tw = TEXT_W - gut - R_PAD
     rows = []
@@ -183,6 +236,10 @@ def build(data, out):
                         on_top.append((tx0 + a * sc, ly[ln], (b - a) * sc, LANE_H, COL["expert_comm"], "bars", f"r{r} {title}"))
                         continue
                     D.rect(tx0 + a * sc, ly[ln], (b - a) * sc, LANE_H, COL[ck], "bars", f"r{r} {title}")
+            if HOST_HATCH:
+                # cs_v3: hatched Host bands on the GPU lane where the device is idle inside a host range
+                for (a, b, names) in host_bands(it):
+                    D.hrect(tx0 + a * sc, ly["gpu"], (b - a) * sc, LANE_H, "bars", f"r{r} host {', '.join(names)} {a:.2f}–{b:.2f} ms")
             # rank span tick (end of device work)
             ex = tx0 + S[r]["end"] * sc
             D.line(ex, yy - 0.4, ex, yy + rank_h + 0.4, INK, "glyphs", 0.5)
@@ -203,12 +260,15 @@ def build(data, out):
     D.text(tx0 + tw, ay + 7, "ms", 5, "labels", "end", INK2)
     # legend: task colours, span tick, resource patterns
     ly_ = ay + AXIS_H + 1; lx = gut
-    legend = ((("token", "Token Comm."), ("expert_comm", "Expert Comm."), ("comp", "Expert Comp."), ("reduce", "Top-k Reduce"), ("plan", "Plan / Meta"), ("wait", "Wait"))
+    legend = ((("token", "Token Comm."), ("expert_comm", "Expert Comm."), ("comp", "Expert Comp."), ("reduce", "Top-k Reduce"),
+               ("plan", "Plan / Metadata" if v3 else "Plan / Meta"), ("wait", "Wait")) + ((("host", "Host"),) if v3 else ())
               if tpl else
               (("token", "Token Comm."), ("expert_comm", "Expert Comm. (disp.)"), ("expert_comm_w2", "Expert Comm. (comb.)"), ("comp", "Expert Comp."),
                ("reduce", "Top-k Reduce"), ("plan", "Plan / Meta"), ("wait", "Wait")))
     for key, lab in legend:
-        D.rect(lx, ly_ + 1, 8, 4.5, COL[key], "bars"); D.text(lx + 10, ly_ + 5, lab, 5.2, "labels", color=INK2); lx += 10 + 2.75 * len(lab) + 7
+        if key == "host": D.hrect(lx, ly_ + 1, 8, 4.5, "bars")
+        else: D.rect(lx, ly_ + 1, 8, 4.5, COL[key], "bars")
+        D.text(lx + 10, ly_ + 5, lab, 5.2, "labels", color=INK2); lx += 10 + 2.75 * len(lab) + 7
     D.line(lx, ly_, lx, ly_ + 6.5, INK, "glyphs", 0.5); D.text(lx + 3, ly_ + 5, "iteration end", 5.2, "labels", color=INK2); lx += 3 + 2.75 * 13 + 9
     for ln in ("nic", "nvlink", "gpu"):
         D.dline(lx, ly_ + 3.2, lx + 12, ly_ + 3.2, LINE, "background", 0.6, DASH[ln]); D.text(lx + 14, ly_ + 5, LANE_LABEL[ln], 5.2, "labels", color=INK2)
@@ -264,11 +324,13 @@ if __name__ == "__main__":
     ap.add_argument("--rows", choices=("cs2", "cs3", "cs3v2"), default="cs2", help="row table: cs2 = 9/5 capture, cs3 = 9/9 3D-scheduling capture, cs3v2 = 9/11 streaming-Σ recapture (figs/main_perf_v2)")
     ap.add_argument("--eff-iter", default="iter4"); ap.add_argument("--skew-iter", default="iter33")
     ap.add_argument("--simple", action="store_true", help="OURS overlapped swap only: Efficient + Skewed, 2 ranks each")
-    ap.add_argument("--template", choices=("cs_v1",), default=None,
-                    help="cs_v1 = the user's pruned CS_v1.drawio style (implies --simple: 3D-scheduled swap rows only, vertical Predictable/Drift labels, no row/lane labels, one green, expert comm on top, flat draw.io)")
+    ap.add_argument("--template", choices=("cs_v1", "cs_v3"), default=None,
+                    help="cs_v1 = the user's pruned CS_v1.drawio style (implies --simple: 3D-scheduled swap rows only, vertical Predictable/Drift labels, no row/lane labels, one green, expert comm on top, flat draw.io); "
+                         "cs_v3 = cs_v1 + no device-to-device copies drawn + hatched Host bands in GPU-idle host phases + legend 'Plan / Metadata' / 'Host' (2026-09-13 review)")
     a = ap.parse_args()
     if a.template:
         TEMPLATE = a.template; a.simple = True
+        if a.template == "cs_v3": DROP_D2D = True; HOST_HATCH = True
     if a.rows in ("cs3", "cs3v2"):
         ROWS[:] = [(t1, t2, cid, {"EFF": a.eff_iter, "SKEW": a.skew_iter}[itn]) for t1, t2, cid, itn in (ROWS_CS3 if a.rows == "cs3" else ROWS_CS3V2)]
     if a.simple: ROWS[:] = [r for r in ROWS if r[1] in ("overlapped swap", "3D-scheduled swap")]
