@@ -124,3 +124,50 @@ tagged with their issue phase (early / late = w1 / l1 = w2) and the summary
 carries `_swap_under_gemm_ms` / `_swap_under_nic_ms`. Figure:
 `build_case_study.py <json> --rows cs3 --out figs/case_study/case_study_v2`
 (the 9/5 `case_study.*` = v1, untouched).
+
+## Scenario naming (2026-09-13 ruling) — Predictable / Drift
+
+Figure labels: row 1 (`Efficient` in the builder) = **Predictable**, row 2
+(`Skewed`) = **Drift**. Earlier labels `Predictable/Shifting` (CS_v2 9/12)
+and the one-day `Specialization/Drift` (6f359ee) are retired for this lane;
+the ablation keeps `Specialization/Drift` because its first scenario is a
+DIFFERENT workload (below).
+
+Definitions (postdoc wording, adopted):
+
+* **Predictable** — placement history and evaluation come from the same
+  dataset, so historical expert demand is a useful basis for placement. The
+  predictability comes from that correspondence, not from the absence of a
+  dataset mixture. This IS the main-experiment setup (§5.1): the figure shows
+  the mechanisms under relatively balanced demand.
+* **Drift** — evaluation encounters demand absent from the placement
+  history, exposing imbalance and triggering expert movement. Call it a
+  workload *shift*; "swap" is reserved for the system's corrective expert
+  movement.
+
+Verification (checked against the capsule spec / cells / summary, not the
+labels; capsule `20260909-124809_perlmutter_0e64e3cc`, capture 4):
+
+| | ablation "Specialization" (S-A) | case-study row 1 "Predictable" | main experiment (K2 4n b64) |
+|---|---|---|---|
+| family / cell id | `pools=professional_law; opool=8-pool mix` (`ablcycle_sa_prolaw_k2_4n`) | `pools=livecodebench/execution; dslots=64:32` → `trace-610042` | `trace-610042` (identical family hash on every `figs/main_perf` 4n K2 row) |
+| placement history | equal-weight mix of 8 pools incl. professional_law, same layer/window | lcb decode slots [32,64) (rule-10 previous window, `oracle_slots`) | same as case-study row 1 |
+| evaluation | professional_law, slots [64,96) | lcb, slots [64,96) | same |
+| arm | `swapall_rp4` (reset to basis every 4th timed iteration, dwell-4 proxy) | `swapall_rst_3d_dual3_str4` (reset to basis before EVERY timed iteration, full capped orbit) | `ours_l01_s1_pv2_r2` (placement solved once at setup, no movement) |
+| statistic | mean over 16 timed iters, 4 reps | one iteration (`iter4`), nsys mode | iter-max median, isolated mode |
+
+So the postdoc's reading is correct: the case-study first row is the
+main-experiment workload, not the ablation's S-A. Row 2 shares the ablation's
+S-C family (7-pool history excluding professional_law, 8-topic schedule,
+dwell 4; `iter33` = 2nd iteration of the professional_law block), which is
+why "Drift" is the same word in both figures.
+
+Caveat the caption must carry: the case-study arm is the reset-every proxy,
+so expert movement fires in BOTH rows by construction — Predictable `iter4`:
+10/16 ranks move 56–112 MB, GEMM spread 1.13x (27.1 vs 23.9 ms);
+Drift `iter33`: 16/16 ranks move 56–448 MB, GEMM spread 1.91x (44.5 vs
+23.3 ms); `iter5`/`iter32` reproduce both. Under the main-experiment arm
+(`s1_pv2`, no swap) the Predictable row would carry no expert-comm blocks.
+The green blocks in the Predictable row therefore show the swap mechanism
+idling cheaply under balanced demand, not a claim that the main experiment
+moves experts.

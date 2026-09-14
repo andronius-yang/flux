@@ -195,5 +195,9 @@ text. Optimization names must match the legend verbatim.
   and includes one absent from the placement history (adaptation to
   incomplete history). Both differ from the main experiment, which serves
   earlier demand of the same class; "Predictable" implied a closer match
-  than the experiment provides. Same rename applied to the case-study
-  figure (`figs/case_study`, CS_v2). Numbers unchanged.
+  than the experiment provides. Numbers unchanged. NOTE (same day, later
+  ruling): the case-study figure (`figs/case_study`, CS_v2) does NOT share
+  S-A — its first row is the main-experiment workload (lcb history → lcb
+  evaluation, family `trace-610042`) and is named **Predictable** there;
+  only **Drift** is shared (same S-C family). See
+  `figs/case_study/00_data_note.md` § "Scenario naming".

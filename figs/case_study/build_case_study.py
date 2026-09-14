@@ -53,7 +53,7 @@ LANE_LABEL = {"nic": "NIC RDMA", "nvlink": "NVLink", "gpu": "GPU", "gpu2": "GPU 
 # ONE green for expert comm (both 3D stages), expert-comm blocks drawn LAST (on top of any other NVLink
 # activity), flat draw.io (every cell under parent 1) — "copy the style, change the data".
 TEMPLATE = None
-SCENARIO_NAME = {"Efficient": "Specialization", "Skewed": "Drift"}
+SCENARIO_NAME = {"Efficient": "Predictable", "Skewed": "Drift"}  # 2026-09-13 ruling, see 00_data_note.md "Scenario naming"
 TEMPLATE_GUT = 16.0
 
 
@@ -265,7 +265,7 @@ if __name__ == "__main__":
     ap.add_argument("--eff-iter", default="iter4"); ap.add_argument("--skew-iter", default="iter33")
     ap.add_argument("--simple", action="store_true", help="OURS overlapped swap only: Efficient + Skewed, 2 ranks each")
     ap.add_argument("--template", choices=("cs_v1",), default=None,
-                    help="cs_v1 = the user's pruned CS_v1.drawio style (implies --simple: 3D-scheduled swap rows only, vertical Specialization/Drift labels, no row/lane labels, one green, expert comm on top, flat draw.io)")
+                    help="cs_v1 = the user's pruned CS_v1.drawio style (implies --simple: 3D-scheduled swap rows only, vertical Predictable/Drift labels, no row/lane labels, one green, expert comm on top, flat draw.io)")
     a = ap.parse_args()
     if a.template:
         TEMPLATE = a.template; a.simple = True
