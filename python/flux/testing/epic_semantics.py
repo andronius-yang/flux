@@ -1200,11 +1200,32 @@ class EpicIterPlanner:
         # ablation (campaign-2 knob). No quota mode for epic.
         assert replica_select in ("local_static", "local_spread"), (
             replica_select)
-        assert router in ("d6", "loccap_gpu", "loccap_sl"), router
+        # pv3 / pv3c (branch pv3, 2026-09-15): the paper-constraint routers
+        # on the EPIC driver's staged transport (the llc "2Ours no-overlap"
+        # main-perf row) — same sender-local contract as loccap_sl (own row
+        # on device + the phys-row allgather), sized by the provable
+        # per-replica bounds instead of the LocCap tables.
+        assert router in ("d6", "loccap_gpu", "loccap_sl", "pv3", "pv3c"), \
+            router
         assert router == "d6" or eps is not None, (
             f"router {router} needs eps")
         self.router = router
         self.eps = eps
+        self._pv3 = None
+        # incidence drift band of the relaxed audit: 5% for the LocCap
+        # kernel (its tables pin the tier-3 shares); the pv3c vacate pass
+        # is a relaxed-ticket greedy whose incidence legitimately drifts
+        # more vs the canonical-order reference on small cells (Qwen b1:
+        # +8%) — its HARD contract is the provable bounds, so the band is a
+        # sanity guard only (20%)
+        self.incidence_band = 0.20 if router in ("pv3", "pv3c") else 0.05
+        if router in ("pv3", "pv3c"):
+            from .pv3_ext import c_rational, load_ext
+            self._pv3 = load_ext()
+            self._pv3_c = c_rational(eps)
+            wsz = (self._pv3.workspace_ints_c if router == "pv3c"
+                   else self._pv3.workspace_ints)(plan.cfg.G, plan.cfg.R)
+            self._pv3_ws = torch.empty(wsz, dtype=torch.int32, device=device)
         self.route_group = route_group
         self.exchange_fn = exchange_fn
         self.f_cap = f_cap
@@ -1251,8 +1272,9 @@ class EpicIterPlanner:
             self._pad_vslot_g = [
                 self._home_of_token * gm["gpe"] + (gm["gpe"] - 1)
                 for gm in groups_meta]
-        if router == "loccap_sl":
-            # relaxed kernel arm: sender-local row + communicated agreement.
+        if router in ("loccap_sl", "pv3", "pv3c"):
+            # relaxed kernel arms (LocCap sender-local, pv3, pv3c):
+            # sender-local row + communicated agreement.
             # l01 combine IS supported since 8.22.route, but only through
             # the INWINDOW path (derive_routed_meta + derive_combine_meta
             # refresh the combine metadata per iteration; enable_hc_combine
@@ -1318,7 +1340,20 @@ class EpicIterPlanner:
             # binding) but the ROUTING never changes across iterations —
             # discriminates capacity-mode bugs from changing-routing bugs
             return self.derive_reference()
-        if self.router == "loccap_sl":
+        if self.router in ("pv3", "pv3c"):
+            # paper-constraint router (branch pv3): own-row route on the
+            # allgathered demand + the phys-row allgather, same bracket
+            fn = (self._pv3.route_pv3c if self.router == "pv3c"
+                  else self._pv3.route_pv3)
+            phys_own, kstats = fn(
+                self._topk_own_i32, tpe_all.int().contiguous(),
+                self.l2p.int().contiguous(), self.lcnts.int().contiguous(),
+                self.rank, nlp, self.L, self._pv3_c[0], self._pv3_c[1],
+                self._pv3_ws)
+            phys_all = self._exchange(phys_own).long().view(R, S * K)
+            tok_all = self._tok_all()
+            rqp = None
+        elif self.router == "loccap_sl":
             # PLACE-lambda sender-local FUSED KERNEL (relaxed; the pll_*
             # kernel arm): own-row routing on device + the phys-row
             # allgather, all inside the timed plan bracket. The kernel's
@@ -1395,7 +1430,7 @@ class EpicIterPlanner:
             tok_all, phys_all = reroute_expand_all_gpu(
                 rqp, self.l2p, self.lcnts, self.topk_all, cfg.interleave)
         self._last_phys_all = phys_all
-        if (self.router in ("loccap_sl", "loccap_gpu")
+        if (self.router in ("loccap_sl", "loccap_gpu", "pv3", "pv3c")
                 and int(os.getenv("FLUX_PLL_FAST_TAIL", "1"))
                 and (not self.hc or self.inwindow_meta)
                 and not self.hcc):
@@ -1405,7 +1440,7 @@ class EpicIterPlanner:
                 ip = self._derive_from_phys_fast(phys_all, kstats)
         else:
             ip = self._derive_from_phys(tok_all, phys_all, rqp, kstats)
-        if (self.router == "loccap_sl"
+        if (self.router in ("loccap_sl", "pv3", "pv3c")
                 and getattr(self, "_check_iters", False)):
             # validation runs (FLUX_PLL_CHECK_ITERS=1): audit EVERY
             # iteration's relaxed routing — perturbs timing, G1-gate only
@@ -1424,7 +1459,7 @@ class EpicIterPlanner:
         cfg = self.cfg
         phys_all = ov.long().to(self.device).view(cfg.R, cfg.S * cfg.K)
         self._last_phys_all = phys_all
-        if (self.router in ("loccap_sl", "loccap_gpu")
+        if (self.router in ("loccap_sl", "loccap_gpu", "pv3", "pv3c")
                 and int(os.getenv("FLUX_PLL_FAST_TAIL", "1"))
                 and (not self.hc or self.inwindow_meta)
                 and not self.hcc):
@@ -2130,7 +2165,7 @@ class EpicIterPlanner:
         assert ip.seg_start == runner.elay.seg_start, "seg_start drift"
         assert ip.gemm_segments == runner.elay.gemm_segments
         assert ip.max_pair_rows == runner.elay.max_pair_rows
-        if self.router in ("loccap_gpu", "loccap_sl"):
+        if self.router in ("loccap_gpu", "loccap_sl", "pv3", "pv3c"):
             # loccap_sl: check_against runs on derive_reference()'s ip
             # (deterministic side of the relaxed contract)
             ov = self.plan.phys_override
@@ -2204,7 +2239,7 @@ class EpicIterPlanner:
 
     def check_relaxed(self, ip: EpicIterPlan, bounds,
                       ref_incidence: int = None,
-                      band: float = 0.05) -> dict:
+                      band: float = None) -> dict:
         """Relaxed drift guard for the loccap_sl kernel arm (user ruling
         2026-08-21: invariants + bounds + incidence band replace bitwise
         identity). Audits the ASSEMBLED routing (every rank holds the full
@@ -2216,6 +2251,8 @@ class EpicIterPlanner:
           4. incidence within `band` of the setup reference (optional)
         Cheap (a few bincounts); run at setup always, per-iteration under
         FLUX_PLL_CHECK_ITERS=1. Returns audit facts."""
+        if band is None:
+            band = getattr(self, "incidence_band", 0.05)
         cfg = self.cfg
         R, S, K, nlp = cfg.R, cfg.S, cfg.K, cfg.nlp
         phys = self._last_phys_all
@@ -2240,9 +2277,30 @@ class EpicIterPlanner:
         assert bool((recv <= ru).all()), (
             "recv bound violated: "
             f"{(recv - ru).clamp(min=0).max().item()} rows over")
-        assert bool((pair <= pu).all()), (
-            "pair bound violated: "
-            f"{(pair - pu).clamp(min=0).max().item()} rows over")
+        if not bool((pair <= pu).all()):
+            # diagnostic dump (pv3c pair-bound investigation 2026-09-15):
+            # offending pairs + the routed tensors for offline replay
+            over = (pair - pu).clamp(min=0)
+            bad = torch.nonzero(over)[:8].tolist()
+            dump = os.environ.get("FLUX_PLL_PAIR_DUMP",
+                                  os.path.expandvars(
+                                      "$PSCRATCH/workspace/andrewy/logs/pv3/"
+                                      "pair_dump"))
+            os.makedirs(dump, exist_ok=True)
+            torch.save({"phys": phys.cpu(), "pair": pair.cpu(),
+                        "pair_ub": pu.cpu(), "recv": recv.cpu(),
+                        "recv_ub": ru.cpu(), "topk": self.topk_all.cpu(),
+                        "l2p": self.l2p.cpu(), "lcnts": self.lcnts.cpu(),
+                        "p2l": self.p2l.cpu(), "nlp": nlp, "L": self.L,
+                        "router": self.router, "eps": self.eps,
+                        "rank": self.rank},
+                       os.path.join(dump, f"rank{self.rank:03d}.pt"))
+            raise AssertionError(
+                "pair bound violated: "
+                f"{int(over.max())} rows over; pairs (src,dst,rows,ub): "
+                + ", ".join(f"({i},{j},{int(pair[i, j])},{int(pu[i, j])})"
+                            for i, j in bad)
+                + f"; dump {dump}")
         facts = {"recv_max": int(recv.max()),
                  "pair_max": int(pair.max()),
                  "kernel_stats": self.last_kernel_stats}

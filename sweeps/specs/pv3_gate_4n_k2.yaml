@@ -1,0 +1,19 @@
+# 2026-09-14 (branch pv3): PV3 routing gate at 4n K2 — the paper-constraint
+# router (--route_rule pv3) on the canon OURS s1 pv2_r2 stack, per-iteration
+# output validation (--check_iters 1) + final correctness ON, b1 + b16.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 16]
+variants:
+  - ours_l01_s1_pv2_r2_pv3_gate
+modes: [isolated]
+iters: 6
+warmup_iters: 2
+skip_correctness: false
+timeout_s: 900
+idle_timeout_s: 300
+retries: 0
+notes: "pv3 gate 4n K2: paper-constraint router, per-iteration gate + correctness"

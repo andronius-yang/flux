@@ -1,0 +1,18 @@
+# 2026-09-14 (branch pv3): PV3C gate at 4n K2 b16 — per-iteration output
+# validation + correctness under the relaxed vacate kernel at C = 1/4.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [16]
+variants:
+  - ours_l01_s1_pv2_r2_pv3c_eps025_gate
+modes: [isolated]
+iters: 6
+warmup_iters: 2
+skip_correctness: false
+timeout_s: 900
+idle_timeout_s: 300
+retries: 0
+notes: "pv3c gate 4n K2 b16 (C=1/4): per-iteration gate + correctness"

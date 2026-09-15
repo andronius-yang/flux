@@ -1,0 +1,18 @@
+# 2026-09-15 (branch pv3): the failing llc pv3c Qwen b16 cell alone, with the
+# pair-bound diagnostic dump (FLUX_PLL_PAIR_DUMP) and correctness on.
+platform: perlmutter
+nodes: 4
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [16]
+variants:
+  - llc_l01_s1_pv2_pv3c_eps025
+modes: [isolated]
+iters: 6
+warmup_iters: 2
+skip_correctness: false
+timeout_s: 600
+idle_timeout_s: 240
+retries: 0
+notes: "llc pv3c Qwen b16 pair-bound repro with diagnostic dump"

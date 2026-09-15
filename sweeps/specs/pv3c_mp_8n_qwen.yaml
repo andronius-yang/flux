@@ -1,0 +1,25 @@
+# 2026-09-15 pv3c recapture campaign (branch pv3): main-perf 8n Qwen Ours lanes: LocCap twin vs pv3c C=1/4, 1/2
+platform: perlmutter
+nodes: 8
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 4, 16]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 900
+idle_timeout_s: 300
+retries: 1
+variants:
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s1_pv2_r2_pv3c_eps025
+  - ours_l01_s1_pv2_r2_pv3c_eps05
+  - ours_l01_s2_swap_force_p2p_r2
+  - ours_l01_s2_swap_force_p2p_r2_pv3c_eps025
+  - ours_l01_s2_swap_force_p2p_r2_pv3c_eps05
+  - llc_l01_s1_pv2
+  - llc_l01_s1_pv2_pv3c_eps025
+  - llc_l01_s1_pv2_pv3c_eps05
+notes: "main-perf 8n Qwen Ours lanes: LocCap twin vs pv3c C=1/4, 1/2"

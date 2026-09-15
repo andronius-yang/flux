@@ -1,0 +1,26 @@
+# 2026-09-15: pv3c route-graph verification at 32n K2 b1 (the topology where
+# the eager route cost +0.7..1.2 ms of plan bracket): LocCap, pv3c C=1/2 with
+# the route graph (default) and its eager _nrg twin, fused + direct wire.
+# sym_size_override_g 12: dwire pv3c pair-cap composition (handoff 39 §10 #2).
+platform: perlmutter
+nodes: 32
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1]
+sym_size_override_g: 12
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 900
+idle_timeout_s: 300
+retries: 1
+variants:
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s1_pv2_r2_pv3c_eps05
+  - ours_l01_s1_pv2_r2_pv3c_eps05_rg
+  - ours_l01_s1_pv2_r2_dwire
+  - ours_l01_s1_pv2_r2_dwire_pv3c_eps05
+  - ours_l01_s1_pv2_r2_dwire_pv3c_eps05_rg
+notes: "pv3c route graph A/B 32n K2 b1 (fused + dwire), heap 12G"

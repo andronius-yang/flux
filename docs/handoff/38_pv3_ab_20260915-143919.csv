@@ -1,0 +1,4 @@
+run_id,cell_id,variant,budget,status,deterministic,total_ms,plan_comm_ms,plan_ms,place_ms,l0_ms,l1_ms,e2e_ms
+20260915-143919,ours_l01_s1_pv2_r2_dwire_trace-610042_b1_k8_isolated,ours_l01_s1_pv2_r2_dwire,1,ok,0,8.994976000000001,0.52328,1.7064,0.002656,4.348304000000001,2.5970560000000003,6.886144
+20260915-143919,ours_l01_s1_pv2_r2_dwire_pv3c_eps025_trace-610042_b1_k8_isolated,ours_l01_s1_pv2_r2_dwire_pv3c_eps025,1,ok,0,9.602272,0.467216,2.443136,0.002688,4.091792,2.49,6.51936
+20260915-143919,ours_l01_s1_pv2_r2_dwire_pv3c_eps05_trace-610042_b1_k8_isolated,ours_l01_s1_pv2_r2_dwire_pv3c_eps05,1,ok,0,9.849936,0.539248,2.89848,0.002688,4.11736,2.442192,6.55312

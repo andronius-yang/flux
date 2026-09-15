@@ -1,0 +1,20 @@
+# 2026-09-15 pv3c recapture: repeat of the 8n K2 llc b1 cells (the C=1/4 cell in
+# capsule 20260915-084021 read +24.6% with equal lane brackets — stall class).
+platform: perlmutter
+nodes: 8
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 900
+idle_timeout_s: 300
+retries: 1
+variants:
+  - llc_l01_s1_pv2
+  - llc_l01_s1_pv2_pv3c_eps025
+  - llc_l01_s1_pv2_pv3c_eps05
+notes: "8n K2 llc b1 repeat (outlier check)"

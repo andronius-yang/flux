@@ -1,0 +1,19 @@
+# 2026-09-15 (branch pv3): llc (EPIC driver, staged hier a2av) under pv3c
+# C = 1/4 — per-iteration relaxed audit (FLUX_PLL_CHECK_ITERS=1) +
+# correctness at 4n K2 b16.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [16]
+variants:
+  - llc_l01_s1_pv2_pv3c_eps025_gate
+modes: [isolated]
+iters: 6
+warmup_iters: 2
+skip_correctness: false
+timeout_s: 900
+idle_timeout_s: 300
+retries: 0
+notes: "llc pv3c C=1/4 gate 4n K2 b16"

@@ -1,0 +1,27 @@
+# 2026-09-15 pv3c recapture: 16n K2 b16 slack ladder. Capsule 20260915-092116
+# read pv3c +2..+6% vs the LocCap twin at b16 on s1/s2/llc (C=1/4 and 1/2);
+# this adds the C=1 point and a second LocCap/C=1/2 sample.
+platform: perlmutter
+nodes: 16
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [16]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 900
+idle_timeout_s: 300
+retries: 1
+variants:
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s1_pv2_r2_pv3c_eps05
+  - ours_l01_s1_pv2_r2_pv3c_eps1
+  - ours_l01_s2_swap_force_p2p_r2
+  - ours_l01_s2_swap_force_p2p_r2_pv3c_eps05
+  - ours_l01_s2_swap_force_p2p_r2_pv3c_eps1
+  - llc_l01_s1_pv2
+  - llc_l01_s1_pv2_pv3c_eps05
+  - llc_l01_s1_pv2_pv3c_eps1
+notes: "16n K2 b16 C ladder (LocCap, 1/2, 1) on s1/s2/llc"

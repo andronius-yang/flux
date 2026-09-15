@@ -1,0 +1,20 @@
+# 2026-09-14 (branch pv3): PV3 vs LocCap routing A/B at 4n K2 — the two
+# routers on the identical pv2_r2 s1 stack, one binary, isolated mode, the
+# main-perf budgets b1/b4/b16 (+ b64). Compare arms INSIDE this capsule only.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 4, 16, 64]
+variants:
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s1_pv2_r2_pv3
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 600
+idle_timeout_s: 240
+retries: 1
+notes: "pv3 vs loccap routing A/B 4n K2 (s1 pv2_r2, one binary)"

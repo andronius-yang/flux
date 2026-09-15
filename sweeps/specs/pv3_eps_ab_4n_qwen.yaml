@@ -1,0 +1,22 @@
+# 2026-09-14 (branch pv3): PV3 per-replica SLACK ladder vs LocCap (eps 1/16)
+# at 4n Qwen — s1 pv2_r2 stack, one binary, isolated. Does more slack recover
+# the wire (remote rows + incidence) to on-par? Compare inside this capsule.
+platform: perlmutter
+nodes: 4
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [4, 16, 64]
+variants:
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s1_pv2_r2_pv3_eps025
+  - ours_l01_s1_pv2_r2_pv3_eps05
+  - ours_l01_s1_pv2_r2_pv3_eps1
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 600
+idle_timeout_s: 240
+retries: 1
+notes: "pv3 slack ladder (C = 1/4, 1/2, 1) vs loccap eps 1/16, 4n Qwen s1"

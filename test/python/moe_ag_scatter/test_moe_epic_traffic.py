@@ -123,6 +123,11 @@ torch.cuda.set_device(DIST_ENV.LOCAL_RANK)
 print = partial(print, flush=True)
 
 
+# routers whose per-iteration routing is RELAXED (sender-local kernel + row
+# exchange; audited by invariants + provable bounds + a final deterministic
+# iteration): the LocCap kernel arm and the pv3 family (branch pv3)
+_RELAXED_ROUTERS = ("loccap_sl", "pv3", "pv3c")
+
 def init_ep_group(ep_size: int):
     assert DIST_ENV.WORLD_SIZE % ep_size == 0
     global EP_GROUP
@@ -913,7 +918,7 @@ def parse_args():
                         " dynamic analog, ablation). Both sender-local.")
     parser.add_argument("--router", default="d6",
                         choices=["d6", "loccap", "evensplit", "loccap_gpu",
-                                 "loccap_sl"],
+                                 "loccap_sl", "pv3", "pv3c"],
                         help="replica selection: d6 = src mod lcnts (the "
                         "EPIC baseline rule; re-derived per iteration on "
                         "device under SCHEMA rule 5); loccap = per-token "
@@ -1355,6 +1360,59 @@ if __name__ == "__main__":
                 print(f"llc_sizing=demand: recv_cap {_cap_prev} -> "
                       f"{pll_bounds['recv_cap']} (fp_slack {_fp_slack});"
                       f" pair/stage floors stay provable", flush=True)
+    elif args.router in ("pv3", "pv3c"):
+        # paper-constraint routers (branch pv3, 2026-09-15): the setup
+        # reference is the deterministic torch route (final-iteration
+        # correctness routing); sizing = the PROVABLE per-replica bounds:
+        # pv3 realizes the reference counts exactly (deterministic tables),
+        # pv3c may add up to a destination's extra tickets (relaxed vacate)
+        # -> recv_ub = sum_e U_e per GPU, pair_ub = tables + extra tickets.
+        from flux.testing.pv3_route import pv3_route as _pv3_route
+        from flux.testing.pv3_route import pv3c_route as _pv3c_route
+        from flux.testing.pv3_ext import c_rational as _pv3_c_rat
+        _cn, _cd = _pv3_c_rat(args.eps)
+        L_ = DIST_ENV.LOCAL_WORLD_SIZE
+        if args.router == "pv3c":
+            phys_all_route, _st = _pv3c_route(
+                topk_all.long().cpu(), plan.p2l, plan.l2p, plan.lcnts,
+                cfg.nlp, L_, _cn, _cd, return_tables=True)
+            _tab, _ext = _st["tables"], _st["extra"]
+            _hosted = (_tab["rep"] >= 0)
+            _rep = _tab["rep"].clamp(min=0)
+            _recv_ub = torch.zeros(W, dtype=torch.int64)
+            _recv_ub.index_add_(0, _rep.reshape(-1),
+                                (_tab["U"].unsqueeze(1) * _hosted.long())
+                                .reshape(-1))
+            _pair_tab = _tab["M"] + _ext
+            _pair_ub = torch.zeros(W * W, dtype=torch.int64)
+            _idx = (torch.arange(W).view(1, W, 1) * W
+                    + _rep.unsqueeze(1)).expand_as(_pair_tab)
+            _pair_ub.index_add_(0, _idx.reshape(-1),
+                                (_pair_tab * _hosted.unsqueeze(1).long())
+                                .reshape(-1))
+            _pair_ub = _pair_ub.view(W, W)
+        else:
+            phys_all_route, _st = _pv3_route(
+                topk_all.long().cpu(), plan.p2l, plan.l2p, plan.lcnts,
+                cfg.nlp, L_, _cn, _cd, return_tables=True)
+            _recv_ub = _st["rows_per_rank"].clone()
+            _pair_ub = _st["pair"].clone()
+        assert _st["c2_over_rows"] == 0 and _st["c2_under_rows"] == 0
+        phys_all_route = phys_all_route.cpu()
+        plan.phys_override = phys_all_route
+        pll_bounds = {
+            "f_cap": 0,
+            "recv_ub": _recv_ub, "pair_ub": _pair_ub,
+            "recv_cap": int(_recv_ub.max()), "pair_cap": int(_pair_ub.max()),
+        }
+        args.pll_f_cap = 0
+        if rank == 0:
+            print(f"[{args.router}-sizing] recv_cap {pll_bounds['recv_cap']} "
+                  f"pair_cap {pll_bounds['pair_cap']}; replica ratio "
+                  f"[{_st['replica_ratio_min']:.3f}, "
+                  f"{_st['replica_ratio_max']:.3f}] gpu ratio "
+                  f"[{_st['gpu_ratio_min']:.3f}, {_st['gpu_ratio_max']:.3f}]",
+                  flush=True)
     elif args.router == "evensplit":
         phys_all_route = evensplit_route(topk_all.long(), plan.l2p,
                                          plan.lcnts).cpu()
@@ -1371,7 +1429,7 @@ if __name__ == "__main__":
                 else f"loccap_gpu_eps{args.eps:g}"
                 if args.router == "loccap_gpu"
                 else f"loccap_sl_eps{args.eps:g}"
-                if args.router == "loccap_sl"
+                if args.router in _RELAXED_ROUTERS
                 else f"loccap_eps{args.eps:g}")
         pred = [p for p in pblob.get("predicted", [])
                 if p.get("router") == want]
@@ -1426,7 +1484,7 @@ if __name__ == "__main__":
     # loccap_sl capacity mode: recv-side buffers + wire panels are sized to
     # the PROVABLE table bounds (never to the reference's realized rows),
     # so every relaxed kernel iteration fits by construction.
-    if args.router == "loccap_sl":
+    if args.router in _RELAXED_ROUTERS:
         runner.reserve_recv_capacity(pll_bounds["recv_cap"])
     if args.transport in ("nvshmem", "hier_compress"):
         runner.enable_nvshmem(DIST_ENV.LOCAL_WORLD_SIZE, args.num_comm_sm,
@@ -1449,7 +1507,7 @@ if __name__ == "__main__":
             args.migration != "inkernel", (
                 "--hc_wire lb_union x --migration inkernel is untested")
         hc_kwargs = {}
-        if args.router == "loccap_sl":
+        if args.router in _RELAXED_ROUTERS:
             L_ = DIST_ENV.LOCAL_WORLD_SIZE
             NN_ = W // L_
             pu = pll_bounds.get("pair_sizing", pll_bounds["pair_ub"])
@@ -1480,7 +1538,7 @@ if __name__ == "__main__":
             # iteration routing variance needs capacity-sized inbuf/scale
             # (the provable recv bound — same bound as the dispatch side)
             _hcc_cap = (pll_bounds["recv_cap"]
-                        if (args.router == "loccap_sl"
+                        if (args.router in _RELAXED_ROUTERS
                             and pll_bounds is not None) else None)
             runner.enable_hc_combine(n_split=args.l1_n_split,
                                      m_capacity=_hcc_cap)
@@ -1516,7 +1574,7 @@ if __name__ == "__main__":
     # legacy_untimed_plan in cells.csv (visible, never silently mixed).
     _ft_on = int(os.environ.get("FLUX_PLL_FAST_TAIL", "1"))
     per_iter = ((args.groups == 1
-                 and args.router in ("d6", "loccap_gpu", "loccap_sl"))
+                 and args.router in ("d6", "loccap_gpu", "loccap_sl", "pv3", "pv3c"))
                 or (args.groups in (2, 4) and args.router == "d6"
                     and args.replica_select == "local_static"
                     and args.migration == "off" and bool(_ft_on)))
@@ -1543,7 +1601,7 @@ if __name__ == "__main__":
             inwindow_meta=(args.hc_meta == "inwindow"
                            and runner.hc_enabled),
             router=args.router,
-            eps=(args.eps if args.router in ("loccap_gpu", "loccap_sl")
+            eps=(args.eps if args.router in ("loccap_gpu", "loccap_sl", "pv3", "pv3c")
                  else None),
             route_group=TP_GROUP,
             f_cap=args.pll_f_cap,
@@ -1552,7 +1610,7 @@ if __name__ == "__main__":
         # loads must reproduce the CPU reference state bitwise.
         assert torch.equal(iter_planner.local_loads().cpu(), tpe[rank])
         loads_gather_buf.copy_(tpe.reshape(-1).to(loads_gather_buf.device))
-        if args.router == "loccap_sl":
+        if args.router in _RELAXED_ROUTERS:
             # relaxed contract: bitwise guard runs on the DETERMINISTIC
             # reference ip; the real kernel derive is audited by
             # invariants + provable bounds + incidence band instead.
@@ -1598,12 +1656,12 @@ if __name__ == "__main__":
             # determinism is the load-bearing property). For loccap_sl the
             # guard consumes the REFERENCE vce (the setup bundle was built
             # from the reference routing).
-            vce_chk = (ip_ref.hc_vce if args.router == "loccap_sl"
+            vce_chk = (ip_ref.hc_vce if args.router in _RELAXED_ROUTERS
                        else ip0.hc_vce)
             b0 = runner._hc_bundles[0]
             sd, scd, sps_c, uc_c = runner._hc_ops[0].derive_routed_meta(
                 vce_chk)
-            if (args.router in ("loccap_sl", "loccap_gpu", "d6")
+            if (args.router in ("loccap_sl", "loccap_gpu", "d6", "pv3", "pv3c")
                     and int(os.environ.get("FLUX_PLL_FAST_TAIL", "1"))):
                 # fast tail: vce is topk-column-ordered, so the setup
                 # bundle's canonical-order meta is not bitwise-comparable.
@@ -1762,7 +1820,7 @@ if __name__ == "__main__":
               f"{imb_after:.3f}")
         print(f"router: {args.router}"
               + (f" (eps {args.eps:g})"
-                 if args.router in ("loccap", "loccap_gpu", "loccap_sl") else "")
+                 if args.router in ("loccap", "loccap_gpu", "loccap_sl", "pv3", "pv3c") else "")
               + f"; incidence_remote {route_stats['incidence_remote']} "
               f"(mean nodes/token {route_stats['mean_nodes_per_token']:.3f});"
               f" loccap_plan_host_ms {loccap_plan_host_ms:.1f} "
@@ -1915,7 +1973,7 @@ if __name__ == "__main__":
     )
     RECORDER.emit_iters("epic", iter_times)
 
-    if args.router == "loccap_sl" and iter_planner is not None:
+    if args.router in _RELAXED_ROUTERS and iter_planner is not None:
         # FINAL DETERMINISTIC ITERATION (untimed; user decision
         # 2026-08-21): bind the setup-reference routing and run one
         # forward so output_sha and check_correctness validate the data

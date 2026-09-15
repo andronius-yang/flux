@@ -1,0 +1,19 @@
+# 2026-09-15 (branch pv3): llc LocCap vs pv3c (C = 1/4) on the EPIC staged
+# transport, 4n K2, main-perf budgets, one binary, isolated.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 4, 16]
+variants:
+  - llc_l01_s1_pv2
+  - llc_l01_s1_pv2_pv3c_eps025
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 600
+idle_timeout_s: 240
+retries: 1
+notes: "llc loccap vs pv3c C=1/4, 4n K2 b1/b4/b16"

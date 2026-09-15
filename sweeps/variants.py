@@ -3013,6 +3013,25 @@ for _base in ("ours_l01_s2", "ours_l01_s2_stale", "ours_l01_s2_gate",
         test_args=VARIANTS[_base]["test_args"]
                   + ["--place_solver", "pv2", "--redundant_per_rank", "2"],
     )
+# ---- PV3 routing arms (branch pv3, 2026-09-14): the paper-constraint
+# router (rotation water-fill, flux/testing/pv3_route.py + _pv3_ext.cu)
+# swapped into the OURS stack via --route_rule pv3. Same pv2 placement,
+# same fused transport, same plan lane; only the replica-selection rule
+# changes: every replica's load within (1 +- eps) of its balanced
+# reference D_e / c_e (paper eq. routing-cost), no forced regime. NEW ARM
+# FAMILY: never bitwise-compare against LocCap cells (different routing ->
+# different out_sha); allclose gates bind as always. Latency comparisons
+# only inside one capsule against the LocCap twin.
+for _base in ("ours_l01_s1_pv2_r2", "ours_l01_s1_pv2"):
+    VARIANTS[_base + "_pv3"] = dict(
+        VARIANTS[_base],
+        test_args=VARIANTS[_base]["test_args"] + ["--route_rule", "pv3"],
+    )
+VARIANTS["ours_l01_s1_pv2_r2_pv3_gate"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2_pv3"],
+    test_args=VARIANTS["ours_l01_s1_pv2_r2_pv3"]["test_args"]
+              + ["--check_iters", "1"],
+)
 # ---- direct-wire transport ablation (2026-08-30, 16n low-budget
 # diagnosis): SAME plan lane (pv2 placement + LocCap routing + r2
 # replicas — the canon pv2_r2 arm) but the wire is the eplb_l01 staged
@@ -3705,3 +3724,115 @@ VARIANTS["ablation_l01_s2_swapall_rp4_noov_p2p_r2"] = dict(
     _ABL_SWAP_BASE,
     test_args=list(_ABL_SWAPALL_ARGS) + ["--swap_reset_period", "4",
                                          "--swap_overlap", "0"])
+
+# PV3 twins of EVERY ours-driver arm (2026-09-14, user directive: pv3 must
+# substitute in every graphed arm — main perf s1, weak scaling, the
+# ablation/case-study swap arms incl. the dual3 default, dwire/dov wires).
+# The hook lives in the shared OursIterPlanner, so a twin = the same arm +
+# --route_rule pv3; the s1 twins defined above are re-derived identically.
+for _name in [k for k, v in VARIANTS.items()
+              if v.get("driver") == "ours"
+              and "--route_rule" not in v.get("test_args", [])]:
+    VARIANTS[_name + "_pv3"] = dict(
+        VARIANTS[_name],
+        test_args=VARIANTS[_name]["test_args"] + ["--route_rule", "pv3"],
+    )
+
+# PV3 slack ladder (2026-09-14, user ask: the 1/16 slack was a stale
+# experiment; does more per-replica slack recover the wire?): the s1 canon
+# and the dual3 default arm under pv3 at eps 1/8, 1/4, 1/2, 1 (C is the
+# paper's relaxation ratio; pv3 bounds = [floor((1-C)q), ceil((1+C)q)]).
+for _base in ("ours_l01_s1_pv2_r2_pv3",
+              "ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_pv3"):
+    if _base not in VARIANTS:
+        continue
+    for _tag, _eps in (("eps0125", "0.125"), ("eps025", "0.25"),
+                       ("eps05", "0.5"), ("eps1", "1.0")):
+        _ta = list(VARIANTS[_base]["test_args"])
+        assert "--eps" in _ta
+        _ta[_ta.index("--eps") + 1] = _eps
+        VARIANTS[f"{_base}_{_tag}"] = dict(VARIANTS[_base], test_args=_ta)
+
+# PV3C twins (2026-09-14): pv3 + vacate pass, s1 canon + dual3 default arm,
+# at eps 1/16, 1/4, 1/2 (+ a check_iters gate twin at 1/4).
+for _base in ("ours_l01_s1_pv2_r2",
+              "ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2"):
+    if _base not in VARIANTS:
+        continue
+    for _tag, _eps in (("", "0.0625"), ("_eps025", "0.25"),
+                       ("_eps05", "0.5")):
+        _ta = list(VARIANTS[_base]["test_args"])
+        _ta[_ta.index("--eps") + 1] = _eps
+        VARIANTS[f"{_base}_pv3c{_tag}"] = dict(
+            VARIANTS[_base], test_args=_ta + ["--route_rule", "pv3c"])
+VARIANTS["ours_l01_s1_pv2_r2_pv3c_eps025_gate"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2_pv3c_eps025"],
+    test_args=VARIANTS["ours_l01_s1_pv2_r2_pv3c_eps025"]["test_args"]
+              + ["--check_iters", "1"])
+
+# PV3C twins of EVERY ours-driver arm (2026-09-15, user directive: every
+# plotted "Ours" lane — fused, direct wire, dov, s2 swap/dual3 — must carry
+# the paper-constraint router): <arm>_pv3c (eps as the base, 1/16),
+# <arm>_pv3c_eps025 (C = 1/4, the recommended default), <arm>_pv3c_eps05.
+for _name in [k for k, v in VARIANTS.items()
+              if v.get("driver") == "ours"
+              and "--route_rule" not in v.get("test_args", [])
+              and "--eps" in v.get("test_args", [])]:
+    for _tag, _eps in (("", None), ("_eps025", "0.25"), ("_eps05", "0.5")):
+        _key = f"{_name}_pv3c{_tag}"
+        if _key in VARIANTS:
+            continue
+        _ta = list(VARIANTS[_name]["test_args"])
+        if _eps is not None:
+            _ta[_ta.index("--eps") + 1] = _eps
+        VARIANTS[_key] = dict(VARIANTS[_name],
+                              test_args=_ta + ["--route_rule", "pv3c"])
+
+# gate twins (check_iters) for the two untested pv3c lanes of the main-perf
+# "Ours" rows: direct wire (ours2_direct) and s2 forced P2P swaps
+# (ours12_dispatch)
+for _base in ("ours_l01_s1_pv2_r2_dwire_pv3c_eps025",
+              "ours_l01_s2_swap_force_p2p_r2_pv3c_eps025"):
+    VARIANTS[_base + "_gate"] = dict(
+        VARIANTS[_base],
+        test_args=VARIANTS[_base]["test_args"] + ["--check_iters", "1"])
+
+# llc ("2Ours no-overlap" main-perf row) under the paper-constraint router
+# (branch pv3, 2026-09-15): the EPIC driver's staged transport with
+# --router pv3c (C = 1/4) / pv3; gate twin audits every iteration
+# (FLUX_PLL_CHECK_ITERS=1: check_relaxed invariants + provable bounds).
+for _rt, _eps, _tag in (("pv3c", "0.25", "pv3c_eps025"), ("pv3c", "0.0625", "pv3c"),
+                        ("pv3", "0.25", "pv3_eps025")):
+    _ta = list(VARIANTS["llc_l01_s1_pv2"]["test_args"])
+    _ta[_ta.index("--router") + 1] = _rt
+    _ta[_ta.index("--eps") + 1] = _eps
+    VARIANTS[f"llc_l01_s1_pv2_{_tag}"] = dict(VARIANTS["llc_l01_s1_pv2"],
+                                             test_args=_ta)
+VARIANTS["llc_l01_s1_pv2_pv3c_eps025_gate"] = dict(
+    VARIANTS["llc_l01_s1_pv2_pv3c_eps025"],
+    env=dict(VARIANTS["llc_l01_s1_pv2_pv3c_eps025"].get("env", {}),
+             FLUX_PLL_CHECK_ITERS="1"))
+
+# llc pv3c at C = 1/2 (8n/16n slack ladder)
+_ta = list(VARIANTS["llc_l01_s1_pv2_pv3c_eps025"]["test_args"])
+_ta[_ta.index("--eps") + 1] = "0.5"
+VARIANTS["llc_l01_s1_pv2_pv3c_eps05"] = dict(VARIANTS["llc_l01_s1_pv2_pv3c_eps025"], test_args=_ta)
+
+# pv3c at C = 1 (eps 1.0) for the 16n slack ladder (2026-09-15): the four
+# main-perf Ours lanes
+for _base in ("ours_l01_s1_pv2_r2", "ours_l01_s2_swap_force_p2p_r2",
+              "ours_l01_s1_pv2_r2_dwire", "llc_l01_s1_pv2"):
+    _src = VARIANTS[_base + "_pv3c_eps025"]
+    _ta = list(_src["test_args"])
+    _ta[_ta.index("--eps") + 1] = "1.0"
+    VARIANTS[_base + "_pv3c_eps1"] = dict(_src, test_args=_ta)
+
+# 2026-09-15 route-graph A/B twins (handoff 39 §10 item 1 / §11): `_nrg` =
+# route graph explicitly OFF, `_rg` = ON. The default arms run the eager
+# route (FLUX_OURS_ROUTE_GRAPH default 0 since 09:20 — the graphed fused
+# arm inflated plan_comm in two 4n A/Bs), so `_nrg` == default.
+for _base in ("ours_l01_s1_pv2_r2_pv3c_eps025", "ours_l01_s1_pv2_r2_pv3c_eps05",
+              "ours_l01_s1_pv2_r2_dwire_pv3c_eps025", "ours_l01_s1_pv2_r2_dwire_pv3c_eps05"):
+    _src = VARIANTS[_base]
+    VARIANTS[_base + "_nrg"] = dict(_src, env=dict(_src["env"], FLUX_OURS_ROUTE_GRAPH="0"))
+    VARIANTS[_base + "_rg"] = dict(_src, env=dict(_src["env"], FLUX_OURS_ROUTE_GRAPH="1"))

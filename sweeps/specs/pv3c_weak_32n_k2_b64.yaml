@@ -1,0 +1,19 @@
+# 2026-09-15 pv3c recapture campaign (branch pv3): weak-scaling 32n b64 (ours)
+platform: perlmutter
+nodes: 32
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 1500
+idle_timeout_s: 600
+retries: 1
+variants:
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s1_pv2_r2_pv3c_eps025
+  - ours_l01_s1_pv2_r2_pv3c_eps05
+notes: "weak-scaling 32n b64 (ours)"

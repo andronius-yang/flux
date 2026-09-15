@@ -1,0 +1,21 @@
+# 2026-09-14 (branch pv3): PV3 routing under the DEFAULT OURS s2 arm (dual3
+# 3D-scheduled swap, user rule 9/10) — the abl3d gate-3d recipe (reset-every
+# proLaw severe cell, every timed iteration a full drift event, --check_iters
+# 1 + correctness) with --route_rule pv3: the router must follow the swapped
+# tables every iteration.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering"
+budgets_mib: [64]
+modes: [isolated]
+iters: 6
+warmup_iters: 3
+skip_correctness: false
+timeout_s: 600
+idle_timeout_s: 200
+retries: 0
+variants:
+  - ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_gate_pv3
+notes: "pv3 dual3 gate 4n K2 b64: paper-constraint router under live swaps, per-iteration gate + correctness"

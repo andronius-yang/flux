@@ -160,8 +160,30 @@ class OursIterPlanner:
         # count-equivalent to the EPLB `local_spread` rule / SGLang
         # dynamic-dispatch analog). Default "loccap" = unchanged behaviour;
         # no existing arm/spec passes the kwarg. Never a headline arm.
-        assert route_rule in ("loccap", "equal_split"), route_rule
+        # route_rule="pv3" (branch pv3, 2026-09-14): the rotation
+        # water-fill router that implements the paper's routing
+        # constraints literally (per-replica load within (1 +- C) of the
+        # balanced reference q = D_e / c_e; see pv3_route.py and
+        # docs/handoff/38_pv3_routing.md). Standalone JIT kernel
+        # (_pv3_ext.cu), same sender-local contract as LocCap: tables are
+        # a pure function of the allgathered d; relaxed tickets pick the
+        # slot per own entry. No forced regime: kstats identically 0.
+        # route_rule="pv3c": pv3 + the per-token VACATE pass on per-replica
+        # release/extra budgets (LocCap's node-cover idea under the
+        # constraints; handoff 38 §7). Realized per-(src, dst) counts are
+        # bounded by the tables (not exact): sizing uses the provable caps.
+        assert route_rule in ("loccap", "equal_split", "pv3", "pv3c"), \
+            route_rule
         self.route_rule = route_rule
+        self._pv3 = None
+        if route_rule in ("pv3", "pv3c"):
+            assert not route_global, "pv3 is the sender-local lane only"
+            from flux.testing.pv3_ext import c_rational, load_ext
+            self._pv3 = load_ext()
+            self._pv3_c = c_rational(eps)
+            wsz = (self._pv3.workspace_ints_c if route_rule == "pv3c"
+                   else self._pv3.workspace_ints)(cfg.G, cfg.R)
+            self._pv3_ws = torch.empty(wsz, dtype=torch.int32, device=device)
         self.plan = plan
         self.rank = rank
         self.device = device
@@ -211,6 +233,29 @@ class OursIterPlanner:
         self.plan_prealloc = (self.plan_graph or self.xchg_narrow > 0
                               or bool(int(os.environ.get(
                                   "FLUX_OURS_PLAN_PREALLOC", "0"))))
+        # FLUX_OURS_ROUTE_GRAPH (2026-09-15, handoff 39 §10 item 1): CUDA-
+        # graph the pv3/pv3c route + kstats copy + exchange pack (five
+        # launches + a memset through the JIT extension, all on persistent
+        # buffers) — captured once at prime_graphs(d_gather_buf), replayed
+        # per iteration. The recapture read +0.25..0.5 ms (16n) / +0.7..1.2
+        # ms (32n) of plan bracket under pv3c vs one fused LocCap launch,
+        # with the kernels themselves at +0.15 ms in the 1-GPU h2h: the
+        # eager launch path amplified by max-over-ranks. RESULT (09:20):
+        # the gap was kernel GPU time on real placements (fixed in kernel
+        # v4, _pv3_ext.cu); the graph saves ~20 us of enqueue but the
+        # graphed FUSED arm read +0.4 ms of plan_comm on nearly every rank
+        # in two 4n A/Bs (capsules 20260915-151806/-161623; the eager twin
+        # and the graphed dwire arm were clean) — cause not traced. Default
+        # OFF (opt-in FLUX_OURS_ROUTE_GRAPH=1, only with PLAN_GRAPH and the
+        # pv3 family); eager fallback on capture failure. LocCap keeps its
+        # f_cap-retry host sync, so it is never graphed.
+        self.route_graph = (self.plan_graph and route_rule in ("pv3", "pv3c")
+                            and bool(int(os.environ.get(
+                                "FLUX_OURS_ROUTE_GRAPH", "0"))))
+        self._route_graph = None
+        self._route_graph_broken = False
+        self._route_graph_dbuf = None
+        self._route_graph_keep = None
         if self.xchg_narrow:
             assert cfg.R * cfg.nlp <= 32767, (
                 f"XCHG_NARROW needs P = R*nlp <= 32767 (int16 phys), got "
@@ -282,9 +327,17 @@ class OursIterPlanner:
 
     def refresh_placement(self):
         dev = self.device
-        self.l2p = self.plan.l2p.to(dev)
-        self.lcnts = self.plan.lcnts.to(dev)
-        self.p2l = self.plan.p2l.long().to(dev)
+        if self._route_graph is not None:
+            # the route graph captured these device tables: update them in
+            # place (same shapes by construction; SwapTableSync already
+            # copies in place on the fired-swap path)
+            self.l2p.copy_(self.plan.l2p.to(dev))
+            self.lcnts.copy_(self.plan.lcnts.to(dev))
+            self.p2l.copy_(self.plan.p2l.long().to(dev))
+        else:
+            self.l2p = self.plan.l2p.to(dev)
+            self.lcnts = self.plan.lcnts.to(dev)
+            self.p2l = self.plan.p2l.long().to(dev)
         if self.route_global:
             from flux.testing.placelambda_gpu import instance_tables_gpu
             self._rg_tables = instance_tables_gpu(
@@ -425,6 +478,21 @@ class OursIterPlanner:
         plan_comm bracket) — derive is the deterministic global route."""
         if self.route_global:
             return self._derive_rg()
+        cfg = self.cfg
+        S, K, R = cfg.S, cfg.K, cfg.R
+        if (self._route_graph is not None
+                and d_gather_buf is self._route_graph_dbuf):
+            with _nvtx("plan.route_graph"):
+                self._route_graph.replay()
+        else:
+            self._route_and_pack(d_gather_buf)
+        return self._exchange_and_tail()
+
+    def _route_and_pack(self, d_gather_buf):
+        """Own-rank route + kstats copy + fused-exchange pack, eager. For
+        pv3/pv3c this is exactly the region the route graph captures
+        (persistent inputs: _topk_own_i32, d_gather_buf, l2p, lcnts,
+        _pv3_ws; persistent outputs: _kstats_pinned, _xchg_send)."""
         import flux
         cfg = self.cfg
         S, K, R = cfg.S, cfg.K, cfg.R
@@ -433,13 +501,25 @@ class OursIterPlanner:
             # forced-budget retry (kstats identically 0).
             with _nvtx("plan.route_equal_split"):
                 phys_own, kstats = self._equal_split_route()
+        elif self.route_rule in ("pv3", "pv3c"):
+            # paper-constraint router (ctor note): two launches over the
+            # allgathered d + the CURRENT l2p/lcnts (swap-lane
+            # refresh_placement keeps them placement-consistent); pv3c
+            # adds the per-token vacate kernel
+            with _nvtx("plan.route_pv3"):
+                fn = (self._pv3.route_pv3c if self.route_rule == "pv3c"
+                      else self._pv3.route_pv3)
+                phys_own, kstats = fn(
+                    self._topk_own_i32, d_gather_buf, self.l2p, self.lcnts,
+                    self.rank, cfg.nlp, self.L, self._pv3_c[0],
+                    self._pv3_c[1], self._pv3_ws)
         else:
             with _nvtx("plan.route"):
                 phys_own, kstats = flux.placelambda_route_sl(
                     self._topk_own_i32, d_gather_buf, self.l2p, self.lcnts,
                     self.rank, cfg.nlp, self.L, self.eps,
                     self.f_cap_current)
-        if self.f_cap_retry and self.route_rule != "equal_split":
+        if self.f_cap_retry and self.route_rule == "loccap":
             # forced-budget breach check + local escalate-and-reroute
             # (kstats[2] = forced_budget_overflow). Escalation ladder:
             # 4x, then uncapped (kernel INT_MAX tickets). The raised cap
@@ -472,6 +552,49 @@ class OursIterPlanner:
             else:
                 self._xchg_send[S * K:].copy_(
                     self._probs_own.view(-1).view(torch.int32))
+        return phys_own, kstats
+
+    def _capture_route_graph(self, d_gather_buf):
+        """Capture-once of _route_and_pack on the persistent buffers (pv3
+        family only). Runs on a VALID demand histogram: d_gather_buf is
+        filled from the setup topk_all first (values are irrelevant to the
+        captured program but the kernels must see consistent tables). The
+        graph-pool phys/kstats tensors are kept alive for the graph's
+        lifetime; nothing else reads them (consumers use _xchg_send and
+        _kstats_pinned). Eager fallback on any failure."""
+        cfg = self.cfg
+        try:
+            R, G = cfg.R, cfg.G
+            hist = torch.zeros(R * G, dtype=torch.int32, device=self.device)
+            idx = (torch.arange(R, device=self.device).view(R, 1, 1) * G
+                   + self.topk_all).reshape(-1)
+            hist.index_add_(0, idx, torch.ones_like(idx, dtype=torch.int32))
+            d_gather_buf.copy_(hist.view(R, G))
+            for _ in range(2):  # warmup (lazy loads, allocator)
+                self._route_and_pack(d_gather_buf)
+            torch.cuda.synchronize()
+            g = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(g):
+                keep = self._route_and_pack(d_gather_buf)
+            g.replay()
+            torch.cuda.synchronize()
+            self._route_graph = g
+            self._route_graph_dbuf = d_gather_buf
+            self._route_graph_keep = keep
+            if self.rank == 0:
+                print(f"[ours] route graph captured ({self.route_rule}, "
+                      f"R={cfg.R})", flush=True)
+        except Exception as e:  # noqa: BLE001 — eager fallback
+            self._route_graph = None
+            self._route_graph_dbuf = None
+            self._route_graph_broken = True
+            if self.rank == 0:
+                print(f"[ours] route graph capture failed "
+                      f"({type(e).__name__}: {e}); eager", flush=True)
+
+    def _exchange_and_tail(self):
+        cfg = self.cfg
+        S, K, R = cfg.S, cfg.K, cfg.R
         with _nvtx("plan.xchg_allgather"):
             if self.xchg_narrow:
                 # NCCL rejects int16 (Short); ship the same bytes as int8
@@ -573,18 +696,24 @@ class OursIterPlanner:
                 print(f"[ours] plan tail graph capture failed "
                       f"({type(e).__name__}: {e}); eager", flush=True)
 
-    def prime_graphs(self):
-        """Capture the plan tail graph at SETUP inside a rank-quiesced
+    def prime_graphs(self, d_gather_buf=None):
+        """Capture the plan tail graph (and, given the persistent demand
+        buffer, the pv3/pv3c route graph) at SETUP inside a rank-quiesced
         region (canon-regen 8/29 finding: lazy first-use capture
         mid-iteration SIGABRTs large-budget cells — torch's pre-capture
         sync waits on peers' in-flight NCCL/NVSHMEM work that needs this
         rank; b32/b64 volumes expose it). No-op when graphs are off or
         already captured; the capture records ops only, buffer VALUES are
-        irrelevant."""
+        irrelevant (the route capture fills d_gather_buf with a valid
+        histogram first)."""
         if (self.plan_graph and self.plan_prealloc
                 and not self._tail_graph_broken
                 and self._tail_graph is None):
             self._capture_tail_graph()
+        if (self.route_graph and d_gather_buf is not None
+                and not self._route_graph_broken
+                and self._route_graph is None):
+            self._capture_route_graph(d_gather_buf)
 
     def derive_reference(self) -> OursIterPlan:
         """Deterministic vce from the setup torch loccap_route_sl routing

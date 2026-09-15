@@ -1,0 +1,24 @@
+# 2026-09-15: pv3c kernel-v4 (fast tables + cooperative vacate) + route graph
+# in-driver check at 16n K2 b1/b4, where the campaign read +0.25..0.5 ms of
+# plan bracket: LocCap vs pv3c C=1/2 (graph) vs its eager _nrg twin, fused
+# s1 + direct wire.
+platform: perlmutter
+nodes: 16
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 4]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 900
+idle_timeout_s: 300
+retries: 1
+variants:
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s1_pv2_r2_pv3c_eps05
+  - ours_l01_s1_pv2_r2_pv3c_eps05_rg
+  - ours_l01_s1_pv2_r2_dwire
+  - ours_l01_s1_pv2_r2_dwire_pv3c_eps05
+notes: "pv3c kernel v4 + route graph in-driver A/B, 16n K2 b1/b4"

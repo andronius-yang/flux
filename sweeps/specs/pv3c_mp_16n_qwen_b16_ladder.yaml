@@ -1,0 +1,27 @@
+# 2026-09-15 pv3c recapture: 16n Qwen b16 slack ladder + stall-clean twins.
+# Capsule 20260915-094347 read pv3c C=1/4 +14% (s1) / +11.5% (llc) at b16 and
+# two cells hit the known ~350 ms Qwen-16n-b16 stall (LocCap s2, pv3c s1 C=1/2).
+platform: perlmutter
+nodes: 16
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [16]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 900
+idle_timeout_s: 300
+retries: 1
+variants:
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s1_pv2_r2_pv3c_eps05
+  - ours_l01_s1_pv2_r2_pv3c_eps1
+  - ours_l01_s2_swap_force_p2p_r2
+  - ours_l01_s2_swap_force_p2p_r2_pv3c_eps05
+  - ours_l01_s2_swap_force_p2p_r2_pv3c_eps1
+  - llc_l01_s1_pv2
+  - llc_l01_s1_pv2_pv3c_eps05
+  - llc_l01_s1_pv2_pv3c_eps1
+notes: "16n Qwen b16 C ladder (LocCap, 1/2, 1) + stall-clean twins"

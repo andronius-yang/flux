@@ -52,6 +52,7 @@ from flux.testing.placelambda_gpu import (
     loccap_route_sl,
     loccap_sl_bounds,
 )
+from flux.testing.pv3_route import pv3_route
 from flux.testing import placelambda_fast as plfast
 from flux.testing.ultraep_semantics import (
     UltraEPConfig,
@@ -282,14 +283,22 @@ def parse_args():
                         " movement stream, NO cross-node migration (the"
                         " pv2 adoption lane is disabled). Decision is"
                         " timed in the place bracket (total_ms).")
-    p.add_argument("--route_rule", choices=["loccap", "equal_split"],
+    p.add_argument("--route_rule",
+                   choices=["loccap", "equal_split", "pv3", "pv3c"],
                    default="loccap",
-                   help="CASE-STUDY ONLY (2026-09-05, figs/case_study "
-                        "routing twin): equal_split = sender-local, "
-                        "locality-oblivious equal split over each expert's "
-                        "instances instead of the LocCap kernel route "
-                        "(flux.testing.ours.equal_split_route_all). Default "
-                        "loccap = unchanged; no existing arm passes it.")
+                   help="loccap (default): the LocCap sender-local kernel "
+                        "(uniform per-rank cap ceil((1+eps) S K), forced "
+                        "regime). pv3 (branch pv3, 2026-09-14): the "
+                        "rotation water-fill router implementing the "
+                        "paper's routing constraints — every replica's "
+                        "load within (1 +- eps) of its balanced reference "
+                        "D_e / c_e, no forced regime, exact deterministic "
+                        "counts (flux.testing.pv3_route / _pv3_ext.cu). "
+                        "pv3c: pv3 + the per-token vacate pass on "
+                        "per-replica slack budgets (token-node cover under "
+                        "the same constraints; relaxed counts, provable "
+                        "caps). equal_split: CASE-STUDY ONLY (2026-09-05) "
+                        "locality-oblivious equal split.")
     p.add_argument("--swap_tau_rows", type=int, default=512,
                    help="EPIC tau in rows: accept a swap only if it drops"
                         " the pair max load by at least this many rows"
@@ -708,6 +717,81 @@ def main():
             print(f"[es-sizing] resident: recv {_r_es} pair {_p_es} -> caps "
                   f"recv {pll_bounds['recv_cap']} pair "
                   f"{pll_bounds['pair_cap']}", flush=True)
+    if args.route_rule in ("pv3", "pv3c"):
+        # PV3 (branch pv3, 2026-09-14): the runtime route's per-(source,
+        # destination) counts are EXACTLY the reference's (deterministic
+        # tables; tickets only permute tokens within a segment), so the
+        # reference route IS the sizing basis: recv / pair caps = exact
+        # counts + the 8W cushion, folded over the scheduled topics (and
+        # the s2 sizing placements below). The LocCap bounds stay as a
+        # floor (max) so nothing downstream shrinks.
+        # PV3C: the vacate pass moves rows within the slack budgets, so
+        # the realized counts are BOUNDED, not exact: recv cap = per-GPU
+        # sum of the replica upper bounds U_e, pair cap = tables + the
+        # source's extra tickets (both provable), reference route = the
+        # deterministic pv3c reference (the final correctness routing).
+        from flux.testing.pv3_ext import c_rational as _pv3_c_rat
+        from flux.testing.pv3_route import pv3c_route, pv3c_budgets
+        _pv3_c = _pv3_c_rat(args.eps)
+        _pv3c_slacks = []            # per sizing route: max extra per dst
+
+        def _pv3_caps(_tk, _p2l_x, _l2p_x, _lc_x):
+            if args.route_rule == "pv3c":
+                _ph, _st_ = pv3c_route(_tk.long(), _p2l_x, _l2p_x, _lc_x,
+                                       cfg.nlp, L, _pv3_c[0], _pv3_c[1],
+                                       return_tables=True)
+                _tab = _st_["tables"]
+                _rel, _ext = _st_["release"], _st_["extra"]
+                _hosted = (_tab["rep"] >= 0)                      # [G, Cmax]
+                _rep = _tab["rep"].clamp(min=0)
+                _recv_ub = torch.zeros(W, dtype=torch.int64)
+                _recv_ub.index_add_(0, _rep.reshape(-1),
+                                    (_tab["U"].unsqueeze(1) * _hosted.long())
+                                    .reshape(-1))
+                _pair_tab = (_tab["M"] + _ext)                   # [G, R, Cmax]
+                _pair_ub = torch.zeros(W * W, dtype=torch.int64)
+                _idx = (torch.arange(W).view(1, W, 1) * W
+                        + _rep.unsqueeze(1)).expand_as(_pair_tab)
+                _pair_ub.index_add_(0, _idx.reshape(-1),
+                                    (_pair_tab * _hosted.unsqueeze(1).long())
+                                    .reshape(-1))
+                assert _st_["c2_over_rows"] == 0 and _st_["c2_under_rows"] == 0
+                # provable per-destination DRIFT of the relaxed vacate
+                # kernel vs the reference: at most the extra tickets all
+                # sources hold for that destination (the a2av recv-region
+                # cushion; forced-pair slack is 0 for pv3 routes)
+                _ext_dst = torch.zeros(W, dtype=torch.int64)
+                _ext_dst.index_add_(0, _rep.unsqueeze(1).expand_as(_ext)
+                                    .reshape(-1),
+                                    (_ext * _hosted.unsqueeze(1).long())
+                                    .reshape(-1))
+                _st_["pv3c_extra_dst_max"] = int(_ext_dst.max())
+                _pv3c_slacks.append(int(_ext_dst.max()))
+                return (_ph, int(_recv_ub.max()), int(_pair_ub.max()), _st_)
+            _ph, _st_ = pv3_route(_tk.long(), _p2l_x, _l2p_x, _lc_x,
+                                  cfg.nlp, L, _pv3_c[0], _pv3_c[1],
+                                  return_tables=True)
+            assert _st_["c2_over_rows"] == 0 and _st_["c2_under_rows"] == 0
+            return (_ph, int(_st_["rows_per_rank"].max()),
+                    int(_st_["pair"].max()), _st_)
+
+        phys_ref, _r_p3, _p_p3, _st_p3 = _pv3_caps(topk_all, plan.p2l,
+                                                   plan.l2p, plan.lcnts)
+        for _tk in sched_topk_all[1:]:
+            _, _r_t, _p_t, _ = _pv3_caps(_tk, plan.p2l, plan.l2p, plan.lcnts)
+            _r_p3, _p_p3 = max(_r_p3, _r_t), max(_p_p3, _p_t)
+        pll_bounds["recv_cap"] = max(pll_bounds["recv_cap"], _r_p3 + 8 * W)
+        pll_bounds["pair_cap"] = max(pll_bounds["pair_cap"], _p_p3 + 8 * W)
+        if rank == 0:
+            print(f"[pv3-sizing] resident: recv {_r_p3} pair {_p_p3} -> caps "
+                  f"recv {pll_bounds['recv_cap']} pair "
+                  f"{pll_bounds['pair_cap']}; replica ratio "
+                  f"[{_st_p3['replica_ratio_min']:.3f}, "
+                  f"{_st_p3['replica_ratio_max']:.3f}] gpu ratio "
+                  f"[{_st_p3['gpu_ratio_min']:.3f}, "
+                  f"{_st_p3['gpu_ratio_max']:.3f}] c3 real/rounded "
+                  f"{_st_p3['c3_real_violations']}/"
+                  f"{_st_p3['c3_rounded_violations']}", flush=True)
     plan.phys_override = phys_ref
     _st("reference route + bounds ok")
     # r2 fix (2026-08-26) generalized (2026-08-27, branch pv2): every
@@ -730,6 +814,17 @@ def main():
             phys_x, _r_x, _p_x = _es_caps(topk_all, _l2p_x, _lc_x)
             for _tk in sched_topk_all[1:]:
                 _, _r_t, _p_t = _es_caps(_tk, _l2p_x, _lc_x)
+                _r_x, _p_x = max(_r_x, _r_t), max(_p_x, _p_t)
+            pll_bounds["recv_cap"] = max(pll_bounds["recv_cap"],
+                                         _r_x + 8 * W)
+            pll_bounds["pair_cap"] = max(pll_bounds["pair_cap"],
+                                         _p_x + 8 * W)
+        if args.route_rule in ("pv3", "pv3c"):
+            # PV3: exact-count twin on every sizing placement x topic
+            phys_x, _r_x, _p_x, _ = _pv3_caps(topk_all, _p2l_x, _l2p_x,
+                                              _lc_x)
+            for _tk in sched_topk_all[1:]:
+                _, _r_t, _p_t, _ = _pv3_caps(_tk, _p2l_x, _l2p_x, _lc_x)
                 _r_x, _p_x = max(_r_x, _r_t), max(_p_x, _p_t)
             pll_bounds["recv_cap"] = max(pll_bounds["recv_cap"],
                                          _r_x + 8 * W)
@@ -793,6 +888,15 @@ def main():
     fp_slack = int(pll_aux["forced_pair"].sum(0).max())
     for _phys_x, aux_x in s2_refs:
         fp_slack = max(fp_slack, int(aux_x["forced_pair"].sum(0).max()))
+    if args.route_rule == "pv3c":
+        # pv3c: the vacate kernel may add up to the destination's extra
+        # tickets on top of the reference route (provable; maxed over the
+        # sizing routes) — the only drift a pv3 route can have
+        fp_slack = max(fp_slack, max(_pv3c_slacks))
+        if rank == 0:
+            print(f"[pv3c-sizing] recv-region cushion: extra-ticket drift "
+                  f"{max(_pv3c_slacks)} rows (fp_slack {fp_slack})",
+                  flush=True)
     cushion = fp_slack + 8 * W
 
     # recv rows this rank computes (dispatch recv == combine send)
@@ -1348,7 +1452,7 @@ def main():
     # pre-capture sync deadlocks against peers' in-flight collectives)
     torch.cuda.synchronize()
     torch.distributed.barrier()
-    planner.prime_graphs()
+    planner.prime_graphs(d_gather_buf)
     runner.prime_scale_graph(planner)
     torch.cuda.synchronize()
     torch.distributed.barrier()
@@ -1836,9 +1940,13 @@ def main():
         # s2: the setup reference route was solved on the ORACLE placement;
         # re-solve deterministically on the CURRENT (adopted) tables so the
         # final iteration matches the slots' weights (untimed)
-        phys_fin, _ = loccap_route_sl(
-            topk_all.long().cpu(), plan.p2l, plan.l2p, plan.lcnts,
-            cfg.nlp, L, args.eps, return_tables=True)
+        if args.route_rule in ("pv3", "pv3c"):
+            phys_fin, _, _, _ = _pv3_caps(topk_all, plan.p2l, plan.l2p,
+                                          plan.lcnts)
+        else:
+            phys_fin, _ = loccap_route_sl(
+                topk_all.long().cpu(), plan.p2l, plan.l2p, plan.lcnts,
+                cfg.nlp, L, args.eps, return_tables=True)
         plan.phys_override = phys_fin
     ip_ref = planner.derive_reference()
     runner.prep()

@@ -1,0 +1,3 @@
+run_id,cell_id,variant,budget,status,deterministic,total_ms,plan_comm_ms,plan_ms,place_ms,l0_ms,l1_ms,e2e_ms
+20260915-065146,ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_trace-610042_b64_k8_isolated,ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2,64,ok,0,48.01,0.19432,2.3572480000000002,1.20152,18.7816165,25.2615365,44.111759
+20260915-065146,ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_pv3c_eps025_trace-610042_b64_k8_isolated,ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_pv3c_eps025,64,ok,0,48.7926715,0.171328,2.2573119999999998,1.186608,20.005792,24.8346885,45.4704
