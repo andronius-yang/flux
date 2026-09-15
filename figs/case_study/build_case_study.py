@@ -275,10 +275,10 @@ def build(data, out):
     D.text(tx0 + tw, ay + 7, "ms", 5, "labels", "end", INK2)
     # legend: task colours, span tick, resource patterns
     ly_ = ay + AXIS_H + 1; lx = gut
-    legend = ((("token", "Token Comm."), ("expert_comm", "Expert Comm."), ("comp", "Expert Comp."), ("reduce", "Top-k Reduce"),
+    legend = ((("token", "Token Comm."), ("expert_comm", "Expert Swap"), ("comp", "Expert Comp."), ("reduce", "Top-k Reduce"),
                ("plan", "Plan / Metadata" if v3 else "Plan / Meta"), ("wait", "Wait")) + ((("host", "Host"),) if v3 else ())
               if tpl else
-              (("token", "Token Comm."), ("expert_comm", "Expert Comm. (disp.)"), ("expert_comm_w2", "Expert Comm. (comb.)"), ("comp", "Expert Comp."),
+              (("token", "Token Comm."), ("expert_comm", "Expert Swap (disp.)"), ("expert_comm_w2", "Expert Swap (comb.)"), ("comp", "Expert Comp."),
                ("reduce", "Top-k Reduce"), ("plan", "Plan / Meta"), ("wait", "Wait")))
     for key, lab in legend:
         if key == "host": D.hrect(lx, ly_ + 1, 8, 4.5, "bars")
@@ -339,6 +339,7 @@ if __name__ == "__main__":
     ap.add_argument("--rows", choices=("cs2", "cs3", "cs3v2"), default="cs2", help="row table: cs2 = 9/5 capture, cs3 = 9/9 3D-scheduling capture, cs3v2 = 9/11 streaming-Σ recapture (figs/main_perf_v2)")
     ap.add_argument("--eff-iter", default="iter4"); ap.add_argument("--skew-iter", default="iter33")
     ap.add_argument("--simple", action="store_true", help="OURS overlapped swap only: Efficient + Skewed, 2 ranks each")
+    ap.add_argument("--variant-suffix", default="", help="suffix inserted into the OURS row cell ids before the family tag, e.g. _pv3c_eps025 (2026-09-15 pv3c capsule)")
     ap.add_argument("--template", choices=("cs_v1", "cs_v3", "cs_v4"), default=None,
                     help="cs_v1 = the user's pruned CS_v1.drawio style (implies --simple: 3D-scheduled swap rows only, vertical Predictable/Drift labels, no row/lane labels, one green, expert comm on top, flat draw.io); "
                          "cs_v3 = cs_v1 + no device-to-device copies drawn + hatched Host bands in GPU-idle host phases + legend 'Plan / Metadata' / 'Host' (2026-09-13 review); "
@@ -350,6 +351,9 @@ if __name__ == "__main__":
         if a.template == "cs_v4": PLAN_MERGE = True; HOST_MIN_MS = 0.3
     if a.rows in ("cs3", "cs3v2"):
         ROWS[:] = [(t1, t2, cid, {"EFF": a.eff_iter, "SKEW": a.skew_iter}[itn]) for t1, t2, cid, itn in (ROWS_CS3 if a.rows == "cs3" else ROWS_CS3V2)]
+    if a.variant_suffix:
+        ROWS[:] = [(t1, t2, (cid.replace(f"_{PLAIN}", f"{a.variant_suffix}_{PLAIN}").replace(f"_{SCHED}", f"{a.variant_suffix}_{SCHED}")
+                             if cid.startswith(_RST) else cid), itn) for t1, t2, cid, itn in ROWS]
     if a.simple: ROWS[:] = [r for r in ROWS if r[1] in ("overlapped swap", "3D-scheduled swap")]
     data = json.load(open(a.json))
     ledger, h, tmax = build(data, a.out)

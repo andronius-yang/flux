@@ -7,6 +7,7 @@ nodes,system,budget_mib,C,total_ms,loccap_twin_ms,d_vs_twin_pct,twin_src,figure_
 4,ours,1,1/16,4.053,4.023,0.7,,4.009,1.1,ours_l01_s1_pv2_r2_pv3c,20260915-055811_perlmutter_a6e6d1d6,ours_l01_s1_pv2_r2_pv3c_trace-610042_b1_k8_isolated,iter_max_median,campaign
 4,ours,1,1/2,4.089,4.023,1.6,,4.009,2.0,ours_l01_s1_pv2_r2_pv3c_eps05,20260915-055811_perlmutter_a6e6d1d6,ours_l01_s1_pv2_r2_pv3c_eps05_trace-610042_b1_k8_isolated,iter_max_median,campaign
 4,ours,1,1/4,4.083,4.023,1.5,,4.009,1.9,ours_l01_s1_pv2_r2_pv3c_eps025,20260915-055811_perlmutter_a6e6d1d6,ours_l01_s1_pv2_r2_pv3c_eps025_trace-610042_b1_k8_isolated,iter_max_median,campaign
+4,ours,1,1/4,4.031,4.076,-1.1,,4.009,0.5,ours_l01_s1_pv2_r2_pv3c_eps025,20260915-221148_perlmutter_50d3edf7,ours_l01_s1_pv2_r2_pv3c_eps025_trace-610042_b1_k8_isolated,iter_max_median,v4
 4,ours,64,1/16,48.421,47.592,1.7,,46.247,4.7,ours_l01_s1_pv2_r2_pv3c,20260915-053358_perlmutter_6415d100,ours_l01_s1_pv2_r2_pv3c_trace-610042_b64_k8_isolated,iter_max_median,campaign
 4,ours,64,1/16,48.867,46.935,4.1,,46.247,5.7,ours_l01_s1_pv2_r2_pv3c,20260915-054844_perlmutter_3394711e,ours_l01_s1_pv2_r2_pv3c_trace-610042_b64_k8_isolated,iter_max_median,campaign
 4,ours,64,1/2,46.141,46.935,-1.7,,46.247,-0.2,ours_l01_s1_pv2_r2_pv3c_eps05,20260915-054844_perlmutter_3394711e,ours_l01_s1_pv2_r2_pv3c_eps05_trace-610042_b64_k8_isolated,iter_max_median,campaign

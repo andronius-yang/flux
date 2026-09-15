@@ -70,12 +70,22 @@ def load(cap_dir):
     rows = []
     for cid, its in per.items():
         c = cells[cid]
-        if c["status"] != "ok" or c["variant"] not in ARM:
+        variant = c["variant"]
+        if PV3C:
+            # 2026-09-15 pv3c data swap (handoff 39): the OURS arms are their
+            # `_pv3c_eps025` twins (paper-constraint router, C = 1/4); the
+            # LocCap-router OURS cells are dropped everywhere; COMET and the
+            # slipstream-only arm are unchanged (no placement/routing)
+            if variant.endswith(PV3C_SUFFIX):
+                variant = variant[:-len(PV3C_SUFFIX)]
+            elif variant in ARM and not variant.startswith("l01_"):
+                continue
+        if c["status"] != "ok" or variant not in ARM:
             continue
         fp = json.loads(c["family_params"])
         mx = [max(its[i].values()) for i in sorted(its)]
         T = len(mx)
-        label, order = ARM[c["variant"]]
+        label, order = ARM[variant]
         base = dict(capsule=os.path.basename(cap_dir), cell_id=cid, variant=c["variant"], arm=label,
                     arm_order=order, scenario=scenario_of(fp), binary=binary, iters=T,
                     eval_pool=SHORT.get(fp.get("pools"), fp.get("pools")))
@@ -92,18 +102,24 @@ def load(cap_dir):
                 rows.append(dict(base, topic=SHORT.get(sched[k], sched[k]), mean_ms=st.mean(bt[k]),
                                  median_ms=st.median(bt[k]), sd_ms=st.pstdev(bt[k]), n_iters=len(bt[k])))
         else:
-            dw = 4 if "rp4" in c["variant"] else (1 if ("rst" in c["variant"] or "swapall_p2p" in c["variant"] or "swapall_noov" in c["variant"]) else 0)
+            dw = 4 if "rp4" in variant else (1 if ("rst" in variant or "swapall_p2p" in variant or "swapall_noov" in variant) else 0)
             base.update(protocol="reset-proxy (per-topic cell)", dwell=dw)
             rows.append(dict(base, topic=base["eval_pool"], mean_ms=st.mean(mx), median_ms=st.median(mx), sd_ms=st.pstdev(mx), n_iters=T))
     return rows
 
 
+PV3C = "--pv3c" in sys.argv or os.environ.get("CYC_PV3C") == "1"
+PV3C_SUFFIX = "_pv3c_eps025"
+
+
 def main():
     caps = sorted(glob.glob(os.path.join(RUNS, "20260902-*")) + glob.glob(os.path.join(RUNS, "20260903-*")))
+    if PV3C:
+        caps += sorted(glob.glob(os.path.join(RUNS, "20260915-*")))
     rows = []
     for c in caps:
         note = open(os.path.join(c, "spec.yaml")).read()
-        if "ablcycle" not in note and "ablsched" not in note:
+        if "ablcycle" not in note and "ablsched" not in note and not (PV3C and "cycling ablation" in note):
             continue
         if "ablcycle gate" in note:
             continue   # correctness gate (random payload) — not a perf regime

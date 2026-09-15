@@ -62,7 +62,8 @@ CYC_ARMS = {"ablation_l01_pr0_pv2_r2", "ours_l01_s1_pv2_r2", "ablation_l01_s2_sw
             "ablation_l01_s2_swapall_noov_p2p_r2", "ablation_l01_s2_swapall_rp4_p2p_r2",
             "ablation_l01_s2_swapall_rp4_noov_p2p_r2", "ablation_l01_s2_swap_t1_rst_p2p_r2",
             "ablation_l01_s2_swapall_nr_p2p_r2", "ablation_l01_s2_swapall_nr_noov_p2p_r2",
-            "ours_l01_s2_swap_p2p_t1_r2", "ablation_l01_s2_swap_t1_noov_p2p_r2"}
+            "ours_l01_s2_swap_p2p_t1_r2", "ablation_l01_s2_swap_t1_noov_p2p_r2",
+            "ablation_l01_s2_swap_t1_rp4_p2p_r2", "ablation_l01_s2_swap_t1_rp4_noov_p2p_r2"}
 CS_ARMS = {"ablation_l01_s2_swapall_rst_3d_early_str4_p2p_r2", "ablation_l01_s2_swapall_rst_3d_noov_str4_p2p_r2",
            "ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2"}
 

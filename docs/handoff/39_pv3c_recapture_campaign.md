@@ -424,3 +424,57 @@ dwire b16 +4.4, 8n Qwen fused b4 +4.9, 16n Qwen fused b16 +7.0 (campaign),
 Qwen b16 rerun 3 min (+ the debug/sanitizer grants) ≈ 10.5 nh. Capsules
 -183514, -184102, -184912, -185111, -184537, -184739, -210903 (+ the v4
 A/Bs -175055/-175557 and gates).
+
+## 13. Figure regeneration on the pv3c data (2026-09-15 15:30–)
+
+User go after the result-change report (§12.2 numbers; the only flipped
+group, main_perf 4n K2 b1, re-measured on v4.1 = 4.031 vs COMET 4.037, a
+tie). Plotted data + renders backed up under `figs/<fig>/pre_pv3c_20260915/`
+(README inside). `docs/handoff/39_pv3c_figure_swap.py` writes the live
+`figure_src.csv` of main_perf (60 plotted Ours cells; unplotted budgets keep
+the LocCap values with an explicit flag) and weak_scaling (14 cells,
+speedups recomputed on best-of(ours, dwire)) and the ablation tables (the
+three OURS arms take their pv3c twins). Style edits: main_perf x labels
+"b MiB (= tok/GPU)" per model column (K2 72/296/1168, Qwen 128/512/2048 =
+the sweep's tokens_per_rank); weak_scaling panel tags "1 MiB (= 72
+tok/GPU)" / "64 MiB (= 4680 tok/GPU)"; cycling legend "w/ overlapping
+scheduling" / "+ expert swap overlap" (+ the dormant sequential-twin text);
+case study legend "Expert Swap". Cycling: `build_dataset.py --pv3c` (pv3c
+twins become the OURS arms, LocCap OURS cells dropped, COMET/slipstream
+unchanged) -> make_figure_src -> make_figure; the Specialization group draws
+the proLaw topic with n reps and the generator needs >= 3 (plotted: 4) ->
+S-A reps 2-4 of the six drawn pv3c rungs queued (`pv3c_cyc_sa_reps_k2_4n`,
+lanes sareps/sareps4). Case study: extractor on capsule -072722 ->
+`build_case_study.py --rows cs3 --template cs_v4 --variant-suffix
+_pv3c_eps025 --out figs/case_study/CS_v5`.
+
+### 13.1 Regeneration complete (2026-09-15 17:00)
+
+Cycling Panel A draws the professional-law topic with n reps and the
+generator requires >= 3 (plotted: 4), so the six drawn OURS rungs were run
+to 4 pv3c reps: `pv3c_cyc_sa_t1rp4_k2_4n` (-220415, the two one-round
+reset-d4 rungs the campaign never covered, 32/32) and
+`pv3c_cyc_sa_reps_k2_4n` x3 (-223848 48/48, -223901 46/48, -231639 48/48)
+plus `pv3c_cyc_sa_prolaw_topup_k2_4n` (-235212 2/2) for the two proLaw
+cells lost when grant 58390114 expired mid-cell. `make_figure_src.py`
+gained the same `--pv3c` mode as `build_dataset.py` so the S-C
+per-iteration series uses the pv3c cells too (COMET / slipstream carry no
+placement or routing and stay as measured).
+
+Final rendered numbers (chain COMET -> overlapping scheduling -> placement
+& routing -> expert swap overlap; mean +- spread over reps):
+
+| group | plotted | pv3c |
+|---|---|---|
+| Specialization (proLaw, 4 reps) | 65.84 / 58.61 / 54.32 / 52.86 = 1 / 1.12 / 1.21 / 1.25 | 65.84 / 58.61 / 52.51+-0.39 / 51.49+-0.30 = 1 / 1.12 / **1.25** / **1.28** |
+| Drift (whole schedule, 3 reps) | 57.61 / 54.77 / 53.56 / 52.24 = 1 / 1.05 / 1.08 / 1.10 | 57.61 / 54.77 / 53.63+-0.72 / 52.03+-0.11 = 1 / 1.05 / **1.07** / **1.11** |
+
+Figures regenerated on the pv3c data with the 2026-09-15 style edits:
+`figs/main_perf/main_perf.{pdf,png}` (tokens/GPU x labels),
+`figs/weak_scaling/weak_scaling*{pdf,png}` (10 renders, tokens/GPU panel
+tags), `figs/ablation_cycling/ablation_ver{A,B}.{pdf,png}` (renamed
+legend), `figs/case_study/CS_v5.{svg,drawio,pdf,png}` ("Expert Swap"
+legend; CS_v4 kept). The LOO/matched ablation has no renderer in-repo —
+`figs/ablation/ablation_tables.csv` and `ablation_iter_tidy.csv` carry the
+pv3c arms for whoever draws it. Pre-swap data and renders remain under
+`figs/<fig>/pre_pv3c_20260915/`.

@@ -92,7 +92,8 @@ CONFIG = dict(
                  hspace=0.22,                       # gap between panels (fraction of panel height)
                  right_label_x=0.935,               # REV 3.2: tighter to the right ticks (fig frac)
                  label_pos="top",                   # REV 3.1: always above the bar (postdoc)
-                 tag_fmt="{} MiB", tag_size=6.0,    # per-panel budget tag, top-left inside
+                 tag_fmt="{} MiB (= {} tok/GPU)", tag_size=6.0,    # per-panel budget tag, top-left inside (2026-09-15: + tokens/GPU fed)
+                 tok_per_gpu={1: 72, 64: 4680},     # K2 tokens_per_rank actually fed (sweep cells.csv)
                  tag_weight="bold",                 # REV 3.2: scenario setting in bold
                  shared_left_label=True,            # REV 3.2: ONE "Latency (ms)" for the stack
                  left_label_x=0.028,                # fig frac
@@ -318,7 +319,7 @@ def plot_stacked(cfg):
         last_panel = k == len(st["budgets"]) - 1
         draw_panel(fig, ax, ax.twinx(), datas[b], c, st["metric"],
                    None if st.get("shared_left_label") else cfg["Y_LABELS"]["A"],
-                   x_label=last_panel, legend=(k == 0), tag=st["tag_fmt"].format(b),
+                   x_label=last_panel, legend=(k == 0), tag=st["tag_fmt"].format(b, st["tok_per_gpu"][b]),
                    right_label=False)
     m = st["MARGINS"]
     if st.get("shared_left_label"):

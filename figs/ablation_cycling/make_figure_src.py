@@ -14,6 +14,8 @@ Reference = S-B unseen-4 dwell-4 schedule (rejected; kept for the record).
 """
 import csv
 import glob
+import os as _os
+import sys as _sys
 import os
 import statistics as st
 from collections import defaultdict
@@ -37,6 +39,10 @@ ARMS = [  # (arm label in results_tidy, figure label, rung)
     ("1+2 one-round swap OVL d4", "1+2 + one-round swap, overlapped (reset d4)", "1+2+swap1 ovl"),
 ]
 LABEL = {a: (l, r) for a, l, r in ARMS}
+
+
+PV3C = "--pv3c" in _sys.argv or _os.environ.get("CYC_PV3C") == "1"
+PV3C_SUFFIX = "_pv3c_eps025"
 
 
 def main():
@@ -106,6 +112,15 @@ def main():
                 per[r["cell_id"]][int(r["iter"])][int(r["rank"])] = float(r["value_ms"])
         for cid, its in per.items():
             v = cells[cid]["variant"]
+            if PV3C:
+                # 2026-09-15 pv3c data swap (handoff 39 §13): the OURS arms are
+                # their `_pv3c_eps025` twins; the LocCap OURS cells of the 9/2
+                # capsules are dropped. COMET / slipstream carry no placement or
+                # routing and stay as measured.
+                if v.endswith(PV3C_SUFFIX):
+                    v = v[:-len(PV3C_SUFFIX)]
+                elif not v.startswith("l01_"):
+                    continue
             arm = {"l01_allgather_dense": "COMET", "l01_slipstream": "1 token-comm overlap",
                    "ablation_l01_pr0_pv2_r2": "2 placement only (pr0)", "ours_l01_s1_pv2_r2": "1+2 static",
                    "ablation_l01_s2_swapall_nr_noov_p2p_r2": "1+2 full-orbit swap SEQ",

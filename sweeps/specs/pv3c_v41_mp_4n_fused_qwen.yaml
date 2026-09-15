@@ -1,0 +1,21 @@
+# 2026-09-15 kernel v4.1: re-measure the 4n main-perf fused rows (the plotted
+# best-of at 4n) with LocCap twins — the campaign's 4n K2 b1 pv3c value (4.083,
+# old kernels) sits 1.1% above COMET (4.037); the v4 4n A/B read the fused b1
+# plan bracket 0.06 ms below LocCap's.
+platform: perlmutter
+nodes: 4
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 4, 16]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 900
+idle_timeout_s: 300
+retries: 1
+variants:
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s1_pv2_r2_pv3c_eps025
+notes: "kernel v4.1 4n Qwen fused rows, C=1/4 + LocCap twin"

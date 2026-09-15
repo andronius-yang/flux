@@ -29,17 +29,17 @@ KNOBS = dict(
     MARGINS=dict(left=0.135, right=0.995, bottom=0.13, top=0.78),
     VERSIONS={                                    # chain per version: (tidy arm key, legend text)
         "A": [("COMET", "COMET"),
-              ("slip", "w/ token comm comp overlap"),
+              ("slip", "w/ overlapping scheduling"),
               ("static", "+ expert placement & routing"),
-              ("swap", "+ expert-dispatch overlap")],
+              ("swap", "+ expert swap overlap")],
         "B": [("COMET", "COMET"),
               ("pr0", "w/ expert placement & routing"),
-              ("static", "+ token comm comp overlap"),
-              ("swap", "+ expert-dispatch overlap")],
+              ("static", "+ overlapping scheduling"),
+              ("swap", "+ expert swap overlap")],
     },
     SWAP_ARM="full",                              # "full" = composed full-orbit swap, "one" = one-round swap
     INCLUDE_SEQ=False,                            # insert the sequential-swap twin before the last bar
-    SEQ_TEXT="+ expert dispatch, un-overlapped",
+    SEQ_TEXT="+ expert swap, un-overlapped",
     GROUPS=[                                      # (group label, figure_src panel prefix, topic, statistic)
         ("Specialization", "A:", "proLaw", "mean over 16 timed iters"),
         ("Drift", "B:", "ALL", "whole-schedule mean, mean over reps"),

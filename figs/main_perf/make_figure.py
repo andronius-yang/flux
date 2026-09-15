@@ -107,7 +107,12 @@ CONFIG = dict(
     ROW_TAGS={"4": "4 nodes", "8": "8 nodes", "16": "16 nodes"},   # row tag text
     ROW_TAG_STYLE="right",                    # "right" rotated edge label,
                                               # or "inside" top-left in-axes
-    GROUP_LABELS={1: "1 MiB", 4: "4 MiB", 16: "16 MiB"},
+    # 2026-09-15 style edit: budget label carries the tokens/GPU actually fed
+    # (sweep cells.csv tokens_per_rank; K2 chunk 14336 B, Qwen 8192 B)
+    TOK_PER_GPU={"K2": {1: 72, 4: 296, 16: 1168, 64: 4680},
+                 "Qwen": {1: 128, 4: 512, 16: 2048, 64: 8192}},
+    GROUP_LABEL_FMT="{b} MiB\n(= {tok} tok/GPU)",
+    GROUP_LABELS={1: "1 MiB", 4: "4 MiB", 16: "16 MiB"},   # fallback (no tokens table)
     X_LABEL=None,          # axis-level x title; None = budgets defined in caption
     Y_LABEL="Latency (ms)",   # single shared label on the figure's left edge
     N_YTICKS=3,
@@ -318,9 +323,12 @@ def plot(data, cfg):
                              fontweight=cfg["COL_TITLE_WEIGHT"])
             if ri == len(cfg["ROWS"]) - 1:
                 ax.set_xticks(range(len(cfg["BUDGETS"])))
-                ax.set_xticklabels([cfg["GROUP_LABELS"][b]
+                toks = cfg.get("TOK_PER_GPU", {}).get(model, {})
+                ax.set_xticklabels([cfg["GROUP_LABEL_FMT"].format(b=b, tok=toks[b])
+                                    if b in toks else cfg["GROUP_LABELS"][b]
                                     for b in cfg["BUDGETS"]],
-                                   fontsize=cfg["FONT_SIZES"]["group_label"])
+                                   fontsize=cfg["FONT_SIZES"]["group_label"],
+                                   linespacing=1.05)
                 ax.tick_params(axis="x", length=0, pad=1.5)
             else:
                 ax.set_xticks([])

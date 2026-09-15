@@ -1,8 +1,8 @@
 figure,nodes,key,C,kernel,note,n_capsules,pv3c_ms,d_vs_twin_pct,figure_ms,d_vs_figure_pct,capsules
 main_perf,2,K2/ours12/1,1/4,campaign,,1,4.202,-2.0,,,20260915-082011
-main_perf,4,K2/ours12/1,1/4,campaign,,1,4.083,1.5,3.998,2.1,20260915-055811
-main_perf,4,K2/ours12/4,1/4,campaign,,1,6.106,-2.9,6.05,0.9,20260915-053358
-main_perf,4,K2/ours12/16,1/4,campaign,,1,14.468,-1.5,14.411,0.4,20260915-053358
+main_perf,4,K2/ours12/1,1/4,v4,,1,4.031,-1.1,3.998,0.8,20260915-221148
+main_perf,4,K2/ours12/4,1/4,v4,,1,6.105,2.8,6.05,0.9,20260915-221148
+main_perf,4,K2/ours12/16,1/4,v4,,1,14.269,-1.1,14.411,-1.0,20260915-221148
 main_perf,4,K2/ours12_dispatch/1,1/4,campaign,,1,4.748,-5.0,6.824,-30.4,20260915-061546
 main_perf,4,K2/ours12_dispatch/4,1/4,campaign,,1,6.787,-1.6,8.322,-18.4,20260915-061546
 main_perf,4,K2/ours12_dispatch/16,1/4,campaign,,1,15.31,-0.2,16.123,-5.0,20260915-061546
@@ -12,9 +12,9 @@ main_perf,4,K2/ours2_direct/16,1/4,campaign,,1,36.515,0.4,,,20260915-061546
 main_perf,4,K2/ours2_nooverlap/1,1/4,campaign,,1,6.377,0.7,6.38,-0.0,20260915-065911
 main_perf,4,K2/ours2_nooverlap/4,1/4,campaign,,1,8.448,-1.7,8.52,-0.8,20260915-065911
 main_perf,4,K2/ours2_nooverlap/16,1/4,campaign,,1,18.606,-0.7,18.269,1.8,20260915-065911
-main_perf,4,Qwen/ours12/1,1/4,campaign,,1,3.082,1.3,3.019,2.1,20260915-060043
-main_perf,4,Qwen/ours12/4,1/4,campaign,,1,4.634,-2.5,4.712,-1.7,20260915-054236
-main_perf,4,Qwen/ours12/16,1/4,campaign,,1,12.072,-0.4,11.716,3.0,20260915-054236
+main_perf,4,Qwen/ours12/1,1/4,v4,,1,3.028,-1.3,3.019,0.3,20260915-221523
+main_perf,4,Qwen/ours12/4,1/4,v4,,1,4.67,0.5,4.712,-0.9,20260915-221523
+main_perf,4,Qwen/ours12/16,1/4,v4,,1,11.808,-0.1,11.716,0.8,20260915-221523
 main_perf,4,Qwen/ours12_dispatch/1,1/4,campaign,,1,3.728,-4.2,4.655,-19.9,20260915-062223
 main_perf,4,Qwen/ours12_dispatch/4,1/4,campaign,,1,5.34,-2.7,6.079,-12.2,20260915-062223
 main_perf,4,Qwen/ours12_dispatch/16,1/4,campaign,,1,12.665,-0.9,13.36,-5.2,20260915-062223
@@ -72,7 +72,7 @@ main_perf,32,K2/ours2_direct/1,1/2,v4,,2,8.62,-3.4,,,20260915-175055 20260915-18
 weak_scaling,2,ours/1,1/4,campaign,,1,4.202,-2.0,4.24,-0.9,20260915-082011
 weak_scaling,2,ours/64,1/4,campaign,,1,36.023,-0.1,36.092,-0.2,20260915-082011
 weak_scaling,4,dwire/1,1/4,campaign,,1,6.084,-1.9,6.171,-1.4,20260915-061546
-weak_scaling,4,ours/1,1/4,campaign,,1,4.083,1.5,4.009,1.8,20260915-055811
+weak_scaling,4,ours/1,1/4,v4,,1,4.031,-1.1,4.009,0.5,20260915-221148
 weak_scaling,4,ours/64,1/4,campaign,,1,47.857,2.0,46.247,3.5,20260915-054844
 weak_scaling,8,dwire/1,1/4,campaign,,1,6.075,-3.0,6.13,-0.9,20260915-085521
 weak_scaling,8,ours/1,1/4,campaign,,2,5.896,-1.9,5.684,3.7,20260915-084021 20260915-085521
