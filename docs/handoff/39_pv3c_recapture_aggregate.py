@@ -31,7 +31,10 @@ for i, a in enumerate(sys.argv):
         PREFIX = sys.argv[i + 1]
 # superseded capsules (handoff 38 §6.17: llc cells run with LocCap sizing/reference
 # through the port slip) and pre-campaign junk — never aggregated
-EXCLUDE = {"20260915-063112_perlmutter_d5152570", "20260915-063938_perlmutter_b50dd03a"}
+EXCLUDE = {"20260915-063112_perlmutter_d5152570", "20260915-063938_perlmutter_b50dd03a",
+           # route-graph A/Bs (handoff 39 §11): their default pv3c arms ran with the
+           # route graph ON (default at the time) — diagnostics, not dataset rows
+           "20260915-151806_perlmutter_61a436d4", "20260915-161623_perlmutter_37cfc8f0"}
 # single cells superseded by a same-campaign repeat (8n K2 llc b1 C=1/4 read +24.6%
 # with equal lane brackets — stall class; repeat capsule 20260915-085958 = -0.2%)
 # capsules from this run id on were measured on kernel v4 (handoff 39 §11):

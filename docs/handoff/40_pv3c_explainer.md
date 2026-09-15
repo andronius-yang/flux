@@ -262,7 +262,9 @@ Where the 16–32n residual comes from, and what it is not:
 
 After the recapture, the router's two heavy kernels were rewritten for
 speed (handoff 39 §11: 32n plan bracket 2.4 -> 1.4 ms, now cheaper than the
-old router). Speed changes *how* the numbers are computed, never *which*
+old router; v4.1 additionally shrinks the tables kernel's per-thread local
+memory 2048 -> 480 B after a first-launch memory failure on the fullest GPU,
+handoff 39 §12.1). Speed changes *how* the numbers are computed, never *which*
 numbers, and the two halves are guaranteed by two different arguments.
 
 **Half 1 — the tables (what each copy receives) are exact.** The band is

@@ -1,0 +1,22 @@
+# 2026-09-15 kernel v4.1 (per-thread local memory 2048 -> ~640 B; the v4 tables
+# kernel's lmem reservation could not be satisfied on Qwen 16n b16's fullest
+# GPU): rerun the two Qwen 16n b16 pv3c cells with fresh LocCap twins.
+platform: perlmutter
+nodes: 16
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [16]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 900
+idle_timeout_s: 300
+retries: 1
+variants:
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s1_pv2_r2_pv3c_eps05
+  - ours_l01_s2_swap_force_p2p_r2
+  - ours_l01_s2_swap_force_p2p_r2_pv3c_eps05
+notes: "pv3c kernel v4.1 rerun: Qwen 16n b16 fused + swap, C=1/2 + LocCap twins"

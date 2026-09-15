@@ -32,7 +32,13 @@
 
 namespace pv3_ext {
 
-constexpr int kMaxRep = 64;      // replicas per expert (pv2: <= NN <= 32)
+constexpr int kMaxRep = 32;      // replicas per expert (pv2: <= NN <= 32).
+                                 // 2026-09-15: 64 -> 32 — the tables kernel's
+                                 // per-thread local arrays (STACK 2048 B at 64)
+                                 // are reserved for every resident thread on
+                                 // the GPU at first launch (~450 MB); Qwen 16n
+                                 // b16's fullest GPU could not provide it
+                                 // (illegal address on local rank 3).
 constexpr int kMaxNN = 32;       // nodes (node_jj table width)
 constexpr int kThreads = 128;
 
@@ -132,8 +138,8 @@ pv3_tables_kernel(
   if (c == 0 || D == 0) {
     seg_cnt[g] = 0;
     if (cover) {                      // budgets read these: make them 0
-      seg_bound[g * kMaxRep + kMaxRep - 1] = 0;
       left[0] = 0;
+      left[1] = 0;
     }
     return;
   }
@@ -147,14 +153,17 @@ pv3_tables_kernel(
   // restructured: per-replica (node, local rank) precomputed, the round's
   // (du, dl) carried incrementally, and def_tot = sum_k max(0, Lb -
   // fill[k]) kept as a running sum (fill starts at 0 => c * Lb).
-  int u_rep[kMaxRep], l_rep[kMaxRep];
-  for (int jj = 0; jj < c; ++jj) { u_rep[jj] = rep[jj] / L; l_rep[jj] = rep[jj] % L; }
+  unsigned char u_rep[kMaxRep], l_rep[kMaxRep];   // node < 32, local rank < L
+  for (int jj = 0; jj < c; ++jj) {
+    u_rep[jj] = (unsigned char)(rep[jj] / L);
+    l_rep[jj] = (unsigned char)(rep[jj] % L);
+  }
   long long def_tot = (Lb > 0) ? Lb * (long long)c : 0;
   int du = 0, dl = 0;
   for (int p = 0; p < R; ++p) {
     for (int jj = 0; jj < c; ++jj) {
-      int u_i = u_rep[jj] - du; if (u_i < 0) u_i += NN;
-      int l_i = l_rep[jj] - dl; if (l_i < 0) l_i += L;
+      int u_i = (int)u_rep[jj] - du; if (u_i < 0) u_i += NN;
+      int l_i = (int)l_rep[jj] - dl; if (l_i < 0) l_i += L;
       int i = u_i * L + l_i;
       long long want = left[i];
       long long take = 0;
@@ -192,25 +201,24 @@ pv3_tables_kernel(
       rel_me[g * kMaxRep + jj] = fill[jj];       // fill, consumed below
       ext_me[g * kMaxRep + jj] = take_me[jj];    // my take, consumed below
     }
-    seg_bound[g * kMaxRep + kMaxRep - 1] = (int)U;   // never a segment
-    // (kMaxRep-1 unused by segments: c <= NN <= 32 < kMaxRep)
     left[0] = (int)Lb;                           // left[] is spent: reuse
+    left[1] = (int)U;                            // (R >= 2 always)
   }
   // own visit order: sort replicas by the round in which my_rank visits
   // them (p = ((u_j - u_me) mod NN) * L + ((l_j - l_me) mod L))
   int u_me = my_rank / L, l_me = my_rank % L;
-  int ord[kMaxRep], key[kMaxRep];
-  for (int jj = 0; jj < c; ++jj) {
-    int j = rep[jj];
-    int du = (j / L - u_me) % NN; if (du < 0) du += NN;
-    int dl = (j % L - l_me) % L;  if (dl < 0) dl += L;
-    key[jj] = du * L + dl;
-    ord[jj] = jj;
-  }
+  // visit key of replica jj for my rank (computed on the fly: c <= 32)
+  auto vkey = [&](int jj) {
+    int du2 = (int)u_rep[jj] - u_me; if (du2 < 0) du2 += NN;
+    int dl2 = (int)l_rep[jj] - l_me; if (dl2 < 0) dl2 += L;
+    return du2 * L + dl2;
+  };
+  unsigned char ord[kMaxRep];
+  for (int jj = 0; jj < c; ++jj) ord[jj] = (unsigned char)jj;
   for (int a = 1; a < c; ++a) {
-    int oa = ord[a], ka = key[oa];
+    unsigned char oa = ord[a]; int ka = vkey(oa);
     int b = a - 1;
-    while (b >= 0 && key[ord[b]] > ka) { ord[b + 1] = ord[b]; --b; }
+    while (b >= 0 && vkey(ord[b]) > ka) { ord[b + 1] = ord[b]; --b; }
     ord[b + 1] = oa;
   }
   int n = 0, acc = 0;
@@ -316,7 +324,7 @@ pv3c_budget_kernel(
   if (g >= G || jj >= rep_cnt[g]) return;
   long long fill = rel_me[g * kMaxRep + jj];
   int take_me = ext_me[g * kMaxRep + jj];
-  long long U = seg_bound[g * kMaxRep + kMaxRep - 1];
+  long long U = left_ws[(size_t)g * R + 1];
   long long Lb = left_ws[(size_t)g * R];
   const int *row = mtab + ((size_t)g * kMaxRep + jj) * R;
   int rel = lr_share_block(fill - Lb, R, my_rank,

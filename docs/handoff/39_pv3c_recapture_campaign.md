@@ -207,14 +207,14 @@ next to the plotted one, carrying `capsule`/`cell_id` provenance and the same
 statistic (per-iteration max across ranks, median over the 10 timed
 isolated iterations; ablation rows keep their it0 / rest-mean convention;
 cycling rows keep the per-cell median + full series). Router = pv3c with
-C = 1/4 at 2/4/8 nodes and C = 1/2 at 16 and 32 nodes (rule in §8). Comparator for "on par" = the LocCap twin
+C = 1/4 at 2/4/8 nodes and C = 1/2 at 16 and 32 nodes (rule in §8); 16n/32n rows re-measured on kernel v4/v4.1 (§12). Comparator for "on par" = the LocCap twin
 measured in the same capsule on the same binary (Δtwin); Δ vs the plotted
 value (Δfig) carries binary drift and is informational.
 
 | figure | pv3c dataset | cells | verdict (Δtwin, chosen C) | status |
 |---|---|---|---|---|
-| main_perf (rows ours12, ours12_dispatch, ours2_nooverlap, ours2_direct) | `figs/main_perf/figure_src_pv3c.csv` (all C's) + `docs/handoff/39_pv3c_chosen_dataset.csv` (one value per plotted cell at the chosen C) | 4n 24/24, 8n 19/19 (dwire only b1 at 8n, as plotted), 16n 24/24 (dwire b16 filled from C=1/4: the C=1/2 arm dies at NVSHMEM_MALLOC) | 4n mean −1.1% (−5.0..+4.4), 8n −0.8% (−6.3..+4.9), 16n +1.5% (−9.4..+7.9; 4 cells > +5%: llc K2 b1 +7.9, Qwen dispatch b16 +6.4, Qwen llc b16 +5.4, Qwen dwire b1 +5.2) | READY 4n/8n; 16n READY-WITH-CAVEAT (not strictly on par) |
-| weak_scaling (ours + dwire, K2, b1/b64) | `figs/weak_scaling/figure_src_pv3c.csv` + chosen dataset | 2n 2/2, 4n 3/3, 8n 3/3, 16n 3/3, 32n 3/3 (dwire b1 from the 12G-heap rerun -143919) | 2n −1.1%, 4n +0.5%, 8n −1.4%, 16n +3.8% (b64 +5.1%), 32n +6.1% (ours b1 +1.2%, ours b64 +9.3%, dwire b1 +9.5% = plan bracket) | READY 2–16n; 32n READY-WITH-CAVEAT (b64 wire, b1 plan bracket) |
+| main_perf (rows ours12, ours12_dispatch, ours2_nooverlap, ours2_direct) | `figs/main_perf/figure_src_pv3c.csv` (all C's) + `docs/handoff/39_pv3c_chosen_dataset.csv` (one value per plotted cell at the chosen C) | 4n 24/24, 8n 19/19 (dwire only b1 at 8n, as plotted), 16n 24/24 (dwire b16 filled from C=1/4: the C=1/2 arm dies at NVSHMEM_MALLOC) | 4n mean −0.9% (−5.0..+4.4), 8n −0.9% (−6.3..+4.9), 16n +0.1% on kernel v4 (26/27 cells v4; −12.7..+7.0; only Qwen b16 fused +7.0 (campaign row: the v4 attempt hit the ~350 ms combine stall) and Qwen b16 swap +5.7 (v4, l0/l1 wire) above +4%) | READY 4n/8n/16n (Qwen 16n b16 = wire caveat) |
+| weak_scaling (ours + dwire, K2, b1/b64) | `figs/weak_scaling/figure_src_pv3c.csv` + chosen dataset | 2n 2/2, 4n 3/3, 8n 3/3, 16n 3/3, 32n 3/3 (dwire b1 from the 12G-heap rerun -143919) | 2n −1.1%, 4n +0.5%, 8n −1.4%, 16n +0.2% on v4 (b1 −1.7/−1.5, b64 +3.7), 32n +1.5% on v4 (ours b1 −0.6, dwire b1 −3.4, ours b64 +8.6 = wire) | READY 2–32n (b64 at 16–32n = wire caveat) |
 | ablation (LOO + matched, K2 4n b64, 3 arms × 5 reps) | `figs/ablation/ablation_iter_tidy_pv3c.csv`, `figs/ablation/ablation_tables_pv3c.csv` | 60/60 | it0 / rest-mean within ±1 ms of LocCap on every arm (LOO placement_swap_seq it0 67.8 vs 71.2 — pv3c lower, sd 1.0 vs 4.3) | READY |
 | ablation_cycling (S-A seen-8 per topic, 7 arms; S-C LOO-proLaw dwell-4, 6 arms × 3 reps) | `figs/ablation_cycling/results_tidy_pv3c.csv` | S-A 112/112; S-C 36/36 (3 reps) | S-A per-arm mean over topics −0.9..+1.3%; S-C 3-rep means per arm −1.4..+1.0% (rep-3 slow-wall cell's timed iterations in line with reps 1–2) | READY |
 | case_study (dual3 / early / noov 3D-str4 arms, plain lcb + S-C dwell-4, nsys + isolated) | `figs/case_study/pv3c_capsules.csv` (nsys paths + isolated twins) | 12 nsys+iso pv3c cells + 6 LocCap iso twins | isolated totals within ±1 ms of the LocCap twins (dual3 plain 49.4 vs 48.7; S-C 52.2 vs 51.8) | READY (extractor re-run on the pv3c nsys reps is the figure lane's step) |
@@ -382,3 +382,45 @@ Aggregator: capsules with run id >= 20260915-1611 are `kernel=v4`; the
 chosen dataset prefers v4 rows per cell; the C rule stays on the campaign
 rows; `_rg`/`_nrg` twins are diagnostics and dropped. The v4 A/B capsules
 (-175055 32n b1, -175557 16n b1/b4) already count as v4 rows.
+
+### 12.1 Refresh incident: Qwen 16n b16 pv3c cells died at first launch — kernel v4.1 (12:35)
+
+Capsule -184102 (16n Qwen): s1 and s2 pv3c C=1/2 at b16 failed on every
+attempt with `CUDA error: an illegal memory access`, always on a local-rank-3
+process, 17-27 s after start (setup records only, no iteration metrics);
+every other v4 refresh cell passed (K2 16n 26/27, weak 16n/32n all ok).
+Ruled out: (a) the route product — the v4 audit on this cell's inputs is
+clean for all 64 ranks; (b) sizing — the realised v4 route's a2av region
+requirements (l0 recv/stage/relay, l1 send/stage/conv/wire) are within the
+driver's reference+cushion caps and within 0.2% of the old kernel's
+(`logs/pv3/sizing_qwen16.py`); (c) CUDA_LAUNCH_BLOCKING localisation —
+deadlocks the fused spin kernels (LocCap twin stuck too). Cause: the v4
+tables kernel's per-thread LOCAL memory (cuobjdump STACK 2048 B vs 1536 B
+for the campaign build: two more kMaxRep=64 arrays). CUDA reserves local
+memory for every resident thread at first launch (2048 threads x 108 SMs x
+2 KB = ~450 MB); Qwen b16's fullest GPU (local rank 3 carries the largest
+gateway panels) could not provide it -> illegal address at the first route
+launch. Fix v4.1: kMaxRep 64 -> 32 (replicas <= nodes; audit max 13;
+one-time guard `lcnts.max() <= 32` in both planners), U moved into the
+spent `left[1]` slot, byte-sized node/rank/order arrays, visit keys
+computed inline -> STACK 480 B (~106 MB reservation), vacate 0 B. Gates
+green (parity + pv3c), 56-routing audit clean, real-input route time 32n
+b1 441 us / 16n b1 216 us (LocCap 565 / 387). Rerun of the two cells +
+LocCap twins: `pv3c_v4_qwen16_b16_rerun.yaml` (lane refresh16qb).
+
+### 12.2 Refresh complete (14:15) — final verdict
+
+Rerun -210903 (v4.1, Qwen 16n b16): 4/4 ok; pv3c fused hit the known combine
+stall (82 ms, excluded by the stall rule -> the cell keeps its campaign row,
++7.0% vs the pooled twins), pv3c swap 28.35 vs 26.82 (+5.7%, plan 2.40 vs
+3.12: all of it l0/l1 wire). Route-graph A/B capsules -151806/-161623
+excluded from the datasets (their default arm ran with the graph ON).
+Chosen dataset, Δ vs in-capsule LocCap twin: 2n −1.4%, 4n −0.9%, 8n −0.9%,
+16n +0.1% (26/27 rows on v4), 32n +0.1% (all v4). Cells above +4%: 4n Qwen
+dwire b16 +4.4, 8n Qwen fused b4 +4.9, 16n Qwen fused b16 +7.0 (campaign),
+16n Qwen swap b16 +5.7, 32n fused b64 +8.6 — the last three are incidence
+(wire) at large budgets; nothing is plan bracket any more. Refresh cost:
+16n K2 35-min grant used 17 min, 16n Qwen 30-min used 15, 32n batch 4 min,
+Qwen b16 rerun 3 min (+ the debug/sanitizer grants) ≈ 10.5 nh. Capsules
+-183514, -184102, -184912, -185111, -184537, -184739, -210903 (+ the v4
+A/Bs -175055/-175557 and gates).

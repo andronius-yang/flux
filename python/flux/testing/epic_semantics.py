@@ -1225,6 +1225,9 @@ class EpicIterPlanner:
             self._pv3_c = c_rational(eps)
             wsz = (self._pv3.workspace_ints_c if router == "pv3c"
                    else self._pv3.workspace_ints)(plan.cfg.G, plan.cfg.R)
+            # kernel cap: replicas per expert <= 32 (pv2 places at most one per
+            # node; the kernels' per-thread tables are sized for it)
+            assert int(plan.lcnts.max()) <= 32, "pv3 kernels: > 32 replicas of one expert"
             self._pv3_ws = torch.empty(wsz, dtype=torch.int32, device=device)
         self.route_group = route_group
         self.exchange_fn = exchange_fn
