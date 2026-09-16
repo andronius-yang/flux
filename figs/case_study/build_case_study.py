@@ -197,10 +197,24 @@ def story(it):
                 wait=s.get("barrier", 0), reduce=sum(v for k, v in s.items() if k.startswith("combine.")), end=it["dev_end_ms"])
 
 
+PREFER_SWAPPING = False   # --prefer-swapping: pick among ranks that copied expert slots in that iteration
+
+
 def pick2(cell, itname):
     ranks = sorted(cell["ranks"], key=int)
     S = {r: story(cell["ranks"][r]["iters"][itname]) for r in ranks}
-    hi = max(ranks, key=lambda r: S[r]["gemm"]); lo = min(ranks, key=lambda r: S[r]["gemm"])
+    cand = ranks
+    if PREFER_SWAPPING:
+        # 2026-09-15 (user): the swap decision runs on the demand histogram
+        # before routing, so on the plain-lcb (Predictable) cell 10 of 16
+        # ranks copy 2-4 expert slots every iteration and 6 copy none; the
+        # longest/shortest-GEMM pick is blind to that and can land on two
+        # silent ranks (CS_v5 first cut: r5/r7). Restrict the pick to ranks
+        # that actually swapped so the expert-swap blocks are on the page.
+        sw = [r for r in ranks if any(e.get("task") == "nvlink.swap"
+                                      for e in cell["ranks"][r]["iters"][itname]["events"])]
+        if sw: cand = sw
+    hi = max(cand, key=lambda r: S[r]["gemm"]); lo = min(cand, key=lambda r: S[r]["gemm"])
     return [(hi, "longest expert GEMM"), (lo, "shortest expert GEMM")], S
 
 
@@ -339,12 +353,14 @@ if __name__ == "__main__":
     ap.add_argument("--rows", choices=("cs2", "cs3", "cs3v2"), default="cs2", help="row table: cs2 = 9/5 capture, cs3 = 9/9 3D-scheduling capture, cs3v2 = 9/11 streaming-Σ recapture (figs/main_perf_v2)")
     ap.add_argument("--eff-iter", default="iter4"); ap.add_argument("--skew-iter", default="iter33")
     ap.add_argument("--simple", action="store_true", help="OURS overlapped swap only: Efficient + Skewed, 2 ranks each")
+    ap.add_argument("--prefer-swapping", action="store_true", help="pick the two ranks among those that copied expert slots in the drawn iteration (2026-09-15)")
     ap.add_argument("--variant-suffix", default="", help="suffix inserted into the OURS row cell ids before the family tag, e.g. _pv3c_eps025 (2026-09-15 pv3c capsule)")
     ap.add_argument("--template", choices=("cs_v1", "cs_v3", "cs_v4"), default=None,
                     help="cs_v1 = the user's pruned CS_v1.drawio style (implies --simple: 3D-scheduled swap rows only, vertical Predictable/Drift labels, no row/lane labels, one green, expert comm on top, flat draw.io); "
                          "cs_v3 = cs_v1 + no device-to-device copies drawn + hatched Host bands in GPU-idle host phases + legend 'Plan / Metadata' / 'Host' (2026-09-13 review); "
                          "cs_v4 = cs_v3 + one Plan / Metadata block per cluster (pre-GEMM phase merged), Host bands >= 0.3 ms only")
     a = ap.parse_args()
+    if a.prefer_swapping: PREFER_SWAPPING = True
     if a.template:
         TEMPLATE = a.template; a.simple = True
         if a.template in ("cs_v3", "cs_v4"): DROP_D2D = True; HOST_HATCH = True

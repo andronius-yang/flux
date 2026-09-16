@@ -235,3 +235,19 @@ within blue: token copies from 3–4 receive streams overlap 2–3 deep, and the
 single lane shows their union (2.3–3.5 ms less than the summed durations).
 The lane is a resource-busy view, not a stream view; the caption should say
 "NVLink busy" rather than imply serial issue.
+
+## CS_v5 (2026-09-15): pv3c routing data, rank pick among swapping ranks
+
+CS_v5 = the cs_v4 template rebuilt from the pv3c (paper-constraint router)
+nsys capture, capsule `20260915-072722` (handoff 39 §13), legend "Expert
+Swap". The swap decision runs on the demand histogram before routing, so
+the per-rank swap copies are identical to the 9/9 capture: on the plain-lcb
+(Predictable) cell ranks 1, 3, 4, 6, 9, 10, 11, 12, 13, 14 copy 2-4 expert
+slots every iteration and ranks 0, 2, 5, 7, 8, 15 copy none. The
+longest/shortest-GEMM pick is blind to that: CS_v4 landed on r8 (silent) +
+r1 (2 copies); the first CS_v5 cut landed on r5 + r7 (both silent), which
+is why no green appeared there. `--prefer-swapping` restricts the pick to
+ranks that swapped in the drawn iteration: Predictable = r9 / r1, Skewed =
+r9 / r13 (unchanged; iter33 r9 copies 16 slots, 10.8 ms). Build:
+`build_case_study.py <json> --out figs/case_study/CS_v5 --rows cs3
+--template cs_v4 --variant-suffix _pv3c_eps025 --prefer-swapping`.
