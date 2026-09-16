@@ -99,7 +99,13 @@ block, every **[knob]** below lives there). Two versions from one script:
   and no fail note appears. 2n ring point: capsule `20260904-004243` (ring +
   Ours in one capsule; the Ours row keeps the COMET-capsule value 36.092 ms,
   the ring capsule's 36.097 ms agrees within 0.01%).
-- The default (no flag) still produces the COMET renders byte-identically.
+- **CANONICAL (user ruling 2026-09-15): the A2AV+GEMM ring is the figure's
+  reference**, so `python3 make_figure.py` (no flag) now renders
+  `weak_scaling_nvshmem_*`. It matches the main figure's speedup reference
+  and has data at every node count, so no fail note is drawn. Rendered on
+  the pv3c routing data (handoff 39 §13); `--baseline comet` still produces
+  the COMET-referenced version, whose 4n 1 MiB bar sits at 1.00x either
+  side of parity (1.003x pre-pv3c, 0.997x after).
 - **Budget switch (REV 2.1)** **[knob: BUDGET]**: `--budget 1` plots the
   1 MiB rows of `figure_src.csv` (72 pre-topk tokens/rank; verB throughput
   scales accordingly); outputs gain a `_b1` infix

@@ -37,6 +37,9 @@ Headline: vs COMET at b16 the speedup runs 0.92x (2n, COMET wins) ->
 ## ver4 (REV 3.0): stacked 1 MiB / 64 MiB figure, Ours = min over arms
 
 `make_figure.py --baseline nvshmem --stacked` -> `weak_scaling_nvshmem_stacked.{pdf,png}`.
+CANONICAL since 2026-09-15 (user ruling): the A2AV+GEMM ring is the figure's
+reference and is what `make_figure.py` renders with no flag; the numbers are
+the pv3c routing data (handoff 39 §13).
 "Ours" follows the main figure's convention (fastest of s1 and the
 direct-wire arm per node). New same-binary one-capsule sets at 1 MiB:
 16n `20260904-120809` (dwire 7.20 / s1 12.77 / ring 24.77) and 32n

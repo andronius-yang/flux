@@ -357,7 +357,11 @@ def main():
     if "--out-dir" in sys.argv:
         OUT_DIR = os.path.abspath(os.path.join(os.getcwd(), sys.argv[sys.argv.index("--out-dir") + 1]))
     os.makedirs(OUT_DIR, exist_ok=True)
-    baseline = "comet"
+    # CANONICAL BASELINE (user ruling 2026-09-15): the weak-scaling figure is
+    # referenced to the A2AV+GEMM ring — the same reference the main figure's
+    # speedup labels use, and the only baseline with data at every node count.
+    # `--baseline comet` still renders the 9/2-9/4 COMET-referenced version.
+    baseline = "nvshmem"
     if "--baseline" in sys.argv:
         baseline = sys.argv[sys.argv.index("--baseline") + 1]
     budget = 64
