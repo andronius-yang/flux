@@ -188,7 +188,10 @@ text. Optimization names must match the legend verbatim.
   (§7) switched to the user's summary style: components + setup only,
   scenario definitions live in the text; terms match the legend verbatim.
 - **REV 0.4 (2026-09-13)** — scenario rename (user + postdoc ruling):
-  group labels `Predictable load` / `Shifting load` → `Specialization` /
+  group labels (2026-09-15, user) `Prof. law only` / `Prof. law rotating`
+  — the labels name the served traffic only and the placement basis moves to
+  the caption and the text. They replace, from REV 0.4,
+  `Predictable load` / `Shifting load` → `Specialization` /
   `Drift`. Specialization: demand concentrates on one known request class
   while placement reflects a broader historical mixture (imbalance stays
   possible despite prior exposure). Drift: demand changes across classes

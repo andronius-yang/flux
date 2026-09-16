@@ -41,8 +41,13 @@ KNOBS = dict(
     INCLUDE_SEQ=False,                            # insert the sequential-swap twin before the last bar
     SEQ_TEXT="+ expert swap, un-overlapped",
     GROUPS=[                                      # (group label, figure_src panel prefix, topic, statistic)
-        ("Specialization", "A:", "proLaw", "mean over 16 timed iters"),
-        ("Drift", "B:", "ALL", "whole-schedule mean, mean over reps"),
+        # 2026-09-15 (user ruling): the group labels name the TRAFFIC only —
+        # the placement basis belongs in the caption and the text. A: only
+        # professional law is served, and the 8-topic basis includes it.
+        # B: the 8 topics rotate every 4 iterations (professional law among
+        # them) on the 7-topic LOO basis that omits it, placement carried over.
+        ("Prof. law only", "A:", "proLaw", "mean over 16 timed iters"),
+        ("Prof. law rotating", "B:", "ALL", "whole-schedule mean, mean over reps"),
     ],
     ARM_ROWS={                                    # tidy_arm names in figure_src.csv, per panel prefix
         "COMET": {"A:": "COMET", "B:": "COMET"},
