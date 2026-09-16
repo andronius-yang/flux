@@ -207,6 +207,7 @@ def story(it):
 
 
 PREFER_SWAPPING = False   # --prefer-swapping: pick among ranks that copied expert slots in that iteration
+SKEWED_FIRST = False      # --skewed-first: draw the Skewed (Prof. law rotating) row above the Efficient (LiveCodeBench) row
 
 
 def pick2(cell, itname):
@@ -241,6 +242,8 @@ def build(data, out):
         if cid not in data["cells"]: print("missing cell, row skipped:", cid, file=sys.stderr); continue
         c = data["cells"][cid]; chosen, S = pick2(c, itn)
         rows.append((t1, t2, c, itn, chosen, S))
+    if SKEWED_FIRST:   # 2026-09-15 (user): the drift row leads, the steady row closes the figure
+        rows.sort(key=lambda r: 0 if r[0] == "Skewed" else 1)
     tmax_all = max(S[r]["end"] for *_, chosen, S in rows for r, _ in chosen) * 1.02
     D = Doc(); D.flat = tpl; y = TOP; ledger = []; on_top = []
     for t1, t2, c, itn, chosen, S in rows:
@@ -362,6 +365,7 @@ if __name__ == "__main__":
     ap.add_argument("--rows", choices=("cs2", "cs3", "cs3v2"), default="cs2", help="row table: cs2 = 9/5 capture, cs3 = 9/9 3D-scheduling capture, cs3v2 = 9/11 streaming-Σ recapture (figs/main_perf_v2)")
     ap.add_argument("--eff-iter", default="iter4"); ap.add_argument("--skew-iter", default="iter33")
     ap.add_argument("--simple", action="store_true", help="OURS overlapped swap only: Efficient + Skewed, 2 ranks each")
+    ap.add_argument("--skewed-first", action="store_true", help="draw the Skewed row above the Efficient row (2026-09-15: the drift case is discussed first)")
     ap.add_argument("--prefer-swapping", action="store_true", help="pick the two ranks among those that copied expert slots in the drawn iteration (2026-09-15)")
     ap.add_argument("--variant-suffix", default="", help="suffix inserted into the OURS row cell ids before the family tag, e.g. _pv3c_eps025 (2026-09-15 pv3c capsule)")
     ap.add_argument("--template", choices=("cs_v1", "cs_v3", "cs_v4"), default=None,
@@ -370,6 +374,7 @@ if __name__ == "__main__":
                          "cs_v4 = cs_v3 + one Plan / Metadata block per cluster (pre-GEMM phase merged), Host bands >= 0.3 ms only")
     a = ap.parse_args()
     if a.prefer_swapping: PREFER_SWAPPING = True
+    if a.skewed_first: SKEWED_FIRST = True
     if a.template:
         TEMPLATE = a.template; a.simple = True
         if a.template in ("cs_v3", "cs_v4"): DROP_D2D = True; HOST_HATCH = True

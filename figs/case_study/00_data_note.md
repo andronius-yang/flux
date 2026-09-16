@@ -262,3 +262,12 @@ on two centred lines. Predictable / Drift (2026-09-13) remain the prose
 names for the two scenarios. Same data, ranks and geometry as the CS_v5
 cut above; `SCENARIO_NAME` in the builder, which now accepts `\n` in a
 vertical label (SVG tspans, draw.io `<br>` with `align=center`).
+
+### CS_v5 row order (2026-09-15, user ruling)
+
+The Prof. law rotating row is drawn ABOVE the LiveCodeBench row
+(`--skewed-first`): the text discusses the drift case first and closes on
+the balanced case. Ranks, data and geometry unchanged. The section text that
+goes with the figure is drafted in `case_study_section_draft.md`. Build:
+`build_case_study.py <json> --out figs/case_study/CS_v5 --rows cs3
+--template cs_v4 --variant-suffix _pv3c_eps025 --prefer-swapping --skewed-first`.
