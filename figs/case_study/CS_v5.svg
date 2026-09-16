@@ -247,10 +247,10 @@
 <text x="467.00" y="110.80" font-size="5.2" text-anchor="start" fill="#5a5e66">GPU</text>
 
 <defs><pattern id="hosthatch" patternUnits="userSpaceOnUse" width="1.6" height="1.6" patternTransform="rotate(45)"><rect width="1.6" height="1.6" fill="#ececea"/><line x1="0" y1="0" x2="0" y2="1.6" stroke="#8a8f98" stroke-width="0.45"/></pattern></defs>
-<text x="8.00" y="23.45" font-size="6.5" text-anchor="middle" fill="#17191c" transform="rotate(-90 8.00 23.45)" font-weight="bold">Predictable</text>
+<text x="8.00" y="23.45" font-size="6.5" text-anchor="middle" fill="#17191c" transform="rotate(-90 8.00 23.45)" font-weight="bold">LiveCodeBench</text>
 <rect x="17.98" y="13.00" width="9.37" height="4.20" fill="url(#hosthatch)"><title>r9 host swap.d2h, swap.decide, swap.apply_tables, swap.prepare 0.26–1.51 ms</title></rect>
 <rect x="18.19" y="34.70" width="9.06" height="4.20" fill="url(#hosthatch)"><title>r1 host swap.d2h, swap.decide, swap.apply_tables, swap.prepare 0.29–1.49 ms</title></rect>
-<text x="8.00" y="71.35" font-size="6.5" text-anchor="middle" fill="#17191c" transform="rotate(-90 8.00 71.35)" font-weight="bold">Drift</text>
+<text x="8.00" y="71.35" font-size="6.5" text-anchor="middle" fill="#17191c" transform="rotate(-90 8.00 71.35)" font-weight="bold"><tspan x="8.00" y="69.89">Prof. law</tspan><tspan x="8.00" y="77.36">rotating</tspan></text>
 <rect x="17.69" y="60.90" width="16.75" height="4.20" fill="url(#hosthatch)"><title>r9 host swap.d2h, swap.decide, swap.apply_tables, swap.prepare 0.23–2.45 ms</title></rect>
 <rect x="17.67" y="82.60" width="16.66" height="4.20" fill="url(#hosthatch)"><title>r13 host swap.d2h, swap.decide, swap.apply_tables, swap.prepare 0.22–2.43 ms</title></rect>
 <rect x="296.75" y="106.80" width="8.00" height="4.50" fill="url(#hosthatch)"></rect>

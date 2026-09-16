@@ -251,3 +251,14 @@ ranks that swapped in the drawn iteration: Predictable = r9 / r1, Skewed =
 r9 / r13 (unchanged; iter33 r9 copies 16 slots, 10.8 ms). Build:
 `build_case_study.py <json> --out figs/case_study/CS_v5 --rows cs3
 --template cs_v4 --variant-suffix _pv3c_eps025 --prefer-swapping`.
+
+### CS_v5 row labels (2026-09-15, user ruling)
+
+The vertical row labels name the traffic, matching the ablation's group
+labels: top = **LiveCodeBench** (the plain steady workload, `trace-610042`,
+iter4; the main-perf workload), bottom = **Prof. law rotating** (the
+professional-law block of the 8-topic rotation, `trace-b549f7`, iter33), set
+on two centred lines. Predictable / Drift (2026-09-13) remain the prose
+names for the two scenarios. Same data, ranks and geometry as the CS_v5
+cut above; `SCENARIO_NAME` in the builder, which now accepts `\n` in a
+vertical label (SVG tspans, draw.io `<br>` with `align=center`).

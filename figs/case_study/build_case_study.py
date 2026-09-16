@@ -53,7 +53,7 @@ LANE_LABEL = {"nic": "NIC RDMA", "nvlink": "NVLink", "gpu": "GPU", "gpu2": "GPU 
 # ONE green for expert comm (both 3D stages), expert-comm blocks drawn LAST (on top of any other NVLink
 # activity), flat draw.io (every cell under parent 1) — "copy the style, change the data".
 TEMPLATE = None
-SCENARIO_NAME = {"Efficient": "Predictable", "Skewed": "Drift"}  # 2026-09-13 ruling, see 00_data_note.md "Scenario naming"
+SCENARIO_NAME = {"Efficient": "LiveCodeBench", "Skewed": "Prof. law\nrotating"}  # 2026-09-15 ruling: name the traffic (top = LiveCodeBench steady, bottom = prof-law block of the 8-topic rotation); "\n" = line break, centred. Was Predictable / Drift (2026-09-13), see 00_data_note.md "Scenario naming"
 TEMPLATE_GUT = 16.0
 # --template cs_v3 (2026-09-13, postdoc review of CS_v2): cs_v1 style (+ the user's hand-edited legend label
 # "Plan / Metadata") with two evidence fixes — (a) device-to-device copies are NOT drawn: the GPU lane
@@ -98,8 +98,15 @@ class Doc(V2.Doc):
         for it in items:
             if it[0] == "vtext":
                 _, x, y, s_, size, layer, c, bold = it
+                lines = s_.split("\n")
+                if len(lines) == 1:
+                    body = html.escape(s_)
+                else:   # multi-line: tspans stacked across the rotated baseline, block centred on (x, y)
+                    lh = 1.15 * size
+                    body = "".join(f'<tspan x="{x:.2f}" y="{y + (i - (len(lines) - 1) / 2) * lh + 0.35 * size:.2f}">{html.escape(l)}</tspan>'
+                                   for i, l in enumerate(lines))
                 out += (f'\n<text x="{x:.2f}" y="{y:.2f}" font-size="{size}" text-anchor="middle" fill="{c}" transform="rotate(-90 {x:.2f} {y:.2f})"'
-                        + (' font-weight="bold"' if bold else "") + f'>{html.escape(s_)}</text>')
+                        + (' font-weight="bold"' if bold else "") + f'>{body}</text>')
             elif it[0] == "hrect":
                 _, x, y, w, h, layer, title = it
                 out += (f'\n<rect x="{x:.2f}" y="{y:.2f}" width="{max(w, 0.3):.2f}" height="{h:.2f}" fill="url(#hosthatch)">'
@@ -114,9 +121,11 @@ class Doc(V2.Doc):
         for i, it in enumerate(items):
             if it[0] == "vtext":
                 _, x, y, s_, size, layer, c, bold = it
-                w = max(8.0, 0.55 * size * len(s_)) * S; hh = size * 1.4 * S
-                st = f"text;html=1;fontSize={size * S:.1f};fontFamily=Helvetica;fontColor={c};align=left;verticalAlign=middle;whiteSpace=nowrap;" + ("fontStyle=1;" if bold else "") + "rotation=-90;"
-                extra.append(f'<mxCell id="v{i}" value="{html.escape(s_, quote=True)}" style="{st}" vertex="1" parent="1">'
+                lines = s_.split("\n")
+                w = max(8.0, 0.55 * size * max(len(l) for l in lines)) * S; hh = size * 1.4 * len(lines) * S
+                st = f"text;html=1;fontSize={size * S:.1f};fontFamily=Helvetica;fontColor={c};align=center;verticalAlign=middle;whiteSpace=nowrap;" + ("fontStyle=1;" if bold else "") + "rotation=-90;"
+                val = html.escape("<br>".join(html.escape(l) for l in lines), quote=True)
+                extra.append(f'<mxCell id="v{i}" value="{val}" style="{st}" vertex="1" parent="1">'
                              f'<mxGeometry x="{x * S - w / 2:.2f}" y="{y * S - hh / 2:.2f}" width="{w:.2f}" height="{hh:.2f}" as="geometry"/></mxCell>')
             elif it[0] == "hrect":
                 _, x, y, w, h, layer, title = it
