@@ -1,0 +1,21 @@
+# 2026-09-17 COMET+EPLB main-perf data gathering (user directive): the
+# reviewer-requested overlap+placement arm (fused router kernel) next to
+# plain COMET in ONE capsule / one binary, main-perf pool + budgets.
+# Results stay private (no figure row) until the user rules.
+platform: perlmutter
+nodes: 8
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 4, 16]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 900
+idle_timeout_s: 300
+retries: 1
+variants:
+  - l01_allgather_dense
+  - l01_allgather_dense_eplb
+notes: "COMET+EPLB main perf 8n qwen b1/4/16 (kernel router) vs COMET, one binary"

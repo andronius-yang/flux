@@ -1565,6 +1565,58 @@ VARIANTS = {
         requires=["FLUX_A2AV_RS_MAX_SEND_ROWS"],
         l1_pattern="dense",
     ),
+    # COMET + EPLB (2026-09-16, reviewer-requested "overlap + placement"
+    # baseline; flux.testing.comet_eplb): the COMET arm above with the
+    # deepseek-ai/EPLB static pool-oracle placement (global policy, G/W + 2
+    # slots per rank — the eplb_l01 arm's exact placement, same vendored
+    # algorithm, same load sidecar) executed by the UNMODIFIED fused ops
+    # through the physical-slot space (nexperts = W*(G/W+2)). Per iteration
+    # the eplb arm's sender-local `local_spread` replica rule maps the
+    # logical routing to physical slots inside the timed plan_comm bracket,
+    # before the routing allgather. Wire: dense allgather is placement-
+    # invariant, so the placement moves only the grouped-GEMM (and dense
+    # combine send) rows; compare against l01_allgather_dense (COMET) and
+    # eplb_l01 (EPLB on the direct wire, no overlap) inside ONE capsule.
+    # `eplb_load: True` = the runner passes the pool-oracle sidecar
+    # (--eplb_load_file) and widens the dense combine send cap (eplb
+    # re-homes globally, so the logical column-sum bound is not a bound).
+    # Not yet a figure row (user 2026-09-16: results stay private until
+    # judged).
+    "l01_allgather_dense_eplb": dict(
+        comm_pattern="l01_allgather_dense_eplb",  # cells.csv label only
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "allgather",
+            "--l1_comm_pattern", "dense",
+            "--n_split", "2",
+            "--placement", "eplb",
+            "--eplb_replica_select", "local_spread",
+        ],
+        env={"FLUX_RS_BLOCKS": "20"},
+        requires=["FLUX_A2AV_RS_MAX_SEND_ROWS"],
+        l1_pattern="dense",
+        eplb_load=True,
+    ),
+    # local_static twin (src mod C, SGLang static-map class) of the arm above
+    "l01_allgather_dense_eplb_lstatic": dict(
+        comm_pattern="l01_allgather_dense_eplb",
+        driver="l01",
+        layer="l01",
+        test_args=[
+            "--impl", "flux",
+            "--l0_comm_pattern", "allgather",
+            "--l1_comm_pattern", "dense",
+            "--n_split", "2",
+            "--placement", "eplb",
+            "--eplb_replica_select", "local_static",
+        ],
+        env={"FLUX_RS_BLOCKS": "20"},
+        requires=["FLUX_A2AV_RS_MAX_SEND_ROWS"],
+        l1_pattern="dense",
+        eplb_load=True,
+    ),
     # DEBUG-ONLY dense gate ablation (2026-08-30, motif figure lane, handoff
     # 30): answers the reviewer question "could COMET just drop its
     # completion gate?". Never headline; instrumented/diagnostic use only.

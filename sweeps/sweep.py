@@ -527,6 +527,35 @@ def exact_rs_scale_knobs(matrix, spec, plat, routing_mode, comm_pattern):
     return dict(env), sym_g
 
 
+EPLB_DENSE_SEND_HEADROOM = 2.0
+
+
+def eplb_dense_send_headroom(env, matrix, spec, plat, routing_mode):
+    """COMET+EPLB (variants with `eplb_load: True`): the dense combine's send
+    cap (FLUX_A2AV_RS_MAX_SEND_ROWS = this rank's grouped-GEMM rows) is
+    derived from the LOGICAL matrix's max column sum, but EPLB re-homes
+    experts globally, so a rank's physical rows are bounded by neither its
+    own column nor the max column. The placement targets the mean; a
+    mismatched pool prediction was measured at ~2x mean (handoff/eplb b64
+    crossover, realized imbalance 2.03). Widen the cap to
+    max(logical bound, EPLB_DENSE_SEND_HEADROOM x mean rows/rank), rounded
+    like the sizer, and return the extra heap GiB the wider send panel
+    needs (the op's FLUX_CHECK is collective — an undersized cap aborts
+    cleanly, never hangs). Mutates env in place."""
+    chunks, _u, _U, _T = matrix_dedup_stats(matrix, spec, plat, routing_mode)
+    W = len(chunks)
+    total = sum(sum(row) for row in chunks)
+    mean = total / W
+    send = int(env["FLUX_A2AV_RS_MAX_SEND_ROWS"])
+    want = math.ceil(EPLB_DENSE_SEND_HEADROOM * mean)
+    want = min(want, total)
+    new_send = max(send, max(8192, math.ceil(want / 8192) * 8192))
+    if new_send <= send:
+        return 0
+    env["FLUX_A2AV_RS_MAX_SEND_ROWS"] = str(new_send)
+    return math.ceil((new_send - send) * spec["chunk_bytes"] / (1 << 30))
+
+
 def parse_family(spec_str):
     """'hotcol:frac=0.7' -> ('hotcol', {'frac': 0.7}); 'uniform' -> ('uniform', {})."""
     name, _, rest = spec_str.partition(":")
@@ -1083,6 +1112,11 @@ def build_cell_env(spec, plat, cell, staging, matrix):
         )
         env.update(l0_knobs)
         env.update(l1_knobs)
+        if v.get("eplb_load"):
+            # COMET+EPLB: global re-homing voids the logical send bound
+            l1_sym_g += eplb_dense_send_headroom(
+                env, matrix, spec, plat, cell.get("routing_mode")
+            )
         # subtract the double-counted floors/overheads conservatively: keep
         # the plain sum minus one 1G overhead term, floor 6G
         sym_g = max(6, l0_sym_g + l1_sym_g - 1)
@@ -1456,6 +1490,10 @@ def build_cell_cmd(spec, plat, cell, jobid, matrix_path, staging, routing_path=N
         if routing_path:
             test_args += ["--routing_file", routing_path]
             test_args += sched_args
+        if v.get("eplb_load") and eplb_load_path:
+            # COMET+EPLB (l01_allgather_dense_eplb): the eplb arm's pool-
+            # oracle sidecar drives the static placement
+            test_args += ["--eplb_load_file", eplb_load_path]
         if spec["skip_correctness"]:
             test_args.append("--skip_correctness")
         if v.get("driver") == "l01_fast":
@@ -2210,8 +2248,9 @@ def cmd_run(spec, jobid_arg, dry):
                 matrices[cell["cell_id"]].update(
                     {"routing": rpath, "routing_sha": mmeta["routing_sha256"]}
                 )
-            if VARIANTS[cell["variant"]].get("driver") in ("eplb", "epic",
-                                                           "ours"):
+            if (VARIANTS[cell["variant"]].get("driver") in ("eplb", "epic",
+                                                            "ours")
+                    or VARIANTS[cell["variant"]].get("eplb_load")):
                 # predicted-load sidecar. Placement input only — matrix
                 # identity is unchanged; the driver records the sha as a
                 # cell fact. Two bases (never mixed inside a capsule —

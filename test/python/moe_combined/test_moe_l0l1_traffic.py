@@ -134,6 +134,21 @@ from flux.testing.a2av_combine_indices import (
     build_a2av_unique_counts_dev,
 )
 from flux.testing.recorder import RECORDER
+from flux.testing.comet_eplb import (
+    build_comet_eplb_plan,
+    comet_eplb_stats,
+    derive_physical_routing_all,
+    fill_canonical_slot_weights,
+    load_pool_load,
+)
+from flux.testing.eplb_semantics import EPLB_POLICIES, EplbIterPlanner
+
+# --placement eplb: the vendored deepseek-ai/EPLB algorithm lives next to
+# the eplb arm's driver (test/python/moe_ag_scatter/eplb_oracle)
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "moe_ag_scatter")
+)
+from eplb_oracle import rebalance_experts  # noqa: E402  (vendored algorithm)
 
 # reuse the layer1 traffic bench's inherited-index math and correctness
 # thresholds (import via sys.path like the fast baselines do): the CPU
@@ -389,6 +404,66 @@ def parse_args():
         " (and shrink the reference scatter staging buffer); correctness columns"
         " in the sweep capsule stay empty for the cell",
     )
+    # ---- COMET + EPLB (2026-09-16, reviewer-requested overlap+placement arm;
+    # flux.testing.comet_eplb has the mechanism): the EPLB static placement
+    # (replication + global re-homing) executed by the UNMODIFIED fused ops
+    # through the physical-slot space. --impl flux/torch only.
+    parser.add_argument(
+        "--placement",
+        default="none",
+        choices=["none", "eplb"],
+        help="expert placement executed by the fused ops: none = default"
+        " home placement (G/W experts per rank, the COMET arm); eplb ="
+        " deepseek-ai/EPLB static pool-oracle placement with"
+        " --eplb_redundant_per_rank replica slots per rank (the arm's ops"
+        " are built with W*(G/W+red) physical experts; routing is mapped"
+        " logical -> physical per iteration with the eplb arm's sender-local"
+        " replica rule inside the timed plan_comm bracket)",
+    )
+    parser.add_argument(
+        "--eplb_load_file",
+        type=str,
+        default=None,
+        help="--placement eplb: predicted per-expert load sidecar"
+        " (<mid>.eplb_load.json, the runner's pool-oracle prediction);"
+        " default None = the batch's own load (self-oracle, smoke only)",
+    )
+    parser.add_argument(
+        "--eplb_policy",
+        default="global",
+        choices=list(EPLB_POLICIES),
+        help="--placement eplb: EPLB policy (global = DeepSeek decode canon)",
+    )
+    parser.add_argument(
+        "--eplb_redundant_per_rank",
+        type=int,
+        default=2,
+        help="--placement eplb: redundant expert slots per rank (nlp = G/W + this;"
+        " the eplb arm's slot parity)",
+    )
+    parser.add_argument(
+        "--eplb_replica_select",
+        default="local_spread",
+        choices=["local_spread", "local_static"],
+        help="--placement eplb: sender-local replica rule (local_spread ="
+        " per-source equal split, the eplb arm's canonical fused-wire rule;"
+        " local_static = src mod C)",
+    )
+    parser.add_argument(
+        "--eplb_no_interleave",
+        default=False,
+        action="store_true",
+        help="--placement eplb: disable the coprime interleave of the reroute expansion",
+    )
+    parser.add_argument(
+        "--eplb_router",
+        default="kernel",
+        choices=["kernel", "torch"],
+        help="--placement eplb: per-iteration logical->physical router:"
+        " kernel = the fused one-launch router (flux.testing.comet_eplb_ext,"
+        " bit-exact with the torch path, guarded at setup); torch = the eplb"
+        " arm's EplbIterPlanner.derive_fused torch ops (~2 ms, device syncs)",
+    )
     # NOTE (2026-08-21, rule-5 conversion): --l1_index_in_window is RETIRED —
     # per-iteration in-window GPU derivation (plan bracket) is the only mode;
     # the old flag's python-builders-inside-l1_ms accounting would be a third
@@ -497,6 +572,64 @@ if __name__ == "__main__":
             f"multi-node requires token count ({ntokens}) divisible by"
             f" world_size * topk ({WORLD_SIZE * args.topk})"
         )
+
+    # ---- COMET + EPLB placement (see flux.testing.comet_eplb) ----------------
+    # From here on `choosed_experts` / `args.G` are in the PHYSICAL-SLOT space
+    # (P = W * nlp slots, slot p homed on rank p // nlp): every op, buffer and
+    # reference below is built for P experts and executes the placement
+    # unchanged. G_LOGICAL keeps the model's expert count for the record.
+    G_LOGICAL = args.G
+    eplb_plan = eplb_cfg = eplb_tpe = eplb_planner = None
+    eplb_pool_load = eplb_load_sha = eplb_load_source = None
+    eplb_plan_host_ms = 0.0
+    if args.placement == "eplb":
+        assert args.impl in ("flux", "torch"), "--placement eplb needs --impl flux|torch"
+        assert not args.routing_sched_files, (
+            "--placement eplb x --routing_sched_files not supported (v1)"
+        )
+        S_per_rank = ntokens // WORLD_SIZE
+        topk_all_cpu = choosed_experts.reshape(WORLD_SIZE, S_per_rank, args.topk).cpu().int()
+        eplb_pool_load, eplb_load_sha, eplb_load_source = load_pool_load(
+            args.eplb_load_file, args.G
+        )
+        if eplb_pool_load is None and RANK == 0:
+            print("eplb: NO --eplb_load_file; placement from the batch's own load"
+                  " (self-oracle — fine for smoke, not a headline cell)")
+        # deployment-scope placement (rule-5 one-shot, untimed, replicated)
+        t0 = time.perf_counter()
+        eplb_cfg, eplb_plan, eplb_tpe = build_comet_eplb_plan(
+            args.G, WORLD_SIZE, S_per_rank, args.topk, H, LOCAL_WORLD_SIZE,
+            topk_all_cpu,
+            eplb_pool_load, args.eplb_policy, rebalance_experts,
+            redundant_per_rank=args.eplb_redundant_per_rank,
+            interleave=not args.eplb_no_interleave,
+            replica_select=args.eplb_replica_select,
+        )
+        eplb_plan_host_ms = (time.perf_counter() - t0) * 1e3
+        if eplb_pool_load is None:
+            eplb_pool_load = eplb_tpe.long().sum(0).tolist()
+        _h = torch.tensor([eplb_plan.plan_hash()], dtype=torch.int64, device="cuda")
+        _h_all = torch.zeros(WORLD_SIZE, dtype=torch.int64, device="cuda")
+        torch.distributed.all_gather_into_tensor(_h_all, _h, group=TP_GROUP)
+        assert bool((_h_all == _h_all[0]).all()), "eplb plan hash differs across ranks"
+        # the timed per-iteration router (this rank's shard, sender-local);
+        # its W-fold loop at setup is the replicated reference routing
+        eplb_planner = EplbIterPlanner(
+            eplb_plan, RANK, torch.device(torch.cuda.current_device()),
+            topk_all_cpu, replica_select=args.eplb_replica_select,
+        )
+        logical_choosed = choosed_experts
+        choosed_experts = derive_physical_routing_all(eplb_planner, WORLD_SIZE)
+        assert choosed_experts.shape == logical_choosed.shape
+        _p2l_dev = eplb_plan.p2l.long().cuda()
+        assert torch.equal(
+            _p2l_dev[choosed_experts.long()], logical_choosed.long().cuda()
+        ), "physical routing does not replicate the logical routing entry-wise"
+        args.G = eplb_cfg.P
+        if RANK == 0:
+            print(f"placement: EPLB {args.eplb_policy}, G {G_LOGICAL} logical ->"
+                  f" {args.G} physical slots ({eplb_cfg.nlp}/rank), replica rule"
+                  f" {args.eplb_replica_select}, load source {eplb_load_source}")
 
     gating_args = gen_moe_gating_args(args.G, args.topk, ntokens, choosed_experts=choosed_experts)
 
@@ -620,6 +753,19 @@ if __name__ == "__main__":
     l1_weight, l1_weight_scale, l1_input_scale, l1_output_vec_scale = next(
         generate_data(data_config)
     )
+    eplb_weight_place_bytes = 0
+    if args.placement == "eplb":
+        # every physical slot carries the canonical weights of the logical
+        # expert it replicates (seeded like the eplb arm's one-time
+        # placement) — replicas are bit-identical, and the torch reference
+        # runs on the same physical layout, so the fused pass is checked
+        # without a special case. One-time placement is deployment scope
+        # (untimed): book-kept as the bytes a real placement would move.
+        assert moe_ctx.weight_groups == 1
+        eplb_weight_place_bytes = fill_canonical_slot_weights(
+            eplb_plan, RANK, moe_ctx.weights[0], l1_weight
+        )
+        torch.cuda.synchronize()
 
     if RANK == 0:
         rows_per_rank = split_cpu.view(WORLD_SIZE, n_experts_per_rank).sum(dim=1)
@@ -652,7 +798,41 @@ if __name__ == "__main__":
             timing_accounting="per_iter_gpu",
             torch_ref_impl="local_slice_scatter",
             l1_index_build_ms=round(l1_index_build_ms, 6),
+            comet_placement=args.placement,
+            G_logical=int(G_LOGICAL),
         )
+        if args.placement == "eplb":
+            st = comet_eplb_stats(eplb_cfg, eplb_plan, eplb_tpe, eplb_pool_load, choosed_experts)
+            print(f"eplb gemm rows per rank: home {st['gemm_rows_per_rank_home']} ->"
+                  f" placed {rows_per_rank.tolist()}  <- residual imbalance of the"
+                  " STATIC placement on this batch is the measurement")
+            print(f"imbalance max/mean: before {st['eplb_imbalance_before']:.3f} -> after"
+                  f" {st['eplb_imbalance_after']:.3f} (predicted, on the pool load:"
+                  f" {st['eplb_pred_imbalance']:.3f}); replicas"
+                  f" {st['eplb_replicas_total']}, re-homed slots {st['eplb_rehomed_slots']}")
+            RECORDER.emit_info(
+                planner_impl="comet_eplb_physical_slots",
+                replica_select=args.eplb_replica_select,
+                eplb_policy=args.eplb_policy,
+                eplb_redundant_per_rank=int(args.eplb_redundant_per_rank),
+                eplb_interleave=not args.eplb_no_interleave,
+                eplb_plan_host_ms=round(eplb_plan_host_ms, 3),
+                # sender-local replica rule: no pre-dispatch exchange; the
+                # logical->physical map runs inside the plan_comm bracket
+                # (before the routing allgather), never outside a window
+                eplb_plan_comm_bytes=0,
+                eplb_route_bracket="plan_comm",
+                eplb_router=args.eplb_router,
+                eplb_load_source=eplb_load_source,
+                eplb_load_file=args.eplb_load_file or "",
+                eplb_load_sha=eplb_load_sha,
+                eplb_weight_place="fc1fc2",
+                eplb_weight_place_wire="local_canonical_gen",
+                eplb_weight_place_bytes=int(eplb_weight_place_bytes),
+                eplb_weight_place_ms_oneshot=0.0,
+                eplb_transport="comet_" + args.l0_comm_pattern + "+" + args.l1_comm_pattern,
+                **st,
+            )
 
     # ---- build the ops (ctor mirrors the per-layer benches) ----
     gemm_only_op = None
@@ -721,8 +901,43 @@ if __name__ == "__main__":
             print(f"[sched] {len(_sched_shards)} topics, dwell"
                   f" {args.routing_dwell}", flush=True)
 
-    def plan_comm_fn():
-        torch.distributed.all_gather_into_tensor(topk_gather_buf, topk_shard, group=TP_GROUP)
+    if args.placement == "eplb":
+        # timed per iteration (SCHEMA rule 5): this rank's LOGICAL shard ->
+        # physical slots with the sender-local replica rule (no exchange), then
+        # the physical routing allgather. topk_shard is the setup reference of
+        # exactly this derivation (derive_physical_routing_all), guarded below.
+        if args.eplb_router == "kernel":
+            from flux.testing.comet_eplb_ext import MODE as _EPLB_MODE, load_ext
+            _ext = load_ext()
+            _k_topk = eplb_planner.topk_all[RANK].to(torch.int32).contiguous()
+            _k_l2p = eplb_planner.l2p.to(torch.int32).contiguous()
+            _k_lcnts = eplb_planner.lcnts.to(torch.int32).contiguous()
+            _k_mode = _EPLB_MODE[args.eplb_replica_select]
+            _k_ilv = not args.eplb_no_interleave
+
+            def eplb_route():
+                return _ext.route_local(_k_topk, _k_l2p, _k_lcnts, RANK, _k_mode, _k_ilv)
+
+            # drift guard (untimed, once): the fused kernel must reproduce the
+            # torch router bitwise on this rank's shard
+            _ref = eplb_planner.derive_fused()
+            _got = eplb_route()
+            torch.cuda.synchronize()
+            assert torch.equal(_got, _ref), "comet_eplb_ext.route_local drift vs derive_fused"
+            del _ref, _got
+        else:
+
+            def eplb_route():
+                return eplb_planner.derive_fused()
+
+        def plan_comm_fn():
+            dst = eplb_route()
+            torch.distributed.all_gather_into_tensor(topk_gather_buf, dst, group=TP_GROUP)
+
+    else:
+
+        def plan_comm_fn():
+            torch.distributed.all_gather_into_tensor(topk_gather_buf, topk_shard, group=TP_GROUP)
 
     plan_comm_fn()
     assert torch.equal(topk_gather_buf, choosed_experts), (

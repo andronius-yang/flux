@@ -1,0 +1,28 @@
+# 2026-09-16 (branch pv3): COMET+EPLB arm gate at 2n K2 — the reviewer-
+# requested "overlap + placement" baseline (l01_allgather_dense_eplb =
+# COMET dense fused ops executing the EPLB pool-oracle placement through
+# the physical-slot space, flux.testing.comet_eplb) next to plain COMET
+# and the EPLB direct-wire arm, all in ONE capsule / one binary, with the
+# torch two-layer correctness reference ON. Main-perf shape/pool/budgets
+# (b1/b16 of the 1/4/16 grid) so the numbers can later be judged against
+# figure_src rows; NOT a figure row yet (user: results stay private).
+platform: perlmutter
+nodes: 2
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 16]
+variants:
+  - l01_allgather_dense
+  - l01_allgather_dense_eplb
+  - eplb_l01
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: false
+timeout_s: 900
+idle_timeout_s: 300
+retries: 0
+extra_env:
+  FLUX_PLL_RANDOM_PAYLOAD: "1"
+notes: "COMET+EPLB gate 2n K2 b1/b16: comet vs comet+eplb vs eplb_l01, one binary, correctness on"

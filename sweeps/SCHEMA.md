@@ -525,6 +525,29 @@ Highlights (full list = header row):
   61.9 -> 51.0; 12/12/8 regresses — margin starves the GEMMs). The
   compress plan is additionally fully sort-free since 2026-08-22
   (reduce_index by the same scd arithmetic).
+  **COMET+EPLB `l01_allgather_dense_eplb` (2026-09-16, branch pv3,
+  reviewer-requested "overlap + placement" baseline; NOT a figure row
+  yet):** the COMET dense arm executing the `eplb_l01` arm's static
+  pool-oracle placement (same vendored deepseek-ai/EPLB, global policy,
+  G/W + 2 slots per rank, same `.oracle_load.json` sidecar) through the
+  PHYSICAL-SLOT space — the fused ops are built with `nexperts = W*(G/W+2)`
+  and home slot p on rank p // nlp, so the unmodified kernels execute the
+  placement (flux.testing.comet_eplb; the MoonEP virtual-expert-space
+  mechanism). Per iteration the eplb arm's sender-local `local_spread`
+  replica rule maps the logical routing to slots INSIDE the plan_comm
+  bracket (before the routing allgather; `eplb_route_bracket=plan_comm`,
+  plan_comm_bytes 0). Replica slots carry the canonical per-logical
+  weights (bit-identical copies; the torch reference runs on the same
+  physical layout, `correct_allclose` is the fused-vs-reference verdict).
+  `gemm_rows_per_rank` = the PLACED rows (the measurement); the eplb_*
+  cell facts mirror the eplb arm (imbalance before/after/pred, replicas,
+  re-homed slots, load sha). Wire: dense allgather is placement-invariant,
+  so only GEMM + dense-combine send rows move. Sizing: the runner widens
+  `FLUX_A2AV_RS_MAX_SEND_ROWS` to max(logical bound, 2 x mean rows/rank)
+  for `eplb_load: True` variants (global re-homing voids the column-sum
+  bound; the op's check is collective, so an overflow aborts, never hangs).
+  Compare only inside one capsule against `l01_allgather_dense` and
+  `eplb_l01` (specs `comet_eplb_gate_4n_{k2,qwen}`).
   Driver l01_fast (--impl fast, 2026-08-21): the FAST+FAST combined
   unfused baseline on REAL routing — dispatch alltoallv -> grouped GEMM0
   -> GELU -> grouped GEMM1 -> combine alltoallv (transposed matrix) ->
