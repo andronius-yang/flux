@@ -331,6 +331,44 @@ Capsules: 071106 / 071304 (4n K2/Qwen), 071215 / 071417 (8n), 073316 /
 `l01_allgather_dense` cells are the same-binary COMET anchor (the
 committed figure_src COMET row is a different binary — never mix).
 
+### 5e. COMET drift check (2026-09-17 07:52, capsule `20260917-145225_perlmutter_a063b0b1`)
+
+Question: the official main-perf COMET row (Aug-24 libs `3649668a`) is 4-47%
+slower than the same arm in the 09-17 capsules (Sep-10 libs `a0c60c75`,
+the SAME libs as the plotted Sep-15 Ours rows). Binary or the Sep-14
+compute image? Same-allocation 4n K2 re-run of COMET + the plotted Ours
+arm (`ours_l01_s1_pv2_r2_pv3c_eps025`), ms:
+
+| 4n K2 | COMET 08-24 (figure) | COMET 09-17 00:11 | COMET 09-17 07:52 | Ours 09-15 (figure) | Ours 09-17 07:52 |
+|---|---|---|---|---|---|
+| 1 MiB | 4.04 | 3.65 | 3.62 | 4.03 | 3.81 |
+| 4 MiB | 6.26 | 5.94 | 5.93 | 6.11 | 5.92 |
+
+- COMET is reproducible day to day on the Sep-10 libs (3.65 vs 3.62).
+- Ours also moved on the new image, by ~5% (4.03 -> 3.81) — so the site
+  image accounts for roughly that much; the rest of the COMET drift
+  (10% at 4n b1; up to 47% at 16n b1, untested here) is the binary.
+- **Fair same-day, same-binary ratio at 4n K2: Ours/COMET 0.95x (1 MiB),
+  1.00x (4 MiB); Ours/COMET+EPLB (09-17 00:11 values) 0.97x / 0.94x.**
+  The K2 small-budget groups where Ours is not the minimum in
+  main_perf_v3 (4n 1+4 MiB, 8n 1 MiB) are therefore genuine, not a
+  measurement artifact. Large budgets and Qwen are unaffected in sign.
+
+### 5f. Plan-bracket share of the plotted Ours rows (2026-09-17, existing data)
+
+The 18 plotted Ours cells are s1 arms (`ours_l01_s1_pv2_r2_pv3c_*`, dwire
+at 16n K2 b1, slipstream at 8n Qwen b1): placement is solved ONCE at setup
+(untimed); the per-iteration brackets are plan_comm (gating/probs
+allgather, 0.15-0.8 ms) + plan (pv3c router + derive_routed/combine meta +
+plan graphs, 0.6-2.8 ms); place_ms = 0. The s2 swap arm (re-solve + swap
+plan every iteration, place_ms ~1 ms) is never the winner. Plan share of
+Ours total: 7-27% (largest at 1 MiB, 16n). Ours e2e-only vs the baselines'
+TOTAL: >= 1.03x vs COMET+EPLB in every group (worst 8n K2 b1 1.03x, 4n K2
+b4 1.04x); e2e-vs-e2e (both sides stripped) still 0.95x at 4n K2 b4,
+1.01x / 1.03x at 4n K2 b1 / 8n K2 b1. SCHEMA rule 5 caveat: planning is
+timed by design (one-shot inference); stripping it from the report needs
+the same treatment on every arm.
+
 ## 6. State at hand-back (2026-09-16 23:56)
 
 - Arm complete and gated: 2n K2, 4n K2, 4n Qwen, 18/18 cells ok with the

@@ -1,0 +1,20 @@
+# 2026-09-17 drift check: is the official-COMET vs same-day-COMET gap the
+# BINARY (8/24 vs 9/10 libs) or the SITE IMAGE (Sep-14 driver/CPE)? Re-run
+# the plotted Ours arm next to COMET today and compare with its 9/15 value.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 4]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 900
+idle_timeout_s: 300
+retries: 1
+variants:
+  - l01_allgather_dense
+  - ours_l01_s1_pv2_r2_pv3c_eps025
+notes: "drift check 4n K2 b1/b4: COMET + plotted Ours arm on today's site image"
