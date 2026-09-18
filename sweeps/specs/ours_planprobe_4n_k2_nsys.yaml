@@ -1,0 +1,25 @@
+# 2026-09-17: what is inside the plotted Ours arm's plan bracket at the K2
+# small budgets where COMET+EPLB wins? NVTX capture (instrumented mode —
+# breakdown only, never latency; SCHEMA rule 3) of the per-iteration
+# plan path: route kernel / kstats sync / xchg pack / xchg allgather /
+# vce tail / derive_routed_meta / combine meta / scale.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 4]
+modes: [nsys]
+extra_env:
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+  FLUX_OURS_NVTX: "1"
+iters: 10
+warmup_iters: 5
+profile_iters: 3
+skip_correctness: true
+timeout_s: 1200
+idle_timeout_s: 400
+retries: 0
+variants:
+  - ours_l01_s1_pv2_r2_pv3c_eps025
+notes: "plan-bracket NVTX probe: plotted Ours arm, 4n K2 b1/b4, nsys isolated"

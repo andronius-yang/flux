@@ -369,6 +369,68 @@ b4 1.04x); e2e-vs-e2e (both sides stripped) still 0.95x at 4n K2 b4,
 timed by design (one-shot inference); stripping it from the report needs
 the same treatment on every arm.
 
+### 5g. Why Ours loses to COMET+EPLB at K2 1/4 MiB (2026-09-17, existing data)
+
+Brackets (ms, iter-max median), Ours fused s1 pv3c vs COMET+EPLB:
+
+| group | Ours plan_comm+plan / l0 / l1 | COMET+EPLB plan_comm+plan / l0 / l1 | CE gemm imb |
+|---|---|---|---|
+| 4n K2 b1 | 0.75 / 1.67 / 1.62 | 0.39 / 1.66 / 1.72 | 1.16 |
+| 4n K2 b4 | 0.77 / 2.46 / 2.85 | 0.45 / 2.49 / 2.64 | 1.10 |
+| 8n K2 b1 | 1.10 / 2.69 / 2.16 | 0.55 / 2.20 / 2.19 | 1.19 |
+| 4n Qwen b1 (win) | 0.77 / 1.19 / 1.11 | 0.41 / 1.12 / 2.26 | 1.21 |
+
+1. The whole 4n K2 b1 gap (0.35 ms) is the plan bracket: e2e ties
+   (3.27 vs 3.30). Ours' per-iteration metadata (derive_routed_meta +
+   combine meta + graph replay + probs packaging) costs 0.6-0.8 ms vs
+   COMET's 0.26; the pv3c router itself is only 0.05-0.2 of it. Placement
+   solve is 0 (setup). Fusing the meta derivation (as done for the EPLB
+   router) is worth ~0.3-0.5 ms = 7-12% at 1 MiB.
+2. 8n K2 b1: dispatch (2.69 vs 2.20) — the fused union wire has more
+   serialized put/signal stages (intra-node dedup -> union -> gateway
+   forward, ~120 us CXI floor each) than one dense allgather; at 72
+   tok/GPU x 16-32 ranks the dense allgather is latency-optimal. A
+   byte-gated dense-dispatch fallback at <= 1 MiB would take this back.
+3. 4n K2 b4: combine (2.85 vs 2.64) — CE's balanced rows (imb 1.10) cut
+   COMET's own combine from 3.00 to 2.64; Ours' msplit combine at 14 KB
+   rows / 296 tok/GPU is wave-latency bound. Ours cells do NOT record
+   gemm_rows_per_rank (the pv3c C=1/4 cap allows up to 1.25x) — add the
+   fact to the ours driver before concluding on balance.
+4. Shape, not scale: on Qwen (8 KB rows, 2x the tokens per MiB) COMET's
+   dense combine is 2x slower per byte (2.26/3.58 ms) and Ours wins l1 by
+   1.1-1.7 ms; on K2 the dense combine is cheap (1.72) so Ours' wire
+   advantage does not appear until bandwidth-bound (>= 16 MiB).
+
+### 5h. Inside the Ours plan bracket (NVTX probe 2026-09-17, capsule
+`20260917-152059_perlmutter_2ce12c36`, spec `ours_planprobe_4n_k2_nsys`,
+FLUX_OURS_NVTX=1, instrumented — breakdown only)
+
+Host-side range medians per iteration, 4n K2, plotted arm
+`ours_l01_s1_pv2_r2_pv3c_eps025` (node 0, 4 ranks):
+
+| stage | b1 | b4 | in bracket |
+|---|---|---|---|
+| loads allgather d[R,G] | 0.16 (plan_comm) | 0.14 | plan_comm |
+| plan.route_pv3 (kernel + kstats) | 0.08 | 0.08 | plan |
+| plan.xchg_pack (phys+probs pack) | 0.07 | 0.07 | plan |
+| plan.xchg_allgather (routing+probs) | 0.11 | 0.12 | plan |
+| plan.vce_tail | 0.05 | 0.05 | plan |
+| plan.derive_routed_meta (C++ fused, pinned-D2H sync) | 0.31 | 0.41 | plan |
+| plan.m_this_host (D2H row count for sizing) | 0.05 | 0.05 | plan |
+| plan.combine_meta_op + scale_build | 0.36 + 0.05 | 0.37 + 0.05 | side stream under l0 (plan_overlap 1) |
+
+Sum of the in-bracket stages 0.67 / 0.78 ms == the event-timed plan_comm+
+plan (0.75 / 0.77). Reading: the derive itself IS the fused C++ path and
+costs what COMET's does (0.31 vs 0.25; +0.1 at b4 for the compress
+unique counts). The extra ~0.4 ms is the global-demand router's chain —
+loads allgather, route kernel, pack, vce, sizing D2H — five small
+serialized steps each ending in a launch gap or host sync. Fusing
+route+pack+vce into one kernel that emits the packed exchange buffer
+saves ~0.2 ms; the loads allgather (0.16) is inherent to a demand-aware
+router (EPLB's rule is sender-local). Best case ~0.3 ms: 4n K2 b1 4.03 ->
+~3.7 = tie with COMET+EPLB (3.68), not a win; the 8n b1 dispatch gap and
+the b4 combine gap (§5g) remain.
+
 ## 6. State at hand-back (2026-09-16 23:56)
 
 - Arm complete and gated: 2n K2, 4n K2, 4n Qwen, 18/18 cells ok with the
