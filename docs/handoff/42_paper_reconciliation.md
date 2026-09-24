@@ -556,3 +556,30 @@ and isolated by same-binary twins (`rpr3_ab_{4,8}n_k2`):
 2. pipeline depth 2 → `FLUX_A2AV_RELAY_SLOTS` (default 2; twin 3).
 Arms: `_rpr0_nop2p` (= the old binary), `_rpr0` (legacy staging + P2P pulls),
 base (per-round 2 slots + P2P), `_rprs3`, `_rpr_nop2p` (round-2 config).
+
+### 7.3 Round 3 isolation — VERDICT (capsules 20260924-102746 gate 8/8, -104607 4n, -105850 8n)
+
+8n severe, fused s1, rank-max medians (l0 / total):
+
+| arm | b16 | b64 |
+|---|---|---|
+| `_rpr0_nop2p` legacy staging + getmem (= old binary) | 9.56 / 23.40 | 38.58 / 89.33 |
+| `_rpr_nop2p` per-round 2 slots + getmem (round 2) | 10.64 / 24.58 (+5.0 %) | 41.41 / 90.59 (+1.4 %) |
+| **per-round 2 slots + P2P pulls (new default)** | 9.32 / 23.33 (−0.3 %) | 37.27 / 87.25 (−2.3 %) |
+| `_rprs3` per-round 3 slots + P2P | 9.39 / 23.47 (+0.3 %) | 36.97 / 86.88 (−2.7 %) |
+| `_rpr0` legacy staging + P2P | 9.95 / 23.82 (+1.8 %) | 38.27 / 89.65 (+0.4 %) |
+
+The round-2 cost reproduces exactly in the getmem twin and vanishes with the
+copy-engine pulls; slot depth 2 vs 3 makes no difference. Mechanism confirmed:
+the proxy-lowered `getmem_nbi` pulls, interleaved per round, shared the proxy
+thread with the wire puts. 4n five-arm A/B: all within ±1.8 % (noise). Gate
+8/8 with per-iteration output checks incl. the P2P pulls.
+
+**Verdict: per-round relay staging (2 slots) with copy-engine P2P pulls is the
+default — paper Algorithm 1's per-round redistribution, at parity or better
+on total_ms at 4n and 8n, relay buffer −67 % (4n) / −85 % (8n) / −92 % (16n),
+and the 8n b64 swap arms fit the heap again.** The 16n confirmation on the
+new binary (b16 severe five arms; b64 on the lcb family since the severe
+family exhausts the heap at 16n b64 for every arm) is queued as
+`rpr3_16n_k2_*` (§7.4). Receiver-side (gateway stage) per-round staging
+remains the next lever for 16n b64 on severe placements.

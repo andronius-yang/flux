@@ -1,0 +1,19 @@
+# Per-round relay round 3 at 16n b64 on the main-perf lcb family (the severe family exhausts
+# the heap at 16n b64 for every arm): old binary vs new defaults.
+platform: perlmutter
+nodes: 16
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [64]
+modes: [isolated]
+iters: 8
+warmup_iters: 4
+skip_correctness: true
+timeout_s: 500
+idle_timeout_s: 200
+retries: 0
+variants:
+  - ours_l01_s1_pv2_r2_pv3c_eps025_rpr0_nop2p
+  - ours_l01_s1_pv2_r2_pv3c_eps025
+notes: "rpr3 16n lcb b64: legacy/getmem vs per-round 2 slots P2P"
