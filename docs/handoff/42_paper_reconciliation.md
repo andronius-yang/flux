@@ -605,3 +605,24 @@ pulls no longer touch the NVSHMEM proxy. What remains open for memory is the
 receiver side (gateway stage, all NN−1 rounds resident), which is what 16n b64
 on severe placements needs; it requires a remote per-round acknowledgement and
 is a separate decision.
+
+## 8. Main-perf-conditions check (SCHEMA rule 17, 2026-09-24) — capsule 20260924-153937 (4n, 24/24)
+
+User rule: headline comparisons run under the Figure-9 conditions (lcb family,
+the figure's Ours arm `ours_l01_s1_pv2_r2_pv3c_eps025`, b1/b4/b16/b64); b64-only
+and severe-family reads are ablation discussion. `_legacy` = all three knobs
+(minmove partition, per-round staging, P2P pulls) pinned to the old behaviour
+on the same binary.
+
+| 4n K2 lcb, fused s1 | figure value | new defaults | `_legacy` twin | new vs twin |
+|---|---|---|---|---|
+| b1 | 4.03 (9/15 binary) | 3.76 | 3.86 | −2.8 % |
+| b4 | 6.11 (9/15) | 5.82 | 5.85 | −0.5 % |
+| b16 | 14.27 (9/15) | 14.28 | 14.25 | +0.2 % |
+| b64 | 46.67 (8/29) | 45.72 / 46.07 (two capsules) | 45.10 / 45.99 | +1.4 % / +0.2 % |
+
+No increased latency on the main-perf cells at 4n; the small budgets favour
+the new defaults. Band-dual3 on lcb: new −7 % (b1), −3 % (b4), −3 % (b16) vs
+its twin. Severe family (ablation discussion only): b1/b4 parity; b16 +5.6 %
+single capsule (same class as the §4.2 reading that dissolved under repeats;
+unrepeated). 8n and 16n under the same conditions: `recon_smallb_{8,16}n_k2`.

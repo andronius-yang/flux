@@ -1194,3 +1194,11 @@ explicitly NOT applied to any canon.
    `_pv3c_eps025` twins). Legacy `tau` arms keep their semantics; the two
    triggers are different placement sequences (out_sha differs
    legitimately) — compare only inside one capsule.
+17. **Comparison conditions = main-perf conditions (2026-09-24, user rule).**
+   Any new knob's headline A/B runs under the Figure-9 conditions: the
+   main-perf family (`pools=livecodebench/execution`, K2 + Qwen where
+   plotted), the figure's Ours arm (`ours_l01_s1_pv2_r2_pv3c_eps025`), budgets
+   1/4/16/64, at the plotted node counts, with the same-binary twin in the
+   same capsule, and is read against BOTH the twin and the plotted value.
+   b64-only or severe-family (proLaw reset-every) reads belong to the
+   ablation / case-study discussion and are never the headline check.

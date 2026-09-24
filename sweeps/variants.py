@@ -3948,6 +3948,19 @@ for _base in ("ours_l01_s1_pv2_r2_pv3c_eps025",
             VARIANTS[_base + _tag],
             test_args=VARIANTS[_base + _tag]["test_args"] + ["--check_iters", "1"])
 
+# `_legacy` twin (2026-09-24): ALL of today's reconciliation knobs pinned to the
+# old binary's behaviour in one env — equal-cut relay partition, all-rounds
+# relay staging, proxy getmem pulls — on the same binary as the new defaults
+# (minmove ON, per-round 2-slot staging ON, P2P pulls ON). The main-perf
+# small-budget check (b1/b4/b16) compares <arm> vs <arm>_legacy in one capsule.
+for _base in ("ours_l01_s1_pv2_r2_pv3c_eps025",
+              "ablation_l01_s2_swapall_rst_3d_dual3_str4_bal_p2p_r2_pv3c_eps025"):
+    _src = VARIANTS[_base]
+    VARIANTS[_base + "_legacy"] = dict(
+        _src, env=dict(_src.get("env", {}), FLUX_A2AV_LB_MINMOVE="0",
+                       FLUX_A2AV_RELAY_PER_ROUND="0", FLUX_A2AV_RELAY_P2P_PULL="0"),
+        requires=list(_src.get("requires", [])) + ["FLUX_A2AV_RELAY_P2P_PULL"])
+
 # llc ("2Ours no-overlap" main-perf row) under the paper-constraint router
 # (branch pv3, 2026-09-15): the EPIC driver's staged transport with
 # --router pv3c (C = 1/4) / pv3; gate twin audits every iteration
