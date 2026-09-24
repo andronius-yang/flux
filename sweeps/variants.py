@@ -3961,6 +3961,16 @@ for _base in ("ours_l01_s1_pv2_r2_pv3c_eps025",
                        FLUX_A2AV_RELAY_PER_ROUND="0", FLUX_A2AV_RELAY_P2P_PULL="0"),
         requires=list(_src.get("requires", [])) + ["FLUX_A2AV_RELAY_P2P_PULL"])
 
+# `_legacy` twins for the other plotted main-perf Ours arms (2026-09-24 final
+# recapture): the 16n rows use pv3c C=1/2, the b2/b64 rows the LocCap s1 arm.
+for _base in ("ours_l01_s1_pv2_r2_pv3c_eps05", "ours_l01_s1_pv2_r2"):
+    _src = VARIANTS[_base]
+    if _base + "_legacy" not in VARIANTS:
+        VARIANTS[_base + "_legacy"] = dict(
+            _src, env=dict(_src.get("env", {}), FLUX_A2AV_LB_MINMOVE="0",
+                           FLUX_A2AV_RELAY_PER_ROUND="0", FLUX_A2AV_RELAY_P2P_PULL="0"),
+            requires=list(_src.get("requires", [])) + ["FLUX_A2AV_RELAY_P2P_PULL"])
+
 # llc ("2Ours no-overlap" main-perf row) under the paper-constraint router
 # (branch pv3, 2026-09-15): the EPIC driver's staged transport with
 # --router pv3c (C = 1/4) / pv3; gate twin audits every iteration

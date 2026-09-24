@@ -1,0 +1,19 @@
+# FINAL recapture step 1 (2026-09-24): correctness gate ladder for the new defaults at the
+# main-perf small budgets (only b8/b64 were gated before). Per-iteration output checks.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering"
+budgets_mib: [1, 4, 16]
+modes: [isolated]
+iters: 6
+warmup_iters: 3
+skip_correctness: false
+timeout_s: 600
+idle_timeout_s: 240
+retries: 0
+variants:
+  - ours_l01_s1_pv2_r2_pv3c_eps025_gate
+  - ablation_l01_s2_swapall_rst_3d_dual3_str4_bal_p2p_r2_pv3c_eps025_gate
+notes: "final step 1: gate ladder b1/b4/b16, s1 + dual3 band, new defaults"

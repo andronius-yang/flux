@@ -1,0 +1,22 @@
+# FINAL recapture step 7a (2026-09-24): main-perf conditions, new defaults vs the same-binary
+# _legacy twin, plotted Ours arm per (topology, budget). 16n heap: same runner sizing as the
+# plotted rows (13G at lcb b64 for the s1 arms; 8/30 + 9/24 capsules).
+platform: perlmutter
+nodes: 16
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4, 16, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 600
+idle_timeout_s: 240
+retries: 1
+variants:
+  - ours_l01_s1_pv2_r2_pv3c_eps05
+  - ours_l01_s1_pv2_r2_pv3c_eps05_legacy
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s1_pv2_r2_legacy
+notes: "final 7a: K2 16n (eps05 + LocCap rows)"

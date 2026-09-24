@@ -1,0 +1,20 @@
+# FINAL recapture step 3 (2026-09-24): ablation loo study on the final binary (new defaults),
+# plotted arms (tau=1 orbit == band trigger at C_swap=0). Run 3x = 3 reps; it0 = drift event.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy"
+budgets_mib: [64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 900
+idle_timeout_s: 300
+retries: 1
+variants:
+  - ablation_l01_pr_swapall_pw_noov_p2p_r2_pv3c_eps025
+  - ablation_l01_s2_swapall_pw_noov_p2p_r2_pv3c_eps025
+  - ablation_l01_s2_swapall_pw_p2p_r2_pv3c_eps025
+notes: "final step 3: ablation loo on the final binary"
