@@ -42,7 +42,8 @@
 import numpy as np
 import torch
 
-__all__ = ["swap_plan", "apply_swaps", "swap_orbit", "OursSwapLane"]
+__all__ = ["swap_plan", "apply_swaps", "swap_orbit", "node_band",
+           "OursSwapLane"]
 
 
 def rank_loads(load_g, p2l, lcnts, R, nlp):
@@ -58,7 +59,26 @@ def rank_loads(load_g, p2l, lcnts, R, nlp):
     return share.view(R, nlp).sum(1)
 
 
-def swap_plan(load_g, p2l, lcnts, L, nlp, tau_rows):
+def node_band(L_r, L, C):
+    """Paper §4.3 load constraint on the placement REFERENCE loads
+    (2026-09-23 reconciliation). L_r[j] = sum over hosted slots of
+    D_e // c_e = the fair-share total the router (pv3/pv3c) is bound to
+    within (1 +- C); routing can never move a GPU outside that band, so
+    the only imbalance swaps must repair is the reference itself. Swaps
+    are intra-node (the node total is invariant), hence the constraint
+    is per node: node u is OUT of band iff
+        max_{j in u} L_r[j] > (1 + C) * mean_{j in u} L_r[j].
+    Returns (out_of_band bool [NN], ratio float64 [NN] = max / mean)."""
+    lr = np.asarray(L_r, dtype=np.int64).reshape(-1, L)
+    tot = lr.sum(1)
+    mx = lr.max(1)
+    # integer-exact comparison: max * L > (1 + C) * total
+    out = mx.astype(np.float64) * L > (1.0 + C) * tot.astype(np.float64)
+    ratio = np.where(tot > 0, mx * L / np.maximum(tot, 1), 1.0)
+    return out, ratio
+
+
+def swap_plan(load_g, p2l, lcnts, L, nlp, tau_rows, bal_C=None):
     """One round of EPIC-greedy intra-node pairing. Host integer, pure.
     Returns (swaps, L_r) where swaps = [(r_h, s_h, e_h, r_l, s_l, e_l)]
     (global slot ids; each rank appears in at most one swap).
@@ -70,20 +90,30 @@ def swap_plan(load_g, p2l, lcnts, L, nlp, tau_rows):
     mode (the always-overlap probe): prefilter + gain threshold bypassed,
     every pair applies its best exchange regardless of gain sign, so
     movement oscillates at the fixed point and NVLink traffic fires every
-    iteration (the sizing orbit detects the cycle)."""
+    iteration (the sizing orbit detects the cycle).
+
+    bal_C (2026-09-23, paper §4.3 reconciliation): when not None, the
+    band TRIGGER replaces the pair-gap threshold as the reason to swap —
+    only nodes whose reference loads are out of band (node_band) are
+    paired, every accepted exchange must still strictly reduce the pair
+    max (tau_rows >= 1), and the greedy stops as soon as every node is
+    back inside (1 + C) * node mean: the minimal-swap reading of the
+    paper's "triggered only when the imbalance exceeds the configured
+    load constraint, accepted only when it reduces the max"."""
     p2l_np = np.asarray(p2l.numpy(), dtype=np.int64)
     lg = np.asarray(load_g.numpy(), dtype=np.int64)
     lc = np.maximum(np.asarray(lcnts.numpy(), dtype=np.int64), 1)
-    swaps, L_r = _swap_plan_np(p2l_np, lg, lc, L, nlp, tau_rows)
+    swaps, L_r = _swap_plan_np(p2l_np, lg, lc, L, nlp, tau_rows,
+                               bal_C=bal_C)
     return swaps, torch.from_numpy(L_r)
 
 
 def _swap_plan_np(p2l_np, lg, lc, L, nlp, tau_rows, w_slot=None,
-                  L_r=None, per_pair=1):
+                  L_r=None, per_pair=1, bal_C=None):
     """Numpy core of swap_plan (single-conversion fastpath entry): inputs
     already int64 numpy (lc pre-clamped >= 1). Same output, no torch.
     w_slot/L_r may be passed precomputed (orbit fastpath maintains them
-    incrementally across rounds)."""
+    incrementally across rounds). bal_C: see swap_plan."""
     R = p2l_np.shape[0] // nlp
     NN = R // L
     G = lg.shape[0]
@@ -103,6 +133,11 @@ def _swap_plan_np(p2l_np, lg, lc, L, nlp, tau_rows, w_slot=None,
     Q = H.shape[0]
     lrH, lrL = L_r[H], L_r[Lo]
     pair_ok = np.ones(Q, dtype=bool) if force else (lrH - lrL > tau_rows)
+    if bal_C is not None:
+        # band trigger: pairs inside an in-band node never swap
+        assert not force, "bal_C excludes force mode"
+        node_out, _ = node_band(L_r, L, bal_C)
+        pair_ok &= node_out[H // L]
     hs = H[:, None] * nlp + np.arange(nlp)[None, :]                 # [Q, nlp]
     ls = Lo[:, None] * nlp + np.arange(nlp)[None, :]
     e_hs, e_ls = p2l_np[hs], p2l_np[ls]
@@ -147,6 +182,7 @@ def _swap_plan_np(p2l_np, lg, lc, L, nlp, tau_rows, w_slot=None,
     # the used slots, and pick again — up to per_pair exchanges per pair
     # in one numpy pass instead of one per re-paired round.
     lrH, lrL = lrH.copy(), lrL.copy()
+    L_w = L_r.copy() if bal_C is not None else None
     for _m in range(1, per_pair):
         if not has.any():
             break
@@ -156,6 +192,13 @@ def _swap_plan_np(p2l_np, lg, lc, L, nlp, tau_rows, w_slot=None,
         lrL[qs] += d
         ok[qs, a[qs], :] = False
         ok[qs, :, b[qs]] = False
+        if bal_C is not None:
+            # minimal swaps: a node that the picks so far brought back
+            # inside the band takes no further exchange in this pass
+            L_w[H[qs]] = lrH[qs]
+            L_w[Lo[qs]] = lrL[qs]
+            node_out, _ = node_band(L_w, L, bal_C)
+            ok &= node_out[H // L][:, None, None]
         new_max = np.maximum(lrH[:, None, None] - wh8[:, :, None] + wl8[:, None, :],
                              lrL[:, None, None] - wl8[:, None, :] + wh8[:, :, None])
         gain = np.maximum(lrH, lrL)[:, None, None] - new_max
@@ -206,7 +249,7 @@ def apply_swaps(p2l, l2p, swaps):
 
 
 def swap_orbit(load_g, p2l, l2p, lcnts, L, nlp, tau_rows, max_rounds=8,
-               return_cycle=False):
+               return_cycle=False, bal_C=None):
     """Setup-side fixed-point iteration of the runtime swap sequence on a
     fixed demand vector (the sizing-envelope fold input). Returns the list
     of successive (p2l, l2p) placements AFTER each swapping iteration
@@ -219,7 +262,8 @@ def swap_orbit(load_g, p2l, l2p, lcnts, L, nlp, tau_rows, max_rounds=8,
     cur_p2l, cur_l2p = p2l, l2p
     cycle = None
     for _ in range(max_rounds):
-        swaps, _ = swap_plan(load_g, cur_p2l, lcnts, L, nlp, tau_rows)
+        swaps, _ = swap_plan(load_g, cur_p2l, lcnts, L, nlp, tau_rows,
+                             bal_C=bal_C)
         if not swaps:
             break
         cur_p2l, cur_l2p = apply_swaps(cur_p2l, cur_l2p, swaps)
@@ -601,14 +645,20 @@ class OursSwapLane:
 # ==========================================================================
 
 def swap_orbit_capped(load_g, p2l, l2p, lcnts, L, nlp, cap, max_rounds=32,
-                      per_pair=1):
+                      per_pair=1, bal_C=None):
     """Lean runtime orbit FASTPATH (2026-09-01): ONE torch->numpy
     conversion, all tau=1 rounds in numpy (the vectorized _swap_plan_np
     core + 2-element array writes per swap), l2p rebuilt once at the end
     (canonical ascending-phys column order). Round-granular cap
     truncation as before. tau=1 strictly reduces a pair's max per
     accepted swap -> terminates. Returns (p2l_f, l2p_f, rounds); when no
-    round applies, the INPUT tensors are returned unchanged."""
+    round applies, the INPUT tensors are returned unchanged.
+
+    bal_C (paper §4.3 reconciliation, 2026-09-23): band-triggered orbit —
+    rounds run only for nodes out of band and stop as soon as every node
+    is inside (1 + C) * node mean (see node_band / swap_plan); the
+    result is the SHORTEST greedy swap sequence that restores the load
+    constraint, instead of the tau=1 fixpoint."""
     R = p2l.numel() // nlp
     a0 = np.asarray(p2l.numpy(), dtype=np.int64)
     lg = np.asarray(load_g.numpy(), dtype=np.int64)
@@ -621,7 +671,8 @@ def swap_orbit_capped(load_g, p2l, l2p, lcnts, L, nlp, cap, max_rounds=32,
     L_r = w_slot.reshape(R, nlp).sum(1)
     for _ in range(max_rounds):
         swaps, _ = _swap_plan_np(cur, lg, lc, L, nlp, 1,
-                                 w_slot=w_slot, L_r=L_r, per_pair=per_pair)
+                                 w_slot=w_slot, L_r=L_r, per_pair=per_pair,
+                                 bal_C=bal_C)
         if not swaps:
             break
         nxt = cur.copy()
@@ -633,7 +684,7 @@ def swap_orbit_capped(load_g, p2l, l2p, lcnts, L, nlp, cap, max_rounds=32,
                 # the multi-pick pass overshot the staging cap: fall back
                 # to a single-exchange round for this step
                 swaps, _ = _swap_plan_np(cur, lg, lc, L, nlp, 1,
-                                         w_slot=w_slot, L_r=L_r)
+                                         w_slot=w_slot, L_r=L_r, bal_C=bal_C)
                 if not swaps:
                     break
                 nxt = cur.copy()

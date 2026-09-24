@@ -175,6 +175,22 @@ struct A2AVConsumerBuildArguments {
   //   both unset                  -> legacy source-keyed single pass
   bool hist_only;
   int64_t const *offA_lane;   // [E * W] lane-keyed A-order group starts
+  // 2026-09-23 minimal-move relay partition (FLUX_A2AV_LB_MINMOVE, paper
+  // §4.2 eq. 2/3): the remote-node union regions are laid out CHUNK-major
+  // (relay k's window = its kept own-segment prefix + the excess pieces it
+  // imports), so the canonical dedup recv row (source-ascending cumsum) is
+  // remapped through per-source-node piece tables, sorted by canonical
+  // start: for region-relative row x in piece i (mm_lo[i] <= x < mm_hi[i])
+  // the recv row is mm_base[ns] + mm_dst[i] + (x - mm_lo[i]). Own-node
+  // sources are never remapped. mm_off == nullptr -> identity (legacy
+  // equal-cut canonical windows).
+  int local_world_size;       // L
+  int node_idx;
+  int64_t const *mm_off;      // [NN + 1] piece range of source node ns
+  int64_t const *mm_lo;       // [NN * 2L] canonical (region-relative) piece start
+  int64_t const *mm_hi;       // [NN * 2L] piece end
+  int64_t const *mm_dst;      // [NN * 2L] chunk-major (region-relative) piece start
+  int64_t const *mm_base;     // [NN] region base (recv_off_u[ns * L])
 };
 void a2av_consumer_build_impl(A2AVConsumerBuildArguments const &args, cudaStream_t stream);
 

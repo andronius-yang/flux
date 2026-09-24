@@ -689,7 +689,28 @@ a2av_consumer_build_kernel(A2AVConsumerBuildArguments args) {
       continue;
     }
     const int64_t e = args.e_all[p];
-    const int64_t recv_row = args.c_excl[p / args.topk];
+    int64_t recv_row = args.c_excl[p / args.topk];
+    if (args.mm_off != nullptr) {
+      // minimal-move partition: canonical row -> chunk-major row (see .h)
+      const int ns = (int)(args.s_all[p] / args.local_world_size);
+      if (ns != args.node_idx) {
+        const int64_t base = args.mm_base[ns];
+        const int64_t x = recv_row - base;
+        int lo = (int)args.mm_off[ns], hi = (int)args.mm_off[ns + 1];
+        if (hi > lo) {
+          // last piece with mm_lo <= x (pieces sorted by canonical start)
+          while (hi - lo > 1) {
+            const int mid = (lo + hi) >> 1;
+            if (args.mm_lo[mid] <= x) {
+              lo = mid;
+            } else {
+              hi = mid;
+            }
+          }
+          recv_row = base + args.mm_dst[lo] + (x - args.mm_lo[lo]);
+        }
+      }
+    }
     int lane = 0;
     if (args.lane_end != nullptr) {
       // gating lane = first w with recv_row < lane_end[w] (rows always fall

@@ -37,6 +37,7 @@
 #include "moe_ag_scatter/sort_util.h"
 #include "moe_ag_scatter/triton_util.h"
 #include "moe_ag_scatter/workspace_util.h"
+#include "coll/flat_fanout.h"
 #include "moe_ag_scatter/ths_op/a2av_nvtx_proxy.hpp"
 #include "flux/a2av_progress.h"
 #include <nvshmemx.h>
@@ -369,6 +370,20 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // i.e. behind full wire drain — and the overlap this knob exists for
   // is structurally impossible.
   const bool flat_fenced_sig_;
+  // FLUX_A2AV_FLAT_FENCED_DEV=1 (2026-09-17, dov device fan-out): the fenced
+  // flat fan-out above is issued by TWO device kernels (coll/flat_fanout.h:
+  // per-destination blocks of concurrent nbi puts, then one PE quiet + the
+  // remote signal ops from one thread) instead of ~2W host stream ops —
+  // the fixed per-destination host issue cost that made dov lose at 8n/16n
+  // 1 MiB (handoff 31 §4b). Requires FLAT_FENCED_SIG (ctor-checked); wire
+  // semantics identical (same puts, same quiet-then-signal order).
+  // Per-destination tables: pinned staging + device copy, double-buffered
+  // by the send-half parity, allocated lazily at W.
+  const bool flat_fenced_dev_;
+  int64_t *ff_host_ = nullptr;      // pinned [2][3W]: dst_off, src_off, bytes
+  int32_t *ff_host_intra_ = nullptr;  // pinned [2][W]
+  int64_t *ff_dev_ = nullptr;
+  int32_t *ff_dev_intra_ = nullptr;
   // FLUX_A2AV_RELAY_PULL_STREAM=1 (2026-08-23 M4-C5): relay phase-1 pulls
   // move to a dedicated stream and phase-2's round-dn wire put waits ONLY
   // round dn's pull event. The shipped single-stream order serializes
@@ -427,6 +442,41 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // node's window lanes follows the gateway fan-out rotation arrival order
   // (args.a2av_rot_align; lb_union window keying only)
   const bool sched_rot_align_;
+  // FLUX_A2AV_LB_MINMOVE=1 (2026-09-23, paper §4.2 eq. 2/3 reconciliation;
+  // default ON under FLUX_A2AV_LB_UNION=1): the balanced-relay partition of
+  // each (source node -> target node) stream is the WATER-FILL with minimal
+  // intra-node movement Sum_k (V_k - cap_k)^+ — relay k keeps the first
+  // min(V_k, cap_k) rows of its OWN send segment and imports only the
+  // excess of over-cap ranks (two-pointer, donors and importers ascending)
+  // — instead of the equal cut of the source-ascending canonical stream,
+  // whose excess CASCADES (a heavy rank pushes every later rank's rows off
+  // their own NIC: V = (3, 3, 0) moves 3 rows where 2 suffice). NIC balance
+  // is unchanged (chunk k <= cap_k, the ceil-split of V / L). The remote
+  // union regions on the receiver become CHUNK-major (window k = [B_k,
+  // B_k + size_k), pieces inside in canonical order) and the consumer build
+  // remaps the canonical dedup row through per-node piece tables
+  // (sort_util mm_*); windows, lanes, gateway forwards and the wire put
+  // keep their shape (all derive from chunk_bound / chunk_rows_of). Requires
+  // union_bcast (Tier B) + fused stage 2 (the ATen consumer chain is not
+  // remapped) — ctor-checked.
+  const bool lb_minmove_;
+  // per-forward water-fill plan, replicated on every rank from U_mat: for
+  // pair (n, m) and k in [0, L]: mm_bound_[(n*NN+m)*(L+1)+k] = B_k (chunk-
+  // major prefix); per relay k: mm_keep_ (own rows kept), mm_imp_ (rows
+  // imported); mm_pieces_[(n*NN+m)] in canonical order: (sl, j_lo, j_hi)
+  // rows of source sl's segment ride relay k at row off inside its chunk.
+  struct MmPiece {
+    int sl;
+    int64_t j_lo, j_hi;
+    int k;
+    int64_t off;
+  };
+  std::vector<int64_t> mm_bound_, mm_keep_, mm_imp_;
+  std::vector<std::vector<MmPiece>> mm_pieces_;
+  static int64_t mm_words(int64_t NN, int64_t L) {
+    // receiver tables (arena i64 words): off[NN+1] base[NN] lo/hi/dst[NN*2L]
+    return (NN + 1) + NN + 3 * NN * 2 * L;
+  }
   uint64_t run_id_ = 0;              // epoch value carried by the NVSHMEM signals
   int64_t max_recv_ntokens_ = 0;     // rows of the symmetric recv buffer
   int64_t max_stage_ntokens_ = 0;    // rows of the symmetric gateway staging buffer
@@ -749,6 +799,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         epoch_quiet_(get_int_from_env("FLUX_A2AV_EPOCH_QUIET", 0) != 0),
         wire_sig_fence_(get_int_from_env("FLUX_A2AV_WIRE_SIGNAL_FENCE", 0) != 0),
         flat_fenced_sig_(get_int_from_env("FLUX_A2AV_FLAT_FENCED_SIG", 0) != 0),
+        flat_fenced_dev_(get_int_from_env("FLUX_A2AV_FLAT_FENCED_DEV", 0) != 0),
         relay_pull_stream_(get_int_from_env("FLUX_A2AV_RELAY_PULL_STREAM", 0) != 0),
         wait_flush_(get_int_from_env("FLUX_A2AV_WAIT_FLUSH", 0) != 0),
         nvshmem_wait_(get_int_from_env("FLUX_A2AV_NVSHMEM_WAIT", 0) != 0),
@@ -760,6 +811,11 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             a2av_hier_compress),
         seg_gate_ballot_(get_int_from_env("FLUX_A2AV_SEG_GATE_BALLOT", 0) != 0),
         sched_rot_align_(get_int_from_env("FLUX_A2AV_SCHED_ROT_ALIGN", 0) != 0),
+        lb_minmove_(
+            get_int_from_env(
+                "FLUX_A2AV_LB_MINMOVE", get_int_from_env("FLUX_A2AV_LB_UNION", 0) != 0 ? 1 : 0) !=
+                0 &&
+            get_int_from_env("FLUX_A2AV_LB_UNION", 0) != 0 && a2av_hier_compress && nnodes > 1),
         // ring_mode barriers are CUDA-IPC based and intra-node only; multi-node
         // must take the NVSHMEM barrier (ring_mode = false)
         group_barrier(this->tp_group, nnodes == 1 && this->tp_group->get_size() > 8) {
@@ -803,6 +859,12 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           << "FLUX_A2AV_LB_UNION + FLUX_A2AV_PACK_OVERLAP is unsupported";
       FLUX_CHECK(!this->fanout_eager_ || lb_union)
           << "FLUX_A2AV_FANOUT requires FLUX_A2AV_LB_UNION (eager Tier B gateway forward)";
+      FLUX_CHECK(!this->lb_minmove_ || (this->union_bcast_ && !this->relay_identity_))
+          << "FLUX_A2AV_LB_MINMOVE is defined on the lb_union balanced relay (union_bcast, "
+             "!relay_identity)";
+      FLUX_CHECK(!this->lb_minmove_ || this->fused_stage2_)
+          << "FLUX_A2AV_LB_MINMOVE needs FLUX_A2AV_FUSED_STAGE2=1 (the ATen consumer chain "
+             "is not remapped to the chunk-major layout); set FLUX_A2AV_LB_MINMOVE=0";
       if (this->fanout_eager_ && nnodes > 1) {
         for (int i = 0; i < nnodes - 1; i++) {
           this->fanout_streams_.push_back(create_cp_stream());
@@ -831,6 +893,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                "fetch_remote_event, which the fenced wire records behind the "
                "PE quiet — the launch would serialize behind full wire drain";
       }
+      FLUX_CHECK(!this->flat_fenced_dev_ || this->flat_fenced_sig_)
+          << "FLUX_A2AV_FLAT_FENCED_DEV requires FLUX_A2AV_FLAT_FENCED_SIG=1 "
+             "(it is the device-issued twin of the fenced flat fan-out)";
       if (this->early_launch_ && a2av_hier_compress &&
           !(this->relay_identity_ && this->union_bcast_) && nnodes > 1) {
         // the gather/relay tails are issued inline (pack stream) behind
@@ -951,8 +1016,10 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         const int64_t R = nnodes - 1;
         // union bcast forwards whole unions: no forward-index tables; the Tier B
         // gating searchsorted queries i64[E * (W + 1)] ride the upload instead
+        // minmove appends the receiver piece tables (mm_words) behind gate_q
         const int64_t extra = this->union_bcast_
-                                  ? (int64_t)this->ep_nexperts * (world_size + 1)
+                                  ? (int64_t)this->ep_nexperts * (world_size + 1) +
+                                        (this->lb_minmove_ ? mm_words(nnodes, L) : 0)
                                   : (this->relay_identity_ ? R * L : R * L * L + R * L + 2 * R);
         this->compress_meta_off_ = pad_to(meta_bytes, (int64_t)8);
         total_meta_bytes =
@@ -1329,9 +1396,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     std::vector<int64_t> u_mat, U_mat, recv_off_u, seg_off_h, fwd_col_off_h;
     // balanced-relay only: canonical starts of the inbound sources per round,
     // and my per-round staging window [win_a, win_b)
-    std::vector<int64_t> recv_start_h, win_a_h, win_b_h, gate_q_h;
+    std::vector<int64_t> recv_start_h, win_a_h, win_b_h, gate_q_h, mm_h;
     int64_t total_send_rows = 0;
-    torch::Tensor seg_off_dev, fwd_col_off_dev, recv_start_dev, win_a_dev, win_b_dev;
+    torch::Tensor seg_off_dev, fwd_col_off_dev, recv_start_dev, win_a_dev, win_b_dev, mm_dev;
     // ---- balanced-relay partition (compress && !relay_identity_): per round,
     // the L union segments of a (source node n -> target node m) transfer form
     // ONE canonical stream (ascending source local rank, token-ascending
@@ -1353,15 +1420,86 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       }
       return acc;
     };
-    // balanced chunk boundary k (k in [0, L]) of the n -> m stream: the first
-    // (total mod L) chunks get one extra row
+    // balanced chunk boundary k (k in [0, L]) of the n -> m stream. Legacy
+    // (equal cut of the canonical stream): the first (total mod L) chunks get
+    // one extra row. lb_minmove_: B_k of the water-fill plan (chunk-major
+    // layout; chunk k = relay k's kept prefix + imported pieces, size <= cap_k).
     auto chunk_bound = [&](int n, int m, int k) -> int64_t {
       const int64_t Lb = dist_env.local_world_size;
+      if (this->lb_minmove_) {
+        if (n == m) {
+          return 0;
+        }
+        return this->mm_bound_[((size_t)n * dist_env.nnodes + m) * (Lb + 1) + k];
+      }
       const int64_t total = canon_start(n, (int)Lb, m);
       return (total / Lb) * k + std::min<int64_t>((int64_t)k, total % Lb);
     };
     auto chunk_rows_of = [&](int n, int m, int k) -> int64_t {
       return chunk_bound(n, m, k + 1) - chunk_bound(n, m, k);
+    };
+    // lb_minmove_ plan (paper §4.2 eq. 2/3, C_NIC = 0): per (n, m) stream
+    // cap_k = ceil-split of V / L; relay k keeps min(V_k, cap_k) of its own
+    // rows; the excess of donors (V_k > cap_k) flows to importers (room =
+    // cap_k - V_k) by one ascending two-pointer merge -> moved rows =
+    // Sum_k (V_k - cap_k)^+, the minimum (eq. 3), <= 2L - 1 pieces per
+    // stream, O(L) per pair. Pieces are emitted in canonical order (source
+    // ascending, rows ascending) — the receiver remap binary-searches them.
+    auto mm_build = [&]() {
+      const int NNb = dist_env.nnodes;
+      const int Lb = dist_env.local_world_size;
+      this->mm_bound_.assign((size_t)NNb * NNb * (Lb + 1), 0);
+      this->mm_keep_.assign((size_t)NNb * NNb * Lb, 0);
+      this->mm_imp_.assign((size_t)NNb * NNb * Lb, 0);
+      this->mm_pieces_.assign((size_t)NNb * NNb, {});
+      std::vector<int64_t> V(Lb), cap(Lb), keep(Lb), room(Lb), off(Lb);
+      for (int n = 0; n < NNb; n++) {
+        for (int m = 0; m < NNb; m++) {
+          if (n == m) {
+            continue;
+          }
+          const size_t pm = (size_t)n * NNb + m;
+          int64_t tot = 0;
+          for (int k = 0; k < Lb; k++) {
+            V[k] = U_of(n, k, m);
+            tot += V[k];
+          }
+          for (int k = 0; k < Lb; k++) {
+            cap[k] = tot / Lb + (k < tot % Lb ? 1 : 0);
+            keep[k] = std::min(V[k], cap[k]);
+            room[k] = cap[k] - keep[k];
+            off[k] = keep[k];
+          }
+          auto &pl = this->mm_pieces_[pm];
+          int imp = 0;
+          for (int sl = 0; sl < Lb; sl++) {
+            if (keep[sl] > 0) {
+              pl.push_back(MmPiece{sl, 0, keep[sl], sl, 0});
+            }
+            int64_t j = keep[sl];
+            while (j < V[sl]) {
+              while (imp < Lb && room[imp] == 0) {
+                imp++;
+              }
+              FLUX_CHECK_LT(imp, Lb) << "lb_minmove: water-fill ran out of room";
+              const int64_t take = std::min(V[sl] - j, room[imp]);
+              pl.push_back(MmPiece{sl, j, j + take, imp, off[imp]});
+              off[imp] += take;
+              room[imp] -= take;
+              j += take;
+            }
+          }
+          FLUX_CHECK_LE((int64_t)pl.size(), (int64_t)2 * Lb) << "lb_minmove: piece bound";
+          int64_t *bd = &this->mm_bound_[pm * (Lb + 1)];
+          bd[0] = 0;
+          for (int k = 0; k < Lb; k++) {
+            this->mm_keep_[pm * Lb + k] = keep[k];
+            this->mm_imp_[pm * Lb + k] = off[k] - keep[k];
+            bd[k + 1] = bd[k] + off[k];
+          }
+          FLUX_CHECK_EQ(bd[Lb], tot);
+        }
+      }
     };
     this->run_id_ += 1;
     if (this->nvtx_proxy_enabled_) {
@@ -1527,6 +1665,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                 << "a2av_unique_counts node union out of range at (" << s << ", " << n << ")";
           }
         }
+        if (this->lb_minmove_) {
+          mm_build();
+        }
         // dedup recv layout: source-major regions of u[s][d] rows — except in
         // union-bcast mode, where a REMOTE-node source's region holds the whole
         // U[s][node(d)]-row union (the gateway forwards it verbatim; consumers
@@ -1605,6 +1746,36 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                 gate_q_h[e * (W + 1) + 1 + s] = e * R_key + lane_end[s];
               }
             }
+            if (this->lb_minmove_) {
+              // receiver piece tables for the consumer-build remap (my node
+              // as target): off[NN+1] base[NN] lo[NN*2L] hi[NN*2L] dst[NN*2L],
+              // canonical coordinates region-relative, sorted by lo per ns
+              const int64_t P = (int64_t)NN * 2 * L;
+              mm_h.assign((size_t)mm_words(NN, L), 0);
+              int64_t *o_off = mm_h.data();
+              int64_t *o_base = o_off + NN + 1;
+              int64_t *o_lo = o_base + NN;
+              int64_t *o_hi = o_lo + P;
+              int64_t *o_dst = o_hi + P;
+              int64_t pc = 0;
+              for (int ns = 0; ns < NN; ns++) {
+                o_off[ns] = pc;
+                o_base[ns] = recv_off_u[(size_t)ns * L];
+                if (ns == my_node) {
+                  continue;
+                }
+                const size_t pm = (size_t)ns * NN + my_node;
+                for (const auto &pz : this->mm_pieces_[pm]) {
+                  const int64_t c0 = canon_start(ns, pz.sl, my_node);
+                  o_lo[pc] = c0 + pz.j_lo;
+                  o_hi[pc] = c0 + pz.j_hi;
+                  o_dst[pc] = chunk_bound(ns, my_node, pz.k) + pz.off;
+                  pc++;
+                }
+              }
+              o_off[NN] = pc;
+              FLUX_CHECK_LE(pc, P);
+            }
           }
         } else if (this->relay_identity_ || NN == 1) {
           fwd_col_off_h.assign((size_t)std::max(NN - 1, 0) * L, 0);
@@ -1670,6 +1841,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         for (size_t i = 0; i < gate_q_h.size(); i++) {
           cmp_h[coff++] = gate_q_h[i];
         }
+        for (size_t i = 0; i < mm_h.size(); i++) {
+          cmp_h[coff++] = mm_h[i];
+        }
       }
       if (pack_ov) {
         // GEMM n-1 reads this parity's meta slice (ssc_dev) until it finishes;
@@ -1705,6 +1879,13 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
               dev + this->compress_meta_off_ + (nseg + 1) * 8,
               {(int64_t)this->ep_nexperts * ((int64_t)W + 1)},
               opt_dev_i64);
+          if (this->lb_minmove_) {
+            mm_dev = torch::from_blob(
+                dev + this->compress_meta_off_ +
+                    (nseg + 1 + (int64_t)this->ep_nexperts * ((int64_t)W + 1)) * 8,
+                {mm_words(NN, L)},
+                opt_dev_i64);
+          }
         }
         if (NN > 1 && !this->union_bcast_) {
           char *cbase = dev + this->compress_meta_off_ + (nseg + 1) * 8;
@@ -2120,7 +2301,25 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             .lane_end = tier_b ? gate_q_dev.data_ptr<int64_t>() + 1 : nullptr,
             .gate_hist = tier_b ? blk_cnt + nexG : nullptr,
             .hist_only = false,
-            .offA_lane = nullptr};
+            .offA_lane = nullptr,
+            .local_world_size = (int)dist_env.local_world_size,
+            .node_idx = dist_env.node_idx,
+            .mm_off = nullptr,
+            .mm_lo = nullptr,
+            .mm_hi = nullptr,
+            .mm_dst = nullptr,
+            .mm_base = nullptr};
+        if (this->lb_minmove_) {
+          FLUX_CHECK(tier_b && mm_dev.defined());
+          const int64_t NNm = dist_env.nnodes, Lm = dist_env.local_world_size;
+          const int64_t P = NNm * 2 * Lm;
+          int64_t *mm = mm_dev.data_ptr<int64_t>();
+          cb_args.mm_off = mm;
+          cb_args.mm_base = mm + NNm + 1;
+          cb_args.mm_lo = cb_args.mm_base + NNm;
+          cb_args.mm_hi = cb_args.mm_lo + P;
+          cb_args.mm_dst = cb_args.mm_hi + P;
+        }
         if (tier_b) {
           if (!this->a2av_gating_cumsum_.defined()) {
             this->a2av_gating_cumsum_ = torch::empty(
@@ -2209,6 +2408,30 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           // always kept, so the dropped-token fill never reaches `want`)
           auto row_of_tok = c_excl.narrow(0, 0, ntokens)
                                 .masked_fill(mine_n.narrow(0, 0, ntokens).eq(0), ntokens);
+          if (this->lb_minmove_) {
+            // chunk-major remap of the canonical rows (host twin of the kernel)
+            const int64_t NNc = dist_env.nnodes, Lc = dist_env.local_world_size;
+            const int64_t P = NNc * 2 * Lc;
+            auto tok_node =
+                iota.narrow(0, 0, ntokens).div((int64_t)tokens_per_rank * Lc, "floor");
+            auto kept = mine_n.narrow(0, 0, ntokens).ne(0);
+            for (int64_t ns = 0; ns < NNc; ns++) {
+              const int64_t p0 = mm_h[ns], p1 = mm_h[ns + 1];
+              if (ns == dist_env.node_idx || p1 <= p0) {
+                continue;
+              }
+              const int64_t base = mm_h[NNc + 1 + ns];
+              auto lo = mm_dev.narrow(0, (NNc + 1) + NNc + p0, p1 - p0);
+              auto dst = mm_dev.narrow(0, (NNc + 1) + NNc + 2 * P + p0, p1 - p0);
+              auto sel = tok_node.eq(ns).logical_and(kept);
+              auto x = row_of_tok.sub(base).clamp_min(0);
+              auto idx = torch::searchsorted(lo, x, /*out_int32=*/false, /*right=*/true)
+                             .sub(1)
+                             .clamp_(0, p1 - p0 - 1);
+              auto nr = dst.index_select(0, idx).add(x).sub(lo.index_select(0, idx)).add(base);
+              row_of_tok = torch::where(sel, nr, row_of_tok);
+            }
+          }
           auto want = row_of_tok.index_select(0, p_of_row.div((int64_t)topk, "floor"));
           auto got = sorted_gather_index.narrow(0, 0, M_this_ep).to(torch::kLong);
           FLUX_CHECK(torch::equal(got, want)) << "a2av fused consumer: gather/recv-row mismatch";
@@ -2996,10 +3219,47 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           bool pr_waited[64] = {false};  // pack_ready is epoch-global: one
                                          // front-end wait per peer suffices
                                          // (stream FIFO covers reuse)
-          for (int dn = 1; dn < NN; dn++) {
-            int tn = (my_node - dn + NN) % NN;
+          // Per-round piece list of MY chunk (2026-09-23): (sl, src = row inside
+          // sl's send segment for tn, dst = row inside my chunk, rows), plus the
+          // own-only flag (the chunk is one contiguous slice of my own segment
+          // at own_off: no staging, the wire put reads the send buffer). Legacy
+          // = intersections of my equal-cut window with each source segment;
+          // lb_minmove_ = my kept prefix + the excess pieces the plan imports.
+          // Both phases derive from this one list.
+          struct PullPiece {
+            int sl;
+            int64_t src, dst, rows;
+          };
+          std::vector<PullPiece> pcs;
+          auto round_pieces = [&](int tn, bool &own_only, int64_t &own_off) {
+            pcs.clear();
+            if (this->lb_minmove_) {
+              const size_t pm = (size_t)my_node * NN + tn;
+              own_only = this->mm_imp_[pm * L + my_lr] == 0;
+              own_off = 0;
+              if (own_only) {
+                return;
+              }
+              const int64_t keep = this->mm_keep_[pm * L + my_lr];
+              if (keep > 0) {
+                pcs.push_back(PullPiece{my_lr, 0, 0, keep});
+              }
+              for (const auto &pz : this->mm_pieces_[pm]) {
+                if (pz.k == my_lr && pz.sl != my_lr) {
+                  pcs.push_back(PullPiece{pz.sl, pz.j_lo, pz.off, pz.j_hi - pz.j_lo});
+                }
+              }
+              return;
+            }
             const int64_t a_me = chunk_bound(my_node, tn, my_lr);
             const int64_t b_me = chunk_bound(my_node, tn, my_lr + 1);
+            const int64_t sstart = canon_start(my_node, my_lr, tn);
+            const int64_t send = sstart + U_of(my_node, my_lr, tn);
+            own_only = a_me >= sstart && b_me <= send;
+            own_off = a_me - sstart;
+            if (own_only) {
+              return;
+            }
             for (int sl = 0; sl < L; sl++) {
               const int64_t s0 = canon_start(my_node, sl, tn);
               const int64_t s1 = s0 + U_of(my_node, sl, tn);
@@ -3008,20 +3268,26 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
               if (hi <= lo) {
                 continue;
               }
+              pcs.push_back(PullPiece{sl, lo - s0, lo - a_me, hi - lo});
+            }
+          };
+          for (int dn = 1; dn < NN; dn++) {
+            int tn = (my_node - dn + NN) % NN;
+            bool own_only_r;
+            int64_t own_off_r;
+            round_pieces(tn, own_only_r, own_off_r);
+            for (const auto &pc : pcs) {
+              const int sl = pc.sl;
               if (sl == my_lr) {
-                if (a_me >= s0 && b_me <= s1) {
-                  // single-source fast path (must mirror own_only below)
-                  continue;
-                }
                 if (this->wave_pack_) {
                   // my remote segment tn must be packed before this self copy
                   const int seg = tn < my_node ? tn : tn + L - 1;
                   CUDA_CHECK(cudaStreamWaitEvent(pull_stream, this->pack_seg_events_[seg]));
                 }
                 CUDA_CHECK(cudaMemcpyAsync(
-                    relay_base + (relay_round_base(my_lr, dn) + (lo - a_me)) * row_bytes,
-                    send_base + (my_seg_base(tn) + (lo - s0)) * row_bytes,
-                    (hi - lo) * row_bytes,
+                    relay_base + (relay_round_base(my_lr, dn) + pc.dst) * row_bytes,
+                    send_base + (my_seg_base(tn) + pc.src) * row_bytes,
+                    pc.rows * row_bytes,
                     cudaMemcpyDeviceToDevice,
                     pull_stream));
                 continue;
@@ -3050,16 +3316,16 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
               if (this->relay_blocking_pull_) {
                 // T3 diagnostic: blocking get (local completion at return)
                 nvshmemx_getmem_on_stream(
-                    relay_base + (relay_round_base(my_lr, dn) + (lo - a_me)) * row_bytes,
-                    send_base + (peer_seg_base(sl, tn) + (lo - s0)) * row_bytes,
-                    (hi - lo) * row_bytes,
+                    relay_base + (relay_round_base(my_lr, dn) + pc.dst) * row_bytes,
+                    send_base + (peer_seg_base(sl, tn) + pc.src) * row_bytes,
+                    pc.rows * row_bytes,
                     prank,
                     pull_stream);
               } else {
                 nvshmemx_getmem_nbi_on_stream(
-                    relay_base + (relay_round_base(my_lr, dn) + (lo - a_me)) * row_bytes,
-                    send_base + (peer_seg_base(sl, tn) + (lo - s0)) * row_bytes,
-                    (hi - lo) * row_bytes,
+                    relay_base + (relay_round_base(my_lr, dn) + pc.dst) * row_bytes,
+                    send_base + (peer_seg_base(sl, tn) + pc.src) * row_bytes,
+                    pc.rows * row_bytes,
                     prank,
                     pull_stream);
               }
@@ -3108,9 +3374,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                   this->cp_stream_inter_node);
               continue;
             }
-            const int64_t sstart = canon_start(my_node, my_lr, tn);
-            const int64_t send = sstart + U_at(rank, tn);
-            const bool own_only = a_me >= sstart && b_me <= send;
+            bool own_only;
+            int64_t own_off;
+            round_pieces(tn, own_only, own_off);
             if (own_only && this->wave_pack_) {
               // this round's put reads my send segment directly — gate on the
               // segment's pack event (per-round, replaces the blanket wait)
@@ -3126,7 +3392,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             }
             char *wire_src;
             if (own_only) {
-              wire_src = send_base + (my_seg_base(tn) + (a_me - sstart)) * row_bytes;
+              wire_src = send_base + (my_seg_base(tn) + own_off) * row_bytes;
             } else {
               // pull phase 1 assembled my chunk with gets that are FIFO-
               // ordered before this wire put on the same stream — no inbound
@@ -3546,6 +3812,51 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
         // their tiles per-source as soon as their copy lands, while the
         // GEMM — launched ungated under the ctor-enforced EARLY_LAUNCH —
         // spins tile-by-tile on the signal buffer.
+        if (this->flat_fenced_dev_) {
+          // device-issued twin (coll/flat_fanout.h): the same puts and the
+          // same quiet-then-signal order, from two kernels. Tables are
+          // double-buffered by the send-half parity so the pinned staging
+          // of the previous forward is never rewritten while its H2D is
+          // still queued.
+          if (this->ff_dev_ == nullptr) {
+            CUDA_CHECK(cudaHostAlloc(
+                (void **)&this->ff_host_, sizeof(int64_t) * 2 * 3 * W, cudaHostAllocDefault));
+            CUDA_CHECK(cudaHostAlloc(
+                (void **)&this->ff_host_intra_, sizeof(int32_t) * 2 * W, cudaHostAllocDefault));
+            CUDA_CHECK(cudaMalloc((void **)&this->ff_dev_, sizeof(int64_t) * 2 * 3 * W));
+            CUDA_CHECK(cudaMalloc((void **)&this->ff_dev_intra_, sizeof(int32_t) * 2 * W));
+          }
+          const int slot = par & 1;
+          int64_t *h = this->ff_host_ + (int64_t)slot * 3 * W;
+          int32_t *hi = this->ff_host_intra_ + (int64_t)slot * W;
+          int64_t *dv = this->ff_dev_ + (int64_t)slot * 3 * W;
+          int32_t *di = this->ff_dev_intra_ + (int64_t)slot * W;
+          for (int d = 0; d < W; d++) {
+            h[d] = recv_off[d] * row_bytes;
+            h[W + d] = send_off[d] * row_bytes;
+            h[2 * W + d] = (d == rank) ? 0 : chunk_at(rank, d) * row_bytes;
+            hi[d] = (d / dist_env.local_world_size == dist_env.node_idx) ? 1 : 0;
+          }
+          CUDA_CHECK(cudaMemcpyAsync(
+              dv, h, sizeof(int64_t) * 3 * W, cudaMemcpyHostToDevice,
+              this->cp_stream_inter_node));
+          CUDA_CHECK(cudaMemcpyAsync(
+              di, hi, sizeof(int32_t) * W, cudaMemcpyHostToDevice,
+              this->cp_stream_inter_node));
+          FlatFanoutParams fp;
+          fp.dst_off_bytes = dv;
+          fp.src_off_bytes = dv + W;
+          fp.bytes = dv + 2 * W;
+          fp.is_intra = di;
+          fp.recv_base = recv_base;
+          fp.send_base = send_base;
+          fp.signal = signal_base;
+          fp.signal_value = this->run_id_;
+          fp.rank = rank;
+          fp.world_size = W;
+          flat_fanout_put(fp, this->cp_stream_inter_node);
+          flat_fanout_quiet_signal(fp, this->cp_stream_inter_node);
+        } else {
         std::vector<int> quiet_sig_targets;
         quiet_sig_targets.reserve(W);
         for (int i = 1; i < W; i++) {
@@ -3593,6 +3904,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                 this->cp_stream_inter_node);
           }
         }
+        }  // flat_fenced_dev_ / host-issued fenced wire
       } else {
         // remote puts, ring order starting at rank+1 to avoid incast
         for (int i = 1; i < W; i++) {

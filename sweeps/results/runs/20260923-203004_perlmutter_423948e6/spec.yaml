@@ -1,0 +1,30 @@
+G: 384
+H: 7168
+budgets_mib:
+  - 8
+chunk_bytes: 14336
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering"
+ffn_hidden: 2048
+idle_timeout_s: 180
+iters: 8
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 7
+nodes: 8
+notes: "recon A/B 8n K2 b8 (debug QOS): minmove on/off, s1 arms only (dual3 wedges below b64: pre-existing class)"
+platform: perlmutter
+profile_iters: 3
+retries: 0
+shape: k2
+skip_correctness: true
+sm_margin: 8
+timeout_s: 420
+topk: 8
+variants:
+  - ours_l01_s1_pv2_r2_pv3c_eps025
+  - ours_l01_s1_pv2_r2_pv3c_eps025_mm0
+warmup_iters: 3

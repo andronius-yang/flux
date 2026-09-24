@@ -1,0 +1,23 @@
+# Paper reconciliation A/B at 8n (2026-09-23, user: verify total_ms is reduced or
+# constant at 8n as at 4n). 30-min debug QOS, so one budget per spec, b64 first.
+# One binary, one capsule, isolated. proLaw severe reset-every cell (swaps fire
+# every timed iteration; the s1 arms measure the relay partition on the same
+# traffic). Arms: fused s1 pv3c C=1/4 minmove ON vs legacy cut (_mm0); dual3_str4
+# band trigger ON vs tau=1 (legacy) and band with the legacy cut (_mm0).
+platform: perlmutter
+nodes: 8
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering"
+budgets_mib: [8]
+modes: [isolated]
+iters: 8
+warmup_iters: 3
+skip_correctness: true
+timeout_s: 420
+idle_timeout_s: 180
+retries: 0
+variants:
+  - ours_l01_s1_pv2_r2_pv3c_eps025
+  - ours_l01_s1_pv2_r2_pv3c_eps025_mm0
+notes: "recon A/B 8n K2 b8 (debug QOS): minmove on/off, s1 arms only (dual3 wedges below b64: pre-existing class)"

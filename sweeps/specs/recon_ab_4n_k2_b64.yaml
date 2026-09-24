@@ -1,0 +1,30 @@
+# Paper reconciliation A/B b64 (2026-09-23; dual3 arms wedge below b64 — a PRE-EXISTING
+# class: 9/15 capsule 20260915-051044 b16 dual3_str4 stuck/failed before this lane —
+# so dual3 runs at b64 only, user rule: reconciliations must not add
+# latency). One binary, one capsule, isolated. Arms: fused s1 main-perf lane with
+# the minimal-move partition ON (default) vs the legacy equal cut (_mm0); dual3
+# mechanism arms with the band trigger (_bal) vs the tau=1 orbit-to-fixpoint
+# (legacy) and with the partition off. Family 1 = proLaw severe reset-every
+# (swaps fire), family 2 = plain lcb (s1 main-perf cell).
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering"
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 900
+idle_timeout_s: 300
+retries: 1
+variants:
+  - ours_l01_s1_pv2_r2_pv3c_eps025
+  - ours_l01_s1_pv2_r2_pv3c_eps025_mm0
+  - ablation_l01_s2_swapall_rst_3d_dual3_str4_bal_p2p_r2_pv3c_eps025
+  - ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_pv3c_eps025
+  - ablation_l01_s2_swapall_rst_3d_dual3_str4_bal_p2p_r2_pv3c_eps025_mm0
+  - ablation_l01_s2_swapall_rst_3d_dual3_ml_str4_bal_p2p_r2_pv3c_eps025
+notes: "recon A/B 9.23: minmove on/off (s1 + dual3_bal), band vs tau=1 trigger (dual3), dual3_ml band; K2 4n b64 isolated"

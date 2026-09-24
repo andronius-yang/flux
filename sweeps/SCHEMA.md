@@ -1176,3 +1176,21 @@ explicitly NOT applied to any canon.
    new build boundary vs the 8/24 handoff-18 rows (rule 4 — cross-build
    deltas indicative only). LocCap routing, Slipstream transport,
    slack-parity (r2) and every other canon are unchanged.
+16. **Paper reconciliation knobs (2026-09-23, user directive — handoff 42 is
+   the authority; user rule: a reconciliation must not add to `total_ms`).**
+   (a) `FLUX_A2AV_LB_MINMOVE` (default **ON** under `FLUX_A2AV_LB_UNION=1`):
+   the balanced-relay partition of every (source node → target node) stream
+   is the water-fill with the paper's minimal intra-node movement
+   Σ_k (V_k − cap_k)^+ (§4.2 eq. 3) instead of the equal cut of the
+   source-ascending canonical stream; NIC balance identical, remote union
+   regions become chunk-major on the receiver. Twin `<arm>_mm0` pins the
+   legacy cut on the SAME binary (`requires` the knob string). NEVER-MIX:
+   capsules on a binary carrying the knob (first: ths-op fcc1b53d, 9/23) are
+   a new build boundary vs earlier lb_union capsules (rule 4). (b)
+   `--swap_trigger band` (`--swap_bal_C`, default = `--eps`): the OURS swap
+   lane swaps only while a node's placement-reference loads exceed
+   (1 + C) × node mean and stops at the first in-band placement (§4.3 eq. 4
+   read as minimal swaps); arms `..._dual3{_str4,_ml_str4}_bal_...` (+
+   `_pv3c_eps025` twins). Legacy `tau` arms keep their semantics; the two
+   triggers are different placement sequences (out_sha differs
+   legitimately) — compare only inside one capsule.

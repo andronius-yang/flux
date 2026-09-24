@@ -1,0 +1,21 @@
+# Repeat of the one 4n b64 pair whose l1 shifted (+3 ms, s1 fused on proLaw severe,
+# capsule 20260923-201035) under the minimal-move partition while l0 stayed at parity
+# and the other three pairs shifted the other way: three fresh capsules of the pair,
+# 20 timed iterations each, to separate cell-to-cell l1 variance from a real effect.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering"
+budgets_mib: [64]
+modes: [isolated]
+iters: 20
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 600
+idle_timeout_s: 240
+retries: 1
+variants:
+  - ours_l01_s1_pv2_r2_pv3c_eps025_mm0
+  - ours_l01_s1_pv2_r2_pv3c_eps025
+notes: "recon repeat 9.23: s1 fused minmove on/off, proLaw severe b64 4n, 3 capsules x 20 iters"

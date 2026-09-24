@@ -3767,6 +3767,30 @@ for _bt, _bargs in (("nr", _ABL_SWAPALL_NR), ("rst", _ABL_SWAPALL_ARGS)):
                                  FLUX_OURS_SWAP_STREAMS="4"),
         test_args=list(_bargs) + ["--swap_overlap", "0"])
 
+# =========================================================================
+# PAPER RECONCILIATION arms (2026-09-23, user directive): the submitted
+# paper's §4.3 swap formalization — a swap is TRIGGERED only when the
+# GPU-load imbalance exceeds the configured load constraint C, accepted
+# only when it reduces the max, and the greedy stops as soon as the
+# constraint holds again (minimal swaps). Under the pv3/pv3c router every
+# replica already sits within (1 +- C) of D_e / c_e, so the trigger acts on
+# the placement REFERENCE loads (sum of D_e // c_e over a GPU's slots)
+# against the NODE mean (swaps are intra-node). `--swap_trigger band`
+# (C = --eps unless --swap_bal_C) replaces the tau=1 orbit-to-fixpoint of
+# the swapall lane on exactly the paper's mechanism arms: dual3 (two
+# movement blocks under l0 / l1) and dual3 + moved-last. The pv3c twin
+# generator below derives <arm>_pv3c_eps025 etc. (same C for router and
+# trigger). Legacy (tau) arms keep their names and semantics.
+for _bt, _bargs in (("nr", _ABL_SWAPALL_NR), ("rst", _ABL_SWAPALL_ARGS)):
+    for _et in ("_str4", "_ml_str4"):
+        _src = VARIANTS[f"ablation_l01_s2_swapall_{_bt}_3d_dual3{_et}_p2p_r2"]
+        _name = f"ablation_l01_s2_swapall_{_bt}_3d_dual3{_et}_bal_p2p_r2"
+        VARIANTS[_name] = dict(
+            _src, test_args=list(_src["test_args"]) + ["--swap_trigger", "band"])
+        VARIANTS[_name + "_gate"] = dict(
+            VARIANTS[_name],
+            test_args=VARIANTS[_name]["test_args"] + ["--check_iters", "1"])
+
 # correctness gate twin of pr0 (OURS-driver arms verify via --check_iters,
 # not the flux-driver correct_* columns)
 VARIANTS["ablation_l01_pr0_gate_pv2_r2"] = dict(
@@ -3849,6 +3873,25 @@ for _base in ("ours_l01_s1_pv2_r2_dwire_pv3c_eps025",
         VARIANTS[_base],
         test_args=VARIANTS[_base]["test_args"] + ["--check_iters", "1"])
 
+# minimal-move relay partition twins (2026-09-23, paper §4.2 eq. 2/3
+# reconciliation): the binary carrying FLUX_A2AV_LB_MINMOVE defaults the
+# water-fill partition ON under LB_UNION; `_mm0` pins the legacy equal cut of
+# the canonical stream on the SAME binary — the in-capsule A/B that proves
+# the reconciliation adds no latency (user rule 9/23). Gate twins audit
+# every iteration on both partitions.
+for _base in ("ours_l01_s1_pv2_r2", "ours_l01_s1_pv2_r2_pv3c_eps025",
+              "ablation_l01_s2_swapall_rst_3d_dual3_str4_bal_p2p_r2_pv3c_eps025",
+              "ablation_l01_s2_swapall_rst_3d_dual3_ml_str4_bal_p2p_r2_pv3c_eps025",
+              "ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_pv3c_eps025"):
+    _src = VARIANTS[_base]
+    VARIANTS[_base + "_mm0"] = dict(
+        _src, env=dict(_src.get("env", {}), FLUX_A2AV_LB_MINMOVE="0"),
+        requires=list(_src.get("requires", [])) + ["FLUX_A2AV_LB_MINMOVE"])
+    for _g in (_base, _base + "_mm0"):
+        if _g + "_gate" not in VARIANTS:
+            VARIANTS[_g + "_gate"] = dict(
+                VARIANTS[_g], test_args=VARIANTS[_g]["test_args"] + ["--check_iters", "1"])
+
 # llc ("2Ours no-overlap" main-perf row) under the paper-constraint router
 # (branch pv3, 2026-09-15): the EPIC driver's staged transport with
 # --router pv3c (C = 1/4) / pv3; gate twin audits every iteration
@@ -3888,3 +3931,21 @@ for _base in ("ours_l01_s1_pv2_r2_pv3c_eps025", "ours_l01_s1_pv2_r2_pv3c_eps05",
     _src = VARIANTS[_base]
     VARIANTS[_base + "_nrg"] = dict(_src, env=dict(_src["env"], FLUX_OURS_ROUTE_GRAPH="0"))
     VARIANTS[_base + "_rg"] = dict(_src, env=dict(_src["env"], FLUX_OURS_ROUTE_GRAPH="1"))
+
+# ---- dov device fan-out (2026-09-17): FLUX_A2AV_FLAT_FENCED_DEV=1 — the
+# fenced flat wire's ~2W host-issued stream ops (puts + quiet + signal ops)
+# become two device kernels (coll/flat_fanout.h); same puts, same
+# quiet-then-signal order. Targets the 8n/16n 1-2 MiB cells where dov lost
+# to dwire on host issue cost (handoff 31 §4b). Compare fused / dwire / dov
+# / dov_dev inside ONE capsule on the new binary (tag FLUX_A2AV_FLAT_FENCED_DEV).
+VARIANTS["ours_l01_s1_pv2_r2_dov_dev"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2_dov"],
+    comm_pattern="ours_l01_dov_dev",
+    env=dict(VARIANTS["ours_l01_s1_pv2_r2_dov"]["env"], FLUX_A2AV_FLAT_FENCED_DEV="1"),
+    requires=list(VARIANTS["ours_l01_s1_pv2_r2_dov"].get("requires", []))
+             + ["FLUX_A2AV_FLAT_FENCED_DEV"],
+)
+VARIANTS["ours_l01_s1_pv2_r2_dov_dev_gate"] = dict(
+    VARIANTS["ours_l01_s1_pv2_r2_dov_dev"],
+    test_args=VARIANTS["ours_l01_s1_pv2_r2_dov_dev"]["test_args"] + ["--check_iters", "1"],
+)

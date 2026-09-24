@@ -26,6 +26,8 @@ FINAL DETERMINISTIC iteration on the setup torch loccap_route_sl routing,
 validated against a local logical-space two-layer torch reference
 (replicas share logical weights, so the logical reference is exact)."""
 
+import time as _time_mod
+_PROC_T0 = _time_mod.time()  # setup-trace elapsed base (before torch import)
 import argparse
 import os
 import sys
@@ -304,6 +306,21 @@ def parse_args():
                         " the pair max load by at least this many rows"
                         " (movement-cost threshold). A huge value gives"
                         " the decide-but-never-swap comparator arm.")
+    p.add_argument("--swap_trigger", choices=("tau", "band"), default="tau",
+                   help="tau (legacy): swaps fire on the pair-gap / gain"
+                        " threshold --swap_tau_rows (tau=1 orbit-to-"
+                        "fixpoint on the composed lane). band (2026-09-23,"
+                        " paper §4.3 reconciliation): a node swaps only"
+                        " while max_j L_j > (1 + C) * node-mean L_j on the"
+                        " placement REFERENCE loads (sum of D_e // c_e over"
+                        " hosted slots — the quantity the pv3/pv3c router"
+                        " holds within (1 +- C) and cannot itself"
+                        " rebalance); each exchange must still strictly"
+                        " reduce the pair max, and the orbit stops as soon"
+                        " as every node is back in band (minimal swaps).")
+    p.add_argument("--swap_bal_C", type=float, default=-1.0,
+                   help="band trigger relaxation C; < 0 = reuse --eps (the"
+                        " router's C: one configured load constraint).")
     p.add_argument("--wire", choices=["fused", "direct", "dov"],
                    default="fused",
                    help="l0/l1 transport: fused = the canonical Slipstream"
@@ -402,6 +419,11 @@ def l0_union_recv_demand(uc_ref, rank, W, L, S, K):
 
 def main():
     args = parse_args()
+    # paper §4.3 band trigger (2026-09-23): C defaults to the router's eps
+    swap_bal_C = None
+    if args.swap_trigger == "band":
+        assert args.swap_tau_rows >= 0, "--swap_trigger band excludes force"
+        swap_bal_C = args.swap_bal_C if args.swap_bal_C >= 0 else args.eps
     input_dtype = DTYPE_MAP[args.dtype]
     assert input_dtype == torch.bfloat16, "OURS arm instantiates BF16"
     assert args.H * input_dtype.itemsize == args.chunk_bytes
@@ -425,7 +447,9 @@ def main():
 
     def _st(tag):
         if _strace_on:
-            print(f"[setup-trace] r{rank} {tag}", flush=True)
+            # +elapsed since process start (2026-09-23: setup-time breakdown)
+            print(f"[setup-trace] r{rank} +{_time_mod.time() - _PROC_T0:7.1f}s {tag}",
+                  flush=True)
     _st("enter (dist env up)")
     assert_node_major_ranks()
     _st("node-major ok")
@@ -571,7 +595,21 @@ def main():
                                      minlength=args.G).cpu().long()
             _orbit = oswap.swap_orbit(
                 _load_g, plan.p2l, plan.l2p, plan.lcnts, L, cfg.nlp,
-                args.swap_tau_rows)
+                args.swap_tau_rows, bal_C=swap_bal_C)
+            if swap_bal_C is not None and rank == 0:
+                _R = plan.p2l.numel() // cfg.nlp
+                _ob, _ra = oswap.node_band(
+                    oswap.rank_loads(_load_g, plan.p2l, plan.lcnts, _R,
+                                     cfg.nlp).numpy(), L, swap_bal_C)
+                _pf = _orbit[-1][0] if _orbit else plan.p2l
+                _ob2, _ra2 = oswap.node_band(
+                    oswap.rank_loads(_load_g, _pf, plan.lcnts, _R,
+                                     cfg.nlp).numpy(), L, swap_bal_C)
+                print(f"[swap-band] C={swap_bal_C:.4f}: basis nodes out of"
+                      f" band {int(_ob.sum())}/{len(_ob)} (max/mean"
+                      f" {_ra.max():.3f}) -> after {len(_orbit)} band"
+                      f" rounds {int(_ob2.sum())}/{len(_ob2)}"
+                      f" ({_ra2.max():.3f})", flush=True)
             _fold = _orbit
             if args.swap_tau_rows < 0:
                 # FORCE pre-converge (2026-08-29): the timed iterations only
@@ -611,7 +649,7 @@ def main():
                                        minlength=args.G).cpu().long()
                 _orb_t = oswap.swap_orbit(
                     _lg_t, plan.p2l, plan.l2p, plan.lcnts, L, cfg.nlp,
-                    max(args.swap_tau_rows, 1))
+                    max(args.swap_tau_rows, 1), bal_C=swap_bal_C)
                 for _oi, (_p2l_o, _l2p_o) in enumerate(_orb_t):
                     s2_size_plans.append(
                         (f"t{_ti}swap{_oi}", _p2l_o, _l2p_o, plan.lcnts))
@@ -1462,6 +1500,7 @@ def main():
     out = None
     _sched_dev = [t.long().cuda() for t in sched_topk_all]
     _sched_cur = 0
+    _st("timed loop start")
     for i in range(total_iters):
         runner.prep()
         if _sched_dev:
@@ -1554,7 +1593,7 @@ def main():
                     _p2l_f, _l2p_f, _nr = oswap_rt.swap_orbit_capped(
                         load_g, plan.p2l, plan.l2p, plan.lcnts, L,
                         cfg.nlp, args.swap_max_moves,
-                        per_pair=args.swap_pair_moves)
+                        per_pair=args.swap_pair_moves, bal_C=swap_bal_C)
                     all_moves = oswap_rt.net_moves(plan.p2l, _p2l_f, L,
                                                    cfg.nlp)
                     swaps = [mv for lst in all_moves for mv in lst]
@@ -1572,7 +1611,7 @@ def main():
                 else:
                     swaps, _Lr = oswap_rt.swap_plan(
                         load_g, plan.p2l, plan.lcnts, L, cfg.nlp,
-                        args.swap_tau_rows)
+                        args.swap_tau_rows, bal_C=swap_bal_C)
                     _pt1 = time.perf_counter()
                     _cs_dec.__exit__(None, None, None)
                     with _cs_nvtx("swap.apply_tables"):
@@ -1599,12 +1638,22 @@ def main():
                                    swap_lane.move_bytes_this_iter, 0))
                 if rank == 0 and args.check_iters:
                     _pt2 = time.perf_counter()
+                    _band = ""
+                    if swap_bal_C is not None:
+                        _R = plan.p2l.numel() // cfg.nlp
+                        _ob, _ra = oswap_rt.node_band(
+                            oswap_rt.rank_loads(load_g, plan.p2l,
+                                                plan.lcnts, _R,
+                                                cfg.nlp).numpy(),
+                            L, swap_bal_C)
+                        _band = (f" band(after) out {int(_ob.sum())}/"
+                                 f"{len(_ob)} max/mean {_ra.max():.3f}")
                     print(f"[swap/{args.swap_xport}/{args.swap_issue}]"
                           f" iter {i}: d2h "
                           f"{(_ptd - _pt0) * 1e3:.2f} plan "
                           f"{(_pt1 - _ptd) * 1e3:.2f} apply+issue "
                           f"{(_pt2 - _pt1) * 1e3:.2f} ms swaps "
-                          f"{len(swaps)}: {swaps}", flush=True)
+                          f"{len(swaps)}{_band}: {swaps}", flush=True)
             elif lane is not None and use_pv2:
                 # PV2 PLACE lane (timed): one D2H of d -> host drift ->
                 # stateless marginals solve (placement_v2) -> gain /
