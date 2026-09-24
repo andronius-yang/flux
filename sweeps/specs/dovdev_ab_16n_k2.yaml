@@ -1,0 +1,21 @@
+# 2026-09-17 dov device fan-out A/B: fused vs dwire vs dov (host fan-out)
+# vs dov_dev (device fan-out), one binary, 16n k2 small budgets.
+platform: perlmutter
+nodes: 16
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 2, 4]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 900
+idle_timeout_s: 300
+retries: 1
+variants:
+  - ours_l01_s1_pv2_r2
+  - ours_l01_s1_pv2_r2_dwire
+  - ours_l01_s1_pv2_r2_dov
+  - ours_l01_s1_pv2_r2_dov_dev
+notes: "dov_dev A/B 16n k2 b1, 2, 4: fused/dwire/dov/dov_dev one binary"

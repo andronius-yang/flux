@@ -431,6 +431,96 @@ router (EPLB's rule is sender-local). Best case ~0.3 ms: 4n K2 b1 4.03 ->
 ~3.7 = tie with COMET+EPLB (3.68), not a win; the 8n b1 dispatch gap and
 the b4 combine gap (§5g) remain.
 
+### 5i. Proposition: ordered puts + signals + tile-spin overlap on the direct wire (2026-09-17)
+
+Already built and measured as **dov** (handoff 31, 8/30-31, merged into
+pv2). dwire dispatch = `All2AllSingle`: one device kernel issues one
+`putmem_nbi_block` per destination (all concurrent), then TWO team
+barriers (barrier = quiet + sync) — NO signal, GEMM starts after the
+barrier. dov (`FLUX_A2AV_FLAT_FENCED_SIG=1` + early launch) = ring-ordered
+concurrent nbi puts + ONE PE quiet + signal ops in ring order (remote),
+nbi put_signal intra-node, GEMM tiles spin per source (rule-6 clean: the
+F2 quiet-then-signal pattern). Result: dov < dwire at 4n every budget
+(-5..-19%), 8n b2/b4+ and 16n b4+; dov LOSES at 8n b1 (+6.5% K2) and 16n
+b1 (+17%) — exactly the cells where dwire is plotted — because the host
+issues ~2W stream ops (130 at 16n) against dwire's single device-kernel
+fan-out, plus +0.2-0.5 plan and combine-entry skew. Fused beats dov at
+every 4n/8n cell (4n K2 b1: fused l0 1.62 vs dov 2.05 vs dwire 2.62), and
+the direct family's combine (staged reverse a2av, ~2.9 ms at 4n b1 vs
+fused 1.6) is untouched by dispatch overlap. Verdict: cannot recover the
+K2 1/4 MiB groups at 4n/8n; the only open upside is 16n b1/b2 if the
+fenced fan-out moves into a device kernel (handoff 31 §4b candidate),
+bounded by the b1 GEMM it could hide (~0.3-0.5 ms of 6.8).
+
+### 5j. dov device fan-out (`FLUX_A2AV_FLAT_FENCED_DEV`, 2026-09-17, user directive)
+
+Built: `src/coll/flat_fanout.h` + `flat_fanout_impl.cu` (coll lib, -rdc):
+kernel 1 = one block per destination in ring order, remote
+`nvshmemx_putmem_nbi_block`, intra-node `nvshmemx_putmem_signal_nbi_block`
+(audited P2P config), zero-payload = signal only; kernel 2 = one thread
+`nvshmem_quiet()` then the remote signal ops in ring order (F2
+quiet-then-signal, rule-6 clean). In `gemm_grouped_v2_ag_scatter.cc` the
+fenced flat branch gets a `flat_fenced_dev_` twin: per-destination tables
+(dst/src byte offsets, bytes, intra flag) filled on the host into pinned
+staging double-buffered by the send-half parity, one H2D + two launches on
+the wire stream instead of ~2W host stream ops. Ctor-checked to require
+FLAT_FENCED_SIG. Arms `ours_l01_s1_pv2_r2_dov_dev[_gate]` (tag
+`FLUX_A2AV_FLAT_FENCED_DEV`); specs `dovdev_gate_4n_k2` (b1+b8,
+correctness ON, random payload) and `dovdev_ab_{4n,8n,16n}_k2` +
+`dovdev_ab_16n_qwen` (fused / dwire / dov / dov_dev, one binary, 1-4 MiB).
+
+Build: the pv3 worktree had no build tree and uninitialised submodules;
+`3rdparty/nccl` and `3rdparty/cutlass` are SYMLINKED to main's checkouts
+(same commits; git reports "expected submodule path not to be a symbolic
+link" — restore before committing: rm the symlinks, `git submodule
+update --init`) and the `python/flux/lib` symlinks to main's libs were
+REMOVED so the build cannot overwrite main. Build env = the fab120 recipe
++ gcc-native/12.3 as CC/CXX/CUDAHOSTCXX (module.sh's gcc/12.2.0 is gone),
+on one compute node (`logs/pv3/chain_build_dovdev.sh`, log
+`build_dovdev.log`). Side effect: build.sh's pip editable install
+re-points the conda env's `flux` at this worktree (runs use launch.sh's
+CWD PYTHONPATH, so other trees are unaffected). NOTE the pv3 worktree now
+runs its OWN binary — every capsule after this build is a new rule-4
+boundary vs the 9/15-9/17 capsules (different libs).
+
+**dov_dev results (new pv3 binary, one capsule each; total ms, l0 in parens):**
+
+- Gate 4n K2 b1+b8 (capsule 164555): every iteration "gate OK (0 bad
+  rows)", correctness PASS, payload probe ON — device quiet-then-signal
+  is wire-clean.
+- 4n K2 (164906, 8/8 ok): b1 fused 3.84 (1.58) / dwire 6.11 (2.65) / dov
+  5.81 (2.03) / **dov_dev 5.69 (2.07)**; b4 5.85 / 11.71 / 10.32 / 10.31.
+  dov_dev −2% at b1, all of it plan_comm (0.31 → 0.18); dispatch identical.
+- 8n K2 (165851, 12/12 ok): b1 fused 4.42 (1.86) / dwire 5.80 (2.55) / dov
+  6.16 (2.68) / **dov_dev 6.21 (2.68)**; b2 5.36 / 8.00 / 7.78 / 7.80; b4
+  7.57 / 12.79 / 11.83 / 11.75 (dispatch 4.69 → 4.25). The device fan-out
+  does NOT move the 1-2 MiB dispatch leg at 8n: the host-issue cost was
+  not the reason dov trails dwire there. What remains: dov's plan bracket
+  (1.47 vs dwire 1.37 vs fused 0.73 — the flat-mode derive + combine
+  algebra) and the un-overlapped combine (1.9-3.0 vs fused 1.6-2.1).
+- NOTE on this binary the fused LocCap arm reads 4.42 at 8n K2 b1 vs the
+  plotted pv3c 5.90 (Sep-15, main's Sep-10 libs) — a new-binary/site
+  shift on Ours itself (untangled only by a same-binary re-measure).
+- 16n K2 (215249, 12/12 ok; grant took 5 h of backfill): b1 fused 6.74
+  (2.88) / dwire 6.15 (2.83) / dov 8.18 (3.85) / **dov_dev 8.21 (3.97)**;
+  b2 7.85 / 8.84 / 10.23 / 10.38; b4 10.36 / 14.56 / 14.99 / 15.33. At 60
+  remote destinations the device fan-out is STILL a wash (dispatch 3.97
+  vs 3.85). **Verdict: the host-issue hypothesis of handoff 31 §4b is
+  refuted at 4n, 8n and 16n.** dov's ~1 ms dispatch deficit vs dwire at
+  1 MiB is structural to the fenced design: the PE-wide quiet releases
+  every remote source only after full drain (per-destination completion
+  is not exposed by NVSHMEM), so nothing overlaps at small budgets while
+  the early-launched GEMM sits spinning in the dynamic claimer — pure
+  overhead until bytes are large enough to hide it (4 MiB+ at 16n).
+  Also visible: fused at 16n b1 reads 6.74 on this binary vs the 12.63
+  plotted (Sep-15) — the same fresh-binary/site shift as at 8n; dwire's
+  16n b1 crown (6.15 vs 6.74) is now only −9%.
+- 16n Qwen (215745, 12/12 ok): b1 fused 6.33 (2.63) / dwire 6.03 (2.75) /
+  dov 7.62 (3.75) / **dov_dev 7.74 (4.05)**; b2 7.10 / 8.86 / 9.97 / 9.88;
+  b4 9.05 / 14.48 / 14.82 / 14.59. Same picture. Campaign CLOSED 15:02,
+  all grants released. Capsules 164555 (gate), 164906, 165851, 215249,
+  215745 — uncommitted, new-binary boundary.
+
 ## 6. State at hand-back (2026-09-16 23:56)
 
 - Arm complete and gated: 2n K2, 4n K2, 4n Qwen, 18/18 cells ok with the

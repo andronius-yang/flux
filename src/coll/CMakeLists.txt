@@ -11,6 +11,7 @@ if(ENABLE_NVSHMEM)
   all2all_single_2d_impl.cu
   weight_prefetch_getmem_impl.cu
   fused_ep_dispatch_impl.cu
+  flat_fanout_impl.cu
   )
 endif()
 
