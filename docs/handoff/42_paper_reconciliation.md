@@ -583,3 +583,25 @@ new binary (b16 severe five arms; b64 on the lcb family since the severe
 family exhausts the heap at 16n b64 for every arm) is queued as
 `rpr3_16n_k2_*` (§7.4). Receiver-side (gateway stage) per-round staging
 remains the next lever for 16n b64 on severe placements.
+
+### 7.4 16n confirmation on the round-3 binary (job 58820895; capsules 20260924-130036 b16 severe, -130341 b64 lcb)
+
+| cell | arm | l0 | total | Δ |
+|---|---|---|---|---|
+| 16n b16 severe | `_rpr0_nop2p` (old binary) | 16.20 | 39.93 | — |
+| | `_rpr_nop2p` (round 2: per-round + getmem) | 21.48 | 44.42 | **+11.3 %** (reproduces §7.2) |
+| | **per-round 2 slots + P2P (default)** | 15.54 | 38.35 | **−3.9 %** |
+| | `_rprs3` 3 slots + P2P | 16.17 | 39.28 | −1.6 % |
+| | `_rpr0` legacy staging + P2P | 16.44 | 43.18 | +8.2 % (l0/l1 at parity; the total carries a stall outside l0/l1 — single capsule, not reproduced elsewhere) |
+| 16n b64 lcb (main-perf family) | `_rpr0_nop2p` | 40.91 | 88.08 | — |
+| | **per-round 2 slots + P2P** | 37.37 | 83.14 | **−5.6 %** |
+
+Relay buffer at 16n: 4198 vs 54473 rows (b16), 15206 vs 216320 (b64) — −92 %.
+
+**Closed.** The paper's per-round redistribution (Algorithm 1) is now the
+implementation's default with the relay buffer at 2 × max-round-chunk, at
+parity or better on total_ms at 4n, 8n and 16n (the user rule), because the
+pulls no longer touch the NVSHMEM proxy. What remains open for memory is the
+receiver side (gateway stage, all NN−1 rounds resident), which is what 16n b64
+on severe placements needs; it requires a remote per-round acknowledgement and
+is a separate decision.
