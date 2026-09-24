@@ -1202,3 +1202,10 @@ explicitly NOT applied to any canon.
    same capsule, and is read against BOTH the twin and the plotted value.
    b64-only or severe-family (proLaw reset-every) reads belong to the
    ablation / case-study discussion and are never the headline check.
+18. **The old router is retired (2026-09-24, user ruling).** pv3c (paper
+   §4.1 constraints: per-replica band, provable caps) supersedes LocCap
+   everywhere: no new capsule runs a LocCap-routed OURS arm, and every
+   plotted Ours bar — including the b2/b64 rows that were captured on
+   8/29–8/30 before pv3c existed — is recaptured on pv3c (C = 1/4 at
+   2–8 nodes, 1/2 at 16 nodes). `ours_l01_s1_pv2_r2` and every other
+   LocCap-routed OURS arm are historical comparators only.

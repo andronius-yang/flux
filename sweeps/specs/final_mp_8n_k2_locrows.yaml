@@ -17,6 +17,4 @@ retries: 1
 variants:
   - ours_l01_s1_pv2_r2_pv3c_eps025
   - ours_l01_s1_pv2_r2_pv3c_eps025_legacy
-  - ours_l01_s1_pv2_r2
-  - ours_l01_s1_pv2_r2_legacy
-notes: "final 6b: K2 8n b2/b64 LocCap rows"
+notes: "final 6b: K2 8n b2/b64 pv3c rows"
