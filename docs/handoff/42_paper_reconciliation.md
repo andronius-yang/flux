@@ -656,3 +656,52 @@ reconciliation set — minimal-move partition, per-round sender redistribution
 with copy-engine pulls, band-triggered swaps — is latency-neutral or better
 under the Figure-9 conditions at 4n, 8n and 16n. Nothing outstanding on this
 lane except the receiver-side staging decision (§7, deferred by design).
+
+## 9. FINAL recapture on the reconciled defaults (2026-09-24 pm; SCHEMA rules 17/18) — in progress
+
+Binary: round-3 build (per-round staging + P2P pulls + minmove + band trigger,
+commit df726f9+). Old router retired: every Ours cell is pv3c (C=1/4 at 2–8n,
+1/2 at 16n) at ALL budgets incl. b2/b64. `_legacy` = the three comm-side
+knobs pinned to the pre-reconciliation behaviour on the same binary.
+
+**Step 1 — gate ladder** (20260924-193531): 6/6, per-iteration output checks at
+b1/b4/b16, fused arm + band dual3 arm.
+
+**Step 2 — case study** (20260924-194756, 12/12 isolated + nsys, K2 4n b64):
+the drawn arm (dual3 reset-every) moves 12 slots/iteration on the Predictable
+row and 28.6 on the drift schedule; nsys reports for both rows captured on the
+final binary (`sweep_data/20260924-194756.../nsys/`) for the figure regenerate.
+
+**Step 3 — ablation, 3 reps, final binary** (matched 20260924-{202339,202841,
+203340}; LOO -{202602,203102,203600}); it0 = drift iteration:
+
+| study | pr (place+route+swap seq) | full stack seq swap | full stack overlapped swap |
+|---|---|---|---|
+| matched, per rep | 50.5 / 66.8* / 50.5 | 51.5 / 49.5 / 53.0 | 47.2 / 65.1* / 49.2 |
+| matched, figure (9/15) | 54.0 | 53.1 | 50.2 |
+| LOO, mean (sd) | 68.69 (0.5) | 69.37 (0.8) | **61.55 (0.1)** |
+| LOO, figure (9/15) | 67.8 | 67.7 | 59.1 |
+
+\* rep 2 carried a stall spike in two arms (the class figs/ablation/README
+already notes: show reps or a box). Excluding it, the overlapped-swap step is
+3.9–4.3 ms matched and 7.8 ms LOO — the plotted ordering and magnitudes hold.
+
+**Steps 4–6 — main perf, new defaults vs `_legacy` twin (total ms):**
+
+| cell | b1 | b2 | b4 | b16 | b64 |
+|---|---|---|---|---|---|
+| Qwen 4n (20260924-203838) | 2.79 / 2.86 | 3.34 / 3.42 | 4.45 / 4.50 | 11.67 / 11.77 | 41.68 / 40.18 (+3.6 %) |
+| Qwen 4n figure | 3.03 | 3.79 | 4.67 | 11.81 | 40.13 |
+| K2 4n b2/b64 (-204348) | | 4.40 / 4.36 | | | 47.46 / 46.73 (+1.5 %) |
+| K2 4n figure | 4.03 | 4.68 | 6.11 | 14.27 | 46.67 |
+| K2 2n (-204615) | 4.18 / 4.20 | 4.63 / 4.69 | 5.57 / 5.57 | 12.01 / 11.65 | 36.95 / 36.46 |
+| Qwen 2n (-205256) | 2.36 / 2.37 | 2.79 / 2.76 | 3.44 / 3.46 | 8.54 / 8.52 | 31.32 / 30.29 (+3.3 %) |
+| Qwen 8n (-205126) | 3.62 / 3.60 | 4.35 / 4.36 | 6.04 / 5.93 | 15.19 / 15.80 | 54.20 / 55.30 (−2.0 %) |
+| Qwen 8n figure | 5.27 | 5.87 | 7.74 | 16.74 | 58.37 |
+
+b1–b16: at or below the plotted values everywhere and within ±3 % of the
+twin. **b64 at 2n/4n reads +1.3…+3.6 % above the twin** (and Qwen 4n b64 above
+its plotted 40.13), while 8n/16n b64 read −2…−6 %. Which of the three defaults
+carries the low-node-count b64 cost is being isolated (`final_b64iso_{2,4}n_*`,
+2 reps: `_mm0`, `_rpr0`, `_rpr0_nop2p`, `_rpr_nop2p`, `_legacy` twins).
+Pending: K2 8n b2/b64, 16n K2 + Qwen (queued).
