@@ -640,3 +640,19 @@ Well below the plotted values at every budget (build drift since 9/15) and
 within ±2.5 % (≤ 0.16 ms) of the same-binary twin; the small deltas sit in l1
 at b1, which the changed paths do not touch (noise class). 16n under the same
 conditions queued (`recon_smallb_16n_k2`).
+
+### 8.2 16n under main-perf conditions (capsule 20260924-170433, 6/6; regular job 58830206) — CLOSED
+
+| 16n K2 lcb, fused s1 | figure value (9/15 binary, C=1/2 arm) | new defaults | `_legacy` twin | new vs twin |
+|---|---|---|---|---|
+| b1 | 12.63 | 6.81 (l0 2.61) | 7.80 (l0 2.95) | −12.7 % |
+| b4 | 15.34 | 10.58 | 10.43 | +1.4 % (+0.15 ms) |
+| b16 | 29.31 | 25.27 | 25.85 | −2.2 % |
+| b64 (§7.4, same family) | 85.79 | 83.14 | 88.08 | −5.6 % |
+
+All three topologies now read at or below the plotted values and within noise
+of (mostly below) the same-binary twin at every main-perf budget. The
+reconciliation set — minimal-move partition, per-round sender redistribution
+with copy-engine pulls, band-triggered swaps — is latency-neutral or better
+under the Figure-9 conditions at 4n, 8n and 16n. Nothing outstanding on this
+lane except the receiver-side staging decision (§7, deferred by design).
