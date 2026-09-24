@@ -772,6 +772,7 @@ def main():
         from flux.testing.pv3_route import pv3c_route, pv3c_budgets
         _pv3_c = _pv3_c_rat(args.eps)
         _pv3c_slacks = []            # per sizing route: max extra per dst
+        _pv3c_pair_exts = []         # per sizing route: extra per (src, dst)
 
         def _pv3_caps(_tk, _p2l_x, _l2p_x, _lc_x):
             if args.route_rule == "pv3c":
@@ -805,6 +806,14 @@ def main():
                                     .reshape(-1))
                 _st_["pv3c_extra_dst_max"] = int(_ext_dst.max())
                 _pv3c_slacks.append(int(_ext_dst.max()))
+                # per (source rank, dest rank) extra tickets [W, W]: the
+                # node-pair sums bound one ROUND's relay-chunk drift
+                # (per-round relay staging cushion, 2026-09-24)
+                _ext_pair = torch.zeros(W * W, dtype=torch.int64)
+                _ext_pair.index_add_(0, _idx.reshape(-1),
+                                     (_ext * _hosted.unsqueeze(1).long())
+                                     .reshape(-1))
+                _pv3c_pair_exts.append(_ext_pair.view(W, W))
                 return (_ph, int(_recv_ub.max()), int(_pair_ub.max()), _st_)
             _ph, _st_ = pv3_route(_tk.long(), _p2l_x, _l2p_x, _lc_x,
                                   cfg.nlp, L, _pv3_c[0], _pv3_c[1],
@@ -990,7 +999,30 @@ def main():
     l0_recv_rows = max(
         int(l0_exact["FLUX_A2AV_MAX_RECV_NTOKENS"]) + cushion, recv_cap)
     stage_rows = int(l0_exact["FLUX_A2AV_MAX_STAGE_NTOKENS"]) + cushion_sr
-    relay_rows = int(l0_exact["FLUX_A2AV_MAX_RELAY_NTOKENS"]) + cushion_sr
+    from flux.testing.moonep_fused_map import relay_per_round_enabled
+    cushion_relay = cushion_sr
+    if relay_per_round_enabled():
+        # per-round (two-slot) relay staging: a slot holds ONE round's chunk
+        # of node n -> node m, ceil(V_m / L) rows; its drift over the
+        # reference is bounded by the node-pair drift E(n, m) = sum over
+        # s in n, d in m of the per-(src, dst) drift (forced-pair rows under
+        # LocCap, extra tickets under pv3c), split over the L relays:
+        # cushion = 2 slots x (ceil(max_{n != m} E(n, m) / L) + 1) + 8W —
+        # instead of the whole-node fp_slack the all-rounds staging carried.
+        _drift_pair = pll_aux["forced_pair"].long().clone()
+        for _phys_x, aux_x in s2_refs:
+            _drift_pair = torch.maximum(_drift_pair, aux_x["forced_pair"].long())
+        for _ep in (_pv3c_pair_exts if args.route_rule == "pv3c" else []):
+            _drift_pair = torch.maximum(_drift_pair, _ep.long())
+        _E = _drift_pair.view(nn, L, nn, L).sum(3).sum(1)          # [nn, nn]
+        _E.fill_diagonal_(0)
+        _E_np = int(_E.max())
+        cushion_relay = 2 * ((_E_np + L - 1) // L + 1) + 8 * W
+        if rank == 0:
+            print(f"[relay-sizing] per-round staging: node-pair drift max "
+                  f"{_E_np} rows -> relay cushion {cushion_relay} "
+                  f"(all-rounds cushion was {cushion_sr})", flush=True)
+    relay_rows = int(l0_exact["FLUX_A2AV_MAX_RELAY_NTOKENS"]) + cushion_relay
     # collective max: never let one rank under-size vs a peer's view
     t_red = torch.tensor([l0_recv_rows, recv_cap, stage_rows, relay_rows],
                          dtype=torch.int64, device="cuda")

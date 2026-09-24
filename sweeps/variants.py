@@ -3910,6 +3910,22 @@ for _base in ("ablation_l01_pr_swapall_pw_noov_p2p_r2_pv3c_eps025",
         if _base + _tag not in VARIANTS:
             VARIANTS[_base + _tag] = dict(_src, test_args=list(_src["test_args"]) + _extra)
 
+# Per-round relay staging twins (2026-09-24, handoff 42 §7): the binary
+# carrying FLUX_A2AV_RELAY_PER_ROUND defaults the two-slot double buffer ON
+# under LB_UNION; `_rpr0` pins the legacy all-rounds staging on the SAME
+# binary (the in-capsule A/B for "no new latency" + the heap saving).
+for _base in ("ours_l01_s1_pv2_r2_pv3c_eps025",
+              "ablation_l01_s2_swapall_rst_3d_dual3_str4_bal_p2p_r2_pv3c_eps025",
+              "ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_pv3c_eps025"):
+    _src = VARIANTS[_base]
+    VARIANTS[_base + "_rpr0"] = dict(
+        _src, env=dict(_src.get("env", {}), FLUX_A2AV_RELAY_PER_ROUND="0"),
+        requires=list(_src.get("requires", [])) + ["FLUX_A2AV_RELAY_PER_ROUND"])
+    for _g in (_base, _base + "_rpr0"):
+        if _g + "_gate" not in VARIANTS:
+            VARIANTS[_g + "_gate"] = dict(
+                VARIANTS[_g], test_args=VARIANTS[_g]["test_args"] + ["--check_iters", "1"])
+
 # llc ("2Ours no-overlap" main-perf row) under the paper-constraint router
 # (branch pv3, 2026-09-15): the EPIC driver's staged transport with
 # --router pv3c (C = 1/4) / pv3; gate twin audits every iteration

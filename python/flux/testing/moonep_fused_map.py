@@ -222,6 +222,14 @@ def _chunk_bound(U_mat: torch.Tensor, L: int, n: int, m: int, k: int) -> int:
     return (total // L) * k + min(k, total % L)
 
 
+def relay_per_round_enabled() -> bool:
+    """Mirror of the op ctor: FLUX_A2AV_RELAY_PER_ROUND defaults to ON under
+    FLUX_A2AV_LB_UNION=1 (balanced relay, blocking wire)."""
+    import os
+    lb = os.environ.get("FLUX_A2AV_LB_UNION", "0") != "0"
+    return os.environ.get("FLUX_A2AV_RELAY_PER_ROUND", "1" if lb else "0") != "0"
+
+
 def required_a2av_knobs(meta: FusedMeta, W: int, local_world_size: int) -> dict:
     """Exact capacity requirements, replicating the op's checks
     (gemm_grouped_v2_ag_scatter.cc:1147, 1250-1263, 2315-2340) for the
@@ -258,11 +266,17 @@ def required_a2av_knobs(meta: FusedMeta, W: int, local_world_size: int) -> dict:
                     if ns != n
                 )
                 max_stage = max(max_stage, srows)
-                rrows = sum(
+                per_round = [
                     _chunk_bound(U, L, n, (n - dn + nn) % nn, k + 1)
                     - _chunk_bound(U, L, n, (n - dn + nn) % nn, k)
                     for dn in range(1, nn)
-                )
+                ]
+                # FLUX_A2AV_RELAY_PER_ROUND (2026-09-24, default ON under
+                # LB_UNION): the relay staging is a two-slot double buffer of
+                # the largest round chunk, not the sum over rounds (the
+                # runtime FLUX_CHECK mirrors this: 2 * max_round <= knob)
+                rrows = (2 * max(per_round) if relay_per_round_enabled()
+                         else sum(per_round))
                 max_relay = max(max_relay, rrows)
 
     return {

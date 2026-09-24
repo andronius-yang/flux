@@ -437,3 +437,92 @@ routing, metadata, the exchange issue — is inside `total_ms` (SCHEMA rule 5:
 only the initial gating-metadata exchange is untimed). The fixed 24 s is
 process start (torch import, 16-rank rendezvous, NVSHMEM bootstrap, heap
 registration), paid once per deployment.
+
+## 7. Per-round relay staging (`FLUX_A2AV_RELAY_PER_ROUND`, 2026-09-24) — the paper's per-round redistribution, for memory
+
+**Why.** The 8n b64 swap arms died at NVSHMEM init (§4.4): the fused ops'
+capacity buffers at the s2 ceilings (recv 222k rows = 3.2 GB, gateway stage
+112k = 1.6 GB, relay 106k = 1.5 GB, send, plus the combine's panels) left no
+room on the 16 G heap for the composed swap lane's 470 MB staging
+(`ours_swap.py:842`). The relay staging held MY wire chunks for ALL NN−1
+rounds at once (§3), i.e. Σ_rounds chunk; the paper's Algorithm 1 stages per
+round.
+
+**Design (C++ `gemm_grouped_v2_ag_scatter.cc`, default ON under LB_UNION).**
+Two round slots (double buffer) of `max_relay_ntokens_ / 2` rows each; round
+dn is pulled into slot `(dn−1)&1` and put from it, so the buffer is
+`2 × max_round chunk` instead of `Σ_rounds chunk`: (NN−1)/2 × smaller at equal
+rounds (3.5× at 8n, 7.5× at 16n, 15.5× at 32n). Synchronisation is one
+intra-rank device edge per round and nothing else:
+- the pull of round dn (dn ≥ 3) may reuse the slot only after the put of round
+  dn−2 has READ it. On the default single stream (pulls and puts both on
+  `cp_stream_inter_node`) the blocking put's stream completion already
+  guarantees that by FIFO — zero extra operations; with
+  `FLUX_A2AV_RELAY_PULL_STREAM=1` the pull stream waits the round's put event
+  (`relay_put_events_`, recorded on the wire stream after each put);
+- no host sync, no remote dependency: the put is local-completion, the peer
+  gets wait only on peers' pack flags (as before) — the chain pull(dn) →
+  put(dn) → pull(dn+2) is intra-rank and acyclic;
+- host enqueue order interleaves pull(dn)/put(dn) per round (`pull_round` /
+  `put_round` lambdas; legacy order kept for the knob-off path); the GEMM
+  gate `relay_send_event_` is recorded after the first two rounds' pulls (the
+  only ones that never wait on a put), so the GEMM launch point is unchanged;
+- pipeline depth 2: the pull of round dn+2 waits for put(dn); put(dn+1) is
+  already staged, and an NVLink pull (~10× the per-NIC rate) finishes long
+  before put(dn+1) does, so the NIC never idles — expected latency effect 0.
+- Requires the BLOCKING wire (`FLUX_A2AV_BLOCKING_WIRE=1`, the 8/22 hard-rule
+  default; nbi / fenced puts do not certify the source is read at stream
+  completion) — ctor-checked. `_rpr0` twins pin the legacy all-rounds staging
+  on the same binary.
+
+**Sizing paths changed to match** (the buffer only shrinks if the knob asks
+for less): `moonep_fused_map.required_a2av_knobs` (the OURS driver's exact
+sizing; `relay_per_round_enabled()` mirrors the ctor default),
+`gen_matrix.a2av_knob_demands` (new `relay_lb_pr`), `sweep.exact_scale_knobs`
+(flux / l01 drivers; picks the per-round bound from the variant env). The
+runtime FLUX_CHECK mirrors: `2 × max_round ≤ FLUX_A2AV_MAX_RELAY_NTOKENS`.
+
+**Not done (next candidate): the gateway staging** (inbound chunks of all
+NN−1 rounds, 1.6 GB here) could be made per-round the same way, but its
+reuse needs the SENDER to wait on the RECEIVER's "forwarded" ack (a remote
+flow-control signal per round) — a cross-rank dependency the wire currently
+does not have; it couples the sender's put to the receiver's forward
+progress. Evaluate only if the relay saving is insufficient.
+
+### 7.1 Results, 4n (job 58817882 round 1, job 58818300 round 2)
+
+**Round 1 (single wire stream, capsules 20260924-081756 gate 6/6, -083151 A/B):**
+correct (per-iteration checks at b8/b64, both arms), but fused s1 on the severe
+cell at b64 read l0 +6 ms with per-round ON: on the single stream the blocking
+put of round dn serialized the pull of round dn+1 behind that round's whole
+wire transfer — the double buffer had degraded to a depth-1 pipeline. Two
+cells also failed at the recorder flush (a `_drift` name collision my sizing
+patch introduced; renamed). Fixes: per-round staging always allocates the
+dedicated pull stream and the per-round event edges (depth-2 pipeline as
+designed); the relay cushion is the node-pair drift over the L relays (§7)
+instead of the whole-node all-rounds slack.
+
+**Round 2 (capsules 20260924-085122 gate 6/6, 20260924-090506 A/B 16/16):**
+
+| cell | per-round ON total (l0 / l1) | legacy `_rpr0` | Δ |
+|---|---|---|---|
+| lcb b8, s1 | 8.94 (3.50 / 4.56) | 8.89 (3.56 / 4.52) | +0.6 % |
+| lcb b64, s1 | 45.72 (19.37 / 24.33) | 45.10 (19.15 / 24.20) | +1.4 % |
+| severe b8, s1 | 10.81 (3.95 / 6.11) | 10.96 (3.94 / 6.15) | −1.4 % |
+| severe b64, s1 | 69.86 (26.76 / 40.37) | 68.01 (26.10 / 39.53) | +2.7 % |
+| lcb b64, dual3 band | 47.35 | 47.35 | 0 |
+| severe b64, dual3 band | 59.86 (24.23 / 31.34) | 58.95 (23.97 / 29.98) | +1.5 % |
+
+Relay buffer (rows, from the sizing lines): b64 21340 vs 64248 (**−67 %**,
+0.9 → 0.3 GB per rank at K2), b8 2794 vs 8003; the cushion fell from 51845 to
+12184 rows (s1) / 17638 (dual3) at b64. The ratio improves with node count
+((NN−1)/2 on the exact part; the cushion is now node-count independent).
+
+Latency: within the 3 % parity threshold on every cell (automatic check
+passed → 8n/16n queued), but the b64 s1 deltas are both positive (+0.6 /
++1.85 ms, l0 +0.2 / +0.66). Single capsule; the same-size readings in §4.2
+dissolved under repeats, and the severe cell's l1 carries ±1.5 ms of
+cell-to-cell variance, so this is not yet a verdict either way. If a small
+positive l0 cost persists across the 8n/16n reads and a 4n repeat, the lever
+is the slot count (a 3-slot buffer keeps most of the saving and adds a round
+of pull slack), to be added as `FLUX_A2AV_RELAY_SLOTS`.

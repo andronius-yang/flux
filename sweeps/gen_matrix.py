@@ -348,7 +348,7 @@ def a2av_knob_demands(chunks, u, U, L):
     def node_chunk(s, n):
         return sum(chunks[s][n * L + j] for j in range(L))
 
-    stage_hier = stage_ident = stage_lb = relay_lb = 0
+    stage_hier = stage_ident = stage_lb = relay_lb = relay_lb_pr = 0
     if nn > 1:
         for gn in range(nn):
             for gl in range(L):
@@ -377,14 +377,15 @@ def a2av_knob_demands(chunks, u, U, L):
                         if ns != n
                     ),
                 )
-                relay_lb = max(
-                    relay_lb,
-                    sum(
-                        chunk_bound(n, (n - dn + nn) % nn, k + 1)
-                        - chunk_bound(n, (n - dn + nn) % nn, k)
-                        for dn in range(1, nn)
-                    ),
-                )
+                per_round = [
+                    chunk_bound(n, (n - dn + nn) % nn, k + 1)
+                    - chunk_bound(n, (n - dn + nn) % nn, k)
+                    for dn in range(1, nn)
+                ]
+                relay_lb = max(relay_lb, sum(per_round))
+                # per-round double-buffered relay staging (2026-09-24):
+                # two slots of the largest round chunk
+                relay_lb_pr = max(relay_lb_pr, 2 * max(per_round))
 
     return {
         "recv_copies": recv_copies,
@@ -393,6 +394,7 @@ def a2av_knob_demands(chunks, u, U, L):
         "stage_ident": stage_ident,
         "stage_lb": stage_lb,
         "relay_lb": relay_lb,
+        "relay_lb_pr": relay_lb_pr,
     }
 
 

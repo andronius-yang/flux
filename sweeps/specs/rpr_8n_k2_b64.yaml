@@ -1,0 +1,24 @@
+# Per-round relay staging at 8n b64 (2026-09-24): the heap-cap case — the composed
+# swap lane's staging did not fit beside the fused ops' capacity buffers on the 16 G
+# heap (flux_shm.cc:117 on every dual3 arm, capsule 20260923-202517). With the relay
+# staging at 2 x max round chunk instead of 7 rounds, the dual3 band arm should fit;
+# s1 ON vs _rpr0 gives the 8n latency parity read. debug QOS (30 min).
+platform: perlmutter
+nodes: 8
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering"
+budgets_mib: [64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 600
+idle_timeout_s: 240
+retries: 0
+variants:
+  - ablation_l01_s2_swapall_rst_3d_dual3_str4_bal_p2p_r2_pv3c_eps025
+  - ours_l01_s1_pv2_r2_pv3c_eps025
+  - ours_l01_s1_pv2_r2_pv3c_eps025_rpr0
+  - ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_pv3c_eps025
+notes: "rpr 8n b64: dual3 band (previously heap-capped) + s1 ON vs legacy + legacy dual3"

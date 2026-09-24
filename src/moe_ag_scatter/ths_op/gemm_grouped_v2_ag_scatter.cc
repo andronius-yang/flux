@@ -473,6 +473,25 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   };
   std::vector<int64_t> mm_bound_, mm_keep_, mm_imp_;
   std::vector<std::vector<MmPiece>> mm_pieces_;
+  // FLUX_A2AV_RELAY_PER_ROUND=1 (2026-09-24, default ON under LB_UNION; paper
+  // Algorithm 1 = per-round redistribution): the relay staging holds TWO
+  // round slots (double buffer) instead of all NN-1 rounds' chunks — the
+  // buffer shrinks from Sum_rounds chunk to 2 x max_round chunk ((NN-1)/2 x
+  // at equal rounds: 3.5x at 8n, 7.5x at 16n). Round dn is pulled into slot
+  // (dn-1)&1 and put from it; the pull of round dn (dn >= 3) may only start
+  // after the put of round dn-2 has READ that slot: on the single default
+  // stream the blocking put's stream completion gives that for free (FIFO);
+  // with FLUX_A2AV_RELAY_PULL_STREAM the pull stream waits the round's put
+  // event (relay_put_events_) — one intra-rank device edge per round, no
+  // host sync, no remote dependency (the put is local-completion, the peer
+  // gets wait only on peers' pack flags as before -> acyclic). Pull/put host
+  // enqueues interleave per round; the GEMM gate (relay_send_event_) is
+  // recorded after the first two rounds' pulls (the only ones that never
+  // wait on a put), so the launch point is unchanged. Requires the BLOCKING
+  // wire (nbi / fenced puts do not certify the source is read at stream
+  // completion) — ctor-checked.
+  const bool relay_per_round_;
+  std::vector<cudaEvent_t> relay_put_events_;   // NN-1, per_round && pull stream
   static int64_t mm_words(int64_t NN, int64_t L) {
     // receiver tables (arena i64 words): off[NN+1] base[NN] lo/hi/dst[NN*2L]
     return (NN + 1) + NN + 3 * NN * 2 * L;
@@ -816,6 +835,11 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                 "FLUX_A2AV_LB_MINMOVE", get_int_from_env("FLUX_A2AV_LB_UNION", 0) != 0 ? 1 : 0) !=
                 0 &&
             get_int_from_env("FLUX_A2AV_LB_UNION", 0) != 0 && a2av_hier_compress && nnodes > 1),
+        relay_per_round_(
+            get_int_from_env(
+                "FLUX_A2AV_RELAY_PER_ROUND",
+                get_int_from_env("FLUX_A2AV_LB_UNION", 0) != 0 ? 1 : 0) != 0 &&
+            a2av_hier_compress && nnodes > 1),
         // ring_mode barriers are CUDA-IPC based and intra-node only; multi-node
         // must take the NVSHMEM barrier (ring_mode = false)
         group_barrier(this->tp_group, nnodes == 1 && this->tp_group->get_size() > 8) {
@@ -865,6 +889,13 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       FLUX_CHECK(!this->lb_minmove_ || this->fused_stage2_)
           << "FLUX_A2AV_LB_MINMOVE needs FLUX_A2AV_FUSED_STAGE2=1 (the ATen consumer chain "
              "is not remapped to the chunk-major layout); set FLUX_A2AV_LB_MINMOVE=0";
+      FLUX_CHECK(!this->relay_per_round_ || !this->relay_identity_)
+          << "FLUX_A2AV_RELAY_PER_ROUND is defined on the balanced relay (!relay_identity)";
+      FLUX_CHECK(!this->relay_per_round_ || (this->blocking_wire_ && !this->wire_sig_fence_))
+          << "FLUX_A2AV_RELAY_PER_ROUND reuses the relay staging after the round's put "
+             "completes on-stream, which only the BLOCKING wire certifies "
+             "(FLUX_A2AV_BLOCKING_WIRE=1, FLUX_A2AV_WIRE_SIGNAL_FENCE=0); set "
+             "FLUX_A2AV_RELAY_PER_ROUND=0";
       if (this->fanout_eager_ && nnodes > 1) {
         for (int i = 0; i < nnodes - 1; i++) {
           this->fanout_streams_.push_back(create_cp_stream());
@@ -873,13 +904,25 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           this->fanout_events_.push_back(ev);
         }
       }
-      if (this->relay_pull_stream_ && a2av_hier_compress && !this->relay_identity_ &&
-          nnodes > 1) {
+      // per-round staging NEEDS the dedicated pull stream: on the single wire
+      // stream the blocking put of round dn would serialize the pull of round
+      // dn+1 behind the round's full wire transfer (measured +6 ms l0 at 4n
+      // b64, capsule 20260924-083151) — the double buffer only pipelines with
+      // pulls on their own stream and the per-round event edges
+      if ((this->relay_pull_stream_ || this->relay_per_round_) && a2av_hier_compress &&
+          !this->relay_identity_ && nnodes > 1) {
         this->pull_streams_.push_back(create_cp_stream());
         for (int i = 0; i < nnodes - 1; i++) {
           cudaEvent_t ev = nullptr;
           CUDA_CHECK(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming));
           this->relay_pull_events_.push_back(ev);
+        }
+        if (this->relay_per_round_) {
+          for (int i = 0; i < nnodes - 1; i++) {
+            cudaEvent_t ev = nullptr;
+            CUDA_CHECK(cudaEventCreateWithFlags(&ev, cudaEventDisableTiming));
+            this->relay_put_events_.push_back(ev);
+          }
         }
       }
       FLUX_CHECK(!(this->early_launch_ && this->pack_overlap_))
@@ -1236,6 +1279,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
     CUDA_CHECK(cudaEventDestroy(this->fetch_remote_event));
     CUDA_CHECK(cudaEventDestroy(this->ready_event));
     for (auto &ev : this->fanout_events_) {
+      CUDA_CHECK(cudaEventDestroy(ev));
+    }
+    for (auto &ev : this->relay_put_events_) {
       CUDA_CHECK(cudaEventDestroy(ev));
     }
     for (auto &ev : this->relay_pull_events_) {
@@ -2957,7 +3003,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             max_stage_rows = std::max(max_stage_rows, srows);
             int64_t rrows = 0;
             for (int dn = 1; dn < NN; dn++) {
-              rrows += chunk_rows_of(n, (n - dn + NN) % NN, k);
+              const int64_t cr = chunk_rows_of(n, (n - dn + NN) % NN, k);
+              // per-round staging: two slots of the largest round chunk
+              rrows = this->relay_per_round_ ? std::max(rrows, 2 * cr) : rrows + cr;
             }
             max_relay_rows = std::max(max_relay_rows, rrows);
           }
@@ -3143,6 +3191,10 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           // relay rank k's staging base for round dn: my chunks packed
           // ascending by round (ALL rounds staged at once, see below)
           auto relay_round_base = [&](int k, int dn) -> int64_t {
+            if (this->relay_per_round_) {
+              // double buffer: round dn lives in slot (dn-1)&1
+              return (int64_t)((dn - 1) & 1) * (this->max_relay_ntokens_ / 2);
+            }
             int64_t acc = 0;
             for (int d2 = 1; d2 < dn; d2++) {
               acc += chunk_rows_of(my_node, (my_node - d2 + NN) % NN, k);
@@ -3171,7 +3223,8 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           // order there (FIFO announce monotonicity preserved), and the
           // put of round dn gains a per-round event edge instead of
           // whole-phase stream FIFO.
-          const bool pull2s = this->relay_pull_stream_ && !this->pull_streams_.empty();
+          const bool pull2s =
+              (this->relay_pull_stream_ || this->relay_per_round_) && !this->pull_streams_.empty();
           cudaStream_t pull_stream = pull2s ? (cudaStream_t)this->pull_streams_[0]
                                             : (cudaStream_t)this->cp_stream_inter_node;
           if (pull2s && !this->wave_pack_) {
@@ -3271,7 +3324,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
               pcs.push_back(PullPiece{sl, lo - s0, lo - a_me, hi - lo});
             }
           };
-          for (int dn = 1; dn < NN; dn++) {
+          auto pull_round = [&](int dn) {
             int tn = (my_node - dn + NN) % NN;
             bool own_only_r;
             int64_t own_off_r;
@@ -3337,29 +3390,30 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
               }
               CUDA_CHECK(cudaEventRecord(this->relay_pull_events_[dn - 1], pull_stream));
             }
-          }
+          };
           // GEMM gate: piece transfers are issued (local nbi work; pull adds
           // pack-ready waits, which are acyclic); the wire loop below contains
           // cross-rank front-end waits and must NOT gate the GEMM launch
           // (forward_impl waits on this instead of fetch_remote_event in
           // relay mode)
-          CUDA_CHECK(cudaEventRecord(this->relay_send_event_, pull_stream));
-          if (!pull2s && this->relay_fence_ && pulled_peer) {
-            // F1: complete the phase-1 nbi gets BEFORE the wire reads
-            // relay_base. Stream FIFO gives issue order only; a proxy-
-            // lowered get can land after the put has read its source, which
-            // ships the PREVIOUS epoch's relay bytes — invisible while
-            // routing metadata and payloads repeat, corrupting under
-            // per-iteration change. Own-only / self-copy rounds never set
-            // pulled_peer and pay nothing.
-            nvshmemx_quiet_on_stream(this->cp_stream_inter_node);
-          }
+          auto f1_quiet = [&]() {
+            if (!pull2s && this->relay_fence_ && pulled_peer) {
+              // F1: complete the phase-1 nbi gets BEFORE the wire reads
+              // relay_base. Stream FIFO gives issue order only; a proxy-
+              // lowered get can land after the put has read its source, which
+              // ships the PREVIOUS epoch's relay bytes — invisible while
+              // routing metadata and payloads repeat, corrupting under
+              // per-iteration change. Own-only / self-copy rounds never set
+              // pulled_peer and pay nothing.
+              nvshmemx_quiet_on_stream(this->cp_stream_inter_node);
+            }
+          };
 
           // ---- phase 2: wire loop, mirror node order. One contiguous put of
           // my chunk per round; node_sig keeps its single-writer-per-slot
           // semantics (the round's chunk k comes only from relay (ns, k)).
           std::vector<int> fenced_sig_targets;  // F2: signal after the quiet
-          for (int dn = 1; dn < NN; dn++) {
+          auto put_round = [&](int dn) {
             int tn = (my_node - dn + NN) % NN;
             int g = dist_env.local_rank_to_global_rank(my_lr, tn);
             const int64_t a_me = chunk_bound(my_node, tn, my_lr);
@@ -3372,7 +3426,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                   NVSHMEM_SIGNAL_SET,
                   g,
                   this->cp_stream_inter_node);
-              continue;
+              return;
             }
             bool own_only;
             int64_t own_off;
@@ -3411,7 +3465,7 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                   g,
                   this->cp_stream_inter_node);
               fenced_sig_targets.push_back(g);
-              continue;
+              return;
             }
             // blocking_wire_ (instrumented): local-completion put whose proxy
             // entrypoint kernel spans the wire drain on the timeline
@@ -3435,6 +3489,35 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                   NVSHMEM_SIGNAL_SET,
                   g,
                   this->cp_stream_inter_node);
+            }
+          };
+          if (!this->relay_per_round_) {
+            // legacy: every round pulled (all rounds staged at once), GEMM
+            // gate, F1 quiet, then the wire loop
+            for (int dn = 1; dn < NN; dn++) {
+              pull_round(dn);
+            }
+            CUDA_CHECK(cudaEventRecord(this->relay_send_event_, pull_stream));
+            f1_quiet();
+            for (int dn = 1; dn < NN; dn++) {
+              put_round(dn);
+            }
+          } else {
+            // per-round double-buffered staging: pull(dn) may reuse the slot
+            // of round dn-2 only after that round's put completed
+            for (int dn = 1; dn < NN; dn++) {
+              if (dn >= 3 && pull2s) {
+                CUDA_CHECK(cudaStreamWaitEvent(pull_stream, this->relay_put_events_[dn - 3], 0));
+              }
+              pull_round(dn);
+              if (dn == std::min(2, NN - 1)) {
+                CUDA_CHECK(cudaEventRecord(this->relay_send_event_, pull_stream));
+              }
+              f1_quiet();
+              put_round(dn);
+              if (pull2s) {
+                CUDA_CHECK(cudaEventRecord(this->relay_put_events_[dn - 1], this->cp_stream_inter_node));
+              }
             }
           }
           if (this->wire_sig_fence_ && !fenced_sig_targets.empty()) {
