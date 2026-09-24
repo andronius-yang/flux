@@ -705,3 +705,38 @@ its plotted 40.13), while 8n/16n b64 read −2…−6 %. Which of the three defa
 carries the low-node-count b64 cost is being isolated (`final_b64iso_{2,4}n_*`,
 2 reps: `_mm0`, `_rpr0`, `_rpr0_nop2p`, `_rpr_nop2p`, `_legacy` twins).
 Pending: K2 8n b2/b64, 16n K2 + Qwen (queued).
+
+### 9.1 Remaining main-perf rows + the b64 low-node-count isolation
+
+**K2 8n b2/b64 pv3c rows** (20260924-211139): b2 5.16 vs twin 5.43 (figure 6.48);
+b64 59.28 vs 59.60 (figure 62.64).
+
+**K2 16n, pv3c C=1/2 at every budget** (20260924-225643, 10/10; b64 ran at the
+runner's 13G heap — the pv3c arm now covers the b64 row that was LocCap):
+
+| b1 | b2 | b4 | b16 | b64 |
+|---|---|---|---|---|
+| 6.09 / 6.28 (fig 12.63) | 7.59 / 7.56 (13.69) | 9.89 / 9.87 (15.34) | 24.42 / 24.39 (29.31) | 82.15 / 83.70 (85.79) |
+
+(new defaults / `_legacy` twin (plotted value)) — at or below both everywhere.
+
+**b64 isolation at 2n/4n, 2 reps each** (K2 4n 20260924-{210852,212321}; Qwen
+4n -{211247,212707}; K2 2n -{211608,213024}; Qwen 2n -{212010,213427}), total
+vs the all-legacy twin:
+
+| arm | 4n K2 | 4n Qwen | 2n K2 | 2n Qwen |
+|---|---|---|---|---|
+| minmove only (legacy staging, getmem) | −1.3 % | +2.9 % | +0.4 % | +2.7 % |
+| minmove + P2P pulls (legacy staging) | +1.7 % | +4.9 % | +1.8 % | +3.9 % |
+| per-round + P2P, minmove off | −0.6 % | −1.3 % | −0.5 % | +3.5 % |
+| minmove + per-round, getmem | −2.6 % | +3.0 % | −0.1 % | +2.9 % |
+| all new defaults | +2.2 % | +2.8 % | +1.8 % | +4.6 % |
+
+Two ~1–3 % effects, present only at b64 with 1–3 rounds: (a) copy-engine
+pulls cost at 2n/4n (+1.2…+3.0 points over the matching getmem arm in all
+four columns) while they are the large win at 8n/16n (proxy contention grows
+with rounds); (b) the minimal-move partition costs on Qwen (+2.7…+2.9) but not
+on K2. Per-round staging itself is free at every node count once its pulls are
+off the proxy. Recommendation pending the user's ruling: node-count-aware pull
+transport (CE pulls at ≥ 8 nodes, getmem below); Qwen b64 repeat at 8n/16n
+before deciding on a node-count-aware partition default. 16n Qwen queued.
