@@ -280,3 +280,46 @@ could use the GPU pv3c kernel (−10 s on swap arms); the swap arms' loose-bound
 16 G heap could be sized exactly (NVSHMEM registers the whole heap). Process
 reuse across cells is NOT acceptable (fresh heap / sizing / no cached schedules
 are part of the one-shot semantics).
+
+## 5. The sub-b64 dual3 wedge — ROOT-CAUSED and FIXED (2026-09-23 evening)
+
+**Symptom (recurring since 9/9):** the composed swap lane with a post-l0 issue
+point (`dual3`, `late3`) parks every rank in perf mode at b8/b16 (9/15 capsule
+20260915-051044 b16 stuck; 9/23 b8 stuck 372 s) while b64 and every
+`--check_iters` cell pass.
+
+**Evidence (job 58815215, 4n K2 proLaw severe b8, `dual3_str4_bal`):**
+1. `CUDA_MODULE_LOADING=EAGER` twin of the wedging cell: ok in 57 s
+   (capsule 20260924-062717) → the known lazy-load-behind-spin-kernel class
+   (memory `l1-a2av-lazy-load-hang`, handoff 8/16).
+2. Attach to the parked LAZY run (`$PSCRATCH/workspace/andrewy/logs/pv3/
+   wedge_attach.log`): on all four local ranks py-spy shows the host thread
+   inside `l1_op.derive_combine_meta` ← `OursRunner.issue_combine_meta(ip,
+   late=True)` (driver line 1873); cuda-gdb `info cuda kernels` shows exactly
+   ONE resident kernel per GPU: the l0 `agscatter gemmgroupedv2 streamk` GEMM,
+   spinning on its per-slot weight gate.
+
+**Mechanism.** In the `late*/dual*` issue modes the driver enqueued, after the
+l0 forward: (1) the late plan-overlap combine-meta kernels, then (2) the swap
+exchange (`issue_late`). The gated l0 GEMM is resident and spinning on the
+swapped slots until (2)'s pushes/pulls land. Under LAZY module loading the
+FIRST launch of a `derive_combine_meta` kernel in the process blocks the host
+until its module loads, and that load never completes behind the resident
+spinning GEMM (the 8/16 class) — so (2) is never issued: circular wait, host
+blocked, device spinning. At b64 the l0 op's ~2 ms metadata prologue keeps the
+GEMM off the device until the host is past (1); at b8/b16 the prologue is
+short and the GEMM is resident when (1) launches. `--check_iters` never
+wedges because its per-iteration syncs put the first launches of (1) in
+iteration 0 before any gate... (perturbed timing). The 9/9 "wait-before-write"
+fix of handoff 36 §13 changed timing, not the cause.
+
+**Fix (driver only, `test_moe_ours_traffic.py`):** `swap_lane.issue_late()`
+is now the very next enqueue after the l0 forward, BEFORE
+`issue_combine_meta(late=True)`. Rule (also written at the site): *the release
+of a device gate must never depend on host progress past another kernel
+launch.* The l1 side already follows it (`issue_l1_post` immediately after the
+l1 forward). Verified under default LAZY on the same allocation: b8
+`dual3_str4_bal` ok 45 s (capsule 20260924-064111), b16 LEGACY tau `dual3_str4`
+(the 9/15 cell) ok 46 s (20260924-064157), b8 `dual3_str4_bal_gate` 6/6
+iterations 0 bad rows (20260924-064244). Hardening option not taken (no need
+shown): prime `derive_combine_meta` at setup, or trap the weight-gate spin.

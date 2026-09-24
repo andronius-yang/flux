@@ -1865,17 +1865,28 @@ def main():
             if swap_lane is not None:
                 swap_lane.mark_l0_start()   # late2/dual2 device start point
             l0_out = runner.l0_forward(inputs_shard, gate_kwargs=gate_kw)
+            if swap_lane is not None:
+                # late/split/dual issue: the exchange rides under the
+                # enqueued l0 (movement streams depend only on the pre-l0
+                # event / the l0 GEMM-start mark). MUST be the very next
+                # enqueue after the l0 forward (2026-09-23 sub-b64 wedge
+                # root cause, handoff 42 §5): the gated l0 GEMM spins on
+                # the swapped slots until these pushes/pulls land, and a
+                # host-blocking first-time module load in ANY launch issued
+                # before them (the late combine-meta kernels below, under
+                # CUDA_MODULE_LOADING=LAZY) can never complete behind the
+                # resident spinning GEMM -> the release is never issued.
+                # At b64 the GEMM prologue hid the window; at b8/b16 it did
+                # not. Rule: the release of a device gate must never depend
+                # on host progress past another kernel launch.
+                with _cs_nvtx("swap.issue_late"):
+                    swap_lane.issue_late()
             # late plan-overlap (mode 2): the combine-meta host work runs
             # HERE, while the GPU executes the just-enqueued l0 — host stays
             # ahead (l0 GPU span >> meta host span at every budget), so no
             # timed bracket inflates; the meta kernels ride the side stream
             # on the sm_margin headroom concurrently with the GEMM.
             runner.issue_combine_meta(ip, late=True)
-            if swap_lane is not None:
-                # late/split issue: the exchange rides under the enqueued
-                # l0 (movement stream depends only on the pre-l0 event)
-                with _cs_nvtx("swap.issue_late"):
-                    swap_lane.issue_late()
             l0_end[i].record()
             if lane is not None:
                 # FLUX_OURS_S2_W2_LATE: l1 weight pushes enqueue AFTER the

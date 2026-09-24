@@ -1,0 +1,20 @@
+# dual3 sub-b64 wedge diagnostic (2026-09-23): the composed swap lane parks in
+# perf mode below b64 (9/15 b16, 9/23 b8). eager = CUDA_MODULE_LOADING=EAGER twin: if it runs, the wedge is the known lazy-load-behind-spin-kernel class (memory l1-a2av-lazy-load-hang).
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering"
+budgets_mib: [8]
+modes: [isolated]
+iters: 3
+warmup_iters: 1
+skip_correctness: true
+timeout_s: 600
+idle_timeout_s: 240
+retries: 0
+variants:
+  - ablation_l01_s2_swapall_rst_3d_dual3_str4_bal_p2p_r2_pv3c_eps025
+extra_env:
+  CUDA_MODULE_LOADING: "EAGER"
+notes: "wedge diagnostic b8 dual3 (eager)"
