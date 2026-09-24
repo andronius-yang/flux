@@ -626,3 +626,17 @@ the new defaults. Band-dual3 on lcb: new −7 % (b1), −3 % (b4), −3 % (b16) 
 its twin. Severe family (ablation discussion only): b1/b4 parity; b16 +5.6 %
 single capsule (same class as the §4.2 reading that dissolved under repeats;
 unrepeated). 8n and 16n under the same conditions: `recon_smallb_{8,16}n_k2`.
+
+### 8.1 8n under main-perf conditions (capsule 20260924-163137, 6/6; debug job 58828609)
+
+| 8n K2 lcb, fused s1 | figure value (9/15 binary) | new defaults | `_legacy` twin | new vs twin |
+|---|---|---|---|---|
+| b1 | 5.84 | 4.29 (l0 1.82 / l1 1.67) | 4.18 (1.83 / 1.57) | +2.5 % (+0.11 ms, in l1) |
+| b4 | 8.60 | 7.46 (3.21 / 3.22) | 7.30 (3.13 / 3.27) | +2.1 % (+0.16 ms) |
+| b16 | 19.16 | 17.52 (7.89 / 8.27) | 17.50 (8.29 / 7.96) | −0.1 % |
+| b64 (§7.2/7.3, severe family only) | — | — | — | see §7.3 |
+
+Well below the plotted values at every budget (build drift since 9/15) and
+within ±2.5 % (≤ 0.16 ms) of the same-binary twin; the small deltas sit in l1
+at b1, which the changed paths do not touch (noise class). 16n under the same
+conditions queued (`recon_smallb_16n_k2`).
