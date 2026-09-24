@@ -1,0 +1,21 @@
+# Per-round relay round 3 gate (2026-09-24): P2P copy-engine pulls + S-slot ring. Per-iteration
+# output checks on the fused s1 arm in every pull/staging configuration, b8 + b64, severe cell.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering"
+budgets_mib: [8, 64]
+modes: [isolated]
+iters: 6
+warmup_iters: 3
+skip_correctness: false
+timeout_s: 900
+idle_timeout_s: 300
+retries: 0
+variants:
+  - ours_l01_s1_pv2_r2_pv3c_eps025_gate
+  - ours_l01_s1_pv2_r2_pv3c_eps025_rprs3_gate
+  - ours_l01_s1_pv2_r2_pv3c_eps025_rpr0_gate
+  - ablation_l01_s2_swapall_rst_3d_dual3_str4_bal_p2p_r2_pv3c_eps025_gate
+notes: "rpr3 gate: per-round 2/3 slots + P2P pulls, legacy staging + P2P pulls, dual3 band"

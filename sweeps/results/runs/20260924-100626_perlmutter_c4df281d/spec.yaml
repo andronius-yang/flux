@@ -1,0 +1,32 @@
+G: 384
+H: 7168
+budgets_mib:
+  - 64
+chunk_bytes: 14336
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering"
+ffn_hidden: 2048
+idle_timeout_s: 240
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 7
+nodes: 16
+notes: "rpr 16n b64: per-round relay staging ON vs legacy (s1) + dual3 band/tau"
+platform: perlmutter
+profile_iters: 3
+retries: 0
+shape: k2
+skip_correctness: true
+sm_margin: 8
+timeout_s: 600
+topk: 8
+variants:
+  - ours_l01_s1_pv2_r2_pv3c_eps025
+  - ours_l01_s1_pv2_r2_pv3c_eps025_rpr0
+  - ablation_l01_s2_swapall_rst_3d_dual3_str4_bal_p2p_r2_pv3c_eps025
+  - ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_pv3c_eps025
+warmup_iters: 5

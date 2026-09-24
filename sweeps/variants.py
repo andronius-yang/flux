@@ -3926,6 +3926,28 @@ for _base in ("ours_l01_s1_pv2_r2_pv3c_eps025",
             VARIANTS[_g + "_gate"] = dict(
                 VARIANTS[_g], test_args=VARIANTS[_g]["test_args"] + ["--check_iters", "1"])
 
+# Per-round relay isolating twins (2026-09-24 pm, handoff 42 §7.2): the 8n/16n
+# reads showed +0.3 ms per round with 2 slots + proxy-lowered getmem pulls on
+# the pull stream. New binary defaults: per-round ON, FLUX_A2AV_RELAY_P2P_PULL=1
+# (copy-engine pulls off the proxy), FLUX_A2AV_RELAY_SLOTS=2.
+#   _rpr0_nop2p : legacy all-rounds staging + legacy getmem pulls (= the old binary)
+#   _rpr0       : legacy staging + P2P pulls
+#   (base)      : per-round, 2 slots, P2P pulls
+#   _rprs3      : per-round, 3 slots, P2P pulls
+#   _rpr_nop2p  : per-round, 2 slots, getmem pulls (= the 02:16 A/B config)
+for _base in ("ours_l01_s1_pv2_r2_pv3c_eps025",
+              "ablation_l01_s2_swapall_rst_3d_dual3_str4_bal_p2p_r2_pv3c_eps025"):
+    _src = VARIANTS[_base]
+    for _tag, _env in (("_rpr0_nop2p", {"FLUX_A2AV_RELAY_PER_ROUND": "0", "FLUX_A2AV_RELAY_P2P_PULL": "0"}),
+                       ("_rprs3", {"FLUX_A2AV_RELAY_SLOTS": "3"}),
+                       ("_rpr_nop2p", {"FLUX_A2AV_RELAY_P2P_PULL": "0"})):
+        VARIANTS[_base + _tag] = dict(
+            _src, env=dict(_src.get("env", {}), **_env),
+            requires=list(_src.get("requires", [])) + ["FLUX_A2AV_RELAY_P2P_PULL"])
+        VARIANTS[_base + _tag + "_gate"] = dict(
+            VARIANTS[_base + _tag],
+            test_args=VARIANTS[_base + _tag]["test_args"] + ["--check_iters", "1"])
+
 # llc ("2Ours no-overlap" main-perf row) under the paper-constraint router
 # (branch pv3, 2026-09-15): the EPIC driver's staged transport with
 # --router pv3c (C = 1/4) / pv3; gate twin audits every iteration

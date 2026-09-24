@@ -433,7 +433,7 @@ def matrix_dedup_stats(matrix, spec, plat, routing_mode):
     return _MATRIX_STATS_CACHE[key]
 
 
-def exact_scale_knobs(matrix, spec, plat, routing_mode, relay_per_round=False):
+def exact_scale_knobs(matrix, spec, plat, routing_mode, relay_per_round=False, relay_slots=2):
     """Exact per-cell a2av knobs + heap from the SAME expressions the runtime
     FLUX_CHECKs (gen_matrix.a2av_knob_demands), computed from the on-disk
     matrix (+ routing file when routing_mode == real; dealer closed form
@@ -444,7 +444,7 @@ def exact_scale_knobs(matrix, spec, plat, routing_mode, relay_per_round=False):
     every previously-passing small-budget cell keeps a byte-identical
     env_json. Returns (env dict, uncapped_sym_g) — the caller skips the cell
     as skipped_capacity when uncapped_sym_g exceeds the platform heap cap."""
-    key = (matrix["path"], routing_mode, bool(relay_per_round))
+    key = (matrix["path"], routing_mode, bool(relay_per_round), int(relay_slots))
     if key not in _EXACT_KNOB_CACHE:
         cb = spec["chunk_bytes"]
         topk = spec["topk"]
@@ -460,7 +460,7 @@ def exact_scale_knobs(matrix, spec, plat, routing_mode, relay_per_round=False):
         stage = cap(max(d["stage_hier"], d["stage_ident"], d["stage_lb"]))
         # FLUX_A2AV_RELAY_PER_ROUND (2026-09-24): two-slot double buffer of
         # the largest round chunk instead of the sum over rounds
-        relay = cap(d["relay_lb_pr"] if relay_per_round else d["relay_lb"])
+        relay = cap(int(relay_slots) * d["relay_lb_pr"] if relay_per_round else d["relay_lb"])
         # heap: whichever the ctor allocates — a2av buffers (2 send halves +
         # recv + stage + relay) or the dense gathered input (W*T rows), plus
         # 1G for signal buffers / NVSHMEM internals; floor at the legacy 6G
@@ -1110,7 +1110,8 @@ def build_cell_env(spec, plat, cell, staging, matrix):
         _rpr = (_venv.get("FLUX_A2AV_LB_UNION", "0") != "0"
                 and _venv.get("FLUX_A2AV_RELAY_PER_ROUND", "1") != "0")
         l0_knobs, l0_sym_g = exact_scale_knobs(
-            matrix, spec, plat, cell.get("routing_mode"), relay_per_round=_rpr
+            matrix, spec, plat, cell.get("routing_mode"), relay_per_round=_rpr,
+            relay_slots=max(2, int(_venv.get("FLUX_A2AV_RELAY_SLOTS", "2")))
         )
         l1_knobs, l1_sym_g = exact_rs_scale_knobs(
             matrix, spec, plat, cell.get("routing_mode"), v.get("l1_pattern", "dense")
@@ -1266,7 +1267,8 @@ def build_cell_env(spec, plat, cell, staging, matrix):
             _rpr = (_venv.get("FLUX_A2AV_LB_UNION", "0") != "0"
                     and _venv.get("FLUX_A2AV_RELAY_PER_ROUND", "1") != "0")
             knobs, sym_g_required = exact_scale_knobs(
-                matrix, spec, plat, cell.get("routing_mode"), relay_per_round=_rpr
+                matrix, spec, plat, cell.get("routing_mode"), relay_per_round=_rpr,
+                relay_slots=max(2, int(_venv.get("FLUX_A2AV_RELAY_SLOTS", "2")))
             )
             env.update(knobs)
             # popped by run_cell for the skipped_capacity decision (never

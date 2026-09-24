@@ -491,7 +491,24 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
   // wire (nbi / fenced puts do not certify the source is read at stream
   // completion) — ctor-checked.
   const bool relay_per_round_;
-  std::vector<cudaEvent_t> relay_put_events_;   // NN-1, per_round && pull stream
+  // FLUX_A2AV_RELAY_SLOTS (default 2): round slots of the per-round staging;
+  // S slots = pipeline depth S (the pull of round dn waits the put of round
+  // dn-S), buffer = S x max_round chunk. 2 = the minimum that keeps the NIC
+  // busy; 3 adds one round of pull slack for a third of the saving.
+  const int relay_slots_;
+  std::vector<cudaEvent_t> relay_put_events_;   // NN-1, per_round (pull stream)
+  // FLUX_A2AV_RELAY_P2P_PULL=1 (2026-09-24, default ON): the relay's intra-node
+  // pulls from peers' send buffers are copy-engine cudaMemcpyAsync over the
+  // P2P-mapped symmetric addresses (nvshmem_ptr, as flux_shm's tensor lists)
+  // instead of nvshmemx_getmem_nbi_on_stream. On this deployment the getmem
+  // is proxy-lowered, i.e. it shares the ONE proxy thread with the wire puts:
+  // in the legacy all-rounds order the gets ran before the wire and were
+  // hidden, in the per-round order they interleave with the puts and the wire
+  // lost bandwidth (8n b64: l0 +4 ms, capsule 20260924-093206). A CE copy
+  // needs no proxy and overlaps the wire. Falls back to getmem per peer whose
+  // nvshmem_ptr is null. The pack-ready wait before the copy is unchanged.
+  const bool relay_p2p_pull_;
+  std::vector<char *> relay_peer_send_;         // [L] P2P base of peer sl's send buffer (or null)
   static int64_t mm_words(int64_t NN, int64_t L) {
     // receiver tables (arena i64 words): off[NN+1] base[NN] lo/hi/dst[NN*2L]
     return (NN + 1) + NN + 3 * NN * 2 * L;
@@ -840,6 +857,8 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                 "FLUX_A2AV_RELAY_PER_ROUND",
                 get_int_from_env("FLUX_A2AV_LB_UNION", 0) != 0 ? 1 : 0) != 0 &&
             a2av_hier_compress && nnodes > 1),
+        relay_slots_(std::max(2, get_int_from_env("FLUX_A2AV_RELAY_SLOTS", 2))),
+        relay_p2p_pull_(get_int_from_env("FLUX_A2AV_RELAY_P2P_PULL", 1) != 0),
         // ring_mode barriers are CUDA-IPC based and intra-node only; multi-node
         // must take the NVSHMEM barrier (ring_mode = false)
         group_barrier(this->tp_group, nnodes == 1 && this->tp_group->get_size() > 8) {
@@ -968,6 +987,16 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
       this->send_half_rows_ = tokens_per_rank_max * topk;
       this->a2av_send_buffer = nvshmem_create_tensor(
           {this->send_half_rows_ * (this->pack_overlap_ ? 2 : 1), hidden}, input_dtype);
+      if (this->relay_p2p_pull_ && nnodes > 1) {
+        const int Lp = world_size / nnodes;
+        this->relay_peer_send_.assign(Lp, nullptr);
+        for (int sl = 0; sl < Lp; sl++) {
+          const int prank = dist_env.local_rank_to_global_rank(sl, dist_env.node_idx);
+          this->relay_peer_send_[sl] = reinterpret_cast<char *>(
+              prank == dist_env.rank ? this->a2av_send_buffer.data_ptr()
+                                     : nvshmem_ptr(this->a2av_send_buffer.data_ptr(), prank));
+        }
+      }
       this->a2av_recv_buffer =
           nvshmem_create_tensor({this->max_recv_ntokens_, hidden}, input_dtype);
       this->a2av_signal_buffer =
@@ -3004,8 +3033,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
             int64_t rrows = 0;
             for (int dn = 1; dn < NN; dn++) {
               const int64_t cr = chunk_rows_of(n, (n - dn + NN) % NN, k);
-              // per-round staging: two slots of the largest round chunk
-              rrows = this->relay_per_round_ ? std::max(rrows, 2 * cr) : rrows + cr;
+              // per-round staging: relay_slots_ slots of the largest round chunk
+              rrows = this->relay_per_round_ ? std::max(rrows, (int64_t)this->relay_slots_ * cr)
+                                             : rrows + cr;
             }
             max_relay_rows = std::max(max_relay_rows, rrows);
           }
@@ -3192,8 +3222,9 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
           // ascending by round (ALL rounds staged at once, see below)
           auto relay_round_base = [&](int k, int dn) -> int64_t {
             if (this->relay_per_round_) {
-              // double buffer: round dn lives in slot (dn-1)&1
-              return (int64_t)((dn - 1) & 1) * (this->max_relay_ntokens_ / 2);
+              // S-slot ring: round dn lives in slot (dn-1) % S
+              return (int64_t)((dn - 1) % this->relay_slots_) *
+                     (this->max_relay_ntokens_ / this->relay_slots_);
             }
             int64_t acc = 0;
             for (int d2 = 1; d2 < dn; d2++) {
@@ -3365,6 +3396,23 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
                     this->a2av_wait_flags()));
                 pr_waited[sl] = true;
               }
+              char *peer_base = (this->relay_p2p_pull_ && !this->relay_peer_send_.empty())
+                                    ? this->relay_peer_send_[sl]
+                                    : nullptr;
+              if (peer_base != nullptr) {
+                // copy-engine P2P read of the peer's packed segment (no proxy);
+                // ordered after the peer's pack-ready wait above like the get
+                // same pack-overlap parity slice as my own send_base (run_id_
+                // is in lockstep on every rank)
+                CUDA_CHECK(cudaMemcpyAsync(
+                    relay_base + (relay_round_base(my_lr, dn) + pc.dst) * row_bytes,
+                    peer_base + (int64_t)par * this->send_half_rows_ * row_bytes +
+                        (peer_seg_base(sl, tn) + pc.src) * row_bytes,
+                    pc.rows * row_bytes,
+                    cudaMemcpyDeviceToDevice,
+                    pull_stream));
+                continue;
+              }
               pulled_peer = true;
               if (this->relay_blocking_pull_) {
                 // T3 diagnostic: blocking get (local completion at return)
@@ -3503,14 +3551,15 @@ class GemmGroupedV2AGScatterOp::GemmGroupedV2AGScatterOpImpl {
               put_round(dn);
             }
           } else {
-            // per-round double-buffered staging: pull(dn) may reuse the slot
-            // of round dn-2 only after that round's put completed
+            // per-round S-slot staging: pull(dn) may reuse the slot of round
+            // dn-S only after that round's put completed
+            const int S = this->relay_slots_;
             for (int dn = 1; dn < NN; dn++) {
-              if (dn >= 3 && pull2s) {
-                CUDA_CHECK(cudaStreamWaitEvent(pull_stream, this->relay_put_events_[dn - 3], 0));
+              if (dn > S && pull2s) {
+                CUDA_CHECK(cudaStreamWaitEvent(pull_stream, this->relay_put_events_[dn - S - 1], 0));
               }
               pull_round(dn);
-              if (dn == std::min(2, NN - 1)) {
+              if (dn == std::min(S, NN - 1)) {
                 CUDA_CHECK(cudaEventRecord(this->relay_send_event_, pull_stream));
               }
               f1_quiet();

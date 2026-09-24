@@ -526,3 +526,33 @@ cell-to-cell variance, so this is not yet a verdict either way. If a small
 positive l0 cost persists across the 8n/16n reads and a 4n repeat, the lever
 is the slot count (a 3-slot buffer keeps most of the saving and adds a round
 of pull slack), to be added as `FLUX_A2AV_RELAY_SLOTS`.
+
+### 7.2 8n / 16n reads of round 2 (capsules 20260924-093206 8n b64, -100626 16n b64, -101147 16n b16)
+
+| cell | per-round ON (l0 / l1) | legacy `_rpr0` (l0 / l1) | Δ total | relay rows ON / legacy |
+|---|---|---|---|---|
+| 8n b64 severe, s1 | 91.62 (42.91 / 45.49) | 89.86 (38.57 / 47.99) | +2.0 % | 15934 / 105688 (−85 %) |
+| 8n b64 severe, dual3 band | 82.68 | (heap-capped before) | ran | 16202 / — |
+| 8n b64 severe, dual3 tau | 86.99 | (heap-capped before) | ran | 16202 / — |
+| 16n b16 severe, s1 | 44.14 (21.61 / 20.72) | 40.16 (17.07 / 21.02) | **+9.9 %** | 4198 / 54473 (−92 %) |
+| 16n b64 severe, all four arms | NVSHMEM_MALLOC fail | NVSHMEM_MALLOC fail (legacy too) | — | 15206 / 216320 |
+
+**Heap goal met at 8n**: the dual3 arms that died on the 16 G heap now run at
+8n b64 (relay 1.5 GB → 0.23 GB per rank). At 16n b64 on the severe family the
+legacy arm dies too: the gateway stage (246k rows = 3.5 GB) and the recv
+region dominate — the receiver-side per-round staging (§7, "not done") is
+what that cell needs.
+
+**Latency goal NOT met at scale**: l0 +4.3 ms at 8n b64 (every iteration
+40.5–45.0 vs 33.8–41.2) and +4.5 ms at 16n b16 — about +0.3 ms per round,
+growing with node count. Two candidate mechanisms, both changed for round 3
+and isolated by same-binary twins (`rpr3_ab_{4,8}n_k2`):
+1. the relay's peer pulls are `nvshmemx_getmem_nbi_on_stream`, which on this
+   deployment is proxy-lowered — in the legacy order all gets ran BEFORE the
+   wire and were hidden; in the per-round order they interleave with the puts
+   on the single proxy thread and steal wire bandwidth → `FLUX_A2AV_RELAY_P2P_PULL`
+   (default ON): copy-engine `cudaMemcpyAsync` over the P2P-mapped symmetric
+   address (`nvshmem_ptr`, as `flux_shm` tensor lists), no proxy;
+2. pipeline depth 2 → `FLUX_A2AV_RELAY_SLOTS` (default 2; twin 3).
+Arms: `_rpr0_nop2p` (= the old binary), `_rpr0` (legacy staging + P2P pulls),
+base (per-round 2 slots + P2P), `_rprs3`, `_rpr_nop2p` (round-2 config).

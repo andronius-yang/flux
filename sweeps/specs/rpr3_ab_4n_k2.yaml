@@ -1,0 +1,24 @@
+# Per-round relay round 3 A/B at 4n (2026-09-24): isolate the l0 cost seen at 8n/16n with
+# 2 slots + getmem pulls. One binary, isolated. Arms: legacy staging+getmem (= old binary),
+# legacy staging + P2P pulls, per-round 2 slots P2P (default), 3 slots P2P, 2 slots getmem.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering"
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [64]
+modes: [isolated]
+iters: 10
+warmup_iters: 4
+skip_correctness: true
+timeout_s: 700
+idle_timeout_s: 240
+retries: 0
+variants:
+  - ours_l01_s1_pv2_r2_pv3c_eps025_rpr0_nop2p
+  - ours_l01_s1_pv2_r2_pv3c_eps025_rpr0
+  - ours_l01_s1_pv2_r2_pv3c_eps025
+  - ours_l01_s1_pv2_r2_pv3c_eps025_rprs3
+  - ours_l01_s1_pv2_r2_pv3c_eps025_rpr_nop2p
+notes: "rpr3 A/B 4n: legacy/getmem, legacy/P2P, per-round 2 P2P, 3 P2P, 2 getmem"

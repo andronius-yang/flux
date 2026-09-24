@@ -385,7 +385,7 @@ def a2av_knob_demands(chunks, u, U, L):
                 relay_lb = max(relay_lb, sum(per_round))
                 # per-round double-buffered relay staging (2026-09-24):
                 # two slots of the largest round chunk
-                relay_lb_pr = max(relay_lb_pr, 2 * max(per_round))
+                relay_lb_pr = max(relay_lb_pr, max(per_round))   # ONE slot; x slots in sweep
 
     return {
         "recv_copies": recv_copies,

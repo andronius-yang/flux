@@ -999,7 +999,7 @@ def main():
     l0_recv_rows = max(
         int(l0_exact["FLUX_A2AV_MAX_RECV_NTOKENS"]) + cushion, recv_cap)
     stage_rows = int(l0_exact["FLUX_A2AV_MAX_STAGE_NTOKENS"]) + cushion_sr
-    from flux.testing.moonep_fused_map import relay_per_round_enabled
+    from flux.testing.moonep_fused_map import relay_per_round_enabled, relay_slots
     cushion_relay = cushion_sr
     if relay_per_round_enabled():
         # per-round (two-slot) relay staging: a slot holds ONE round's chunk
@@ -1017,7 +1017,7 @@ def main():
         _E = _drift_pair.view(nn, L, nn, L).sum(3).sum(1)          # [nn, nn]
         _E.fill_diagonal_(0)
         _E_np = int(_E.max())
-        cushion_relay = 2 * ((_E_np + L - 1) // L + 1) + 8 * W
+        cushion_relay = relay_slots() * ((_E_np + L - 1) // L + 1) + 8 * W
         if rank == 0:
             print(f"[relay-sizing] per-round staging: node-pair drift max "
                   f"{_E_np} rows -> relay cushion {cushion_relay} "

@@ -230,6 +230,12 @@ def relay_per_round_enabled() -> bool:
     return os.environ.get("FLUX_A2AV_RELAY_PER_ROUND", "1" if lb else "0") != "0"
 
 
+def relay_slots() -> int:
+    """Mirror of the op ctor: FLUX_A2AV_RELAY_SLOTS round slots (default 2)."""
+    import os
+    return max(2, int(os.environ.get("FLUX_A2AV_RELAY_SLOTS", "2")))
+
+
 def required_a2av_knobs(meta: FusedMeta, W: int, local_world_size: int) -> dict:
     """Exact capacity requirements, replicating the op's checks
     (gemm_grouped_v2_ag_scatter.cc:1147, 1250-1263, 2315-2340) for the
@@ -275,7 +281,7 @@ def required_a2av_knobs(meta: FusedMeta, W: int, local_world_size: int) -> dict:
                 # LB_UNION): the relay staging is a two-slot double buffer of
                 # the largest round chunk, not the sum over rounds (the
                 # runtime FLUX_CHECK mirrors this: 2 * max_round <= knob)
-                rrows = (2 * max(per_round) if relay_per_round_enabled()
+                rrows = (relay_slots() * max(per_round) if relay_per_round_enabled()
                          else sum(per_round))
                 max_relay = max(max_relay, rrows)
 
