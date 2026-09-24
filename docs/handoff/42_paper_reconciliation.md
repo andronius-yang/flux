@@ -323,3 +323,117 @@ l1 forward). Verified under default LAZY on the same allocation: b8
 (the 9/15 cell) ok 46 s (20260924-064157), b8 `dual3_str4_bal_gate` 6/6
 iterations 0 bad rows (20260924-064244). Hardening option not taken (no need
 shown): prime `derive_combine_meta` at setup, or trap the weight-gate spin.
+
+## 6. Narrative checks for the band trigger (2026-09-24, job 58815666, 4n K2 b64) — FINAL
+
+User requirements: (1) the ablation must keep its ordering (the overlapped-swap
+step still yields a speedup); (2) the case study must still show visible NVLink
+expert movement. Arms: legacy tau=1 orbit vs `_bal` (band, C = the router's 1/4)
+vs `_balc16` (band, C = 1/16). Tool: `docs/handoff/42_narr_summary.py`
+(rank-max total_ms; it0 = the drift-event iteration after the post-warmup
+reset; rest = mean of the other timed iterations; slot moves from the records,
+one move = w1 + w2 ≈ 2 × 29.4 MB). CORRECTION 9/24: the first cut of these
+tables (and the §4.2/§4.4 medians) filtered `iter >= warmup_iters` on the
+metrics, which already index TIMED iterations only — i.e. dropped the first
+five timed iterations. Scripts fixed; all numbers below use every timed
+iteration; §4 conclusions unchanged (see 6.4).
+
+### 6.0 The key identity: band trigger at C = 0 ≡ the legacy tau=1 orbit
+
+`node_band(C=0)` is "max > mean", i.e. any node not perfectly balanced is out
+of band; every strictly max-reducing exchange is then eligible and the greedy
+stops only at the fixpoint — exactly `swap_orbit_capped` without the band.
+Verified bitwise on 40 random (placement, demand) cases incl. the 8-slot cap
+(`test_ours_swap.py::band_gates` (f)). **So the paper-figure arms (ablation
+`swapall_pw`, cycling `swapall`, case study `dual3_str4`) already ARE the
+paper's §4.3 algorithm with the configured load constraint set to 0 (perfect
+balance) and the 8-slot staging cap: trigger only when imbalanced, accept only
+max-reducing exchanges, stop when no exchange reduces the max.** The
+reconciliation adds the explicit constraint dial; the figures need no
+recapture for it. What the dial buys at C > 0 is measured below.
+
+### 6.1 Case study (capsule 20260924-065407, dual3_str4 reset-every, 32 iterations)
+
+| row | trigger | total median | it0 | moves / iteration |
+|---|---|---|---|---|
+| Predictable (lcb) | C=0 (legacy) | 48.82 | 48.26 | 12.0 |
+| | band C=1/4 | 47.83 | 47.68 | **0.0** |
+| | band C=1/16 | 48.45 | 47.83 | 6.0 |
+| Drift (S-C schedule; proLaw block = drawn iteration) | C=0 (legacy) | 51.64 | 58.81 | 28.6 |
+| | band C=1/4 | 51.55 | 55.70 | 2.9 (proLaw block only) |
+| | band C=1/16 | 51.72 | 55.52 | 17.4 |
+
+C=1/4 removes the Predictable row's expert-swap blocks (its basis sits at
+max/mean 1.09); C=1/16 keeps movement on both rows (half / 60 % of the
+volume) at equal total.
+
+### 6.2 Ablation, 3 reps (matched 20260924-{070659,072147,073628}; LOO 20260924-{071357,072843,074330})
+
+it0 = drift-event iteration (mean over reps, sd ≤ 1.8), rest = other iterations, moves at it0:
+
+| study | arm | C=0 (legacy) it0 / rest / moves | band 1/4 | band 1/16 |
+|---|---|---|---|---|
+| matched | placement+routing+swap seq (pr) | 54.81 / 48.93 / 27 | 50.14 / 49.48 / 0 | 49.81 / 48.49 / 20 |
+| matched | full stack, seq swap | 53.42 / 48.14 / 27 | 48.83 / 48.86 / 0 | 49.10 / 48.48 / 20 |
+| matched | full stack, overlapped swap | **49.00** / 48.05 / 27 | 49.96 / 48.92 / 0 | 49.96 / 47.82 / 20 |
+| LOO | placement+routing+swap seq (pr) | 68.81 / 56.30 / 59 | 62.34 / 56.88 / 15 | 69.09 / 56.16 / 53 |
+| LOO | full stack, seq swap | 67.67 / 55.83 / 59 | 61.03 / 56.07 / 15 | 68.68 / 55.95 / 53 |
+| LOO | full stack, overlapped swap | **59.98** / 55.17 / 59 | 56.87 / 56.06 / 15 | **59.85** / 55.33 / 53 |
+
+Reading. The overlapped-swap step (ovl vs seq at it0) is 4.4 ms matched /
+7.7 ms LOO at C=0 — today's legacy arms reproduce the 9/15 figure data
+(LOO seq 66–69 vs ovl 58–61). At C=1/16 the LOO step is intact (8.8 ms, same
+moves ±10 %) but the matched step vanishes (the trigger moves 20 of 27 slots
+and the sequential exchange is then only ~0.6 ms exposed, so there is little
+left to overlap); at C=1/4 the matched study never swaps and LOO moves a
+quarter of the slots — the step shrinks to 4 ms and every steady-state
+iteration reads ~1 ms slower (uncorrected imbalance below 1.25×). Steady-state
+(rest) totals: C=1/16 ≤ C=0 in 5 of 6 arms; C=1/4 ≥ C=0 in 6 of 6.
+
+### 6.3 Verdict and recommendation
+
+- **Both narrative requirements hold with C_swap = 0**, which is bitwise the
+  arms the figures were drawn from. No figure needs recapture for the swap
+  reconciliation; the paper's "configured load constraint" is 0 (perfect
+  balance) in those experiments and its "minimal number of swaps" is the
+  fixpoint under the 8-slot staging cap.
+- **C_swap = 1/16** is the useful non-zero setting: 25–50 % fewer moves at equal
+  or lower steady-state total, both case-study rows still move, the LOO
+  ablation step intact; but it erases the matched-study step, so it must not
+  replace the figure arms.
+- **C_swap = 1/4 (the router's C) is too coarse** for the swap trigger: it
+  breaks both narratives. The routing relaxation and the swap constraint are
+  separate dials in the code (`--eps`, `--swap_bal_C`).
+- Main perf: the `ours12_dispatch` row (one exchange per pair, FORCE) remains
+  the odd arm out; the reconciled arm for a recapture is the composed lane
+  (band C=0 or 1/16, dual3, cap 8), now runnable at every budget (§5), pending
+  the 8n b64 heap sizing of the swap lane.
+
+### 6.4 Corrected §4 numbers (all timed iterations)
+
+4n b64 A/B (20260923-201035): lcb s1 46.07 vs `_mm0` 45.99 (+0.2 %); dual3 band
+47.30 vs tau 48.55 (−2.6 %); proLaw s1 69.27 vs 65.83 (the +5 % that the
+repeats dissolved); dual3 band 60.49 vs tau 61.31 (−1.3 %). Pooled partition
+verdict: 4n b64 total −0.36 ms (−0.5 %) CI [−1.07, +0.68] (l0 −0.76 CI
+[−1.69, −0.12]; l1 +0.35 CI [+0.21, +0.57]); 8n b64 total +0.44 ms (+0.5 %) CI
+[−0.96, +1.96]; 8n b8 13.90 vs 13.90. Constant within noise at both
+topologies, as before.
+
+### 6.5 Why the harness setup time is NOT MoE-layer latency (user question 9/24)
+
+The per-cell setup (24 s fixed + up to minutes for swap arms) is the test
+harness sizing the NVSHMEM symmetric heap and receive/staging buffers with
+PROVABLE per-cell bounds: it folds every placement the run will visit (the
+swap orbit on the cell's fixed demand; per-topic orbits on schedule families)
+and routes each with the CPU reference router (1.2 s per route) before
+allocation, so a cell can run at the heap cap and detect overflow instead of
+corrupting silently. The tau=1 orbit produces many placements (309 s setup on
+the schedule cell), the band trigger few (95 s). None of this is per-batch work
+a serving system would do: buffers are allocated once at model load with
+capacity bounds (the pv3c caps are O(G) per iteration and ARE computed inside
+the timed bracket), the placement basis comes from history, and every
+per-iteration decision — plan-comm allgather, swap decision + table apply,
+routing, metadata, the exchange issue — is inside `total_ms` (SCHEMA rule 5:
+only the initial gating-metadata exchange is untimed). The fixed 24 s is
+process start (torch import, 16-rank rendezvous, NVSHMEM bootstrap, heap
+registration), paid once per deployment.

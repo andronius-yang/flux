@@ -3892,6 +3892,24 @@ for _base in ("ours_l01_s1_pv2_r2", "ours_l01_s1_pv2_r2_pv3c_eps025",
             VARIANTS[_g + "_gate"] = dict(
                 VARIANTS[_g], test_args=VARIANTS[_g]["test_args"] + ["--check_iters", "1"])
 
+# Band-trigger twins for the paper's ablation + case-study arms (2026-09-23
+# narrative check, handoff 42 §6): `_bal` = band trigger with C = --eps (the
+# router's 1/4 on the pv3c twins), `_balc16` = band trigger with its own
+# C = 1/16 (paper §4.3's "configured load constraint" read as a separate dial
+# from the routing relaxation). Legacy tau=1 arms keep their names.
+for _base in ("ablation_l01_pr_swapall_pw_noov_p2p_r2_pv3c_eps025",
+              "ablation_l01_s2_swapall_pw_noov_p2p_r2_pv3c_eps025",
+              "ablation_l01_s2_swapall_pw_p2p_r2_pv3c_eps025",
+              "ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_pv3c_eps025",
+              "ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2",
+              "ablation_l01_s2_swapall_pw_p2p_r2", "ablation_l01_s2_swapall_pw_noov_p2p_r2",
+              "ablation_l01_pr_swapall_pw_noov_p2p_r2"):
+    _src = VARIANTS[_base]
+    for _tag, _extra in (("_bal", ["--swap_trigger", "band"]),
+                         ("_balc16", ["--swap_trigger", "band", "--swap_bal_C", "0.0625"])):
+        if _base + _tag not in VARIANTS:
+            VARIANTS[_base + _tag] = dict(_src, test_args=list(_src["test_args"]) + _extra)
+
 # llc ("2Ours no-overlap" main-perf row) under the paper-constraint router
 # (branch pv3, 2026-09-15): the EPIC driver's staged transport with
 # --router pv3c (C = 1/4) / pv3; gate twin audits every iteration

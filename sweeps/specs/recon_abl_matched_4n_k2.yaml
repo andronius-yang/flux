@@ -1,0 +1,28 @@
+# Narrative check 1 (2026-09-23): does the ablation keep its ordering under the
+# band trigger? The matched study of figs/ablation (pv3c C=1/4 arms) with band twins
+# at C=1/4 (= router) and C=1/16; it0 = the postwarmup drift-event iteration,
+# rest_mean = iterations 1-9. Run 3x (3 reps).
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 900
+idle_timeout_s: 300
+retries: 1
+variants:
+  - ablation_l01_pr_swapall_pw_noov_p2p_r2_pv3c_eps025
+  - ablation_l01_s2_swapall_pw_noov_p2p_r2_pv3c_eps025
+  - ablation_l01_s2_swapall_pw_p2p_r2_pv3c_eps025
+  - ablation_l01_pr_swapall_pw_noov_p2p_r2_pv3c_eps025_bal
+  - ablation_l01_s2_swapall_pw_noov_p2p_r2_pv3c_eps025_bal
+  - ablation_l01_s2_swapall_pw_p2p_r2_pv3c_eps025_bal
+  - ablation_l01_pr_swapall_pw_noov_p2p_r2_pv3c_eps025_balc16
+  - ablation_l01_s2_swapall_pw_noov_p2p_r2_pv3c_eps025_balc16
+  - ablation_l01_s2_swapall_pw_p2p_r2_pv3c_eps025_balc16
+notes: "recon narrative check: ablation matched, legacy tau=1 vs band C=1/4 vs band C=1/16"

@@ -106,6 +106,12 @@ def band_gates():
             sw_end, _ = oswap.swap_plan(load_g, pb, lcnts, L, nlp, 1,
                                         bal_C=C)
             assert sw_end == [], "band orbit stopped with swaps left"
+        # (f) C = 0 ("perfect balance" constraint) reproduces the legacy tau=1
+        # capped orbit bitwise: the paper-figure arms ARE the band trigger at C=0
+        p0, l0, n0 = oswap.swap_orbit_capped(load_g, p2l, l2p, lcnts, L, nlp, 8)
+        pz, lz, nz = oswap.swap_orbit_capped(load_g, p2l, l2p, lcnts, L, nlp, 8,
+                                             bal_C=0.0)
+        assert torch.equal(p0, pz) and n0 == nz, "band C=0 != legacy tau=1 orbit"
         print(f"  band ok NN={NN} G={G} C={C}: out-of-band"
               f" {int(out0.sum())}/{NN} (max/mean {r0.max():.3f}) ->"
               f" {int(outb.sum())}/{NN} ({rb.max():.3f}) in {nb} rounds,"

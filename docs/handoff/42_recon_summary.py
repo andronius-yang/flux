@@ -28,7 +28,7 @@ def load(run_id):
             per[k[0]][k[1]][it] = v
     rows = []
     for cid, c in cells.items():
-        wi = int(c.get("warmup_iters", 0) or 0)
+        wi = 0  # metrics.csv `iter` indexes TIMED iterations only (warmups are not recorded)
         stat = {}
         for m in METRICS:
             vals = [v for it, v in per[cid][m].items() if it >= wi]

@@ -1,0 +1,37 @@
+G: 384
+H: 7168
+budgets_mib:
+  - 64
+chunk_bytes: 14336
+dtype: bfloat16
+extra_env: {}
+families:
+  - "trace:model=Kimi-K2;pools=mmlu/professional_law;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy"
+ffn_hidden: 2048
+idle_timeout_s: 300
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 7
+nodes: 4
+notes: "recon narrative check: ablation loo, legacy tau=1 vs band C=1/4 vs band C=1/16"
+platform: perlmutter
+profile_iters: 3
+retries: 1
+shape: k2
+skip_correctness: true
+sm_margin: 8
+timeout_s: 900
+topk: 8
+variants:
+  - ablation_l01_pr_swapall_pw_noov_p2p_r2_pv3c_eps025
+  - ablation_l01_s2_swapall_pw_noov_p2p_r2_pv3c_eps025
+  - ablation_l01_s2_swapall_pw_p2p_r2_pv3c_eps025
+  - ablation_l01_pr_swapall_pw_noov_p2p_r2_pv3c_eps025_bal
+  - ablation_l01_s2_swapall_pw_noov_p2p_r2_pv3c_eps025_bal
+  - ablation_l01_s2_swapall_pw_p2p_r2_pv3c_eps025_bal
+  - ablation_l01_pr_swapall_pw_noov_p2p_r2_pv3c_eps025_balc16
+  - ablation_l01_s2_swapall_pw_noov_p2p_r2_pv3c_eps025_balc16
+  - ablation_l01_s2_swapall_pw_p2p_r2_pv3c_eps025_balc16
+warmup_iters: 5
