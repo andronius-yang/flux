@@ -2452,13 +2452,16 @@ _OURS_ENV = {
     "FLUX_A2AV_RS_EAGER": "0", "FLUX_A2AV_RS_FUSED_PACK": "1",
     "FLUX_A2AV_WAVE_PACK": "1", "FLUX_A2AV_RS_BUCKET": "1",
     "FLUX_A2AV_RS_WIRE_STREAMS": "16",
-    # conn=32 is the OURS family's single canonical pin (2026-08-25):
+    # conn=24 is the OURS family's single canonical pin (2026-09-25 user ruling,
+    # SCHEMA rule 14 amendment: 32 stalls the 16n-Qwen-b16 combine 60-80 % of
+    # iterations, 28 too; 24 is stall-free and neutral at the main-perf budgets
+    # 4n/8n/16n K2+Qwen; s2 gates green at 24). Was conn=32 (2026-08-25):
     # resolves the s2 channel-aliasing hang (qwen stale-b32) AND the K2
     # torn-row race (shard-chain exposure); the 16n l0 probes showed -5%
     # l0 at b64. The family runs ~21 streams; the historical conn=8 pin
     # was sized for the 4n-era a2av mix. Pre-flip conn=8 capsules are
     # env_json-documented, never byte-compared across the flip.
-    "CUDA_DEVICE_MAX_CONNECTIONS": "32", "FLUX_A2AV_RS_PACK_BLOCKS": "10",
+    "CUDA_DEVICE_MAX_CONNECTIONS": "24", "FLUX_A2AV_RS_PACK_BLOCKS": "10",
     "FLUX_A2AV_RS_REDUCE_BLOCKS": "8", "FLUX_A2AV_RS_PRERED_BLOCKS": "6",
     # 2026-08-29 CANON (handoff 26 §4, user ruling): lossless plan graphs
     # ON + (via the --plan_overlap 2 base args) late combine-meta overlap;

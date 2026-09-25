@@ -1148,6 +1148,16 @@ lives inside the demand function (the C++ `chunk_at(s, d)` == dispatch
    env boundary and needs its own gates. env_json records the pin per cell;
    never byte-compare across the flip.
 
+**Amendment to rule 14 (2026-09-25, user ruling — handoff 42 §10–10.1): the OURS
+pin is `CUDA_DEVICE_MAX_CONNECTIONS=24`.** At 32 (and 28) the 16n Qwen b16 combine
+stalls in 60–80 % of iterations (l1 340–490 ms, all ranks, device-side, not fabric);
+24 is stall-free (0/50) and, on same-binary twins, neutral at the plotted budgets
+b1/b4/b16 for K2 and Qwen at 4n/8n/16n (worst cell 16n K2 b16 +4.7 %, b64 +7.2 %,
+against ≥ 34 % margins over the best baseline); 16 costs K2 8–10 % at 8n/16n and is
+rejected. s2 correctness gates are green at 24 (the ≤ 8 deadlock class stays below
+16). Capsules before the flip record conn=32 in env_json; never byte-compare across
+the flip, and the 16n Qwen b16 Ours row is re-read on the new pin.
+
 **Amendment to rule 13 (2026-08-25, user ruling — mechanism attribution):**
 msplit is a FLUX-lineage mechanism (expert-dim M-split scheduling inside
 the grouped GEMM), NOT a Slipstream mechanism. Slipstream's identity is
