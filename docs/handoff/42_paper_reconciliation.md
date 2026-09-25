@@ -850,11 +850,30 @@ spin-kernel wait cannot be scheduled, and the puts stream-ordered behind it neve
 The zero-SM waits are load-bearing. Side effect: a deadlocked cell leaves the
 allocation's nodes "busy" (step creation disabled) — release and re-allocate.
 
-**Open ladder (in flight).** Same-binary twins of `CUDA_DEVICE_MAX_CONNECTIONS` ∈ {2, 4,
-8, 16, 32}: 4n Qwen b1/b4/b16/b64 (dispatch cost of each setting; 2 reps) and 16n Qwen
-b16 + b64 (stall count; c32 control vs c8, repeated). First 4n reads (c2/c4/c8, 2 reps,
-capsules 20260925-1030xx..1038xx): b64 45.3 / 43.5 / 46.8, b16 12.6 / 12.5 / 12.4 ms
-totals; the c32/c16 twins decide whether a lower channel count costs latency. Adoption
-rule unchanged: 0 stalls across reps AND no total_ms loss in same-binary twins at
-4n/8n/16n under main-perf conditions (SCHEMA rules 4/17); if every stall-free setting
-costs latency, the next step is the combine's enqueue order itself.
+**Channel ladder — RESULT (2026-09-25 05:41; same binary 03:28 build; 4n capsules
+20260925-1030xx..1111xx, 16n 20260925-1233xx..1239xx, host enqueue timers on):**
+
+| 16n Qwen | stalled iters | b16 total (clean) | b64 total |
+|---|---|---|---|
+| c32 (production pin) | 14 / 20 | 24.21 | 78.72 |
+| c16 | **0 / 20** | 23.32 (−3.7 %) | 78.54 (−0.2 %) |
+| c8 | 0 / 30 | 24.76 (+2.3 %) | 83.26 (+5.8 %) |
+| c4 | 0 / 20 | 27.94 (+15 %) | 92.07 (+17 %) |
+| c2 | 0 / 20 | 26.66 (+10 %) | 94.00 (+19 %) |
+
+| 4n Qwen total vs c32 | b1 | b4 | b16 | b64 |
+|---|---|---|---|---|
+| c16 (2 reps) | +2.4 % | +3.4 % | +1.4 % | +1.6 % |
+| c8 (4 reps) | −0.9 % | +0.1 % | +6.6 % | +11.6 % |
+| c4 / c2 | +1 / +2 % | +5 / +9 % | +8 / +11 % | +5 / +9 % |
+
+The stall exists ONLY at 32 connections (the hardware maximum). The host-side enqueue
+of the combine is ~1 ms in every iteration including stalled ones (`l1_enq_ms`, new
+driver metric), so the wait is on the device; the host-queue hypothesis is refuted.
+Mechanism at exactly 32 is still unnamed (the nsys mode crashes at 16n), but the
+lever is: **c16 removes the stall and is at parity or better at 16n; at 4n it reads
++1.4…+3.4 % on 2 reps (within twin noise, but one-signed).** Candidate ruling: amend
+SCHEMA rule 14's OURS pin 32 → 16. Validation queued (specs `cpin_*`): 4n K2 twins +
+2 more Qwen reps, s2 correctness gates at c16 vs c32 (rule 14's conn≤8 deadlock /
+torn-row class: K2 + Qwen b16/b32/b64, random payload), 8n K2/Qwen twins (debug QOS),
+16n K2 twins + Qwen reps (regular).
