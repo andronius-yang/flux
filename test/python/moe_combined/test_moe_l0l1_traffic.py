@@ -236,6 +236,10 @@ def perf_combined(name: str, iters: int, warmup_iters: int, prep_fn, plan_comm_f
     torch.distributed.barrier()
     isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))
     iso_sync_times = []
+    # host wall of the l0 / l1 ENQUEUE (API-call time, not device time): a
+    # long value means the host blocked in a launch/wait call (2026-09-25,
+    # 16n-Qwen-b16 combine-stall RCA, handoff 42 §10); ~free to record
+    l0_enq_times, l1_enq_times = [], []
     output = None
     for i in range(total_iters):
         prep_fn()
@@ -263,14 +267,18 @@ def perf_combined(name: str, iters: int, warmup_iters: int, prep_fn, plan_comm_f
             plan = plan_fn()
             plan_end[i].record()
             e2e_start[i].record()
+            t_h = time.perf_counter()
             l0_out = l0_fn(plan)
+            l0_enq_times.append((time.perf_counter() - t_h) * 1e3)
             l0_end[i].record()
             # activation on the [gemm_rows_this_ep, ffn] intermediate — a fresh
             # allocation per window (gelu has no out=); cheap post-warmup via
             # the caching allocator, and part of the pass by definition
             intermediate = torch.nn.functional.gelu(l0_out)
             act_end[i].record()
+            t_h = time.perf_counter()
             output = l1_fn(plan, intermediate)
+            l1_enq_times.append((time.perf_counter() - t_h) * 1e3)
             e2e_end[i].record()
         if TP_GROUP.rank() == 0:
             # per-window heartbeat for the sweep runner's idle-kill: the torch
@@ -299,6 +307,8 @@ def perf_combined(name: str, iters: int, warmup_iters: int, prep_fn, plan_comm_f
             iter_times["total_ms"].append(iter_start[i].elapsed_time(e2e_end[i]))
     if isolated:
         iter_times["iso_sync_ms"] = iso_sync_times[warmup_iters:]
+    iter_times["l0_enq_ms"] = l0_enq_times[warmup_iters:]
+    iter_times["l1_enq_ms"] = l1_enq_times[warmup_iters:]
 
     result = PerfResult(
         name=name, output=output, e2e_time_ms=sum(iter_times["e2e_ms"]) / iters
