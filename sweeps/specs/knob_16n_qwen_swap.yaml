@@ -1,0 +1,17 @@
+# knob grid on the consolidated implementation (2026-09-25, handoff 42 §11): 16n qwen: swap-on
+platform: perlmutter
+nodes: 16
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [1, 4, 16, 64]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 700
+idle_timeout_s: 240
+retries: 0
+variants:
+  - ours_l01_s2_swap_force_p2p_r2_pv3c_eps05
+notes: "knob_16n_qwen_swap"
