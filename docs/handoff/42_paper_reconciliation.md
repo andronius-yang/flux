@@ -1011,7 +1011,7 @@ b16 cells can be completed with a spec-level heap override if the column must be
 ## 13. Pruning ledger (2026-09-25, user ruling)
 
 Removed from the tree in one commit: **127 capsules** (0 of 9/24, 127 of 9/25; 148 MB)
-and **100 specs**, all diagnostics whose conclusions are recorded above and whose numbers no
+and **93 specs** (7 of the listed 100 had already gone with the kernel-wait revert), all diagnostics whose conclusions are recorded above and whose numbers no
 handoff table, SCHEMA rule or figure source quotes: the channel-ladder twins not quoted in §10.1
 (c2/c4/c8/c16/c28 arms and reps), both illegal-memory-access hunts (§10.1; 0/18 + 1/4 reproduction,
 unlocalized), the refuted kernel-wait attempts (§10), the cancelled knob-campaign fragments (§11
