@@ -877,3 +877,35 @@ SCHEMA rule 14's OURS pin 32 → 16. Validation queued (specs `cpin_*`): 4n K2 t
 2 more Qwen reps, s2 correctness gates at c16 vs c32 (rule 14's conn≤8 deadlock /
 torn-row class: K2 + Qwen b16/b32/b64, random payload), 8n K2/Qwen twins (debug QOS),
 16n K2 twins + Qwen reps (regular).
+
+### 10.1 Channel pin search — c16 rejected, c28 stalls, c24 candidate (2026-09-25 08:10)
+
+Same-binary twins (build 03:28), clean-iteration medians, mean over reps; stalls = iterations
+with l1 > 100 ms / total iterations.
+
+| setting | 4n K2 b1/b4/b16/b64 | 4n Qwen (4 reps) | 8n K2 b16/b64 | 8n Qwen b16/b64 | 16n K2 b16/b64 | 16n Qwen b16 (stalls) / b64 |
+|---|---|---|---|---|---|---|
+| c32 (pin) | ref | ref | ref | ref | ref | 23.75 (27/40) / 79.54 |
+| c28 | | | −0.2 / +0.7 % | +2.0 / +1.6 % | | −0.2 % (**19/30**) / −0.0 % |
+| c24 | pending | pending | +0.2 / +2.6 % | −0.5 / +0.6 % | pending | −0.4 % (**0/30**) / +1.8 % |
+| c16 | −0.3/−0.1/+0.5/−0.7 % | +1.1/+1.8/−0.1/+1.1 % | **+10.2 / +9.2 %** | +3.3 / +6.8 % | **+7.9 / +9.7 %** | −2.0 % (0/30) / −2.0 % |
+| c8 | −0.9/+0.1/+6.6/+11.6 % | | | | | +4.2 % (0/30) / +4.7 % |
+
+- **c16 is rejected**: stall-free everywhere but costs K2 8–10 % at 8n and 16n (l0 and l1).
+- **The stall boundary is between 24 and 28 connections** (c28 stalls at the c32 rate,
+  c24 never in 30 iterations). The process creates roughly that many streams, so the stall
+  appears once every stream owns a hardware channel; sharing between some pair of streams is
+  protective. Naming that pair is the code-fix route; not attempted yet.
+- **c24 is the uniform-pin candidate**: 16n Qwen −0.4 / +1.8 %, 8n K2 +0.2 / +2.6 %, 8n Qwen
+  −0.5 / +0.6 %. Validation queued (specs `c24v_*`): 4n K2/Qwen twins ×2, s2 correctness gates
+  at c24, 8n b1/b4 twins ×2, 16n K2 twins ×2 + 2 more 16n Qwen c24 reps (stall count → 50 iters).
+- s2 correctness gates at c16 and c32: 12/12 ok (rule 14's ≤8 class does not reach 16).
+
+**Intermittent illegal memory access (separate, OPEN):** 8n Qwen b16 s1 cell aborted 3 times
+today (capsules 20260925-131809 c32, -135929 c28, -142634 c32; ranks 8/21/14) at the first sync
+in the combine's msplit setup (`gather_rs.cc:4087`); isolated mode syncs before each iteration,
+so the fault lies in plan / dispatch / combine-meta of the same iteration. Hunt 2 (18 cells:
+plain ×6, FLUX_A2AV_TIMING=1 ×6, plan+route graphs off ×6) reproduced nothing → rate ≈ 3/20 plain
+cells, localization open. `CUDA_LAUNCH_BLOCKING=1` deadlocks this design (persistent spin
+kernels) and is unusable. Next tool: build with `-lineinfo` + a device-side bounds trap in the
+plan/dispatch kernels, or a 4n reproduction search.
