@@ -140,12 +140,11 @@ pre-correction Qwen3-shape capsules ran ffn 4096 (unrecorded — no
 `ffn_hidden` column) and their GEMM-inclusive numbers are invalidated;
 never compare across the boundary (SCHEMA cells.csv note).
 
-Four invariants, never violate:
+Six invariants, never violate:
 1. **Budget is strictly the pre-topk send budget** (matrix row sums = `budget_mib * 2^20 * topk`).
 2. **Perf runs need `FLUX_TEST_DETERMINISTIC=0`** — the runner enforces it and the capsule's `deterministic` column records it; a perf number is only valid if that column says 0 (deterministic `scatter_` serializes ~500x and lands on the compress/relay paths).
 3. **Instrumented modes never compare against clean ones** — `phases` (FLUX_A2AV_TIMING) and `nsys` force per-iteration device syncs; they are for breakdowns, never latency. Quote **`isolated`** mode for latency (per-layer, inference semantics) and `e2e` for pipelined throughput — and never compare those two against each other either.
 4. **Compare arms inside one capsule, built from one binary.** `git_sha` is not a build identity (124 capsules span 5 shas but 28 distinct `.so` builds); the same configuration moved 6–33% across builds, which is larger than every headline result. See `sweeps/SCHEMA.md` protocol rule 4.
-6. **Cost comparisons follow the main-perf figure (2026-09-25, user rule).** When measuring the cost of any change, quote the budgets the main-perf figure plots FIRST (currently b1, b4, b16) at every node count in the figure, before b64; never open with b64.
 5. **Wire-ordering HARD RULE (2026-08-22, proven NVSHMEM-only).** On Perlmutter
    (nvshmem/3.2.5-1 + libfabric/CXI) `nvshmemx_putmem_signal_nbi_on_stream`
    exposes the signal BEFORE the data for MB-class puts in essentially every
@@ -161,6 +160,7 @@ Four invariants, never violate:
    `weight_push_multicast` are UNAUDITED and must pass the probe before their
    arms are quoted.
 
+6. **Cost comparisons follow the main-perf figure (2026-09-25, user rule).** When measuring the cost of any change, quote the budgets the main-perf figure plots FIRST (currently b1, b4, b16) at every node count in the figure, before b64; never open with b64.
 ## Formatting
 
 `./code-format.sh` runs clang-format/black over the diff (`--format-all` for everything, `--fail-on-diff` for CI-style checks). Style follows Google style guides via clang-format.
