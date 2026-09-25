@@ -1,0 +1,19 @@
+# c24 uniform-pin validation (2026-09-25, handoff 42 §10): 4n Qwen s2 correctness gate at c24
+platform: perlmutter
+nodes: 4
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [16, 32, 64]
+modes: [isolated]
+iters: 6
+warmup_iters: 3
+skip_correctness: false
+timeout_s: 600
+idle_timeout_s: 240
+retries: 0
+variants:
+  - ours_l01_s2_swap_force_p2p_r2_pv3c_eps025
+extra_env:
+  CUDA_DEVICE_MAX_CONNECTIONS: "24"
+notes: "c24v_4n_s2gate_qwen"
