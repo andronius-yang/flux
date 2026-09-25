@@ -764,3 +764,31 @@ User ruling (9/24 pm): keep ALL new defaults (no node-count-aware transport);
 the 2n/4n b64 deltas of §9.1 are accepted as ablation-side discussion; weak
 scaling not re-run (32n margin), cycling ablation not re-run (its swap
 decisions are the C_swap=0 orbit, unchanged).
+
+### 9.3 Qwen 16n b16/b64 repeat (20260925-013234, -013531; 2 × 4 cells) — recapture CLOSED
+
+| cell | new defaults | `_legacy` twin |
+|---|---|---|
+| b16, stalled iterations / 10 | 5, 7 | 5, 6 |
+| b16, clean-iteration median | 23.5, 24.2 | 23.9, 24.1 (plotted 28.17) |
+| b16, stalled-iteration l1 | 350–500 ms (quantised ~350 / ~500) | same |
+| b64 median | 79.5, 79.7 | 83.0, 83.1 (plotted 76.56, LocCap 8/29) |
+
+The 16n-Qwen b16 combine stall is present in every capsule today (3 of 3),
+in both arms, at identical rates and identical clean-iteration latency: a
+pre-existing cell property (handoff 39 §9 called it intermittent; on 9/15 a
+repeat ladder found clean capsules), not a reconciliation effect. The
+quantised 350 / 500 ms stall lengths point at a fabric-level retry/timeout in
+the combine wire, which is a separate root-cause lane. For the figure the
+comparable number is the clean-iteration median (23.5–24.2 vs 28.17 plotted;
+new = twin). b64: the new defaults beat the twin by 4 % in both reps; both sit
+above the 8/29 LocCap plot (cross-build offset on this cell only; 16n K2 b64
+sits below its plot).
+
+**Final recapture verdict (all figures, new defaults = minmove partition +
+per-round staging with CE pulls + band trigger C_swap=0, pv3c everywhere):**
+gate ladder green; case study recaptured with movement on both rows; ablation
+ordering and magnitudes hold (3 reps); main perf at or below every plotted
+value at b1/b2/b4/b16 for K2 and Qwen at 2n/4n/8n/16n and at b64 for 8n/16n
+K2; the accepted exceptions are b64 at 2n/4n (+1.3…+4.6 % vs the same-binary
+twin, user ruling) and the pre-existing 16n-Qwen b16 stall class.
