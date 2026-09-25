@@ -115,37 +115,6 @@ flux_rs_blocking_wire() {
       bytedance::flux::get_int_from_env("FLUX_A2AV_RS_BLOCKING_WIRE", 1) != 0;
   return v;
 }
-// 2026-09-25 (handoff 42 §10, 16n-Qwen-b16 combine stall): the schedule's
-// GEQ waits are zero-SM cuStreamWaitValue front-end waits. Under
-// CUDA_DEVICE_MAX_CONNECTIONS=1 a pending one blocks the single hardware
-// channel for every stream until its remote-written value lands, so puts
-// enqueued behind it (which other ranks wait on) stall too: intermittent
-// ~340/485 ms combine stalls at 16n. FLUX_A2AV_RS_WAIT_KERNEL=1 makes each
-// wait a one-thread spin kernel (occupies one CTA, never the channel).
-static inline bool
-flux_rs_wait_kernel() {
-  static const bool v =
-      bytedance::flux::get_int_from_env("FLUX_A2AV_RS_WAIT_KERNEL", 0) != 0;
-  return v;
-}
-static inline void
-flux_rs_wait_geq32(cudaStream_t stream, void const *addr, uint32_t value) {
-  if (flux_rs_wait_kernel()) {
-    bytedance::flux::a2av_wait_geq_u32(addr, value, stream);
-  } else {
-    CU_CHECK(bytedance::flux::CUStreamWaitValue(
-        (CUstream)stream, (CUdeviceptr)addr, value, CU_STREAM_WAIT_VALUE_GEQ));
-  }
-}
-static inline void
-flux_rs_wait_geq64(cudaStream_t stream, void const *addr, uint64_t value) {
-  if (flux_rs_wait_kernel()) {
-    bytedance::flux::a2av_wait_geq_u64(addr, value, stream);
-  } else {
-    CU_CHECK(bytedance::flux::CUStreamWaitValue64(
-        (CUstream)stream, (CUdeviceptr)addr, value, CU_STREAM_WAIT_VALUE_GEQ));
-  }
-}
 static inline void
 flux_rs_put_signal(
     void *dst,
@@ -2402,7 +2371,11 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           for (int pc = 0; pc < P; pc++) {
             for (int gi = 0; gi < NN - 1; gi++) {
               int tn = sched_remote[gi];
-              flux_rs_wait_geq32((cudaStream_t)(conv_stream), (void const *)(this->piece_group_flags_.get() + tn * 8 + pc), 1);
+              CU_CHECK(CUStreamWaitValue(
+                  conv_stream,
+                  (CUdeviceptr)(this->piece_group_flags_.get() + tn * 8 + pc),
+                  1,
+                  CU_STREAM_WAIT_VALUE_GEQ));
               for (int di = 0; di < L; di++) {
                 int dl = (my_lr + di) % L;
                 int d = tn * L + dl;
@@ -2444,7 +2417,11 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         }
         for (int gi = 0; !pieces_on && gi < NN - 1; gi++) {
           int tn = sched_remote[gi];  // production schedule (ring / size-sorted)
-          flux_rs_wait_geq32((cudaStream_t)(conv_stream), (void const *)(this->group_flags.get() + tn * this->n_split + sid), 1);
+          CU_CHECK(CUStreamWaitValue(
+              conv_stream,
+              (CUdeviceptr)(this->group_flags.get() + tn * this->n_split + sid),
+              1,
+              CU_STREAM_WAIT_VALUE_GEQ));
           for (int di = 0; di < L; di++) {
             int dl = (my_lr + di) % L;  // self first, then rotation (no incast)
             int d = tn * L + dl;
@@ -2514,7 +2491,11 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
             const int32_t *pt = this->piece_start_host_.data_ptr<int32_t>();
             uint64_t *psig = (uint64_t *)this->a2av_piece_recv_sig_.data_ptr();
             for (int pc = 0; pc < P; pc++) {
-              flux_rs_wait_geq32((cudaStream_t)(wstream), (void const *)(this->piece_wire_flags_.get() + tn * 8 + pc), 1);
+              CU_CHECK(CUStreamWaitValue(
+                  wstream,
+                  (CUdeviceptr)(this->piece_wire_flags_.get() + tn * 8 + pc),
+                  1,
+                  CU_STREAM_WAIT_VALUE_GEQ));
               const int64_t p_lo = pt[seg2 * (P + 1) + pc];
               const int64_t rows_p = pt[seg2 * (P + 1) + pc + 1] - p_lo;
               if (rows_p > 0) {
@@ -2538,7 +2519,11 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
             }
             continue;
           }
-          flux_rs_wait_geq32((cudaStream_t)(wstream), (void const *)(this->wire_flags_.get() + tn * this->n_split + sid), 1);
+          CU_CHECK(CUStreamWaitValue(
+              wstream,
+              (CUdeviceptr)(this->wire_flags_.get() + tn * this->n_split + sid),
+              1,
+              CU_STREAM_WAIT_VALUE_GEQ));
           int64_t rows = U[d * NN + my_node];
           if (rows > 0) {
             flux_rs_put_signal(
@@ -2568,7 +2553,11 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         for (int gi = 0; gi < NN - 1; gi++) {
           int tn = (my_node + 1 + gi) % NN;
           int g = dist_env.local_rank_to_global_rank(my_lr, tn);
-          flux_rs_wait_geq32((cudaStream_t)(this->internode_stream), (void const *)(this->group_flags.get() + tn * this->n_split + sid), 1);
+          CU_CHECK(CUStreamWaitValue(
+              this->internode_stream,
+              (CUdeviceptr)(this->group_flags.get() + tn * this->n_split + sid),
+              1,
+              CU_STREAM_WAIT_VALUE_GEQ));
           int64_t rows = node_chunk(this->rank, tn);
           if (rows > 0) {
             flux_rs_put_signal(
@@ -2593,7 +2582,11 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
       // intra-node: behind the own-node chunk flag; self chunk is a local CE
       // copy, peers get one contiguous putmem_signal each (CE over NVLink for
       // same-node PEs). Every pair signals every split, payload or not.
-      flux_rs_wait_geq32((cudaStream_t)(intra_stream), (void const *)(this->group_flags.get() + my_node * this->n_split + sid), 1);
+      CU_CHECK(CUStreamWaitValue(
+          intra_stream,
+          (CUdeviceptr)(this->group_flags.get() + my_node * this->n_split + sid),
+          1,
+          CU_STREAM_WAIT_VALUE_GEQ));
       if (chunk_at(this->rank, this->rank) > 0) {
         CUDA_CHECK(cudaMemcpyAsync(
             recv_ptr(sid, recv_off_active(this->rank, this->rank)),
@@ -2638,7 +2631,11 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
         for (int dn = 1; dn < NN; dn++) {
           int ns = (my_node + dn) % NN;
           int s = dist_env.local_rank_to_global_rank(my_lr, ns);
-          flux_rs_wait_geq64((cudaStream_t)(gateway_stream), (void const *)(arrival_sig + ns * this->n_split + sid), this->run_id_);
+          CU_CHECK(CUStreamWaitValue64(
+              gateway_stream,
+              (CUdeviceptr)(arrival_sig + ns * this->n_split + sid),
+              this->run_id_,
+              CU_STREAM_WAIT_VALUE_GEQ));
           const int64_t seg = seg_off(my_node, my_lr, ns);
           for (int dl = 0; dl < L; dl++) {
             int d = dist_env.local_rank_to_global_rank((my_lr - dl + L) % L, my_node);
@@ -2718,7 +2715,11 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           if (rows <= 0) {
             return;  // zero-row lanes still signal; nothing to read or wait for
           }
-          flux_rs_wait_geq64((cudaStream_t)(reduce_stream), (void const *)(recv_sig + s * this->n_split + sid), this->run_id_);
+          CU_CHECK(CUStreamWaitValue64(
+              reduce_stream,
+              (CUdeviceptr)(recv_sig + s * this->n_split + sid),
+              this->run_id_,
+              CU_STREAM_WAIT_VALUE_GEQ));
           a2av_combine_lane_reduce(
               A2AVLaneReduceArguments{
                   this->a2av_recv_panel_.data_ptr(),
@@ -2853,10 +2854,18 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
             // v2 M2: remote lanes arrive as P per-piece epoch-SET slots
             uint64_t *psig = (uint64_t *)this->a2av_piece_recv_sig_.data_ptr();
             for (int pc = 0; pc < this->piece_n_; pc++) {
-              flux_rs_wait_geq64((cudaStream_t)(reduce_stream), (void const *)(psig + (int64_t)s2 * 8 + pc), this->run_id_);
+              CU_CHECK(CUStreamWaitValue64(
+                  reduce_stream,
+                  (CUdeviceptr)(psig + (int64_t)s2 * 8 + pc),
+                  this->run_id_,
+                  CU_STREAM_WAIT_VALUE_GEQ));
             }
           } else {
-          flux_rs_wait_geq64((cudaStream_t)(reduce_stream), (void const *)(recv_sig + s2 * this->n_split + sid), this->run_id_);
+          CU_CHECK(CUStreamWaitValue64(
+              reduce_stream,
+              (CUdeviceptr)(recv_sig + s2 * this->n_split + sid),
+              this->run_id_,
+              CU_STREAM_WAIT_VALUE_GEQ));
           }
           a2av_combine_bucket_reduce(
               A2AVBucketReduceArguments{
@@ -2880,7 +2889,11 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           if (this->a2av_compress_ && s / L != my_node && s % L != my_lr) {
             continue;  // lane never materializes under C'
           }
-          flux_rs_wait_geq64((cudaStream_t)(reduce_stream), (void const *)(recv_sig + s * this->n_split + sid), this->run_id_);
+          CU_CHECK(CUStreamWaitValue64(
+              reduce_stream,
+              (CUdeviceptr)(recv_sig + s * this->n_split + sid),
+              this->run_id_,
+              CU_STREAM_WAIT_VALUE_GEQ));
         }
         if (this->a2av_compress_) {
           A2AVCombineCSRReduceArguments csr_args{
@@ -3186,7 +3199,11 @@ class TopkReduceScatterOp::TopkReduceScatterOpImpl {
           cudaStream_t wstream =
               (wire_lane > 0) ? (cudaStream_t)this->internode_streams2_[wire_lane - 1]
                               : (cudaStream_t)this->internode_stream;
-          flux_rs_wait_geq32((cudaStream_t)(wstream), (void const *)(this->group_flags.get() + idx), 1);
+          CU_CHECK(CUStreamWaitValue(
+              wstream,
+              (CUdeviceptr)(this->group_flags.get() + idx),
+              1,
+              CU_STREAM_WAIT_VALUE_GEQ));
           flux_rs_put_signal(
               recv_base + (int64_t)(this->node_idx * this->n_split + sid) * slot_bytes,
               send_base + (int64_t)idx * slot_bytes,

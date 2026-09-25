@@ -632,9 +632,4 @@ struct A2AVDynReduceArguments {
 void a2av_combine_dyn_reduce(
     A2AVDynReduceArguments const &args, DataTypeEnum dtype, cudaStream_t stream);
 
-// Kernel-based GEQ waits (one-thread spin CTA on `stream`), the alternative
-// to zero-SM cuStreamWaitValue front-end waits under FLUX_A2AV_RS_WAIT_KERNEL=1.
-void a2av_wait_geq_u32(void const *addr, uint32_t value, cudaStream_t stream);
-void a2av_wait_geq_u64(void const *addr, uint64_t value, cudaStream_t stream);
-
 }  // namespace bytedance::flux
