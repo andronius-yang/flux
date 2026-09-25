@@ -740,3 +740,27 @@ on K2. Per-round staging itself is free at every node count once its pulls are
 off the proxy. Recommendation pending the user's ruling: node-count-aware pull
 transport (CE pulls at ≥ 8 nodes, getmem below); Qwen b64 repeat at 8n/16n
 before deciding on a node-count-aware partition default. 16n Qwen queued.
+
+### 9.2 Qwen 16n, pv3c C=1/2 at every budget (20260925-010102, 10/10; b64 at 13G)
+
+| | b1 | b2 | b4 | b16 | b64 |
+|---|---|---|---|---|---|
+| new defaults | 6.11 | 7.08 | 9.08 | 397.0* | 80.52 |
+| `_legacy` twin | 6.46 | 6.87 | 9.04 | 80.1* | 83.01 |
+| plotted (9/15 b1–b16; 8/29 LocCap b64) | 12.32 | 13.02 | 14.79 | 28.17 | 76.56 |
+
+\* **b16 = the known intermittent 16n-Qwen combine stall** (handoff 39 §9:
+"~350 ms stall, l1 340 ms with equal lane brackets"): per-iteration l1 is
+bimodal in BOTH arms — clean iterations 10.1–10.9 ms (total 22–25, below the
+plotted 28.17), stalled iterations 340–491 ms (new defaults 6/10 iterations,
+twin 4/10). It is independent of the reconciliation (the twin stalls too) and
+was handled in the 9/15 campaign by a b16 repeat ladder; a b16/b64 repeat
+window (`final_mp_16n_qwen_b16b64_rep`, 2 reps) is queued. b64: the new
+defaults beat the twin by 3.1 % but both read above the 8/29 plotted LocCap
+value (76.56) — a cross-build/day offset on this cell (the same binary's twin
+is +8.4 %); the repeat window re-reads it.
+
+User ruling (9/24 pm): keep ALL new defaults (no node-count-aware transport);
+the 2n/4n b64 deltas of §9.1 are accepted as ablation-side discussion; weak
+scaling not re-run (32n margin), cycling ablation not re-run (its swap
+decisions are the C_swap=0 orbit, unchanged).
