@@ -130,7 +130,6 @@ flux_rs_wait_kernel() {
 }
 static inline void
 flux_rs_wait_geq32(cudaStream_t stream, void const *addr, uint32_t value) {
-  using bytedance::flux::get_cu_error_string;  // CU_CHECK expands unqualified
   if (flux_rs_wait_kernel()) {
     bytedance::flux::a2av_wait_geq_u32(addr, value, stream);
   } else {
@@ -140,7 +139,6 @@ flux_rs_wait_geq32(cudaStream_t stream, void const *addr, uint32_t value) {
 }
 static inline void
 flux_rs_wait_geq64(cudaStream_t stream, void const *addr, uint64_t value) {
-  using bytedance::flux::get_cu_error_string;  // CU_CHECK expands unqualified
   if (flux_rs_wait_kernel()) {
     bytedance::flux::a2av_wait_geq_u64(addr, value, stream);
   } else {
