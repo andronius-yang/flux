@@ -966,3 +966,44 @@ narrowest margins are 4n K2 b1 (+6 %) and b4 (+8 %) against Comet. Note the 16n 
 rows are ~2× better than the 9/15 reads (the 9/23–24 reconciliation binary + pin). The
 direct-wire and swap-on columns are the only pre-reconciliation numbers left; they are never
 the min, so regenerating the Ours rows from the fused c24 column alone is consistent.
+
+## 12. FINAL main-perf candidate campaign (2026-09-25 13:01–13:57; user narrative, one job per node count)
+
+Three Ours candidates on the consolidated implementation, min per cell = paper value:
+direct wire (placement + pv3c routing, no comm/comp overlap; its canonical 8-channel pin),
+fused (everything except expert swap), fused + 3D-scheduled band swap
+(`ablation_l01_s2_swapall_nr_3d_dual3_str4_bal_p2p_r2_pv3c_eps{025,05}`, the case-study
+arm without the drift replay). K2 + Qwen, 4n/8n/16n, b1/b4/b16, 10 timed iterations,
+rank-max median, correctness off (gated 9/25 am on the new pin). Capsules
+20260925-200150/-200638 (4n), -203721/-204147 (8n), -204837/-205308 (16n): 52/54 cells ok;
+the two failures are 16n direct-wire b16 (K2, Qwen): `NVSHMEM_MALLOC failed` at setup
+(the direct arm's heap sizing), a missing cell, not a hang. Zero stalled iterations.
+
+```
+cell            direct    fused  swap-3d     min   winner   best baseline   margin
+ 4n K2   b1       6.06      3.80      4.37     3.80    fused          comet    4.04     +6%
+ 4n K2   b4      11.61      5.77      6.43     5.77    fused          comet    6.26     +9%
+ 4n K2   b16     33.86     13.86     14.91    13.86    fused          comet   16.29    +17%
+ 4n Qwen b1       4.66      2.82      3.36     2.82    fused          comet    4.46    +58%
+ 4n Qwen b4      10.14      4.37      4.89     4.37    fused          comet    5.93    +36%
+ 4n Qwen b16     32.40     11.40     12.07    11.40    fused          comet   15.02    +32%
+ 8n K2   b1       5.74      4.37      5.38     4.37    fused          comet    6.77    +55%
+ 8n K2   b4      12.08      7.27      8.06     7.27    fused          comet   10.90    +50%
+ 8n K2   b16     38.71     17.77     17.61    17.61  swap-3d           epic   28.46    +62%
+ 8n Qwen b1       5.17      4.46      4.19     4.19  swap-3d           eplb    7.30    +74%
+ 8n Qwen b4      12.11      6.00      6.83     6.00    fused          comet   10.63    +77%
+ 8n Qwen b16     40.07     15.58     15.63    15.58    fused          comet   28.34    +82%
+16n K2   b1       6.09      6.57      7.54     6.09   direct           eplb    9.75    +60%
+16n K2   b4      14.16      9.88     10.75     9.88    fused           eplb   19.82   +101%
+16n K2   b16          —    26.29     26.24    26.24  swap-3d           epic   39.39    +50%
+16n Qwen b1       5.83      6.00      6.73     5.83   direct           eplb    8.12    +39%
+16n Qwen b4      14.25      9.12     10.12     9.12    fused           eplb   16.81    +84%
+16n Qwen b16          —    23.21     24.56    23.21    fused           epic   42.78    +84%
+* = a stalled iteration (l1 > 100 ms) in that arm
+```
+
+Reading: fused wins 13 of 16 decided cells; the 3D swap arm wins 8n K2 b16, 8n Qwen b1 and
+16n K2 b16 by 1–6 % (noise-level; it is fused plus the ~1–2 ms decision tax); direct wire
+wins 16n b1 for both models by 3–8 % (its historical row) and loses every b4/b16 by ≥ 45 %.
+Every min is below every plotted baseline; narrowest margin 4n K2 b1 (+6 %). The 16n direct
+b16 cells can be completed with a spec-level heap override if the column must be full.
