@@ -923,3 +923,46 @@ plotted 28.17. K2 b16 at 16n carries the known c24 cost (+8 % vs the c32 read) a
 (4n s1 b1/b4/b16 + s2 b16/b64, K2 + Qwen, random payload; capsules 20260925-1632xx..1642xx).
 Open: whether the paper dataset re-reads EVERY Ours row on the new pin (strict; 2n/4n/8n
 windows) or only the 16n rows (lenient) — user ruling pending.
+
+## 11. Knob table on the consolidated implementation (2026-09-25 12:40) — pre-regeneration check
+
+Consolidated implementation = pv3c router at the figure's C (1/4 at ≤ 8n, 1/2 at 16n),
+minimal-move partition, per-round staging + P2P pulls, band trigger (C_swap = 0),
+`CUDA_DEVICE_MAX_CONNECTIONS=24`. "fused c24" = today's capsules (c24v_*, cmid_*_c24,
+pin24_16n_*, c24vb; rank-max median over 10 iterations, mean over n reps). "direct" and
+"swap-on" = the 9/15 pv3c recapture rows at the same C (figure_src_pv3c.csv; pre-reconciliation
+binary, their own pins) — they never beat the fused arm anywhere, so the min-over-knobs is the
+fused arm in all 24 cells. Baselines = the plotted values (8/29–9/3 capsules).
+
+| cell | fused c24 (n) | fused 9/15 | direct 9/15 | swap-on 9/15 | min | best baseline | margin |
+|---|---|---|---|---|---|---|---|
+| 4n K2 b1 | 3.83 (2) | 4.03 | 6.08 | 4.75 | 3.83 | comet 4.04 | +6 % |
+| 4n K2 b4 | 5.81 (2) | 6.11 | 12.13 | 6.79 | 5.81 | comet 6.26 | +8 % |
+| 4n K2 b16 | 13.42 (2) | 14.27 | 36.52 | 15.31 | 13.42 | comet 16.29 | +21 % |
+| 4n K2 b64 | 46.72 (2) | — | — | — | 46.72 | comet 63.72 | +36 % |
+| 4n Qwen b1 | 2.85 (2) | 3.03 | 4.77 | 3.73 | 2.85 | comet 4.46 | +56 % |
+| 4n Qwen b4 | 4.37 (2) | 4.67 | 10.42 | 5.34 | 4.37 | comet 5.93 | +36 % |
+| 4n Qwen b16 | 11.32 (2) | 11.81 | 35.37 | 12.66 | 11.32 | comet 15.02 | +33 % |
+| 4n Qwen b64 | 41.08 (2) | — | — | — | 41.08 | comet 54.94 | +34 % |
+| 8n K2 b1 | 4.25 (2) | 5.84 | 6.08 | 7.00 | 4.25 | comet 6.77 | +59 % |
+| 8n K2 b4 | 7.59 (2) | 8.60 | — | 9.56 | 7.59 | comet 10.90 | +44 % |
+| 8n K2 b16 | 17.26 (2) | 19.16 | — | 20.47 | 17.26 | epic 28.46 | +65 % |
+| 8n K2 b64 | 59.03 (2) | — | — | — | 59.03 | epic 93.79 | +59 % |
+| 8n Qwen b1 | 3.65 (2) | 5.27 | — | 6.11 | 3.65 | eplb 7.30 | +100 % |
+| 8n Qwen b4 | 6.11 (2) | 7.74 | — | 8.09 | 6.11 | comet 10.63 | +74 % |
+| 8n Qwen b16 | 14.92 (2) | 16.74 | — | 17.43 | 14.92 | comet 28.34 | +90 % |
+| 8n Qwen b64 | 53.71 (2) | — | — | — | 53.71 | comet 100.25 | +87 % |
+| 16n K2 b1 | 6.27 (4) | 12.53 | 7.04 | 13.54 | 6.27 | eplb 9.75 | +56 % |
+| 16n K2 b4 | 9.90 (4) | 15.51 | 15.51 | 17.17 | 9.90 | eplb 19.82 | +100 % |
+| 16n K2 b16 | 25.80 (3) | 29.31 | — | 29.42 | 25.80 | epic 39.39 | +53 % |
+| 16n K2 b64 | 84.55 (3) | — | — | — | 84.55 | epic 127.08 | +50 % |
+| 16n Qwen b1 | 5.90 (5) | 12.32 | 6.73 | 13.82 | 5.90 | eplb 8.12 | +38 % |
+| 16n Qwen b4 | 9.33 (4) | 14.79 | 15.51 | 16.22 | 9.33 | eplb 16.81 | +80 % |
+| 16n Qwen b16 | 23.59 (7) | 28.16 | — | 28.35 | 23.59 | epic 42.78 | +81 % |
+| 16n Qwen b64 | 81.25 (7) | — | — | — | 81.25 | epic 142.05 | +75 % |
+
+No stalled iteration in any fused c24 cell. Every min is below every plotted baseline; the
+narrowest margins are 4n K2 b1 (+6 %) and b4 (+8 %) against Comet. Note the 16n b1/b4 fused
+rows are ~2× better than the 9/15 reads (the 9/23–24 reconciliation binary + pin). The
+direct-wire and swap-on columns are the only pre-reconciliation numbers left; they are never
+the min, so regenerating the Ours rows from the fused c24 column alone is consistent.
