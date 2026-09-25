@@ -1007,3 +1007,19 @@ Reading: fused wins 13 of 16 decided cells; the 3D swap arm wins 8n K2 b16, 8n Q
 wins 16n b1 for both models by 3–8 % (its historical row) and loses every b4/b16 by ≥ 45 %.
 Every min is below every plotted baseline; narrowest margin 4n K2 b1 (+6 %). The 16n direct
 b16 cells can be completed with a spec-level heap override if the column must be full.
+
+## 13. Pruning ledger (2026-09-25, user ruling)
+
+Removed from the tree in one commit: **127 capsules** (0 of 9/24, 127 of 9/25; 148 MB)
+and **100 specs**, all diagnostics whose conclusions are recorded above and whose numbers no
+handoff table, SCHEMA rule or figure source quotes: the channel-ladder twins not quoted in §10.1
+(c2/c4/c8/c16/c28 arms and reps), both illegal-memory-access hunts (§10.1; 0/18 + 1/4 reproduction,
+unlocalized), the refuted kernel-wait attempts (§10), the cancelled knob-campaign fragments (§11
+was built from existing data), the smoke runs, and the pre-fix reconciliation probes
+(recon_smallb / recon_wedge / rpr / rpr_ab / dovdev). Kept: 105 capsules and 42 specs — the
+reconciliation A/B and gates (§4–5), the case study and ablation reps (§6), the final recapture
+(§9), the stall/channel windows quoted in §10–10.1, the pin gates and 16n re-read (§9.4/10.2),
+and the candidate campaign behind `figs/main_perf_v4` (§12). Rule applied: a capsule survives if
+a handoff, SCHEMA or figure source quotes its id; a spec survives if it defines a de-facto arm's
+campaign (final3, final_mp, final_gate_ladder, final_abl, final_b64iso, pin24, recon_cs,
+recon_abl, recon_gate, recon_ab, rpr3). Removed ids are in the commit; the git history keeps them.
