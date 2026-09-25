@@ -1,0 +1,34 @@
+G: 128
+H: 4096
+budgets_mib:
+  - 16
+chunk_bytes: 8192
+dtype: bfloat16
+extra_env:
+  FI_CXI_REQ_BUF_MIN_POSTED: "8"
+  FI_CXI_REQ_BUF_SIZE: "16777216"
+  FI_CXI_RX_MATCH_MODE: hybrid
+  FI_LOG_LEVEL: warn
+  FI_LOG_PROV: cxi
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+ffn_hidden: 1536
+idle_timeout_s: 200
+iters: 10
+matrix_instance: "001"
+modes:
+  - isolated
+n_split_l1: 4
+nodes: 16
+notes: stall RCA reqbuf
+platform: perlmutter
+profile_iters: 3
+retries: 0
+shape: qwen3
+skip_correctness: true
+sm_margin: 8
+timeout_s: 500
+topk: 8
+variants:
+  - ours_l01_s1_pv2_r2_pv3c_eps05
+warmup_iters: 5
