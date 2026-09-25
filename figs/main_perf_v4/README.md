@@ -32,6 +32,15 @@ fused capsules (mean over reps, flag `b64_fused_conn24_20260925…`, not plotted
 candidate-campaign row (not plotted). The legacy forced-swap arm (v3's `ours12_dispatch`) is
 retired from main perf; `ours1_tokencomm` and `ours2_nooverlap` are not candidates in v4.
 
+## COMET+EPLB knob (user ruling 2026-09-25)
+
+`make_figure.py` `CONFIG["INCLUDE_COMET_EPLB"]` — **default `False`**: the v4 renders carry the seven
+bars of `figs/main_perf` (6 baselines + Ours). Set it to `True` to restore v3's eighth bar
+(COMET+EPLB, deep plum, between COMET and Ours). With the bar ON, Ours is not the fastest at 4n K2
+b1/b4 (0.97x / 0.96x vs COMET+EPLB) and leads by 1.04x at 4n K2 b16; everywhere else Ours leads
+by 1.09–1.84x (handoff 42 §12 note). The `figure_src.csv` rows `comet_eplb` / `comet_v3anchor`
+stay in the file either way.
+
 ## Files
 
 - `build_figure_src_v4.py` — regenerates `figure_src.csv` from v3 + the capsules (run from anywhere).

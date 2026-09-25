@@ -23,6 +23,9 @@ CONFIG = dict(
     BUDGETS=[1, 4, 16],                       # MiB, group order left->right
     ROWS=["4", "8", "16"],                    # topology per subfigure ROW (top->bottom)
     COLS=["Qwen", "K2"],                      # model per subfigure COLUMN (left->right)
+    # v4 (2026-09-25, user ruling): the COMET+EPLB bar is an explicit knob,
+    # DEFAULT OFF. INCLUDE_COMET_EPLB=True restores v3's eight-bar layout.
+    INCLUDE_COMET_EPLB=False,
     SYSTEMS=[                                 # fixed bar order (SPEC 2.1; v3: +comet_eplb)
         "fast_gemm", "nvshmem_gemm", "moonep", "eplb", "epic", "comet",
         "comet_eplb", "OURS",
@@ -140,6 +143,9 @@ CONFIG = dict(
     VARIANTS=[("main_perf_v4_samebinary", {"comet": "comet_v3anchor"})],
 )
 # =============================================================================
+
+if not CONFIG.get("INCLUDE_COMET_EPLB", False):
+    CONFIG["SYSTEMS"] = [s for s in CONFIG["SYSTEMS"] if s != "comet_eplb"]
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
