@@ -136,3 +136,16 @@ deleted.
 - Keep K2 in the open-source example even though the SGLang run is Qwen-only? (traces are cheap; weights are not needed for the replay bench)
 - Trace hosting: in-repo vs fetch script (size to be measured).
 - Repo name / package name.
+
+## 8. User rulings on §7 (2026-09-25)
+
+1. **Router**: no "off" state; C is a configurable float and the reproduction script's defaults
+   match the figure's tested values (1/4 at ≤ 8 nodes, 1/2 at 16).
+2. **No-overlap row**: removed from the plan; `wire=direct` is the only non-overlap point.
+3. **K2 stays** in the open-source example alongside Qwen (replay needs traces, not weights).
+4. **Traces**: LiveCodeBench only (what main perf needs), kept in-repo if the size allows
+   (measured below); the user may revisit.
+5. **Repo / package name**: to be discussed with the postdoc; a placeholder is used and renamed
+   later (package name appears only in imports, setup metadata and the README — a mechanical rename).
+Also ruled earlier: 2n is not part of the reproduce script; swap-decision compression happens in
+the extraction (band test first, decision off the critical path).
