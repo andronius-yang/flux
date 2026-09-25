@@ -792,3 +792,67 @@ ordering and magnitudes hold (3 reps); main perf at or below every plotted
 value at b1/b2/b4/b16 for K2 and Qwen at 2n/4n/8n/16n and at b64 for 8n/16n
 K2; the accepted exceptions are b64 at 2n/4n (+1.3…+4.6 % vs the same-binary
 twin, user ruling) and the pre-existing 16n-Qwen b16 stall class.
+
+## 10. The 16n-Qwen-b16 combine stall — root cause (2026-09-25)
+
+History: flagged open in handoff 30 (8/30), reproduced in 31 and 39, handled by excluding
+>2x-plot cells and re-running; 9/24 final recapture: 3/3 capsules, 50-70 % of iterations,
+BOTH arms, l1 340-490 ms (quantised ~340 / ~430 / ~485), clean iterations 22-25 ms.
+
+**Shape** (capsule 20260925-013531): on every stalled iteration all 64 ranks report the
+same l1 within 0.4 ms (one dependency holds the collective); l0 is clean (10-11 ms) on
+the same iterations; no libfabric/NVSHMEM warnings at default logging.
+
+**Window 1** (job 58854731, capsules 20260925-072918 base, -073007 hybrid, -073049
+software, -073130 reqbuf, -073209 timing) — fabric hypothesis REJECTED:
+
+| arm | stalled / 10 |
+|---|---|
+| base (FI_LOG_LEVEL=warn FI_LOG_PROV=cxi) | 6 |
+| FI_CXI_RX_MATCH_MODE=hybrid | 7 |
+| FI_CXI_RX_MATCH_MODE=software | 6 |
+| hybrid + FI_CXI_REQ_BUF_SIZE=16M, MIN_POSTED=8 | 6 |
+| FLUX_A2AV_TIMING=1 | **0** |
+
+libfabric warn logs: only benign init lines (av insert, hmem dlopen), no flow-control /
+LE / retry events in any arm. FLUX_A2AV_TIMING is read by the DISPATCH op only; its
+material effect is a `cudaEventSynchronize` at the end of the dispatch forward
+(ag_scatter.cc ~5145): the host cannot run ahead into the combine while l0 executes
+(the isolated driver `test_moe_l0l1_traffic.py` syncs + barriers before each iteration
+only; plan/l0/act/l1 are enqueued back-to-back).
+
+**Window 2** (job 58857561, capsules 20260925-081526 base, -081612 timing, -081648
+conn8, -081934 spintrap; ws2/ws1/nsys cells failed with illegal memory accesses in
+knob-specific paths, unrelated):
+
+| arm | stalled | l0 med | l1 clean med | total clean med |
+|---|---|---|---|---|
+| base | 6/10 | 10.89 | 11.01 | 24.12 |
+| FLUX_A2AV_TIMING=1 | 0/20 | 11.83 | 11.26 | 25.26 |
+| CUDA_DEVICE_MAX_CONNECTIONS=8 | **0/10** | 12.02 | 10.50 | 25.17 |
+| FLUX_A2AV_RS_SPIN_LIMIT=1e6 | 7/10, trap never fired | | | |
+
+**Root cause.** `launch.sh` sets `CUDA_DEVICE_MAX_CONNECTIONS=1` (inherited from
+upstream Flux). The combine schedule (`run_a2av_hier`) paces its ladders with 12
+zero-SM `cuStreamWaitValue{,64}` GEQ waits (pack/wire/piece flags, gateway arrival
+signals, per-lane recv signals). A stream-memory wait executes in the GPU front-end:
+with one hardware channel a pending wait blocks EVERY stream's later work until its
+value lands, and several of those values are written by remote ranks' puts. Puts
+enqueued behind a blocked wait are the puts other ranks are waiting on, so the
+collective head-of-line blocks until the cycle happens to break (the quantised
+~340/485 ms lengths are the front-end wait's poll/retry cadence, not a fabric timer).
+It is a scheduling property of the combine + single channel, so it hits both arms,
+Qwen 16n b16 most (16 wire streams × splits with small per-lane payloads), and it is
+invisible to fabric counters and logs. 8 channels remove it but cost the dispatch
+~1.1 ms at this cell (the dispatch relies on the single channel's enqueue order), so
+the global setting is not the fix.
+
+**Fix (commit d1b978f, knob default OFF):** `FLUX_A2AV_RS_WAIT_KERNEL=1` replaces each
+of the 12 waits with a one-thread spin kernel (`a2av_wait_geq_u32/u64`, acquire.sys
+loads + `__nanosleep(100)`) that occupies one CTA instead of the channel. Same GEQ
+semantics, no nbi puts introduced (wire-ordering rule untouched). Validation in
+flight: rebuild + 4n correctness gates (random payload, K2 + Qwen, b4/b16) + 4n Qwen
+main-perf twins w0/w1 (job 58859295); 16n Qwen b16/b64 base vs waitk vs conn8 (job
+58859297, gated on the rebuild marker). Adoption rule: waitk goes default only if the
+16n stall count is 0 across reps AND the same-binary twins show no total_ms loss at
+4n/8n/16n under main-perf conditions (SCHEMA rules 4/17).
