@@ -832,27 +832,29 @@ knob-specific paths, unrelated):
 | CUDA_DEVICE_MAX_CONNECTIONS=8 | **0/10** | 12.02 | 10.50 | 25.17 |
 | FLUX_A2AV_RS_SPIN_LIMIT=1e6 | 7/10, trap never fired | | | |
 
-**Root cause.** `launch.sh` sets `CUDA_DEVICE_MAX_CONNECTIONS=1` (inherited from
-upstream Flux). The combine schedule (`run_a2av_hier`) paces its ladders with 12
-zero-SM `cuStreamWaitValue{,64}` GEQ waits (pack/wire/piece flags, gateway arrival
-signals, per-lane recv signals). A stream-memory wait executes in the GPU front-end:
-with one hardware channel a pending wait blocks EVERY stream's later work until its
-value lands, and several of those values are written by remote ranks' puts. Puts
-enqueued behind a blocked wait are the puts other ranks are waiting on, so the
-collective head-of-line blocks until the cycle happens to break (the quantised
-~340/485 ms lengths are the front-end wait's poll/retry cadence, not a fabric timer).
-It is a scheduling property of the combine + single channel, so it hits both arms,
-Qwen 16n b16 most (16 wire streams × splits with small per-lane payloads), and it is
-invisible to fabric counters and logs. 8 channels remove it but cost the dispatch
-~1.1 ms at this cell (the dispatch relies on the single channel's enqueue order), so
-the global setting is not the fix.
+**What the two windows establish.** The stall is a GPU-side scheduling interaction in
+the combine, not a fabric event, and it depends on the CUDA hardware-channel count:
+production cells run with `CUDA_DEVICE_MAX_CONNECTIONS=32` (recorded in every capsule's
+env; the dispatch FLUX_CHECKs > 1 under FLUX_A2AV_EARLY_LAUNCH, so `launch.sh`'s `:-1`
+default never applies to the ours arm) and stall 6/10; at 8 channels the same cell ran
+0/10 with a better clean l1 (10.50 vs 11.01) but a slower l0 (12.02 vs 10.89) in that
+single read. A host wait at the end of the dispatch (FLUX_A2AV_TIMING) also removes it
+(0/20). The quantised ~340/430/485 ms lengths are unexplained; no CUPTI activity longer
+than 50 ms appears in the (warmup-only) nsys capture, so the stall is idle time.
 
-**Fix (commit d1b978f, knob default OFF):** `FLUX_A2AV_RS_WAIT_KERNEL=1` replaces each
-of the 12 waits with a one-thread spin kernel (`a2av_wait_geq_u32/u64`, acquire.sys
-loads + `__nanosleep(100)`) that occupies one CTA instead of the channel. Same GEQ
-semantics, no nbi puts introduced (wire-ordering rule untouched). Validation in
-flight: rebuild + 4n correctness gates (random payload, K2 + Qwen, b4/b16) + 4n Qwen
-main-perf twins w0/w1 (job 58859295); 16n Qwen b16/b64 base vs waitk vs conn8 (job
-58859297, gated on the rebuild marker). Adoption rule: waitk goes default only if the
-16n stall count is 0 across reps AND the same-binary twins show no total_ms loss at
-4n/8n/16n under main-perf conditions (SCHEMA rules 4/17).
+**Refuted fix (commits d1b978f/f232029, REVERTED in a83665c/7f473da).**
+`FLUX_A2AV_RS_WAIT_KERNEL=1` replaced the combine's 12 zero-SM `cuStreamWaitValue` GEQ
+waits with one-thread spin kernels. Every cell DEADLOCKED (4n gates K2/Qwen b4/b16, 16n
+b16): the persistent pack/reduce kernels saturate the SMs while they wait for data, a
+spin-kernel wait cannot be scheduled, and the puts stream-ordered behind it never issue.
+The zero-SM waits are load-bearing. Side effect: a deadlocked cell leaves the
+allocation's nodes "busy" (step creation disabled) — release and re-allocate.
+
+**Open ladder (in flight).** Same-binary twins of `CUDA_DEVICE_MAX_CONNECTIONS` ∈ {2, 4,
+8, 16, 32}: 4n Qwen b1/b4/b16/b64 (dispatch cost of each setting; 2 reps) and 16n Qwen
+b16 + b64 (stall count; c32 control vs c8, repeated). First 4n reads (c2/c4/c8, 2 reps,
+capsules 20260925-1030xx..1038xx): b64 45.3 / 43.5 / 46.8, b16 12.6 / 12.5 / 12.4 ms
+totals; the c32/c16 twins decide whether a lower channel count costs latency. Adoption
+rule unchanged: 0 stalls across reps AND no total_ms loss in same-binary twins at
+4n/8n/16n under main-perf conditions (SCHEMA rules 4/17); if every stall-free setting
+costs latency, the next step is the combine's enqueue order itself.
