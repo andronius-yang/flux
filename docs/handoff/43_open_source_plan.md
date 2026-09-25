@@ -1,6 +1,6 @@
 # 43 — Open-source (arXiv) repository plan — DRAFT for taste review (2026-09-25)
 
-Status: draft written while the conn=24 16n re-read queues; nothing has moved yet.
+Status: draft; §9 carries the 9/25 evening rulings (philosophy, vocabulary, gating, drift waiver). Nothing extracted yet.
 User direction (9/24–25): **our system only** (no baselines, no comparisons), the three
 optimizations as on/off knobs, two model shapes (Qwen3-235B, Kimi K2), the dataset fixed
 (LiveCodeBench routing traces), one script/build reproduces the main-perf numbers, clean
@@ -149,3 +149,38 @@ deleted.
    later (package name appears only in imports, setup metadata and the README — a mechanical rename).
 Also ruled earlier: 2n is not part of the reproduce script; swap-decision compression happens in
 the extraction (band test first, decision off the critical path).
+
+## 9. User rulings on the extraction philosophy (2026-09-25, evening)
+
+Guiding principle stated by the user: **simplicity, simplicity, simplicity** — bring in nothing
+legacy beyond what is required to recreate the faithful, reconciled optimizations; names must
+describe our mechanisms, not internal test schedules; the interface must be elegantly
+togglable; simple scripts on the A100 testbed must give results comparable to the main-perf
+figure.
+
+1. **No baseline lineage of any kind.** The new repo must mention neither our own legacy
+   (LocCap, pv2/pv3c/a2av/l0/l1/s1/s2/dual3/eps names) nor ANY other baseline we ran (EPIC,
+   UltraEP, EPLB, MoonEP, FAST, COMET, NCCL/NVSHMEM reference rows — those belong to the
+   experiments section, not the release). Concretely: the plan type and the `loads_from_topk` /
+   `build_nodeaware_plan` helpers currently imported from the epic/ultraep semantics modules are
+   LIFTED and renamed into the planner, never imported; the LocCap correctness reference is
+   replaced by a plain torch reference MoE. **Sole exception: Flux.** Much of our code is built
+   on it; keep the attribution (LICENSE/NOTICE) and its build skeleton, do not advertise it in
+   code, and it need not be purged as thoroughly as the others.
+2. **Vocabulary (approved / amended).** Approved: `placement`, `routing` + `router_c`, `swap`,
+   `dispatch_gemm`, `gemm_combine`. Amended: the wire knob is **`comm_strategy = overlap | direct`**
+   (not `wire=fused|direct`). **`relay` is not a public name or knob**: per-round staging + P2P
+   pulls is simply how the overlap dispatch works (the earlier redistribute-all-at-once variant was
+   not paper-honest and does not ship); it is internal to `dispatch_gemm`.
+3. **Pruning batches can be granular; gate = 4n perf check only.** No 1-node random-payload
+   gate per batch (short and quick 4n perf reads suffice).
+4. Keep Flux's cmake/pybind skeleton (approved).
+5. **Binary-drift rule explicitly waived for this pruning operation.** Only the perf of the FINAL
+   binary (after all prunes) matters; intermediate batch reads are brief checks, not measurements,
+   and SCHEMA protocol rule 4 ("cross-binary → remeasure") is NOT applied between batches. The
+   drafted plan must state this explicitly.
+6. **Comparison target = the most recent main-perf figure (`figs/main_perf_v4`).** The new repo
+   is fresh; its results are compared against main_perf_v4's Ours numbers (that was the goal of
+   the reconciliation). Tuning constants (wire streams, msplit, pack/reduce/prered blocks, wave
+   adapt, channel counts) are frozen constants in one place, not user-facing options; the public
+   surface is `comm_strategy`, `swap`, `router_c`, plus model shape and budget.
