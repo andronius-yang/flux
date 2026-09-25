@@ -909,3 +909,17 @@ plain ×6, FLUX_A2AV_TIMING=1 ×6, plan+route graphs off ×6) reproduced nothing
 cells, localization open. `CUDA_LAUNCH_BLOCKING=1` deadlocks this design (persistent spin
 kernels) and is unusable. Next tool: build with `-lineinfo` + a device-side bounds trap in the
 plan/dispatch kernels, or a 4n reproduction search.
+
+### 9.4 / 10.2 — 16n main-perf re-read on the conn=24 pin (2026-09-25 11:51; capsules 20260925-184428, -184918 Qwen; -184653 K2; 12/12 ok, 0 stalled iterations in 120)
+
+| 16n, conn=24 | b1 | b4 | b16 | b64 |
+|---|---|---|---|---|
+| Qwen (2 reps) | 5.88 (−52 % vs plotted 12.32) | 9.32 (−37 %) | **23.89 (−15 % vs 28.17; 9/24 c32 row was the stall class)** | 82.14 (+7 % vs the 8/29 LocCap plot 76.56; +2.0 % vs 9/24 c32) |
+| K2 (1 rep) | 6.20 (−51 %) | 9.79 (−36 %) | 26.48 (−10 %; +8.4 % vs 9/24 c32 24.42) | 84.71 (−1 %; +3.1 % vs 9/24 c32) |
+
+The stall row is closed: 16n Qwen b16 reads 23.9 ms with zero stalled iterations, below the
+plotted 28.17. K2 b16 at 16n carries the known c24 cost (+8 % vs the c32 read) and still sits
+10 % below the plotted value and 34 % ahead of the best baseline. Gates on the new pin: 10/10
+(4n s1 b1/b4/b16 + s2 b16/b64, K2 + Qwen, random payload; capsules 20260925-1632xx..1642xx).
+Open: whether the paper dataset re-reads EVERY Ours row on the new pin (strict; 2n/4n/8n
+windows) or only the 16n rows (lenient) — user ruling pending.
