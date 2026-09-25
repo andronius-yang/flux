@@ -5,7 +5,7 @@ shape: qwen3
 families:
   - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
 budgets_mib: [16]
-modes: [isolated]
+modes: [phases]
 iters: 10
 warmup_iters: 5
 skip_correctness: true
@@ -14,6 +14,4 @@ idle_timeout_s: 200
 retries: 0
 variants:
   - ours_l01_s1_pv2_r2_pv3c_eps05
-extra_env:
-  FLUX_A2AV_TIMING: "1"
 notes: "stall RCA phases"
