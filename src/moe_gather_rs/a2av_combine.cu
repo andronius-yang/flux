@@ -1442,4 +1442,47 @@ a2av_combine_plan(A2AVCombinePlanArguments const &args, cudaStream_t stream) {
   CUDA_CHECK(cudaGetLastError());
 }
 
+
+// ---------------------------------------------------------------------------
+// Kernel-based GEQ waits (FLUX_A2AV_RS_WAIT_KERNEL=1, 2026-09-25).
+// The combine schedule's zero-SM cuStreamWaitValue waits execute in the GPU
+// front-end: under CUDA_DEVICE_MAX_CONNECTIONS=1 a pending one blocks the
+// single hardware channel for EVERY stream until its (remote-written) value
+// lands, which head-of-line blocks later-enqueued puts other ranks wait on
+// (the intermittent ~340/485 ms 16n-Qwen-b16 combine stall; handoff 42 §10).
+// A one-thread spin kernel occupies one CTA instead of the channel.
+// ---------------------------------------------------------------------------
+__device__ __forceinline__ uint32_t
+a2av_load_acquire_sys_u32(uint32_t const *ptr) {
+  uint32_t v;
+  asm volatile("ld.global.acquire.sys.b32 %0, [%1];\n" : "=r"(v) : "l"(ptr));
+  return v;
+}
+
+__global__ void
+a2av_wait_geq_u32_kernel(uint32_t const *addr, uint32_t value) {
+  while (a2av_load_acquire_sys_u32(addr) < value) {
+    __nanosleep(100);
+  }
+}
+
+__global__ void
+a2av_wait_geq_u64_kernel(uint64_t const *addr, uint64_t value) {
+  while (load_acquire_sys_u64(addr) < value) {
+    __nanosleep(100);
+  }
+}
+
+void
+a2av_wait_geq_u32(void const *addr, uint32_t value, cudaStream_t stream) {
+  a2av_wait_geq_u32_kernel<<<1, 1, 0, stream>>>(
+      reinterpret_cast<uint32_t const *>(addr), value);
+}
+
+void
+a2av_wait_geq_u64(void const *addr, uint64_t value, cudaStream_t stream) {
+  a2av_wait_geq_u64_kernel<<<1, 1, 0, stream>>>(
+      reinterpret_cast<uint64_t const *>(addr), value);
+}
+
 }  // namespace bytedance::flux
