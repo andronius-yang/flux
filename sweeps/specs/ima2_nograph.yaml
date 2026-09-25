@@ -1,0 +1,20 @@
+# IMA hunt 2 (2026-09-25): 8n Qwen b16 s1 cell — plan + route CUDA graphs OFF (stale-pointer replay hypothesis). Perf never quoted.
+platform: perlmutter
+nodes: 8
+shape: qwen3
+families:
+  - "trace:model=Qwen3-235B;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [16]
+modes: [isolated]
+iters: 10
+warmup_iters: 5
+skip_correctness: true
+timeout_s: 600
+idle_timeout_s: 240
+retries: 0
+variants:
+  - ours_l01_s1_pv2_r2_pv3c_eps025
+extra_env:
+  FLUX_OURS_PLAN_GRAPH: "0"
+  FLUX_OURS_ROUTE_GRAPH: "0"
+notes: "ima2_nograph"
