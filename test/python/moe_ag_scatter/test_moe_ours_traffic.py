@@ -1528,6 +1528,10 @@ def main():
     torch.distributed.barrier()
     isolated = bool(int(os.getenv("FLUX_SWEEP_ISOLATED_ITERS", "0")))
     iso_sync_times = []
+    # host wall of the l0 / l1 op ENQUEUE calls (API time, not device time): a long
+    # value = the host blocked in a launch/wait call (2026-09-25 combine-stall RCA,
+    # handoff 42 §10); recorded as l0_enq_ms / l1_enq_ms, ~free
+    l0_enq_times, l1_enq_times = [], []
     move_stats = []   # (trigger, moves, bytes, movement_ms, gain_ppm)
     out = None
     _sched_dev = [t.long().cuda() for t in sched_topk_all]
@@ -1896,7 +1900,9 @@ def main():
             _hbp("l0")
             if swap_lane is not None:
                 swap_lane.mark_l0_start()   # late2/dual2 device start point
+            _t_h = time.perf_counter()
             l0_out = runner.l0_forward(inputs_shard, gate_kwargs=gate_kw)
+            l0_enq_times.append((time.perf_counter() - _t_h) * 1e3)
             if swap_lane is not None:
                 # late/split/dual issue: the exchange rides under the
                 # enqueued l0 (movement streams depend only on the pre-l0
@@ -1938,10 +1944,12 @@ def main():
             elif lane is not None:
                 lane.join_w2()
             _hbp("l1")
+            _t_h = time.perf_counter()
             if _l1_gate is not None:
                 out = runner.l1_forward(intermediate, gate_kwargs=_l1_gate)
             else:
                 out = runner.l1_forward(intermediate)
+            l1_enq_times.append((time.perf_counter() - _t_h) * 1e3)
             if swap_lane is not None:
                 with _cs_nvtx("swap.issue_l1"):
                     swap_lane.issue_l1_post()   # dual3: w2 phase after the l1 enqueue
@@ -1998,6 +2006,8 @@ def main():
                 iter_start[i].elapsed_time(e2e_end[i]))
     if isolated:
         iter_times["iso_sync_ms"] = iso_sync_times[args.warmup_iters:]
+    iter_times["l0_enq_ms"] = l0_enq_times[args.warmup_iters:]
+    iter_times["l1_enq_ms"] = l1_enq_times[args.warmup_iters:]
     if lane is not None and move_stats:
         timed_ms = move_stats[args.warmup_iters:]
         RECORDER.emit_info(
