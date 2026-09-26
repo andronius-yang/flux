@@ -91,3 +91,19 @@ src/: the 7 capacity values (B5).
 | 1 | 2.733 | 4.651 | 2.993 |
 | 4 | 4.385 | 10.252 | 4.670 |
 | 16 | 11.764 | 33.025 | 12.080 |
+
+## M4 read 3 (2026-09-26 00:06-00:11, 4n, job 58891348, qwen3): batch B3 (dead-branch deletion + ctor flags)
+
+Build d1b16a2. Dispatch 4094 -> 3104 lines, combine 4337 -> 3883. All cells match read 2 except the
+FIRST cell (b1 overlap 3.419, +25 %, with GELU/l0/l1 all inflated); a dedicated re-run of that cell
+on the same build (job 58891438, two repetitions) gave 2.797 and 2.843 -> one-off, no step change.
+| MiB | overlap | direct | swap |
+|---|---|---|---|
+| 1 | 3.419 (re-run 2.797 / 2.843) | 4.701 | 3.025 |
+| 4 | 4.386 | 10.229 | 4.621 |
+| 16 | 11.414 | 32.313 | 11.785 |
+B3 tooling: `scratchpad/b3_simplify.py` constant-folds flags line by line (declarations, ctor
+initializers and parameter lines protected; string literals were NOT protected — messages that got
+a literal substituted were reworded by hand), deletes `if (false)` blocks (else bodies become bare
+scopes), unwraps `if (true)`, folds `FLUX_CHECK(true)`. Lesson: never pass a flag that shares its
+name with a method (`a2av_dispatch` = ctor flag AND the dispatch method) — it deleted the method.
