@@ -20,3 +20,26 @@ only the final binary is compared, against `figs/main_perf_v4`.
 LCB execution pools (headers stripped; pool_sha in manifest.json). Sampler seed key kept
 verbatim from `sweeps/gen_matrix.canonical_string` (params incl. `pool=decode` and the 12-hex
 dataset fingerprint), so benchmark batches equal the capsules' routing files.
+
+## M1 notes (2026-09-25, in progress)
+
+- Copy-first (batch B0) done in the new repo: `include/flux` (26 headers), `src/{core,dispatch,combine,direct,swap,planner}`,
+  generators rewritten to bf16 x sm80 x A100 only (1 register TU per op), single library
+  `libmoe_ep_cuda.so` + pybind module `moe_ep._C` (module.cc / dispatch.cc / combine.cc / direct.cc /
+  swap.cc / routing.cc). Compile-driven cuts (anchored script, all cuts asserted): dispatch source
+  5988 -> ~4670 lines (all-gather fallback, in-kernel swap, flat fan-out, triton, profiling,
+  multi-weight, dispatch-only entries, `prepare_moe_ag_scatter_args`), combine 5111 -> 4690 (triton,
+  profiling, multi-input), headers trimmed to the used surface.
+- **Site drift found while building**: the `cudatoolkit/12.4` module now exports hpc_sdk 26.5 /
+  CUDA 13.2 on CPATH, PATH and LD_LIBRARY_PATH (nvcc itself still resolved to 12.4 through the
+  pinned CUDA_HOME). cutlass and the NVSHMEM device headers do not compile against 13.2.
+  `env/perlmutter.sh` now filters every `hpc_sdk/Linux_x86_64/2[5-9].*` and `/usr/local/cuda-13+`
+  entry and pins CUDA 12.4 + math_libs 12.4 (torch needs cusparse.h from there). The research tree's
+  fab120 env script does not filter these paths; the research build of 9/16-9/25 predates the drift.
+- Python package written (config, constants, placement, routing incl. capacities, planner, swap,
+  comm/{overlap,direct}, layer, heap) + bench (replay.py, launch.sh, traces.py). Capacities are
+  computed from the routing's own provable bounds (simplification 1 of the plan, applied at M2
+  rather than M3 so no LocCap code is ever ported); the swap decision runs the band test first
+  (simplification 2). Constants that the research driver read from the environment are frozen in
+  `python/moe_ep/constants.py`; the fused ops still read their tuning/capacity values from the
+  environment (exported by `comm/overlap.py`) until batch B5.
