@@ -206,3 +206,25 @@ the pruning (5988 -> 2765 dispatch lines, 5111 -> 3499 combine, 106 env knobs ->
 drivers -> 0) changed nothing the figure can see. M6 (full 4n grid incl. K2) and M7 (8n/16n,
 regular QOS) launched on this binary via `scripts/reproduce.sh`; 1-node `--check 1` + layer demo
 via `logs/moe_ep/final1n.sh`.
+
+## SGLang integration scoping (M8 note, against the `EPMoE` surface)
+
+Target experiment (handoff 43 §7): Perlmutter, Qwen3-235B-A22B only, TTFT/TPOT with SGLang's EP
+MoE layer replaced by `moe_ep.EPMoE`. What the layer already offers and what the integration must
+add:
+
+| need | status in `moe_ep` | integration work |
+|---|---|---|
+| construction per layer | `EPMoE(cfg, group, sizing_routing, pool_routing)` is collective and allocates symmetric buffers from provable routing bounds | one instance per MoE layer (58 for Qwen3-235B) or one shared wire with per-layer weights — the symmetric heap (6-16 GiB per rank) cannot be paid 58x, so the ops must be shared across layers and `load_weights` becomes per-layer weight *slots*; `sizing_routing` from a calibration prompt set |
+| weights | `load_weights(w1_of, w2_of)` fills `[ffn, H]` / `[H, ffn]` per expert | map SGLang's fused `w13` (gate+up) layout: the dispatch GEMM computes one `[*, ffn]` intermediate followed by GELU; Qwen3 uses SwiGLU (`silu(x W_gate) * (x W_up)`), so either the dispatch GEMM grows to `2*ffn` with a SwiGLU activation between the ops (cheap: `act` is 0.1 ms) or the kernels gain a gated epilogue — decide first |
+| routing in | `prepare(topk_ids, topk_weights)` per step | SGLang's router gives exactly these; loads exchange is the one collective and must run before the swap decision |
+| one step ahead | `prepare` and `forward` are separate; the plan is a plain object | for decode TPOT at tiny batches, run `prepare(step t+1)` on a side stream while `forward(step t)` runs — the planner's graphs are already captured; only the D2H of the loads for the swap decision is a host sync |
+| CUDA graphs | `prime()` captures the plan and scale graphs; forward is eager with host-issued NVSHMEM puts | SGLang's decode CUDA graph must treat the layer as a graph break (eager fallback), or the wire issue moves into a captured region — the host-issued blocking `putmem_signal` cannot be captured; measure the graph-break cost first |
+| process groups | the layer uses one `torch.distributed` group for its collectives and NVSHMEM for the wire | NVSHMEM bootstrap = UID over the same ranks as SGLang's EP group; `bench/launch.sh` env (heap size, `CUDA_DEVICE_MAX_CONNECTIONS=24`, libfabric/CXI) must be set before SGLang initialises CUDA |
+| shapes | `max_tokens_per_rank` sizes everything; Qwen3 1 MiB = 128 tokens per rank | decode batches are far below 1 MiB; prefill is far above (TTFT) — size for the prefill chunk and accept the idle buffer, or build two configurations |
+| memory | Qwen3-235B bf16 = ~470 GB of experts over 16 nodes x 4 x 40 GB = 2.5 TB; with 2 redundant slots per rank (+25 %) | fits at 16 nodes; the hbm80g pool relaxes KV-cache pressure |
+
+The first integration milestone is a single-layer harness inside SGLang's process (no model):
+construct `EPMoE` from the running EP group, run `prepare/forward` on the router's real
+`topk_ids`, and compare against SGLang's own MoE output — the same check `bench/replay.py
+--check 1` does against the torch reference.
