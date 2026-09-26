@@ -44,3 +44,15 @@ dataset fingerprint), so benchmark batches equal the capsules' routing files.
   (simplification 2). Constants that the research driver read from the environment are frozen in
   `python/moe_ep/constants.py`; the fused ops still read their tuning/capacity values from the
   environment (exported by `comm/overlap.py`) until batch B5.
+
+## M2 smoke (2026-09-25 23:26-23:30, 1 node, job 58890762, qwen3 b1, 2 warmup + 3 timed, --check)
+
+| strategy | swap | correctness (4 ranks) | total_ms iter_max_median | note |
+|---|---|---|---|---|
+| overlap | off | PASS 0/128 bad rows each | 1.899 | first run of the fresh repo end to end |
+| overlap | on | PASS | 2.105 (means: plan_comm 1.25, place 0.61, plan 2.05) | band swaps still executing in the timed window (only 2 warmup); 4n read uses 5+10 |
+| direct | off | -- | -- | `No registered hparams found for GemmMeta(... c=Void ...)`: the bias-free GEMM uses the void-C dtype variant, dropped by the pruned generator; restored (gen_gemm.cc), rebuilt |
+
+Environment fixes on the way (all in `env/perlmutter.sh`): CUDA 12.4 pin + path filter (13.2 drift),
+`math_libs/12.4` include (cusparse.h for torch headers), `nccl/2.24.3` module (Slingshot NCCL
+plugin: without it torch's NCCL fails with "network AWS Libfabric not found").
