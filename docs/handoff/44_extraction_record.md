@@ -400,3 +400,19 @@ Also today: `bench --check` tightened (every timed iteration, fresh payload, rea
 - Final binary = build of e252095 (+ b740cc2 script change: time limits 45/15/30 min by node
   count, 300 s per cell, 16n direct b16 cells skipped as the known heap wall). 4n grid re-run
   and 16n grid (regular QOS, 30 min) in flight on it.
+
+## 4n grid on the final binary (2026-09-26 10:34-10:50, job 58906878) + re-run
+
+13/18 within 5 %; the four swap cells are 5-10 % FASTER than published; the one slow cell,
+qwen3 b16 overlap 12.122 (+6.3 %), re-ran at 11.429 / 11.366 on the same binary (published
+11.401) -> a high draw, not a shift. Best of three below the reference ceiling in all six cells.
+Committed as `results/measured/main_perf_4n.csv` + `rerun_4n_qwen3_b16_overlap.csv`.
+| model | MiB | overlap | direct | swap | published (overlap / direct / swap) |
+|---|---|---|---|---|---|
+| qwen3 | 1 | 2.795 | 4.725 | 3.030 | 2.817 / 4.660 / 3.362 |
+| qwen3 | 4 | 4.425 | 10.213 | 4.616 | 4.366 / 10.139 / 4.893 |
+| qwen3 | 16 | 12.122 (re-run 11.429 / 11.366) | 33.019 | 12.008 | 11.401 / 32.404 / 12.072 |
+| k2 | 1 | 3.803 | 6.012 | 3.997 | 3.797 / 6.059 / 4.369 |
+| k2 | 4 | 5.796 | 11.837 | 6.068 | 5.765 / 11.614 / 6.431 |
+| k2 | 16 | 14.178 | 35.101 | 14.217 | 13.864 / 33.859 / 14.911 |
+Remaining: 16n grid on the final binary (regular QOS, 30 min, job 58906248, queued 10:29).
