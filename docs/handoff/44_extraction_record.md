@@ -15,6 +15,7 @@ only the final binary is compared, against `figs/main_perf_v4`.
 |---|---|---|---|
 | 2026-09-25 | M0 skeleton + env + traces + target | c3c35cb | `env/perlmutter.sh` sources on a login node (py 3.11, CUDA 12.4, NVSHMEM 3.2.5 module); `bench/traces.py --self-test` regenerates the six published 4n batches (qwen3/k2 × b1/b4/b16) byte-for-byte (routing sha256 match vs final3 capsules 20260925-200150/-200638); `results/expected_main_perf.csv` = 52 v4 Ours cells + plotted min + reference ceiling (min plotted baseline, numbers only) |
 | 2026-09-25 | M1 copy-first build | 9afb954 | `./build.sh` (login node, 8 jobs, CUDA 12.4 pinned) builds `libmoe_ep_cuda.so` (14.4 MB) + `moe_ep._C`; import exports the 13 expected symbols; `from moe_ep import EPMoE` works |
+| 2026-09-25 | M2+M3 python port + capacity/swap simplifications | 9afb954 (+gen fix) | 4n Qwen read 1: 7/9 cells within 5 %, swap cells 6-8 % faster than published, best-of-three below the ceiling everywhere (table below) |
 
 ## Trace slice provenance
 `data/traces/{qwen3,k2}/{eval,pool}.txt` = `pool_cache/layer5_decode_d{64_96,32_64}.txt` of the
@@ -56,3 +57,26 @@ dataset fingerprint), so benchmark batches equal the capsules' routing files.
 Environment fixes on the way (all in `env/perlmutter.sh`): CUDA 12.4 pin + path filter (13.2 drift),
 `math_libs/12.4` include (cusparse.h for torch headers), `nccl/2.24.3` module (Slingshot NCCL
 plugin: without it torch's NCCL fails with "network AWS Libfabric not found").
+
+## M2 + M3 read 1 (2026-09-25 23:32-23:37, 4 nodes, job 58890820, qwen3, 5 warmup + 10 timed, isolated)
+
+New-repo build 9afb954 + generator fix; capacities from the routing bounds (no LocCap floor), swap
+decision band-first. `results/compare.py` vs `figs/main_perf_v4`:
+
+| MiB | strategy | swap | new repo | published | delta |
+|---|---|---|---|---|---|
+| 1 | overlap | off | 2.776 | 2.817 | -1.5 % |
+| 1 | direct | off | 4.721 | 4.660 | +1.3 % |
+| 1 | overlap | on | 3.091 | 3.362 | **-8.1 %** |
+| 4 | overlap | off | 4.475 | 4.366 | +2.5 % |
+| 4 | direct | off | 10.168 | 10.139 | +0.3 % |
+| 4 | overlap | on | 4.582 | 4.893 | **-6.4 %** |
+| 16 | overlap | off | 11.629 | 11.401 | +2.0 % |
+| 16 | direct | off | 32.831 | 32.404 | +1.3 % |
+| 16 | overlap | on | 11.948 | 12.072 | -1.0 % |
+
+7/9 within the 5 % band; the two outside are the swap strategy being FASTER (band test first,
+orbit only for out-of-band nodes: place bracket 0.23 ms vs ~0.5-0.7 in the research arm). Best of
+three below the reference ceiling at every budget (2.776/4.475/11.629 vs 4.457/5.932/15.018).
+Verdict: M2 and M3 pass on Qwen 4n; the port is faithful, the two simplifications are neutral or
+better. K2 joins at M6 (full 4n grid on the final binary).
