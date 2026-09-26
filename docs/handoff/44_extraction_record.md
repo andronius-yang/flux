@@ -458,3 +458,14 @@ instance); (b) leftover dense inter-node staging allocation in the combine (268-
 names); (d) the three rank-0 log env gates. Each = one small batch + one 4n read.
 Next lane: SGLang integration per the scoping table above (one shared op instance, SwiGLU,
 prefill-sized `max_tokens_per_rank`, hbm80g pool).
+
+## Post-close batch (2026-09-26 12:40-12:58, user directive): dense staging removed
+
+moe_ep 5027029: the combine's unused dense inter-node staging buffers (`staging_send`,
+`staging_recv`, `internode_signals`; declared + allocated, never read) are gone — 2*NN*T*H*2 bytes
+of symmetric heap per rank freed (268 MB at 8n, 537 MB at 16n for Qwen b16). Allocation-only
+change; shipped binary = build of 5027029. Gate read 8 (4n qwen, job 58913250): 7/9 within 5 %,
+the two outside = swap arm faster (3.055 / 4.628 vs 3.362 / 4.893), best of three below the
+reference ceiling at every budget (2.792 / 4.435 / 11.203). The other residuals (pieces mode,
+constant getters, dispatch dense remnants, kernel-builder names, rank-0 log env gates) stay by
+user decision (main perf holds and runs; the repo is open-sourced as is).
