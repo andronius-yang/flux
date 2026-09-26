@@ -159,3 +159,34 @@ dispatch .cc 3104 -> 3035, combine .cc 3745 -> 3574.
 | 4 | 4.404 | 9.798 | 4.758 |
 | 16 | 11.713 | 31.278 | 11.878 |
 Best of three below the reference ceiling at every budget. Next: B7 (rename + purge) -> read 7 = FINAL binary.
+
+## M4/M5 batch B7 (2026-09-26 00:50-01:05): rename + purge, three commits
+
+- 6a2011f B7a/B7b: public identifiers by mechanism — `DispatchGemmOp` / `GemmCombineOp` /
+  `CombineWire` (the combine's wire class), files `src/dispatch/ths_op/dispatch_gemm.{cc,h}`,
+  `src/dispatch/dispatch_gemm_kernel.hpp`, `src/combine/ths_op/gemm_combine.{cc,h}`,
+  `src/combine/gemm_combine_kernel.hpp`, `src/combine/combine_kernels.cu`,
+  `include/flux/args/{dispatch_gemm,gemm_combine}.h`; entry methods `forward()` on both ops,
+  `combine()` inside the wire class; forward kwargs lose the `a2av_` prefix (`unique_counts`,
+  `pack_index`, `reduce_index`, `wire_csr`, `reduce_csr`); router `route()` /
+  `route_workspace_ints()` with kernels `route_{tables,budget,vacate}_kernel` / `route_kernel`
+  (the un-covered variant deleted); Python handles `dispatch_op` / `combine_op`; bench columns
+  `dispatch_ms` / `combine_ms`. Ban grep (`epic|eplb|moonep|ultraep|\bfast\b|comet|loccap|
+  placelambda|slipstream|pv2|pv3|dual3|\bs1\b|\bs2\b|\beps\b` over src python bench scripts
+  include) = 0 hits; loop variables `s1`/`s2` renamed so the gate is literal.
+  Internal identifiers keep their names per the public-only ruling: `a2av_*` buffers/kernels,
+  `A2AVStage1Arguments`, `GemmGroupedV2AGScatter_Kernel` (Flux kernel-builder pattern),
+  `relay_*`, `lb_minmove_`.
+- B7c: every comment that named a removed knob (`FLUX_A2AV_*`), a date, a capsule id, a
+  handoff, a SCHEMA rule, a "Tier B" / "gen-N" / "M4-Cn" campaign label or a user decision was
+  rewritten to describe the shipped mechanism (dispatch wire narrative, minimal-move relay,
+  per-round staging, P2P pulls, wave-pack, blocking-wire rule, fused pack, wave collapse, wire
+  lanes, bucketed receiver). Dead members those comments described went with them: flat
+  fan-out tables, fan-out streams/events, in-kernel swap scratch + timing pool, NVTX window
+  sidecar, forward-count/forward-index/pack-overlap events; `flux_rs_blocking_wire()` inlined.
+  `grep -rnE 'FLUX_A2AV_|20[0-9]{2}-[01][0-9]-|capsule|handoff|Tier B|gen-[0-9]'` = 0 in src/
+  include/ python/ bench/. The word "legacy" remains where it names Flux's dense fallback paths.
+- Sizes after B7: dispatch .cc 2765 lines (research tree: 5988), combine .cc 3499 (5111),
+  combine_kernels.cu 954 (1445), dispatch kernel header 730 (1000), sort_util.cu 453 (1426),
+  workspace_util.cu 340, routing.cu 549; src/+include/ 23.5k lines total, python+bench 2.3k;
+  repo 3.0 MB excluding 3rdparty/build/.so. Build B7 = FINAL binary -> read 7.
