@@ -1,0 +1,275 @@
+nodes,model,row_id,row_label,budget_mib,total_ms,recorded_ms,stat,arm_variant,impl,capsule,cell_id,branch,git_sha,flag
+4,K2,comet,Comet,1,4.037,4.04,iter_max_median,l01_allgather_dense,flux,20260824-153542_perlmutter_2397fca5,l01_allgather_dense_trace-610042_b1_k8_isolated,main,fc8e47070,
+4,K2,comet,Comet,2,4.722,4.72,iter_max_median,l01_allgather_dense,flux,20260824-153542_perlmutter_2397fca5,l01_allgather_dense_trace-610042_b2_k8_isolated,main,fc8e47070,
+4,K2,comet,Comet,4,6.257,6.26,iter_max_median,l01_allgather_dense,flux,20260824-153542_perlmutter_2397fca5,l01_allgather_dense_trace-610042_b4_k8_isolated,main,fc8e47070,
+4,K2,comet,Comet,16,16.286,16.29,iter_max_median,l01_allgather_dense,flux,20260824-153542_perlmutter_2397fca5,l01_allgather_dense_trace-610042_b16_k8_isolated,main,fc8e47070,
+4,K2,comet,Comet,64,63.722,63.72,iter_max_median,l01_allgather_dense,flux,20260824-153542_perlmutter_2397fca5,l01_allgather_dense_trace-610042_b64_k8_isolated,main,fc8e47070,
+4,K2,comet_eplb,COMET+EPLB,1,3.678,3.68,iter_max_median,l01_allgather_dense_eplb,flux,20260917-071106_perlmutter_b2e95c85,l01_allgather_dense_eplb_trace-610042_b1_k8_isolated,pv3,859af86,
+4,K2,comet_eplb,COMET+EPLB,4,5.541,5.54,iter_max_median,l01_allgather_dense_eplb,flux,20260917-071106_perlmutter_b2e95c85,l01_allgather_dense_eplb_trace-610042_b4_k8_isolated,pv3,859af86,
+4,K2,comet_eplb,COMET+EPLB,16,14.352,14.35,iter_max_median,l01_allgather_dense_eplb,flux,20260917-071106_perlmutter_b2e95c85,l01_allgather_dense_eplb_trace-610042_b16_k8_isolated,pv3,859af86,
+4,K2,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),1,3.650,3.65,iter_max_median,l01_allgather_dense,flux,20260917-071106_perlmutter_b2e95c85,l01_allgather_dense_trace-610042_b1_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+4,K2,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),4,5.941,5.94,iter_max_median,l01_allgather_dense,flux,20260917-071106_perlmutter_b2e95c85,l01_allgather_dense_trace-610042_b4_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+4,K2,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),16,16.337,16.34,iter_max_median,l01_allgather_dense,flux,20260917-071106_perlmutter_b2e95c85,l01_allgather_dense_trace-610042_b16_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+4,K2,epic,EPIC,1,8.042,8.04,iter_max_median,epic_l01_hc_m1,epic,20260824-154543_perlmutter_3e868187,epic_l01_hc_m1_trace-610042_b1_k8_isolated,main,fc8e47070,
+4,K2,epic,EPIC,2,8.562,8.56,iter_max_median,epic_l01_hc_m1,epic,20260824-154543_perlmutter_3e868187,epic_l01_hc_m1_trace-610042_b2_k8_isolated,main,fc8e47070,
+4,K2,epic,EPIC,4,10.405,10.41,iter_max_median,epic_l01_hc_m1,epic,20260824-154543_perlmutter_3e868187,epic_l01_hc_m1_trace-610042_b4_k8_isolated,main,fc8e47070,
+4,K2,epic,EPIC,16,20.986,20.99,iter_max_median,epic_l01_hc_m1,epic,20260824-154543_perlmutter_3e868187,epic_l01_hc_m1_trace-610042_b16_k8_isolated,main,fc8e47070,
+4,K2,epic,EPIC,64,66.537,66.54,iter_max_median,epic_l01_hc_m1,epic,20260824-154543_perlmutter_3e868187,epic_l01_hc_m1_trace-610042_b64_k8_isolated,main,fc8e47070,
+4,K2,eplb,EPLB,1,7.937,7.94,iter_max_median,eplb_l01,eplb,20260824-154143_perlmutter_0de1bd1d,eplb_l01_trace-610042_b1_k8_isolated,main,fc8e47070,
+4,K2,eplb,EPLB,2,9.612,9.61,iter_max_median,eplb_l01,eplb,20260824-154143_perlmutter_0de1bd1d,eplb_l01_trace-610042_b2_k8_isolated,main,fc8e47070,
+4,K2,eplb,EPLB,4,13.916,13.92,iter_max_median,eplb_l01,eplb,20260824-154143_perlmutter_0de1bd1d,eplb_l01_trace-610042_b4_k8_isolated,main,fc8e47070,
+4,K2,eplb,EPLB,16,37.301,37.30,iter_max_median,eplb_l01,eplb,20260824-154143_perlmutter_0de1bd1d,eplb_l01_trace-610042_b16_k8_isolated,main,fc8e47070,
+4,K2,eplb,EPLB,64,131.300,131.30,iter_max_median,eplb_l01,eplb,20260824-154143_perlmutter_0de1bd1d,eplb_l01_trace-610042_b64_k8_isolated,main,fc8e47070,
+4,K2,fast_gemm,FAST + GEMM,1,10.772,10.77,iter_max_median,l01_fast,fast,20260829-114622_perlmutter_e7ef30e3,l01_fast_trace-610042_b1_k8_e2e,fast-split,25bc4d2d3,
+4,K2,fast_gemm,FAST + GEMM,2,12.604,12.60,iter_max_median,l01_fast,fast,20260829-133740_perlmutter_ff3902f4,l01_fast_trace-610042_b2_k8_e2e,fast-split,7b68b1329,
+4,K2,fast_gemm,FAST + GEMM,4,16.131,16.13,iter_max_mean,l01_fast,fast,20260829-133740_perlmutter_ff3902f4,l01_fast_trace-610042_b4_k8_e2e,fast-split,7b68b1329,
+4,K2,fast_gemm,FAST + GEMM,16,35.680,16.13,iter_max_median,l01_fast,fast,20260829-133740_perlmutter_ff3902f4,l01_fast_trace-610042_b16_k8_e2e,fast-split,7b68b1329,recorded_16.13_transcription_error
+4,K2,fast_gemm,FAST + GEMM,64,119.894,119.89,iter_max_median,l01_fast,fast,20260829-133740_perlmutter_ff3902f4,l01_fast_trace-610042_b64_k8_e2e,fast-split,7b68b1329,
+4,K2,moonep,MoonEP,1,14.654,14.65,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-155243_perlmutter_3681d4a5,moonep_l01_nvshmem_getmem_trace-610042_b1_k8_isolated,main,fc8e47070,
+4,K2,moonep,MoonEP,2,18.562,18.56,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-155243_perlmutter_3681d4a5,moonep_l01_nvshmem_getmem_trace-610042_b2_k8_isolated,main,fc8e47070,
+4,K2,moonep,MoonEP,4,24.449,24.45,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-155243_perlmutter_3681d4a5,moonep_l01_nvshmem_getmem_trace-610042_b4_k8_isolated,main,fc8e47070,
+4,K2,moonep,MoonEP,16,43.796,43.80,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-155243_perlmutter_3681d4a5,moonep_l01_nvshmem_getmem_trace-610042_b16_k8_isolated,main,fc8e47070,
+4,K2,moonep,MoonEP,64,117.942,117.94,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-155243_perlmutter_3681d4a5,moonep_l01_nvshmem_getmem_trace-610042_b64_k8_isolated,main,fc8e47070,
+4,K2,nvshmem_gemm,NVSHMEM a2av + GEMM,1,5.355,5.36,iter_max_mean,l01_nvshmem,nvshmem,20260831-051230_perlmutter_5b301226,l01_nvshmem_trace-610042_b1_k8_isolated,main,e270e40ec,
+4,K2,nvshmem_gemm,NVSHMEM a2av + GEMM,2,7.465,7.47,iter_max_mean,l01_nvshmem,nvshmem,20260831-051230_perlmutter_5b301226,l01_nvshmem_trace-610042_b2_k8_isolated,main,e270e40ec,
+4,K2,nvshmem_gemm,NVSHMEM a2av + GEMM,4,11.697,11.70,iter_max_mean,l01_nvshmem,nvshmem,20260831-051230_perlmutter_5b301226,l01_nvshmem_trace-610042_b4_k8_isolated,main,e270e40ec,
+4,K2,nvshmem_gemm,NVSHMEM a2av + GEMM,16,40.080,40.08,iter_max_mean,l01_nvshmem,nvshmem,20260831-051230_perlmutter_5b301226,l01_nvshmem_trace-610042_b16_k8_isolated,main,e270e40ec,
+4,K2,nvshmem_gemm,NVSHMEM a2av + GEMM,64,139.727,139.73,iter_max_mean,l01_nvshmem,nvshmem,20260831-051230_perlmutter_5b301226,l01_nvshmem_trace-610042_b64_k8_isolated,main,e270e40ec,
+4,K2,ours12,1+2,1,3.803,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),k2_b1_overlap_swap0_4n,moe_ep,fc27910,open_source_build_fc27910
+4,K2,ours12,1+2,4,5.797,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),k2_b4_overlap_swap0_4n,moe_ep,fc27910,open_source_build_fc27910
+4,K2,ours12,1+2,16,14.178,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),k2_b16_overlap_swap0_4n,moe_ep,fc27910,open_source_build_fc27910
+4,K2,ours12,1+2,64,46.718,,iter_max_median,ours_l01_s1_pv2_r2_pv3c_eps025,ours,20260925-151015_perlmutter_38b6c305;20260925-151847_perlmutter_8221ea9a,ours_l01_s1_pv2_r2_pv3c_eps025_trace-610042_b64_k8_isolated,pv3,dce1e44,b64_fused_conn24_20260925_not_plotted_mean_of_2_reps;carried_from_v4
+4,K2,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",1,3.997,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),k2_b1_overlap_swap1_4n,moe_ep,fc27910,open_source_build_fc27910
+4,K2,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",4,6.068,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),k2_b4_overlap_swap1_4n,moe_ep,fc27910,open_source_build_fc27910
+4,K2,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",16,14.217,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),k2_b16_overlap_swap1_4n,moe_ep,fc27910,open_source_build_fc27910
+4,K2,ours2_direct,2Ours (expert balance + Routing + direct a2av),1,6.012,,iter_max_median,direct,moe_ep,results/measured (moe_ep fc27910),k2_b1_direct_swap0_4n,moe_ep,fc27910,open_source_build_fc27910
+4,K2,ours2_direct,2Ours (expert balance + Routing + direct a2av),4,11.837,,iter_max_median,direct,moe_ep,results/measured (moe_ep fc27910),k2_b4_direct_swap0_4n,moe_ep,fc27910,open_source_build_fc27910
+4,K2,ours2_direct,2Ours (expert balance + Routing + direct a2av),16,35.101,,iter_max_median,direct,moe_ep,results/measured (moe_ep fc27910),k2_b16_direct_swap0_4n,moe_ep,fc27910,open_source_build_fc27910
+4,Qwen,comet,Comet,1,4.457,4.46,iter_max_median,l01_allgather_dense,flux,20260824-160344_perlmutter_c69340fb,l01_allgather_dense_trace-a2e8ab_b1_k8_isolated,main,fc8e47070,
+4,Qwen,comet,Comet,2,4.901,4.90,iter_max_median,l01_allgather_dense,flux,20260824-160344_perlmutter_c69340fb,l01_allgather_dense_trace-a2e8ab_b2_k8_isolated,main,fc8e47070,
+4,Qwen,comet,Comet,4,5.932,5.93,iter_max_median,l01_allgather_dense,flux,20260824-160344_perlmutter_c69340fb,l01_allgather_dense_trace-a2e8ab_b4_k8_isolated,main,fc8e47070,
+4,Qwen,comet,Comet,16,15.018,15.02,iter_max_median,l01_allgather_dense,flux,20260824-160344_perlmutter_c69340fb,l01_allgather_dense_trace-a2e8ab_b16_k8_isolated,main,fc8e47070,
+4,Qwen,comet,Comet,64,54.940,54.94,iter_max_median,l01_allgather_dense,flux,20260824-160344_perlmutter_c69340fb,l01_allgather_dense_trace-a2e8ab_b64_k8_isolated,main,fc8e47070,
+4,Qwen,comet_eplb,COMET+EPLB,1,3.754,3.75,iter_max_median,l01_allgather_dense_eplb,flux,20260917-071304_perlmutter_f72b0109,l01_allgather_dense_eplb_trace-a2e8ab_b1_k8_isolated,pv3,859af86,
+4,Qwen,comet_eplb,COMET+EPLB,4,4.957,4.96,iter_max_median,l01_allgather_dense_eplb,flux,20260917-071304_perlmutter_f72b0109,l01_allgather_dense_eplb_trace-a2e8ab_b4_k8_isolated,pv3,859af86,
+4,Qwen,comet_eplb,COMET+EPLB,16,12.452,12.45,iter_max_median,l01_allgather_dense_eplb,flux,20260917-071304_perlmutter_f72b0109,l01_allgather_dense_eplb_trace-a2e8ab_b16_k8_isolated,pv3,859af86,
+4,Qwen,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),1,4.274,4.27,iter_max_median,l01_allgather_dense,flux,20260917-071304_perlmutter_f72b0109,l01_allgather_dense_trace-a2e8ab_b1_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+4,Qwen,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),4,5.875,5.87,iter_max_median,l01_allgather_dense,flux,20260917-071304_perlmutter_f72b0109,l01_allgather_dense_trace-a2e8ab_b4_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+4,Qwen,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),16,14.310,14.31,iter_max_median,l01_allgather_dense,flux,20260917-071304_perlmutter_f72b0109,l01_allgather_dense_trace-a2e8ab_b16_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+4,Qwen,epic,EPIC,1,6.981,6.98,iter_max_median,epic_l01_hc_m1,epic,20260824-161146_perlmutter_c8dfe3ed,epic_l01_hc_m1_trace-a2e8ab_b1_k8_isolated,main,fc8e47070,
+4,Qwen,epic,EPIC,2,7.801,7.80,iter_max_median,epic_l01_hc_m1,epic,20260824-161146_perlmutter_c8dfe3ed,epic_l01_hc_m1_trace-a2e8ab_b2_k8_isolated,main,fc8e47070,
+4,Qwen,epic,EPIC,4,9.458,9.46,iter_max_median,epic_l01_hc_m1,epic,20260824-161146_perlmutter_c8dfe3ed,epic_l01_hc_m1_trace-a2e8ab_b4_k8_isolated,main,fc8e47070,
+4,Qwen,epic,EPIC,16,20.196,20.20,iter_max_median,epic_l01_hc_m1,epic,20260824-161146_perlmutter_c8dfe3ed,epic_l01_hc_m1_trace-a2e8ab_b16_k8_isolated,main,fc8e47070,
+4,Qwen,epic,EPIC,64,68.583,68.58,iter_max_median,epic_l01_hc_m1,epic,20260824-161146_perlmutter_c8dfe3ed,epic_l01_hc_m1_trace-a2e8ab_b64_k8_isolated,main,fc8e47070,
+4,Qwen,eplb,EPLB,1,6.437,6.44,iter_max_median,eplb_l01,eplb,20260824-160844_perlmutter_41746609,eplb_l01_trace-a2e8ab_b1_k8_isolated,main,fc8e47070,
+4,Qwen,eplb,EPLB,2,8.507,8.51,iter_max_median,eplb_l01,eplb,20260824-160844_perlmutter_41746609,eplb_l01_trace-a2e8ab_b2_k8_isolated,main,fc8e47070,
+4,Qwen,eplb,EPLB,4,12.490,12.49,iter_max_median,eplb_l01,eplb,20260824-160844_perlmutter_41746609,eplb_l01_trace-a2e8ab_b4_k8_isolated,main,fc8e47070,
+4,Qwen,eplb,EPLB,16,35.541,35.54,iter_max_mean,eplb_l01,eplb,20260824-160844_perlmutter_41746609,eplb_l01_trace-a2e8ab_b16_k8_isolated,main,fc8e47070,
+4,Qwen,eplb,EPLB,64,133.057,133.06,iter_max_median,eplb_l01,eplb,20260824-160844_perlmutter_41746609,eplb_l01_trace-a2e8ab_b64_k8_isolated,main,fc8e47070,
+4,Qwen,fast_gemm,FAST + GEMM,1,10.017,10.02,iter_max_median,l01_fast,fast,20260829-134015_perlmutter_5f0fd9fb,l01_fast_trace-a2e8ab_b1_k8_e2e,fast-split,7b68b1329,
+4,Qwen,fast_gemm,FAST + GEMM,2,13.007,13.01,iter_max_median,l01_fast,fast,20260829-134015_perlmutter_5f0fd9fb,l01_fast_trace-a2e8ab_b2_k8_e2e,fast-split,7b68b1329,
+4,Qwen,fast_gemm,FAST + GEMM,4,15.922,15.92,iter_max_median,l01_fast,fast,20260829-134015_perlmutter_5f0fd9fb,l01_fast_trace-a2e8ab_b4_k8_e2e,fast-split,7b68b1329,
+4,Qwen,fast_gemm,FAST + GEMM,16,38.586,38.59,iter_max_median,l01_fast,fast,20260829-134015_perlmutter_5f0fd9fb,l01_fast_trace-a2e8ab_b16_k8_e2e,fast-split,7b68b1329,
+4,Qwen,fast_gemm,FAST + GEMM,64,128.601,128.60,iter_max_median,l01_fast,fast,20260829-134015_perlmutter_5f0fd9fb,l01_fast_trace-a2e8ab_b64_k8_e2e,fast-split,7b68b1329,
+4,Qwen,moonep,MoonEP,1,9.534,9.53,iter_max_mean,moonep_l01_nvshmem_getmem,moonep,20260824-161748_perlmutter_7ce25917,moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated,main,fc8e47070,
+4,Qwen,moonep,MoonEP,2,12.346,12.35,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-161748_perlmutter_7ce25917,moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated,main,fc8e47070,
+4,Qwen,moonep,MoonEP,4,15.667,15.67,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-161748_perlmutter_7ce25917,moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated,main,fc8e47070,
+4,Qwen,moonep,MoonEP,16,38.005,38.01,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-161748_perlmutter_7ce25917,moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated,main,fc8e47070,
+4,Qwen,moonep,MoonEP,64,117.384,117.38,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-161748_perlmutter_7ce25917,moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated,main,fc8e47070,
+4,Qwen,nvshmem_gemm,NVSHMEM a2av + GEMM,1,5.141,5.14,iter_max_mean,l01_nvshmem,nvshmem,20260831-051354_perlmutter_cbb29e30,l01_nvshmem_trace-a2e8ab_b1_k8_isolated,main,e270e40ec,
+4,Qwen,nvshmem_gemm,NVSHMEM a2av + GEMM,2,6.942,6.94,iter_max_mean,l01_nvshmem,nvshmem,20260831-051354_perlmutter_cbb29e30,l01_nvshmem_trace-a2e8ab_b2_k8_isolated,main,e270e40ec,
+4,Qwen,nvshmem_gemm,NVSHMEM a2av + GEMM,4,12.050,12.05,iter_max_mean,l01_nvshmem,nvshmem,20260831-051354_perlmutter_cbb29e30,l01_nvshmem_trace-a2e8ab_b4_k8_isolated,main,e270e40ec,
+4,Qwen,nvshmem_gemm,NVSHMEM a2av + GEMM,16,40.170,40.17,iter_max_mean,l01_nvshmem,nvshmem,20260831-051354_perlmutter_cbb29e30,l01_nvshmem_trace-a2e8ab_b16_k8_isolated,main,e270e40ec,
+4,Qwen,nvshmem_gemm,NVSHMEM a2av + GEMM,64,153.319,153.32,iter_max_mean,l01_nvshmem,nvshmem,20260831-051354_perlmutter_cbb29e30,l01_nvshmem_trace-a2e8ab_b64_k8_isolated,main,e270e40ec,
+4,Qwen,ours12,1+2,1,2.795,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),qwen3_b1_overlap_swap0_4n,moe_ep,fc27910,open_source_build_fc27910
+4,Qwen,ours12,1+2,4,4.425,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),qwen3_b4_overlap_swap0_4n,moe_ep,fc27910,open_source_build_fc27910
+4,Qwen,ours12,1+2,16,11.429,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),qwen3_b16_overlap_swap0_4n,moe_ep,fc27910,open_source_build_fc27910_median_of_3
+4,Qwen,ours12,1+2,64,41.076,,iter_max_median,ours_l01_s1_pv2_r2_pv3c_eps025,ours,20260925-151453_perlmutter_ba1fec81;20260925-152312_perlmutter_c5343f6f,ours_l01_s1_pv2_r2_pv3c_eps025_trace-a2e8ab_b64_k8_isolated,pv3,dce1e44,b64_fused_conn24_20260925_not_plotted_mean_of_2_reps;carried_from_v4
+4,Qwen,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",1,3.030,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),qwen3_b1_overlap_swap1_4n,moe_ep,fc27910,open_source_build_fc27910
+4,Qwen,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",4,4.616,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),qwen3_b4_overlap_swap1_4n,moe_ep,fc27910,open_source_build_fc27910
+4,Qwen,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",16,12.009,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),qwen3_b16_overlap_swap1_4n,moe_ep,fc27910,open_source_build_fc27910
+4,Qwen,ours2_direct,2Ours (expert balance + Routing + direct a2av),1,4.725,,iter_max_median,direct,moe_ep,results/measured (moe_ep fc27910),qwen3_b1_direct_swap0_4n,moe_ep,fc27910,open_source_build_fc27910
+4,Qwen,ours2_direct,2Ours (expert balance + Routing + direct a2av),4,10.213,,iter_max_median,direct,moe_ep,results/measured (moe_ep fc27910),qwen3_b4_direct_swap0_4n,moe_ep,fc27910,open_source_build_fc27910
+4,Qwen,ours2_direct,2Ours (expert balance + Routing + direct a2av),16,33.018,,iter_max_median,direct,moe_ep,results/measured (moe_ep fc27910),qwen3_b16_direct_swap0_4n,moe_ep,fc27910,open_source_build_fc27910
+8,K2,comet,Comet,1,6.773,6.773,iter_max_median,l01_allgather_dense,flux,20260824-161030_perlmutter_aaeb2b14,l01_allgather_dense_trace-610042_b1_k8_isolated,main,fc8e47070,
+8,K2,comet,Comet,2,7.981,7.98,iter_max_median,l01_allgather_dense,flux,20260824-161030_perlmutter_aaeb2b14,l01_allgather_dense_trace-610042_b2_k8_isolated,main,fc8e47070,
+8,K2,comet,Comet,4,10.899,10.899,iter_max_median,l01_allgather_dense,flux,20260824-161030_perlmutter_aaeb2b14,l01_allgather_dense_trace-610042_b4_k8_isolated,main,fc8e47070,
+8,K2,comet,Comet,16,29.900,29.9,iter_max_median,l01_allgather_dense,flux,20260824-161030_perlmutter_aaeb2b14,l01_allgather_dense_trace-610042_b16_k8_isolated,main,fc8e47070,
+8,K2,comet,Comet,64,113.603,113.603,iter_max_median,l01_allgather_dense,flux,20260824-161030_perlmutter_aaeb2b14,l01_allgather_dense_trace-610042_b64_k8_isolated,main,fc8e47070,
+8,K2,comet_eplb,COMET+EPLB,1,4.974,4.97,iter_max_median,l01_allgather_dense_eplb,flux,20260917-071215_perlmutter_49690677,l01_allgather_dense_eplb_trace-610042_b1_k8_isolated,pv3,859af86,
+8,K2,comet_eplb,COMET+EPLB,4,9.000,9.00,iter_max_median,l01_allgather_dense_eplb,flux,20260917-071215_perlmutter_49690677,l01_allgather_dense_eplb_trace-610042_b4_k8_isolated,pv3,859af86,
+8,K2,comet_eplb,COMET+EPLB,16,26.601,26.60,iter_max_median,l01_allgather_dense_eplb,flux,20260917-071215_perlmutter_49690677,l01_allgather_dense_eplb_trace-610042_b16_k8_isolated,pv3,859af86,
+8,K2,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),1,4.937,4.94,iter_max_median,l01_allgather_dense,flux,20260917-071215_perlmutter_49690677,l01_allgather_dense_trace-610042_b1_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+8,K2,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),4,9.559,9.56,iter_max_median,l01_allgather_dense,flux,20260917-071215_perlmutter_49690677,l01_allgather_dense_trace-610042_b4_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+8,K2,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),16,29.602,29.60,iter_max_median,l01_allgather_dense,flux,20260917-071215_perlmutter_49690677,l01_allgather_dense_trace-610042_b16_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+8,K2,epic,EPIC,1,9.933,9.933,iter_max_median,epic_l01_hc_m1,epic,20260824-161932_perlmutter_b61c1890,epic_l01_hc_m1_trace-610042_b1_k8_isolated,main,fc8e47070,
+8,K2,epic,EPIC,2,10.879,10.88,iter_max_median,epic_l01_hc_m1,epic,20260824-161932_perlmutter_b61c1890,epic_l01_hc_m1_trace-610042_b2_k8_isolated,main,fc8e47070,
+8,K2,epic,EPIC,4,12.845,12.845,iter_max_median,epic_l01_hc_m1,epic,20260824-161932_perlmutter_b61c1890,epic_l01_hc_m1_trace-610042_b4_k8_isolated,main,fc8e47070,
+8,K2,epic,EPIC,16,28.462,28.462,iter_max_median,epic_l01_hc_m1,epic,20260824-161932_perlmutter_b61c1890,epic_l01_hc_m1_trace-610042_b16_k8_isolated,main,fc8e47070,
+8,K2,epic,EPIC,64,93.794,93.794,iter_max_median,epic_l01_hc_m1,epic,20260824-161932_perlmutter_b61c1890,epic_l01_hc_m1_trace-610042_b64_k8_isolated,main,fc8e47070,
+8,K2,eplb,EPLB,1,7.974,7.974,iter_max_median,eplb_l01,eplb,20260824-161549_perlmutter_625fe535,eplb_l01_trace-610042_b1_k8_isolated,main,fc8e47070,
+8,K2,eplb,EPLB,2,10.290,10.29,iter_max_median,eplb_l01,eplb,20260824-161549_perlmutter_625fe535,eplb_l01_trace-610042_b2_k8_isolated,main,fc8e47070,
+8,K2,eplb,EPLB,4,15.967,15.967,iter_max_median,eplb_l01,eplb,20260824-161549_perlmutter_625fe535,eplb_l01_trace-610042_b4_k8_isolated,main,fc8e47070,
+8,K2,eplb,EPLB,16,46.255,46.255,iter_max_median,eplb_l01,eplb,20260824-161549_perlmutter_625fe535,eplb_l01_trace-610042_b16_k8_isolated,main,fc8e47070,
+8,K2,eplb,EPLB,64,173.827,173.827,iter_max_median,eplb_l01,eplb,20260824-161549_perlmutter_625fe535,eplb_l01_trace-610042_b64_k8_isolated,main,fc8e47070,
+8,K2,fast_gemm,FAST + GEMM,1,30.379,30.38,iter_max_median,l01_fast,fast,20260829-135702_perlmutter_36f8d83b,l01_fast_trace-610042_b1_k8_e2e,fast-split,33cd4100a,
+8,K2,fast_gemm,FAST + GEMM,2,31.459,31.46,iter_max_median,l01_fast,fast,20260829-135702_perlmutter_36f8d83b,l01_fast_trace-610042_b2_k8_e2e,fast-split,33cd4100a,
+8,K2,fast_gemm,FAST + GEMM,4,36.823,36.82,iter_max_median,l01_fast,fast,20260829-135702_perlmutter_36f8d83b,l01_fast_trace-610042_b4_k8_e2e,fast-split,33cd4100a,
+8,K2,fast_gemm,FAST + GEMM,16,61.810,61.81,iter_max_median,l01_fast,fast,20260829-135702_perlmutter_36f8d83b,l01_fast_trace-610042_b16_k8_e2e,fast-split,33cd4100a,
+8,K2,fast_gemm,FAST + GEMM,64,166.881,166.88,iter_max_median,l01_fast,fast,20260829-135702_perlmutter_36f8d83b,l01_fast_trace-610042_b64_k8_e2e,fast-split,33cd4100a,
+8,K2,moonep,MoonEP,1,17.618,17.618,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-162712_perlmutter_0d5e000e,moonep_l01_nvshmem_getmem_trace-610042_b1_k8_isolated,main,fc8e47070,
+8,K2,moonep,MoonEP,2,16.718,16.72,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-162712_perlmutter_0d5e000e,moonep_l01_nvshmem_getmem_trace-610042_b2_k8_isolated,main,fc8e47070,
+8,K2,moonep,MoonEP,4,26.455,26.455,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-162712_perlmutter_0d5e000e,moonep_l01_nvshmem_getmem_trace-610042_b4_k8_isolated,main,fc8e47070,
+8,K2,moonep,MoonEP,16,50.532,50.532,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-162712_perlmutter_0d5e000e,moonep_l01_nvshmem_getmem_trace-610042_b16_k8_isolated,main,fc8e47070,
+8,K2,moonep,MoonEP,64,162.550,162.55,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-162712_perlmutter_0d5e000e,moonep_l01_nvshmem_getmem_trace-610042_b64_k8_isolated,main,fc8e47070,
+8,K2,nvshmem_gemm,Torch a2av (not ag) + GEMM,1,9.237,9.24,iter_max_mean,l01_nvshmem,nvshmem,20260831-052029_perlmutter_2e94d27b,l01_nvshmem_trace-610042_b1_k8_isolated,main,e270e40ec,label_torch_a2av_is_l01_nvshmem
+8,K2,nvshmem_gemm,Torch a2av (not ag) + GEMM,2,10.953,10.95,iter_max_mean,l01_nvshmem,nvshmem,20260831-052029_perlmutter_2e94d27b,l01_nvshmem_trace-610042_b2_k8_isolated,main,e270e40ec,label_torch_a2av_is_l01_nvshmem
+8,K2,nvshmem_gemm,Torch a2av (not ag) + GEMM,4,16.767,16.77,iter_max_mean,l01_nvshmem,nvshmem,20260831-052029_perlmutter_2e94d27b,l01_nvshmem_trace-610042_b4_k8_isolated,main,e270e40ec,label_torch_a2av_is_l01_nvshmem
+8,K2,nvshmem_gemm,Torch a2av (not ag) + GEMM,16,44.426,44.43,iter_max_mean,l01_nvshmem,nvshmem,20260831-052029_perlmutter_2e94d27b,l01_nvshmem_trace-610042_b16_k8_isolated,main,e270e40ec,label_torch_a2av_is_l01_nvshmem
+8,K2,nvshmem_gemm,Torch a2av (not ag) + GEMM,64,166.870,166.87,iter_max_mean,l01_nvshmem,nvshmem,20260831-052029_perlmutter_2e94d27b,l01_nvshmem_trace-610042_b64_k8_isolated,main,e270e40ec,label_torch_a2av_is_l01_nvshmem
+8,K2,ours12,1+2,1,4.394,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),k2_b1_overlap_swap0_8n,moe_ep,fc27910,open_source_build_fc27910
+8,K2,ours12,1+2,4,7.508,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),k2_b4_overlap_swap0_8n,moe_ep,fc27910,open_source_build_fc27910
+8,K2,ours12,1+2,16,17.678,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),k2_b16_overlap_swap0_8n,moe_ep,fc27910,open_source_build_fc27910
+8,K2,ours12,1+2,64,59.031,,iter_max_median,ours_l01_s1_pv2_r2_pv3c_eps025,ours,20260925-134748_perlmutter_b2228d8f;20260925-135454_perlmutter_bc4bb77a,ours_l01_s1_pv2_r2_pv3c_eps025_trace-610042_b64_k8_isolated,pv3,dce1e44,b64_fused_conn24_20260925_not_plotted_mean_of_2_reps;carried_from_v4
+8,K2,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",1,4.766,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),k2_b1_overlap_swap1_8n,moe_ep,fc27910,open_source_build_fc27910
+8,K2,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",4,7.483,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),k2_b4_overlap_swap1_8n,moe_ep,fc27910,open_source_build_fc27910
+8,K2,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",16,18.287,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),k2_b16_overlap_swap1_8n,moe_ep,fc27910,open_source_build_fc27910
+8,K2,ours2_direct,2Ours (expert balance + Routing + direct a2av),1,5.650,,iter_max_median,direct,moe_ep,results/measured (moe_ep fc27910),k2_b1_direct_swap0_8n,moe_ep,fc27910,open_source_build_fc27910
+8,K2,ours2_direct,2Ours (expert balance + Routing + direct a2av),4,11.748,,iter_max_median,direct,moe_ep,results/measured (moe_ep fc27910),k2_b4_direct_swap0_8n,moe_ep,fc27910,open_source_build_fc27910
+8,K2,ours2_direct,2Ours (expert balance + Routing + direct a2av),16,35.502,,iter_max_median,direct,moe_ep,results/measured (moe_ep fc27910),k2_b16_direct_swap0_8n,moe_ep,fc27910,open_source_build_fc27910
+8,Qwen,comet,Comet,1,7.697,7.697,iter_max_median,l01_allgather_dense,flux,20260824-163955_perlmutter_095c1643,l01_allgather_dense_trace-a2e8ab_b1_k8_isolated,main,fc8e47070,
+8,Qwen,comet,Comet,2,8.186,8.19,iter_max_median,l01_allgather_dense,flux,20260824-163955_perlmutter_095c1643,l01_allgather_dense_trace-a2e8ab_b2_k8_isolated,main,fc8e47070,
+8,Qwen,comet,Comet,4,10.632,10.632,iter_max_median,l01_allgather_dense,flux,20260824-163955_perlmutter_095c1643,l01_allgather_dense_trace-a2e8ab_b4_k8_isolated,main,fc8e47070,
+8,Qwen,comet,Comet,16,28.341,28.341,iter_max_median,l01_allgather_dense,flux,20260824-163955_perlmutter_095c1643,l01_allgather_dense_trace-a2e8ab_b16_k8_isolated,main,fc8e47070,
+8,Qwen,comet,Comet,64,100.247,100.247,iter_max_median,l01_allgather_dense,flux,20260824-163955_perlmutter_095c1643,l01_allgather_dense_trace-a2e8ab_b64_k8_isolated,main,fc8e47070,
+8,Qwen,comet_eplb,COMET+EPLB,1,5.944,5.94,iter_max_median,l01_allgather_dense_eplb,flux,20260917-071417_perlmutter_eedaf8bb,l01_allgather_dense_eplb_trace-a2e8ab_b1_k8_isolated,pv3,859af86,
+8,Qwen,comet_eplb,COMET+EPLB,4,8.502,8.50,iter_max_median,l01_allgather_dense_eplb,flux,20260917-071417_perlmutter_eedaf8bb,l01_allgather_dense_eplb_trace-a2e8ab_b4_k8_isolated,pv3,859af86,
+8,Qwen,comet_eplb,COMET+EPLB,16,24.852,24.85,iter_max_median,l01_allgather_dense_eplb,flux,20260917-071417_perlmutter_eedaf8bb,l01_allgather_dense_eplb_trace-a2e8ab_b16_k8_isolated,pv3,859af86,
+8,Qwen,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),1,6.657,6.66,iter_max_median,l01_allgather_dense,flux,20260917-071417_perlmutter_eedaf8bb,l01_allgather_dense_trace-a2e8ab_b1_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+8,Qwen,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),4,9.244,9.24,iter_max_median,l01_allgather_dense,flux,20260917-071417_perlmutter_eedaf8bb,l01_allgather_dense_trace-a2e8ab_b4_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+8,Qwen,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),16,26.432,26.43,iter_max_median,l01_allgather_dense,flux,20260917-071417_perlmutter_eedaf8bb,l01_allgather_dense_trace-a2e8ab_b16_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+8,Qwen,epic,EPIC,1,9.317,9.317,iter_max_median,epic_l01_hc_m1,epic,20260824-164856_perlmutter_a78bf560,epic_l01_hc_m1_trace-a2e8ab_b1_k8_isolated,main,fc8e47070,
+8,Qwen,epic,EPIC,2,10.428,10.43,iter_max_median,epic_l01_hc_m1,epic,20260824-164856_perlmutter_a78bf560,epic_l01_hc_m1_trace-a2e8ab_b2_k8_isolated,main,fc8e47070,
+8,Qwen,epic,EPIC,4,12.677,12.677,iter_max_median,epic_l01_hc_m1,epic,20260824-164856_perlmutter_a78bf560,epic_l01_hc_m1_trace-a2e8ab_b4_k8_isolated,main,fc8e47070,
+8,Qwen,epic,EPIC,16,29.507,29.507,iter_max_median,epic_l01_hc_m1,epic,20260824-164856_perlmutter_a78bf560,epic_l01_hc_m1_trace-a2e8ab_b16_k8_isolated,main,fc8e47070,
+8,Qwen,epic,EPIC,64,104.426,104.426,iter_max_median,epic_l01_hc_m1,epic,20260824-164856_perlmutter_a78bf560,epic_l01_hc_m1_trace-a2e8ab_b64_k8_isolated,main,fc8e47070,
+8,Qwen,eplb,EPLB,1,7.301,7.301,iter_max_median,eplb_l01,eplb,20260824-164533_perlmutter_062d03f9,eplb_l01_trace-a2e8ab_b1_k8_isolated,main,fc8e47070,
+8,Qwen,eplb,EPLB,2,9.712,9.71,iter_max_median,eplb_l01,eplb,20260824-164533_perlmutter_062d03f9,eplb_l01_trace-a2e8ab_b2_k8_isolated,main,fc8e47070,
+8,Qwen,eplb,EPLB,4,14.379,14.379,iter_max_median,eplb_l01,eplb,20260824-164533_perlmutter_062d03f9,eplb_l01_trace-a2e8ab_b4_k8_isolated,main,fc8e47070,
+8,Qwen,eplb,EPLB,16,44.633,44.633,iter_max_median,eplb_l01,eplb,20260824-164533_perlmutter_062d03f9,eplb_l01_trace-a2e8ab_b16_k8_isolated,main,fc8e47070,
+8,Qwen,eplb,EPLB,64,171.708,171.708,iter_max_median,eplb_l01,eplb,20260824-164533_perlmutter_062d03f9,eplb_l01_trace-a2e8ab_b64_k8_isolated,main,fc8e47070,
+8,Qwen,fast_gemm,FAST + GEMM,1,31.717,31.72,iter_max_median,l01_fast,fast,20260829-135921_perlmutter_929fd81d,l01_fast_trace-a2e8ab_b1_k8_e2e,fast-split,33cd4100a,
+8,Qwen,fast_gemm,FAST + GEMM,2,33.508,33.51,iter_max_median,l01_fast,fast,20260829-135921_perlmutter_929fd81d,l01_fast_trace-a2e8ab_b2_k8_e2e,fast-split,33cd4100a,
+8,Qwen,fast_gemm,FAST + GEMM,4,35.188,35.19,iter_max_median,l01_fast,fast,20260829-135921_perlmutter_929fd81d,l01_fast_trace-a2e8ab_b4_k8_e2e,fast-split,33cd4100a,
+8,Qwen,fast_gemm,FAST + GEMM,16,62.273,62.27,iter_max_median,l01_fast,fast,20260829-135921_perlmutter_929fd81d,l01_fast_trace-a2e8ab_b16_k8_e2e,fast-split,33cd4100a,
+8,Qwen,fast_gemm,FAST + GEMM,64,185.896,185.9,iter_max_median,l01_fast,fast,20260830-061716_perlmutter_ca0ee6d7,l01_fast_trace-a2e8ab_b64_k8_e2e,fast-split,3e317e31a,
+8,Qwen,moonep,MoonEP,1,12.293,12.293,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-170049_perlmutter_472b596a,moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated,main,fc8e47070,
+8,Qwen,moonep,MoonEP,2,12.266,12.27,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-170049_perlmutter_472b596a,moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated,main,fc8e47070,
+8,Qwen,moonep,MoonEP,4,16.341,16.341,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-170049_perlmutter_472b596a,moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated,main,fc8e47070,
+8,Qwen,moonep,MoonEP,16,39.839,39.839,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-170049_perlmutter_472b596a,moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated,main,fc8e47070,
+8,Qwen,moonep,MoonEP,64,154.878,154.878,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-170049_perlmutter_472b596a,moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated,main,fc8e47070,
+8,Qwen,nvshmem_gemm,Torch a2av (not ag) + GEMM,1,9.023,9.02,iter_max_mean,l01_nvshmem,nvshmem,20260831-052158_perlmutter_5164ccb8,l01_nvshmem_trace-a2e8ab_b1_k8_isolated,main,e270e40ec,label_torch_a2av_is_l01_nvshmem
+8,Qwen,nvshmem_gemm,Torch a2av (not ag) + GEMM,2,12.052,12.05,iter_max_mean,l01_nvshmem,nvshmem,20260831-052158_perlmutter_5164ccb8,l01_nvshmem_trace-a2e8ab_b2_k8_isolated,main,e270e40ec,label_torch_a2av_is_l01_nvshmem
+8,Qwen,nvshmem_gemm,Torch a2av (not ag) + GEMM,4,17.603,17.6,iter_max_mean,l01_nvshmem,nvshmem,20260831-052158_perlmutter_5164ccb8,l01_nvshmem_trace-a2e8ab_b4_k8_isolated,main,e270e40ec,label_torch_a2av_is_l01_nvshmem
+8,Qwen,nvshmem_gemm,Torch a2av (not ag) + GEMM,16,52.817,52.82,iter_max_mean,l01_nvshmem,nvshmem,20260831-052158_perlmutter_5164ccb8,l01_nvshmem_trace-a2e8ab_b16_k8_isolated,main,e270e40ec,label_torch_a2av_is_l01_nvshmem
+8,Qwen,nvshmem_gemm,Torch a2av (not ag) + GEMM,64,191.407,191.41,iter_max_mean,l01_nvshmem,nvshmem,20260831-052158_perlmutter_5164ccb8,l01_nvshmem_trace-a2e8ab_b64_k8_isolated,main,e270e40ec,label_torch_a2av_is_l01_nvshmem
+8,Qwen,ours12,1+2,1,3.789,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),qwen3_b1_overlap_swap0_8n,moe_ep,fc27910,open_source_build_fc27910
+8,Qwen,ours12,1+2,4,6.158,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),qwen3_b4_overlap_swap0_8n,moe_ep,fc27910,open_source_build_fc27910
+8,Qwen,ours12,1+2,16,15.262,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),qwen3_b16_overlap_swap0_8n,moe_ep,fc27910,open_source_build_fc27910
+8,Qwen,ours12,1+2,64,53.710,,iter_max_median,ours_l01_s1_pv2_r2_pv3c_eps025,ours,20260925-135131_perlmutter_59294403;20260925-135827_perlmutter_4d02438a,ours_l01_s1_pv2_r2_pv3c_eps025_trace-a2e8ab_b64_k8_isolated,pv3,dce1e44,b64_fused_conn24_20260925_not_plotted_mean_of_2_reps;carried_from_v4
+8,Qwen,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",1,3.982,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),qwen3_b1_overlap_swap1_8n,moe_ep,fc27910,open_source_build_fc27910
+8,Qwen,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",4,6.171,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),qwen3_b4_overlap_swap1_8n,moe_ep,fc27910,open_source_build_fc27910
+8,Qwen,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",16,15.424,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),qwen3_b16_overlap_swap1_8n,moe_ep,fc27910,open_source_build_fc27910
+8,Qwen,ours2_direct,2Ours (expert balance + Routing + direct a2av),1,5.120,,iter_max_median,direct,moe_ep,results/measured (moe_ep fc27910),qwen3_b1_direct_swap0_8n,moe_ep,fc27910,open_source_build_fc27910
+8,Qwen,ours2_direct,2Ours (expert balance + Routing + direct a2av),4,11.912,,iter_max_median,direct,moe_ep,results/measured (moe_ep fc27910),qwen3_b4_direct_swap0_8n,moe_ep,fc27910,open_source_build_fc27910
+8,Qwen,ours2_direct,2Ours (expert balance + Routing + direct a2av),16,37.751,,iter_max_median,direct,moe_ep,results/measured (moe_ep fc27910),qwen3_b16_direct_swap0_8n,moe_ep,fc27910,open_source_build_fc27910
+16,K2,comet,Comet,1,15.296,15.295,iter_max_median,l01_allgather_dense,flux,20260824-162154_perlmutter_995de4bd,l01_allgather_dense_trace-610042_b1_k8_isolated,main,fc8e47070,
+16,K2,comet,Comet,2,18.152,18.15,iter_max_median,l01_allgather_dense,flux,20260824-162154_perlmutter_995de4bd,l01_allgather_dense_trace-610042_b2_k8_isolated,main,fc8e47070,
+16,K2,comet,Comet,4,23.457,23.457,iter_max_median,l01_allgather_dense,flux,20260824-162154_perlmutter_995de4bd,l01_allgather_dense_trace-610042_b4_k8_isolated,main,fc8e47070,
+16,K2,comet,Comet,16,62.731,62.731,iter_max_median,l01_allgather_dense,flux,20260824-162154_perlmutter_995de4bd,l01_allgather_dense_trace-610042_b16_k8_isolated,main,fc8e47070,
+16,K2,comet,Comet,64,233.749,233.749,iter_max_median,l01_allgather_dense,flux,20260824-162154_perlmutter_995de4bd,l01_allgather_dense_trace-610042_b64_k8_isolated,main,fc8e47070,
+16,K2,comet_eplb,COMET+EPLB,1,8.319,8.32,iter_max_median,l01_allgather_dense_eplb,flux,20260917-073316_perlmutter_07377401,l01_allgather_dense_eplb_trace-610042_b1_k8_isolated,pv3,859af86,
+16,K2,comet_eplb,COMET+EPLB,4,17.607,17.61,iter_max_median,l01_allgather_dense_eplb,flux,20260917-073316_perlmutter_07377401,l01_allgather_dense_eplb_trace-610042_b4_k8_isolated,pv3,859af86,
+16,K2,comet_eplb,COMET+EPLB,16,56.925,56.92,iter_max_median,l01_allgather_dense_eplb,flux,20260917-073316_perlmutter_07377401,l01_allgather_dense_eplb_trace-610042_b16_k8_isolated,pv3,859af86,
+16,K2,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),1,8.146,8.15,iter_max_median,l01_allgather_dense,flux,20260917-073316_perlmutter_07377401,l01_allgather_dense_trace-610042_b1_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+16,K2,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),4,18.826,18.83,iter_max_median,l01_allgather_dense,flux,20260917-073316_perlmutter_07377401,l01_allgather_dense_trace-610042_b4_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+16,K2,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),16,60.422,60.42,iter_max_median,l01_allgather_dense,flux,20260917-073316_perlmutter_07377401,l01_allgather_dense_trace-610042_b16_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+16,K2,epic,EPIC,1,16.405,16.405,iter_max_median,epic_l01_hc_m1,epic,20260824-163156_perlmutter_21645f00,epic_l01_hc_m1_trace-610042_b1_k8_isolated,main,fc8e47070,
+16,K2,epic,EPIC,2,17.771,17.77,iter_max_median,epic_l01_hc_m1,epic,20260824-163156_perlmutter_21645f00,epic_l01_hc_m1_trace-610042_b2_k8_isolated,main,fc8e47070,
+16,K2,epic,EPIC,4,19.913,19.913,iter_max_median,epic_l01_hc_m1,epic,20260824-163156_perlmutter_21645f00,epic_l01_hc_m1_trace-610042_b4_k8_isolated,main,fc8e47070,
+16,K2,epic,EPIC,16,39.394,39.394,iter_max_median,epic_l01_hc_m1,epic,20260824-163156_perlmutter_21645f00,epic_l01_hc_m1_trace-610042_b16_k8_isolated,main,fc8e47070,
+16,K2,epic,EPIC,64,127.079,127.079,iter_max_median,epic_l01_hc_m1,epic,20260824-163156_perlmutter_21645f00,epic_l01_hc_m1_trace-610042_b64_k8_isolated,main,fc8e47070,
+16,K2,eplb,EPLB (direct a2av),1,9.748,9.748,iter_max_median,eplb_l01,eplb,20260824-162741_perlmutter_4adf476a,eplb_l01_trace-610042_b1_k8_isolated,main,fc8e47070,
+16,K2,eplb,EPLB (direct a2av),2,12.932,12.93,iter_max_median,eplb_l01,eplb,20260824-162741_perlmutter_4adf476a,eplb_l01_trace-610042_b2_k8_isolated,main,fc8e47070,
+16,K2,eplb,EPLB (direct a2av),4,19.825,19.825,iter_max_median,eplb_l01,eplb,20260824-162741_perlmutter_4adf476a,eplb_l01_trace-610042_b4_k8_isolated,main,fc8e47070,
+16,K2,eplb,EPLB (direct a2av),16,59.047,59.047,iter_max_median,eplb_l01,eplb,20260824-162741_perlmutter_4adf476a,eplb_l01_trace-610042_b16_k8_isolated,main,fc8e47070,
+16,K2,eplb,EPLB (direct a2av),64,227.513,227.513,iter_max_median,eplb_l01,eplb,20260824-162741_perlmutter_4adf476a,eplb_l01_trace-610042_b64_k8_isolated,main,fc8e47070,
+16,K2,fast_gemm,FAST + GEMM,1,193.039,193.04,iter_max_median,l01_fast,fast,20260829-182351_perlmutter_56949b2c,l01_fast_trace-610042_b1_k8_e2e,fast-split,836132d01,
+16,K2,fast_gemm,FAST + GEMM,2,188.399,188.4,iter_max_median,l01_fast,fast,20260829-182351_perlmutter_56949b2c,l01_fast_trace-610042_b2_k8_e2e,fast-split,836132d01,
+16,K2,fast_gemm,FAST + GEMM,4,199.911,199.91,iter_max_median,l01_fast,fast,20260829-182351_perlmutter_56949b2c,l01_fast_trace-610042_b4_k8_e2e,fast-split,836132d01,
+16,K2,fast_gemm,FAST + GEMM,16,226.405,226.41,iter_max_median,l01_fast,fast,20260829-182351_perlmutter_56949b2c,l01_fast_trace-610042_b16_k8_e2e,fast-split,836132d01,
+16,K2,fast_gemm,FAST + GEMM,64,330.000,348,composed,l01_fast,fast,,,fast-split,,composed_native_wire+plan+gemm;recorded_swapped_across_models
+16,K2,moonep,MoonEP,1,20.303,20.304,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-163940_perlmutter_0b408e25,moonep_l01_nvshmem_getmem_trace-610042_b1_k8_isolated,main,fc8e47070,
+16,K2,moonep,MoonEP,2,24.819,24.82,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-163940_perlmutter_0b408e25,moonep_l01_nvshmem_getmem_trace-610042_b2_k8_isolated,main,fc8e47070,
+16,K2,moonep,MoonEP,4,27.591,27.591,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-163940_perlmutter_0b408e25,moonep_l01_nvshmem_getmem_trace-610042_b4_k8_isolated,main,fc8e47070,
+16,K2,moonep,MoonEP,16,58.739,58.739,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-163940_perlmutter_0b408e25,moonep_l01_nvshmem_getmem_trace-610042_b16_k8_isolated,main,fc8e47070,
+16,K2,moonep,MoonEP,64,202.296,202.295,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-163940_perlmutter_0b408e25,moonep_l01_nvshmem_getmem_trace-610042_b64_k8_isolated,main,fc8e47070,
+16,K2,nvshmem_gemm,NVSHMEM a2av + GEMM,1,24.314,24.31,iter_max_mean,l01_nvshmem,nvshmem,20260831-063232_perlmutter_e6841547,l01_nvshmem_trace-610042_b1_k8_isolated,main,e270e40ec,
+16,K2,nvshmem_gemm,NVSHMEM a2av + GEMM,2,27.396,27.4,iter_max_mean,l01_nvshmem,nvshmem,20260831-063232_perlmutter_e6841547,l01_nvshmem_trace-610042_b2_k8_isolated,main,e270e40ec,
+16,K2,nvshmem_gemm,NVSHMEM a2av + GEMM,4,30.748,30.75,iter_max_mean,l01_nvshmem,nvshmem,20260831-063232_perlmutter_e6841547,l01_nvshmem_trace-610042_b4_k8_isolated,main,e270e40ec,
+16,K2,nvshmem_gemm,NVSHMEM a2av + GEMM,16,63.521,63.52,iter_max_mean,l01_nvshmem,nvshmem,20260831-063232_perlmutter_e6841547,l01_nvshmem_trace-610042_b16_k8_isolated,main,e270e40ec,
+16,K2,nvshmem_gemm,NVSHMEM a2av + GEMM,64,209.602,209.6,iter_max_mean,l01_nvshmem,nvshmem,20260831-063232_perlmutter_e6841547,l01_nvshmem_trace-610042_b64_k8_isolated,main,e270e40ec,
+16,K2,ours12,1+2,1,6.779,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),k2_b1_overlap_swap0_16n,moe_ep,fc27910,open_source_build_fc27910
+16,K2,ours12,1+2,4,10.342,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),k2_b4_overlap_swap0_16n,moe_ep,fc27910,open_source_build_fc27910
+16,K2,ours12,1+2,16,25.627,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),k2_b16_overlap_swap0_16n,moe_ep,fc27910,open_source_build_fc27910
+16,K2,ours12,1+2,64,84.706,,iter_max_median,ours_l01_s1_pv2_r2_pv3c_eps05,ours,20260925-184653_perlmutter_09f6eb5b,ours_l01_s1_pv2_r2_pv3c_eps05_trace-610042_b64_k8_isolated,pv3,dce1e44,b64_fused_conn24_20260925_not_plotted_mean_of_1_reps;carried_from_v4
+16,K2,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",1,6.622,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),k2_b1_overlap_swap1_16n,moe_ep,fc27910,open_source_build_fc27910
+16,K2,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",4,10.782,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),k2_b4_overlap_swap1_16n,moe_ep,fc27910,open_source_build_fc27910
+16,K2,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",16,26.527,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),k2_b16_overlap_swap1_16n,moe_ep,fc27910,open_source_build_fc27910
+16,K2,ours2_direct,2Ours (expert balance + Routing + direct a2av),1,6.091,,iter_max_median,direct,moe_ep,results/measured (moe_ep fc27910),k2_b1_direct_swap0_16n,moe_ep,fc27910,open_source_build_fc27910
+16,K2,ours2_direct,2Ours (expert balance + Routing + direct a2av),4,14.288,,iter_max_median,direct,moe_ep,results/measured (moe_ep fc27910),k2_b4_direct_swap0_16n,moe_ep,fc27910,open_source_build_fc27910
+16,Qwen,comet,Comet,1,16.324,16.324,iter_max_median,l01_allgather_dense,flux,20260824-165349_perlmutter_5948c807,l01_allgather_dense_trace-a2e8ab_b1_k8_isolated,main,fc8e47070,
+16,Qwen,comet,Comet,2,18.646,18.65,iter_max_median,l01_allgather_dense,flux,20260824-165349_perlmutter_5948c807,l01_allgather_dense_trace-a2e8ab_b2_k8_isolated,main,fc8e47070,
+16,Qwen,comet,Comet,4,24.430,24.43,iter_max_median,l01_allgather_dense,flux,20260824-165349_perlmutter_5948c807,l01_allgather_dense_trace-a2e8ab_b4_k8_isolated,main,fc8e47070,
+16,Qwen,comet,Comet,16,65.671,65.671,iter_max_median,l01_allgather_dense,flux,20260824-165349_perlmutter_5948c807,l01_allgather_dense_trace-a2e8ab_b16_k8_isolated,main,fc8e47070,
+16,Qwen,comet,Comet,64,234.386,234.386,iter_max_median,l01_allgather_dense,flux,20260824-165349_perlmutter_5948c807,l01_allgather_dense_trace-a2e8ab_b64_k8_isolated,main,fc8e47070,
+16,Qwen,comet_eplb,COMET+EPLB,1,10.445,10.44,iter_max_median,l01_allgather_dense_eplb,flux,20260917-073515_perlmutter_ab54ff9f,l01_allgather_dense_eplb_trace-a2e8ab_b1_k8_isolated,pv3,859af86,
+16,Qwen,comet_eplb,COMET+EPLB,4,17.841,17.84,iter_max_median,l01_allgather_dense_eplb,flux,20260917-073515_perlmutter_ab54ff9f,l01_allgather_dense_eplb_trace-a2e8ab_b4_k8_isolated,pv3,859af86,
+16,Qwen,comet_eplb,COMET+EPLB,16,57.552,57.55,iter_max_median,l01_allgather_dense_eplb,flux,20260917-073515_perlmutter_ab54ff9f,l01_allgather_dense_eplb_trace-a2e8ab_b16_k8_isolated,pv3,859af86,
+16,Qwen,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),1,11.521,11.52,iter_max_median,l01_allgather_dense,flux,20260917-073515_perlmutter_ab54ff9f,l01_allgather_dense_trace-a2e8ab_b1_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+16,Qwen,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),4,18.032,18.03,iter_max_median,l01_allgather_dense,flux,20260917-073515_perlmutter_ab54ff9f,l01_allgather_dense_trace-a2e8ab_b4_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+16,Qwen,comet_v3anchor,COMET (same-capsule anchor 2026-09-17),16,61.016,61.02,iter_max_median,l01_allgather_dense,flux,20260917-073515_perlmutter_ab54ff9f,l01_allgather_dense_trace-a2e8ab_b16_k8_isolated,pv3,859af86,same_binary_as_comet_eplb
+16,Qwen,epic,EPIC,1,16.450,16.45,iter_max_median,epic_l01_hc_m1,epic,20260824-170315_perlmutter_38fe5d32,epic_l01_hc_m1_trace-a2e8ab_b1_k8_isolated,main,fc8e47070,
+16,Qwen,epic,EPIC,2,17.595,17.59,iter_max_median,epic_l01_hc_m1,epic,20260824-170315_perlmutter_38fe5d32,epic_l01_hc_m1_trace-a2e8ab_b2_k8_isolated,main,fc8e47070,
+16,Qwen,epic,EPIC,4,20.216,20.216,iter_max_median,epic_l01_hc_m1,epic,20260824-170315_perlmutter_38fe5d32,epic_l01_hc_m1_trace-a2e8ab_b4_k8_isolated,main,fc8e47070,
+16,Qwen,epic,EPIC,16,42.777,42.777,iter_max_median,epic_l01_hc_m1,epic,20260824-170315_perlmutter_38fe5d32,epic_l01_hc_m1_trace-a2e8ab_b16_k8_isolated,main,fc8e47070,
+16,Qwen,epic,EPIC,64,142.051,142.051,iter_max_median,epic_l01_hc_m1,epic,20260824-170315_perlmutter_38fe5d32,epic_l01_hc_m1_trace-a2e8ab_b64_k8_isolated,main,fc8e47070,
+16,Qwen,eplb,EPLB (direct a2av),1,8.118,8.118,iter_max_median,eplb_l01,eplb,20260824-170002_perlmutter_bb526f7f,eplb_l01_trace-a2e8ab_b1_k8_isolated,main,fc8e47070,
+16,Qwen,eplb,EPLB (direct a2av),2,11.143,11.14,iter_max_median,eplb_l01,eplb,20260824-170002_perlmutter_bb526f7f,eplb_l01_trace-a2e8ab_b2_k8_isolated,main,fc8e47070,
+16,Qwen,eplb,EPLB (direct a2av),4,16.812,16.812,iter_max_median,eplb_l01,eplb,20260824-170002_perlmutter_bb526f7f,eplb_l01_trace-a2e8ab_b4_k8_isolated,main,fc8e47070,
+16,Qwen,eplb,EPLB (direct a2av),16,57.422,57.422,iter_max_median,eplb_l01,eplb,20260824-170002_perlmutter_bb526f7f,eplb_l01_trace-a2e8ab_b16_k8_isolated,main,fc8e47070,
+16,Qwen,eplb,EPLB (direct a2av),64,225.267,225.267,iter_max_median,eplb_l01,eplb,20260825-031147_perlmutter_01dea4d2,eplb_l01_trace-a2e8ab_b64_k8_isolated,main,611e6491f,
+16,Qwen,fast_gemm,FAST + GEMM,1,183.411,183.41,iter_max_median,l01_fast,fast,20260829-195329_perlmutter_347abe3e,l01_fast_trace-a2e8ab_b1_k8_e2e,fast-split,74c654b35,
+16,Qwen,fast_gemm,FAST + GEMM,2,175.104,175.1,iter_max_median,l01_fast,fast,20260829-195329_perlmutter_347abe3e,l01_fast_trace-a2e8ab_b2_k8_e2e,fast-split,74c654b35,
+16,Qwen,fast_gemm,FAST + GEMM,4,185.880,185.88,iter_max_median,l01_fast,fast,20260829-195329_perlmutter_347abe3e,l01_fast_trace-a2e8ab_b4_k8_e2e,fast-split,74c654b35,
+16,Qwen,fast_gemm,FAST + GEMM,16,222.403,222.4,iter_max_median,l01_fast,fast,20260829-195329_perlmutter_347abe3e,l01_fast_trace-a2e8ab_b16_k8_e2e,fast-split,74c654b35,
+16,Qwen,fast_gemm,FAST + GEMM,64,348.000,330,composed,l01_fast,fast,,,fast-split,,composed_native_wire+plan+gemm;recorded_swapped_across_models
+16,Qwen,moonep,MoonEP,1,14.339,14.339,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-171034_perlmutter_f4796901,moonep_l01_nvshmem_getmem_trace-a2e8ab_b1_k8_isolated,main,fc8e47070,
+16,Qwen,moonep,MoonEP,2,15.526,15.53,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-171034_perlmutter_f4796901,moonep_l01_nvshmem_getmem_trace-a2e8ab_b2_k8_isolated,main,fc8e47070,
+16,Qwen,moonep,MoonEP,4,19.704,19.705,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-171034_perlmutter_f4796901,moonep_l01_nvshmem_getmem_trace-a2e8ab_b4_k8_isolated,main,fc8e47070,
+16,Qwen,moonep,MoonEP,16,52.244,52.244,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-171034_perlmutter_f4796901,moonep_l01_nvshmem_getmem_trace-a2e8ab_b16_k8_isolated,main,fc8e47070,
+16,Qwen,moonep,MoonEP,64,181.324,181.324,iter_max_median,moonep_l01_nvshmem_getmem,moonep,20260824-171034_perlmutter_f4796901,moonep_l01_nvshmem_getmem_trace-a2e8ab_b64_k8_isolated,main,fc8e47070,
+16,Qwen,nvshmem_gemm,NVSHMEM a2av + GEMM,1,24.871,24.87,iter_max_mean,l01_nvshmem,nvshmem,20260831-063408_perlmutter_cec30dae,l01_nvshmem_trace-a2e8ab_b1_k8_isolated,main,e270e40ec,
+16,Qwen,nvshmem_gemm,NVSHMEM a2av + GEMM,2,27.536,27.54,iter_max_mean,l01_nvshmem,nvshmem,20260831-063408_perlmutter_cec30dae,l01_nvshmem_trace-a2e8ab_b2_k8_isolated,main,e270e40ec,
+16,Qwen,nvshmem_gemm,NVSHMEM a2av + GEMM,4,34.776,34.78,iter_max_mean,l01_nvshmem,nvshmem,20260831-063408_perlmutter_cec30dae,l01_nvshmem_trace-a2e8ab_b4_k8_isolated,main,e270e40ec,
+16,Qwen,nvshmem_gemm,NVSHMEM a2av + GEMM,16,76.007,76.01,iter_max_mean,l01_nvshmem,nvshmem,20260831-063408_perlmutter_cec30dae,l01_nvshmem_trace-a2e8ab_b16_k8_isolated,main,e270e40ec,
+16,Qwen,nvshmem_gemm,NVSHMEM a2av + GEMM,64,263.697,263.7,iter_max_mean,l01_nvshmem,nvshmem,20260831-063408_perlmutter_cec30dae,l01_nvshmem_trace-a2e8ab_b64_k8_isolated,main,e270e40ec,
+16,Qwen,ours12,1+2,1,5.811,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),qwen3_b1_overlap_swap0_16n,moe_ep,fc27910,open_source_build_fc27910
+16,Qwen,ours12,1+2,4,9.280,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),qwen3_b4_overlap_swap0_16n,moe_ep,fc27910,open_source_build_fc27910
+16,Qwen,ours12,1+2,16,23.695,,iter_max_median,overlap,moe_ep,results/measured (moe_ep fc27910),qwen3_b16_overlap_swap0_16n,moe_ep,fc27910,open_source_build_fc27910
+16,Qwen,ours12,1+2,64,82.141,,iter_max_median,ours_l01_s1_pv2_r2_pv3c_eps05,ours,20260925-184428_perlmutter_f8c6ca86;20260925-184918_perlmutter_217c8661,ours_l01_s1_pv2_r2_pv3c_eps05_trace-a2e8ab_b64_k8_isolated,pv3,dce1e44,b64_fused_conn24_20260925_not_plotted_mean_of_2_reps;carried_from_v4
+16,Qwen,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",1,6.133,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),qwen3_b1_overlap_swap1_16n,moe_ep,fc27910,open_source_build_fc27910
+16,Qwen,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",4,9.484,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),qwen3_b4_overlap_swap1_16n,moe_ep,fc27910,open_source_build_fc27910
+16,Qwen,ours12_dispatch,"1+2 + expert swap (3D-scheduled, band trigger)",16,23.936,,iter_max_median,overlap+swap,moe_ep,results/measured (moe_ep fc27910),qwen3_b16_overlap_swap1_16n,moe_ep,fc27910,open_source_build_fc27910
+16,Qwen,ours2_direct,2Ours (expert balance + Routing + direct a2av),1,5.961,,iter_max_median,direct,moe_ep,results/measured (moe_ep fc27910),qwen3_b1_direct_swap0_16n,moe_ep,fc27910,open_source_build_fc27910
+16,Qwen,ours2_direct,2Ours (expert balance + Routing + direct a2av),4,14.710,,iter_max_median,direct,moe_ep,results/measured (moe_ep fc27910),qwen3_b4_direct_swap0_16n,moe_ep,fc27910,open_source_build_fc27910
