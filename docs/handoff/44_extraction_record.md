@@ -107,3 +107,24 @@ initializers and parameter lines protected; string literals were NOT protected â
 a literal substituted were reworded by hand), deletes `if (false)` blocks (else bodies become bare
 scopes), unwraps `if (true)`, folds `FLUX_CHECK(true)`. Lesson: never pass a flag that shares its
 name with a method (`a2av_dispatch` = ctor flag AND the dispatch method) â€” it deleted the method.
+
+## M4 read 4 (2026-09-26 00:20-00:26, 4n, jobs 58891525 + rerun, qwen3): batch B4 (legacy Flux helpers)
+
+Build e6ff180. Dispatch 3104 lines, combine ~3745, a2av_combine.cu 1445 -> 956, sort_util.cu 1426 -> 455;
+src/swap, topk_gather_rs{,_v2}.cu, system_barrier.hpp removed. 8/9 within 5 % (swap b1 -9 %, faster);
+every cell within ~2 % of read 3 -> no step change. The b4 swap cell was re-run in a second
+allocation because I edited the Python tree (B5) while the read was still importing it (operator
+error: the read uses the working tree; never edit `python/` during a read).
+| MiB | overlap | direct | swap |
+|---|---|---|---|
+| 1 | 2.772 | 4.849 | 3.053 |
+| 4 | 4.431 | 10.217 | 4.609 (rerun) |
+| 16 | 11.482 | 32.661 | 11.844 |
+Best of three below the reference ceiling at every budget (2.772 / 4.431 / 11.482 vs 4.457 / 5.932 / 15.018).
+
+B5 committed c1eaf6c after read 4: capacities are `DispatchOptions{max_recv_rows, max_stage_rows,
+max_relay_rows}` / `CombineOptions{max_send_rows, max_conv_rows, max_wire_rows}` constructor
+arguments (pybind kwargs), computed by `moe_ep.routing.compute_capacities`; `_export_op_env` and
+`constants.OP_ENV` deleted; `grep -rn get_int_from_env src/` = 1 hit (op_registry_proto_utils RANK
+print gate, goes with B6). The combine's gateway (non-compress) path is dead code (compress is on
+whenever nnodes > 1) but its ~45 references are still compiled; deleting it is folded into B6.
