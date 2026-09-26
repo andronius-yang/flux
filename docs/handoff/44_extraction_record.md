@@ -190,3 +190,19 @@ Best of three below the reference ceiling at every budget. Next: B7 (rename + pu
   combine_kernels.cu 954 (1445), dispatch kernel header 730 (1000), sort_util.cu 453 (1426),
   workspace_util.cu 340, routing.cu 549; src/+include/ 23.5k lines total, python+bench 2.3k;
   repo 3.0 MB excluding 3rdparty/build/.so. Build B7 = FINAL binary -> read 7.
+
+## M5 read 7 = FINAL binary (2026-09-26 01:01-01:06, 4n, job 58891949, qwen3)
+
+Build 98a867f (B7a/b/c) + docs 81e8ac0 + b5559e3. 8/9 within 5 %; the ninth is the swap arm
+10.8 % FASTER than published (band-first decision, as in every read). Best of three below the
+reference ceiling at every budget (2.781 / 4.475 / 11.624 vs 4.457 / 5.932 / 15.018).
+| MiB | overlap | direct | swap | published (overlap / direct / swap) |
+|---|---|---|---|---|
+| 1 | 2.781 | 4.716 | 3.000 | 2.817 / 4.660 / 3.362 |
+| 4 | 4.475 | 10.127 | 4.861 | 4.366 / 10.139 / 4.893 |
+| 16 | 11.624 | 32.273 | 11.867 | 11.401 / 32.404 / 12.072 |
+Seven reads across the batches, every cell of every read within twin noise of its predecessor;
+the pruning (5988 -> 2765 dispatch lines, 5111 -> 3499 combine, 106 env knobs -> 0, 7 baseline
+drivers -> 0) changed nothing the figure can see. M6 (full 4n grid incl. K2) and M7 (8n/16n,
+regular QOS) launched on this binary via `scripts/reproduce.sh`; 1-node `--check 1` + layer demo
+via `logs/moe_ep/final1n.sh`.
