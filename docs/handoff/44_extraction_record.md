@@ -416,3 +416,19 @@ Committed as `results/measured/main_perf_4n.csv` + `rerun_4n_qwen3_b16_overlap.c
 | k2 | 4 | 5.796 | 11.837 | 6.068 | 5.765 / 11.614 / 6.431 |
 | k2 | 16 | 14.178 | 35.101 | 14.217 | 13.864 / 33.859 / 14.911 |
 Remaining: 16n grid on the final binary (regular QOS, 30 min, job 58906248, queued 10:29).
+
+## Memory budget of the defaults (for the SGLang lane; 2026-09-26, user question)
+
+Symmetric heap is exact and known at construction (per rank, overlap, Qwen3, T = 2048 tokens/rank
+= 16 MiB, 8n capacities from the grid logs): dispatch send 128 MB, recv/stage/relay 363/147/44 MB,
+combine send/recv/conv/wire 305/134/235/148 MB, swap staging 201 MB (if on), plus a LEFTOVER dense
+inter-node staging pair in the combine (`staging_send`/`staging_recv`, 2·NN·T·H·2 B = 268 MB at
+8n, 537 MB at 16n) that nothing reads since the gateway path went (B6b) — delete in a later
+allocation-only batch. Total ~1.8-2.0 GB against the 6 GiB heuristic minimum (`heap.py`); the
+overlap path scales with T only, the direct path with ranks x pair capacity (the 16n b16 wall,
+direct only, accepted). At the 16 GiB cap overlap fits T ~ 16k tokens/rank.
+SGLang implications: one shared op instance (94 MoE layers x 2 GB is impossible), size
+`max_tokens_per_rank` for the prefill chunk (TTFT) not decode, SwiGLU doubles the dispatch
+intermediate, and on 40 GB A100 at 16n the per-rank weights (2 home + 2 redundant slots x 94
+layers ~ 14 GB experts + replicated non-expert params) leave too little for KV cache at
+prefill-sized T -> run on the hbm80g pool (or 32 nodes) with the heap set from the chunk size.
