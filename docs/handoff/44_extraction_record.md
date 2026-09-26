@@ -259,3 +259,25 @@ band). K2 is new here and lands +2.0 / -0.9 / +1.7 % on the overlap arm.
 Lesson for the record: the per-batch 4n perf read (ruling 3) gates performance, not the
 single-node configuration; a 1-node `--check` belongs in the final gate. Final binary v2 =
 fa07db0 build; `final1n.sh` + the 4n grid re-run on it; 8n/16n (held while rebuilding) run on it.
+
+## M6 DONE on the final binary v2 (2026-09-26 01:20-01:36, 4n job 58892326; 1n job 58892324)
+
+Binary = fa07db0 build (98a867f + single-node receiver 66efe95 + layer-owned NVSHMEM init).
+**1-node `--check 1`: 6/6 PASS** (qwen3 + k2 x overlap / direct / swap, bad rows 0/128 and
+0/72). **4n grid: 16/18 within 5 %**, the two "out" cells are the swap arm 7-11 % FASTER than
+published (qwen3 b1 3.000 vs 3.362, b4 4.567 vs 4.893); best of three below the reference
+ceiling in all six (model, budget) cells. Copied into the repo as
+`results/measured/main_perf_4n.csv` + `compare_4n.txt`.
+| model | MiB | overlap | direct | swap | published (overlap / direct / swap) |
+|---|---|---|---|---|---|
+| qwen3 | 1 | 2.768 | 4.686 | 3.000 | 2.817 / 4.660 / 3.362 |
+| qwen3 | 4 | 4.424 | 10.149 | 4.567 | 4.366 / 10.139 / 4.893 |
+| qwen3 | 16 | 11.806 | 32.409 | 11.756 | 11.401 / 32.404 / 12.072 |
+| k2 | 1 | 3.818 | 6.004 | 4.454 | 3.797 / 6.059 / 4.369 |
+| k2 | 4 | 5.776 | 11.838 | 6.402 | 5.765 / 11.614 / 6.431 |
+| k2 | 16 | 14.134 | 34.075 | 14.177 | 13.864 / 33.859 / 14.911 |
+Third small defect from the layer demo: `load_weights` asked the caller for expert -1 on an
+unassigned redundant slot (the bench's synthetic weight generator happened to accept it). Fix
+3719c05: unassigned slots stay zero in both `EPMoE.load_weights` and `WeightSlots.fill`
+(python-only; the bench path is unchanged). Demo re-run in flight; 8n/16n grids queued
+(regular QOS, jobs 58892055 / 58892056).
