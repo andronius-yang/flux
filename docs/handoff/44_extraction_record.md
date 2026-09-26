@@ -469,3 +469,18 @@ the two outside = swap arm faster (3.055 / 4.628 vs 3.362 / 4.893), best of thre
 reference ceiling at every budget (2.792 / 4.435 / 11.203). The other residuals (pieces mode,
 constant getters, dispatch dense remnants, kernel-builder names, rank-0 log env gates) stay by
 user decision (main perf holds and runs; the repo is open-sourced as is).
+
+## PUBLISH-READY (2026-09-26 14:15)
+
+Publishable artifact = `$PSCRATCH/workspace/andrewy/moe_ep_release`: a single-commit snapshot
+("Initial release") of the working repo at b454377 (the working repo's history is NOT publishable:
+its M1 commits carry the pre-purge op code with baseline names, 44 lines under `git log -p`).
+Snapshot facts: 128 tracked files, cutlass pinned as a submodule at NVIDIA's public URL (commit
+df8a550), zero baseline names in history, zero personal identifiers (the env script now requires
+`MOE_EP_CONDA_ENV`; README lists the tested toolchain Python 3.11 / torch 2.6.0+cu124 / CUDA 12.4,
+and no longer claims a CUTLASS version). Built from scratch (full cmake) in the snapshot; on that
+build: `bench --check` 6/6 PASS (both models x overlap/direct/swap, every iteration, fresh
+payload) and the layer demo 3/3 PASS (job 58917111). No run writes into the tree (all build
+outputs are gitignored; logs live under logs/moe_ep). Re-export = `git archive` from the working
+repo + submodule add, ~10 s (recipe in this session's commands; keep it in the working repo's
+notes if it is repeated).
