@@ -334,3 +334,21 @@ two-repetition re-run of that cell is queued (`logs/moe_ep/rerun8n.sh`, output
 `grid/8n/rerun_qwen3_b16_overlap_swap0.csv`); the swap arm of the same cell ran clean (15.211).
 Acceptance at 8n/16n: rule (ii) holds everywhere; rule (i) holds for every cell that ran except
 the one +5.5 % direct cell and the swap cells that are faster.
+
+## Combine IMA root-cause hunt (2026-09-26 08:40-, user directive: the repo must ship without bugs)
+
+Setup: scratch clones `$PSCRATCH/workspace/andrewy/moe_ep_debug` (bench instrumented: iteration
++ phase-sync localization via `MOE_EP_DEBUG_SYNC=1`) and `moe_ep_debug2` (same + `-lineinfo`);
+cell = 8n qwen3 b16 overlap swap=0; chains in `logs/moe_ep/ima/` (debug QOS, 8 nodes, 30 min).
+- Rate: 5 faults / 64 plain reps (~8 %); ranks 4, 5, 9, 15 (+17 in the grid); iterations 2, 9,
+  13, last -> not first-iteration, not rank-specific. Always detected at the next device sync.
+- With a device sync after every phase (plan / dispatch / act / combine): 0 / 8 -> the fault
+  needs cross-stream concurrency that the phase syncs remove (side-stream combine-meta derive
+  under the dispatch GEMM, or dispatch side-stream stragglers under the combine).
+- Tooling: launch-blocking / sanitizer deadlock the spin kernels (known). GPU core dumps
+  (`CUDA_ENABLE_COREDUMP_ON_EXCEPTION`) are written (full ones truncated by torchrun's teardown;
+  `CUDA_COREDUMP_GENERATION_FLAGS=skip_*` gives complete 82 KB dumps) but NEITHER cuda-gdb 12.4
+  nor 13.2 can open them under driver 580.178 (`m_num_devices > 0` assertion) — dead end.
+- Live attach works: `CUDA_DEVICE_WAITS_ON_EXCEPTION=1` parks the faulting rank; cuda-gdb 12.4
+  attaches to the workers (no yama ptrace restriction). Chain `chain8n_wait.sh` (w2) = watchdog
+  at 100 s + parallel per-node `probe_node.sh` (kernels, device bt, lanes). In flight.
