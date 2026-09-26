@@ -281,3 +281,16 @@ unassigned redundant slot (the bench's synthetic weight generator happened to ac
 3719c05: unassigned slots stay zero in both `EPMoE.load_weights` and `WeightSlots.fill`
 (python-only; the bench path is unchanged). Demo re-run in flight; 8n/16n grids queued
 (regular QOS, jobs 58892055 / 58892056).
+
+## Layer demo PASS + M7 status (2026-09-26 01:33)
+
+`examples/layer_demo.py` (job 58892432): overlap / direct / overlap+swap all PASS against the
+dense PyTorch reference (max |err| 2.4e-4 at ref max 4.8e-2, bf16). The final repo state is
+3719c05 (+ results 1f3ca13); the binary in `python/moe_ep/lib` is the fa07db0 build (the
+python-only 3719c05 change does not touch it). M7 = `scripts/reproduce.sh --nodes 8|16`
+queued in the regular QOS (jobs 58892055 / 58892056, no start estimate); their outputs land in
+`$PSCRATCH/workspace/andrewy/logs/moe_ep/grid/{8n,16n}/` (`compare_<N>n.txt`) and must be
+copied into `results/measured/` and read against the acceptance rule (every cell within 5 % of
+the v4 Ours row, best of three below the reference ceiling). 16n runs `--router-c 0.5`
+(published setting); 16n direct b16 has no published value (heap-sizing failure in the paper
+runs) and is expected to fail the same way.
