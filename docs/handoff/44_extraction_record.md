@@ -378,3 +378,25 @@ then the release binary rebuilt and re-verified (4n `--check` grid, 4n perf grid
 re-queued in the regular QOS so every published number comes from the final binary).
 Also today: `bench --check` tightened (every timed iteration, fresh payload, real route path):
 18/18 cells PASS on 4n (both models x b1/b4/b16 x overlap/direct/swap) on the pre-fix binary.
+
+## Fix validated (2026-09-26 10:15-10:50)
+
+- Rate: **46/46 plain reps clean** on the fixed debug build (8n qwen b16 overlap; pre-fix 5/64,
+  P(46 clean | 8 %) ~ 2 %). Chain `logs/moe_ep/ima/chain_fix1_status.txt`.
+- Correctness: `bench --check` (every timed iteration, fresh payload, real route) **18/18 PASS**
+  on the fixed release binary, 4n, both models x b1/b4/b16 x overlap/direct/swap (verify v3).
+- 8n perf grid on the final binary (debug QOS, 12 min): **18/18 cells ran** (the former faulting
+  cell 15.262 vs 15.580 published); 11/18 within 5 %, all seven "out" cells FASTER than published
+  (swap -5..-11 %, qwen b1 overlap -15 %, direct b16 -6/-8 %); best of three below the reference
+  ceiling in all six cells. Committed as `results/measured/main_perf_8n.csv`.
+| model | MiB | overlap | direct | swap | published (overlap / direct / swap) |
+|---|---|---|---|---|---|
+| qwen3 | 1 | 3.789 | 5.120 | 3.982 | 4.462 / 5.173 / 4.193 |
+| qwen3 | 4 | 6.158 | 11.912 | 6.171 | 6.004 / 12.106 / 6.832 |
+| qwen3 | 16 | 15.262 | 37.751 | 15.424 | 15.580 / 40.072 / 15.629 |
+| k2 | 1 | 4.394 | 5.650 | 4.766 | 4.371 / 5.737 / 5.377 |
+| k2 | 4 | 7.508 | 11.748 | 7.483 | 7.271 / 12.079 / 8.064 |
+| k2 | 16 | 17.678 | 35.502 | 18.287 | 17.774 / 38.712 / 17.613 |
+- Final binary = build of e252095 (+ b740cc2 script change: time limits 45/15/30 min by node
+  count, 300 s per cell, 16n direct b16 cells skipped as the known heap wall). 4n grid re-run
+  and 16n grid (regular QOS, 30 min) in flight on it.
