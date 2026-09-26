@@ -228,3 +228,34 @@ The first integration milestone is a single-layer harness inside SGLang's proces
 construct `EPMoE` from the running EP group, run `prepare/forward` on the router's real
 `topk_ids`, and compare against SGLang's own MoE output — the same check `bench/replay.py
 --check 1` does against the torch reference.
+
+## M6 first pass + two single-node defects (2026-09-26 01:06-01:20)
+
+**4n grid on 98a867f (pre-fix binary, job 58892081, `scripts/reproduce.sh --nodes 4`):** 13/18
+within 5 %, best of three below the reference ceiling in all six (model, budget) cells. The five
+"out" cells: four are the swap arm 5-9 % FASTER than published (band-first decision), one is
+qwen3 b4 overlap at +5.6 % (4.609 vs 4.366; the same cell read 4.404-4.475 in reads 6/7 — noise
+band). K2 is new here and lands +2.0 / -0.9 / +1.7 % on the overlap arm.
+| model | MiB | overlap | direct | swap | published (overlap / direct / swap) |
+|---|---|---|---|---|---|
+| qwen3 | 1 | 2.774 | 4.741 | 3.058 | 2.817 / 4.660 / 3.362 |
+| qwen3 | 4 | 4.609 | 10.105 | 4.610 | 4.366 / 10.139 / 4.893 |
+| qwen3 | 16 | 11.612 | 32.632 | 12.004 | 11.401 / 32.404 / 12.072 |
+| k2 | 1 | 3.872 | 5.994 | 4.063 | 3.797 / 6.059 / 4.369 |
+| k2 | 4 | 5.715 | 11.735 | 6.106 | 5.765 / 11.614 / 6.431 |
+| k2 | 16 | 14.102 | 33.953 | 14.277 | 13.864 / 33.859 / 14.911 |
+
+**Single-node checks (`final1n.sh`, job 58892051) found two defects the 4n reads could not see:**
+1. `--check 1` overlap/swap on ONE node tripped `gemm_combine.cc: Check failed: a2av_compress_`.
+   Cause: B3 folded the receiver selection to the bucketed receiver (`a2av_bucket_ = true`), but
+   in the research tree the bucket receiver was `compress && nnodes > 1 && ...`, and the
+   single-node path used the per-split wait-all top-k reduce that B3/B4 then deleted as dead.
+   Fix 66efe95: `CombineReduceArguments` + `a2av_combine_reduce` kernel restored (35 lines),
+   receiver = `if (!compress) wait-all reduce else bucketed`. Multi-node path unchanged.
+   The direct strategy passed on both models (bad rows 0/128, 0/72).
+2. `examples/layer_demo.py` failed at construction: NVSHMEM was never initialised (the bench
+   called `C.init_shm` itself). Fix fa07db0: `EPMoE` calls `moe_ep._ext.ensure_shm(group)`
+   (idempotent, once per process); the bench no longer initialises NVSHMEM.
+Lesson for the record: the per-batch 4n perf read (ruling 3) gates performance, not the
+single-node configuration; a 1-node `--check` belongs in the final gate. Final binary v2 =
+fa07db0 build; `final1n.sh` + the 4n grid re-run on it; 8n/16n (held while rebuilding) run on it.
