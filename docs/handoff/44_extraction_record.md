@@ -352,3 +352,29 @@ cell = 8n qwen3 b16 overlap swap=0; chains in `logs/moe_ep/ima/` (debug QOS, 8 n
 - Live attach works: `CUDA_DEVICE_WAITS_ON_EXCEPTION=1` parks the faulting rank; cuda-gdb 12.4
   attaches to the workers (no yama ptrace restriction). Chain `chain8n_wait.sh` (w2) = watchdog
   at 100 s + parallel per-node `probe_node.sh` (kernels, device bt, lanes). In flight.
+
+## Combine IMA ROOT-CAUSED (2026-09-26 10:11, chain w3 rep 3, live cuda-gdb attach)
+
+Not the combine at all. The faulting kernel is the dispatch op's `prepare_workspace_kernel`
+(`src/dispatch/workspace_util.cu`, upstream Flux code, one block of 768 threads): warp 17 (threads
+576-607) with `Warp Illegal Address` at the `problem_info[...]` store, line 174 of
+`fill_problem_info` (SASS offset 0x8070 mapped through the -lineinfo build).
+Mechanism: after `aligned_block_prefix_sum_and_sync`, every thread reads
+`ep_splits_acc[ep_nexperts-1]` from shared memory to derive `tiled_m` / `num_tiles`; then
+`fill_problem_info` lets warp 0 overwrite the SAME shared buffer with the per-tile schedule
+table (`sched_tile[m]`, int16 pairs) with no barrier in between. A warp that is scheduled late
+reads a schedule pair instead of the padded row count, gets a garbage tile count, and its
+`problem_info` writes run past the workspace (crash) or land at wrong positions (silent
+corruption risk). Intra-block warp-timing race: identical batch every rep, ~8 % at 8n Qwen b16
+where per-expert tile counts make warp 0 reach entry E-1 fastest. The same race exists in the
+research tree (`src/moe_ag_scatter/workspace_util.cu`, dense + a2av static paths) and in
+upstream Flux's dense path.
+Why the earlier evidence misled: the fault is asynchronous and surfaced at the next host sync,
+which in the research harness was the combine's msplit event sync (hence "combine IMA").
+Fix (one barrier at the top of `fill_problem_info`): release repo e252095, debug copy, and the
+research tree file (uncommitted there; needs its own rebuild before any research-tree run).
+Validation in flight: 46 plain reps on the fixed debug build (chain fix1; pre-fix rate 5/64),
+then the release binary rebuilt and re-verified (4n `--check` grid, 4n perf grid; 8n/16n grids
+re-queued in the regular QOS so every published number comes from the final binary).
+Also today: `bench --check` tightened (every timed iteration, fresh payload, real route path):
+18/18 cells PASS on 4n (both models x b1/b4/b16 x overlap/direct/swap) on the pre-fix binary.

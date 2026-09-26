@@ -151,6 +151,12 @@ fill_problem_info(
   int warp_idx = threadIdx.x / kWarpSize;
   int lane_idx = threadIdx.x % kWarpSize;
 
+  // sched_tile aliases the shared buffer the caller's padded prefix sum lives in, and every
+  // thread reads that prefix sum (tiled_m) right before calling here: warp 0 must not start
+  // overwriting it until all warps have read it, or a late warp derives a garbage tile count
+  // and writes problem_info past the workspace.
+  __syncthreads();
+
   int count = args.num_problem_schedules;
   const ProblemSchedV2 *scheds = (const ProblemSchedV2 *)args.problem_schedules;
 
