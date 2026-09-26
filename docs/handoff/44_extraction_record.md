@@ -128,3 +128,18 @@ arguments (pybind kwargs), computed by `moe_ep.routing.compute_capacities`; `_ex
 `constants.OP_ENV` deleted; `grep -rn get_int_from_env src/` = 1 hit (op_registry_proto_utils RANK
 print gate, goes with B6). The combine's gateway (non-compress) path is dead code (compress is on
 whenever nnodes > 1) but its ~45 references are still compiled; deleting it is folded into B6.
+
+## M4 read 5 (2026-09-26 00:28-00:37, 4n, jobs 58891589 + rerun, qwen3): batch B5 (capacities -> constructor options)
+
+Build c1eaf6c. Pure plumbing (same capacity numbers through `DispatchOptions` / `CombineOptions`
+instead of the environment), yet the overlap-off arm read +5-6 % over published at b4/b16 in the
+main pass (4.638 / 12.068) with direct and swap unchanged; a two-repetition re-run of those two
+cells on the same build gave b4 4.536 and b16 11.892 / 11.626 (final compare 8/9 within 5 %). So
+the B5 binary sits ~2-4 % above read 4 on the overlap arm at b4/b16 — inside twin noise, no
+correctness change, not a step; flagged here so the final-binary read can tell drift from noise.
+| MiB | overlap | direct | swap |
+|---|---|---|---|
+| 1 | 2.789 | 4.730 | 3.157 |
+| 4 | 4.638 (re-run 4.536) | 10.251 | 4.710 |
+| 16 | 12.068 (re-run 11.892 / 11.626) | 32.779 | 12.152 |
+Best of three below the reference ceiling at every budget.
