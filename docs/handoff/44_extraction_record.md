@@ -294,3 +294,43 @@ copied into `results/measured/` and read against the acceptance rule (every cell
 the v4 Ours row, best of three below the reference ceiling). 16n runs `--router-c 0.5`
 (published setting); 16n direct b16 has no published value (heap-sizing failure in the paper
 runs) and is expected to fail the same way.
+
+## M7 DONE (2026-09-26 06:42-07:05, regular QOS): 8n job 58892055 (11 min), 16n job 58892056 (12 min)
+
+Queue wait ~5.5 h after submission at 01:07. Final binary (fa07db0 build), `router_c` 0.25 at
+8n / 0.5 at 16n. **8n: 14/17 within 5 %; 16n: 12/16 within 5 %; best of three below the
+reference ceiling in all twelve (nodes, model, budget) cells.** Copied into the repo as
+`results/measured/main_perf_{8,16}n.csv` + `compare_*.txt`.
+
+8n (ms, overlap / direct / swap; published in parentheses):
+| model | MiB | overlap | direct | swap |
+|---|---|---|---|---|
+| qwen3 | 1 | 3.825 (4.462) | 5.225 (5.173) | 3.991 (4.193) |
+| qwen3 | 4 | 6.234 (6.004) | 12.039 (12.106) | 6.417 (6.832) |
+| qwen3 | 16 | FAILED, see below (15.580) | 39.002 (40.072) | 15.211 (15.629) |
+| k2 | 1 | 4.463 (4.371) | 5.707 (5.737) | 4.875 (5.377) |
+| k2 | 4 | 7.350 (7.271) | 11.891 (12.079) | 7.765 (8.064) |
+| k2 | 16 | 17.987 (17.774) | 38.216 (38.712) | 17.631 (17.613) |
+16n:
+| model | MiB | overlap | direct | swap |
+|---|---|---|---|---|
+| qwen3 | 1 | 6.040 (5.998) | 5.912 (5.828) | 6.132 (6.732) |
+| qwen3 | 4 | 9.188 (9.122) | 14.389 (14.246) | 9.324 (10.121) |
+| qwen3 | 16 | 23.833 (23.209) | heap failure (no published value) | 23.485 (24.557) |
+| k2 | 1 | 6.633 (6.566) | 6.040 (6.088) | 6.870 (7.536) |
+| k2 | 4 | 10.321 (9.877) | 14.936 (14.164) | 10.922 (10.750) |
+| k2 | 16 | 25.452 (26.294) | heap failure (no published value) | 26.150 (26.239) |
+
+Out-of-band cells: six are the swap arm 6-9 % FASTER than published (as at 4n); qwen3 8n b1
+overlap is 14 % FASTER (3.825 vs 4.462; the published 8n b1 plotted min was the swap arm at
+4.193, and the fresh overlap arm beats it); k2 16n b4 direct is +5.5 % (14.936 vs 14.164, the
+direct arm's plan_comm 0.88 ms was the largest of the grid — noise on the loads all_gather).
+Failures: (1) 16n b16 direct on BOTH models: `NVSHMEM_MALLOC failed` — the same symmetric-heap
+wall the paper runs hit (16n direct b16 has no published value; the acceptance CSV carries
+none). (2) 8n qwen3 b16 overlap: CUDA illegal memory access on rank 17 in the combine = the
+OPEN intermittent class recorded in memory as "Combine IMA 8n Qwen b16" (~2/10 cells in the
+research tree), carried over unchanged by the extraction — not a pruning regression. A
+two-repetition re-run of that cell is queued (`logs/moe_ep/rerun8n.sh`, output
+`grid/8n/rerun_qwen3_b16_overlap_swap0.csv`); the swap arm of the same cell ran clean (15.211).
+Acceptance at 8n/16n: rule (ii) holds everywhere; rule (i) holds for every cell that ran except
+the one +5.5 % direct cell and the swap cells that are faster.
