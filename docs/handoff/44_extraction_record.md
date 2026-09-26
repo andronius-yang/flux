@@ -80,3 +80,14 @@ orbit only for out-of-band nodes: place bracket 0.23 ms vs ~0.5-0.7 in the resea
 three below the reference ceiling at every budget (2.776/4.475/11.629 vs 4.457/5.932/15.018).
 Verdict: M2 and M3 pass on Qwen 4n; the port is faithful, the two simplifications are neutral or
 better. K2 joins at M6 (full 4n grid on the final binary).
+
+## M4 read 2 (2026-09-25 23:52-23:57, 4n, job 58891082, qwen3): batches B1 (env knobs frozen) + B2 (debug/trace removed)
+
+Build 3b7af6e. 8/9 within 5 % of published (swap b1 -11 %, faster); every cell within ~3 % of read 1
+-> no step change. Dispatch source 4670 -> 4094 lines, combine 4690 -> 4337. Env reads left in
+src/: the 7 capacity values (B5).
+| MiB | overlap | direct | swap |
+|---|---|---|---|
+| 1 | 2.733 | 4.651 | 2.993 |
+| 4 | 4.385 | 10.252 | 4.670 |
+| 16 | 11.764 | 33.025 | 12.080 |
