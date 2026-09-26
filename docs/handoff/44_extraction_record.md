@@ -432,3 +432,29 @@ SGLang implications: one shared op instance (94 MoE layers x 2 GB is impossible)
 intermediate, and on 40 GB A100 at 16n the per-rank weights (2 home + 2 redundant slots x 94
 layers ~ 14 GB experts + replicated non-expert params) leave too little for KV cache at
 prefill-sized T -> run on the hbm80g pool (or 32 nodes) with the heap set from the chunk size.
+
+## CLOSED (2026-09-26 12:25): M0-M8 complete
+
+Final state: open-source repository `$PSCRATCH/workspace/andrewy/moe_ep`, binary = build of
+e252095 (source HEAD d1abfe5 adds only results/docs). Gates: ban grep 0, env reads in src 0
+(three rank-0 log gates in Flux's op_registry.h remain), process-artifact grep 0, working tree
+clean, fresh-clone build verified (cutlass from NVIDIA's public GitHub), layer demo 3/3,
+`bench --check` 18/18 on 4n (every iteration, fresh payload, real route path), workspace-kernel
+race fixed and validated 46/46.
+Final-binary grids (`results/measured/`, README table, `results/main_perf.png`):
+| nodes | within 5 % of v4 | cells outside | verdict |
+|---|---|---|---|
+| 4 | 13/18 | 4 swap cells faster (-5..-10 %); qwen b16 overlap +6.3 % -> re-run 11.43/11.37 (+0.2/-0.3 %) | all 6 cells below ceiling |
+| 8 | 11/18 | all 7 faster than published (swap -5..-11, qwen b1 overlap -15, direct b16 -6/-8) | all 6 below ceiling; the former IMA cell ran (15.26 vs 15.58) |
+| 16 | 13/16 | 3 swap cells faster (-6..-12 %); direct b16 skipped by design | all 6 below ceiling |
+No cell of any grid is slower than published beyond twin noise (max +4.7 %, 16n K2 b4 overlap).
+Research tree: `figs/main_perf_v5` = v4 baselines + Ours rows from the open-source build (commit
+54fbd65); plotted Ours moves within +-3 % in 15/18 cells (8n Qwen b1 -9.6 %, 16n K2 b4 +4.7 %,
+8n K2 b4 +2.9 %). The workspace-kernel fix is committed in the research tree (79ae81b) but its
+binary is NOT rebuilt (item for whoever next runs it).
+Open, optional: (a) `fill_problem_info` shared-buffer aliasing refactor (bug class, not
+instance); (b) leftover dense inter-node staging allocation in the combine (268-537 MB of heap);
+(c) residual dead code ("pieces" mode, constant getters, Flux dense remnants, kernel-builder
+names); (d) the three rank-0 log env gates. Each = one small batch + one 4n read.
+Next lane: SGLang integration per the scoping table above (one shared op instance, SwiGLU,
+prefill-sized `max_tokens_per_rank`, hbm80g pool).
