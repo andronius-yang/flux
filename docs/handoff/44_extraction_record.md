@@ -143,3 +143,19 @@ correctness change, not a step; flagged here so the final-binary read can tell d
 | 4 | 4.638 (re-run 4.391 / 4.536) | 10.251 | 4.710 |
 | 16 | 12.068 (re-run 11.892 / 11.626) | 32.779 | 12.152 |
 Best of three below the reference ceiling at every budget.
+
+## M4 read 6 (2026-09-26 00:43-00:48, 4n, job 58891774, qwen3): batch B6 (kernel-argument leftovers + combine gateway path)
+
+Builds 59aacb4 (B6a: dynamic tile claimer + bucket workspace, progress slots / tile trace, ballot
+segment gate, prefetch-last remap, rot-align removed from the dispatch kernel Params — the one
+kernel-visible batch) and 298097b (B6b: the combine's dead destination-side gateway path; last
+environment read in src/ gone). 8/9 within 5 % (swap b1 -10 %, faster); the overlap arm is back
+on read 4's numbers (b4 4.404, b16 11.713), so read 5's +2-4 % was noise. No step from the smem /
+Params layout change. Dispatch kernel header 1000 -> 732 lines, workspace_util.cu 496 -> 341,
+dispatch .cc 3104 -> 3035, combine .cc 3745 -> 3574.
+| MiB | overlap | direct | swap |
+|---|---|---|---|
+| 1 | 2.773 | 4.622 | 3.010 |
+| 4 | 4.404 | 9.798 | 4.758 |
+| 16 | 11.713 | 31.278 | 11.878 |
+Best of three below the reference ceiling at every budget. Next: B7 (rename + purge) -> read 7 = FINAL binary.
