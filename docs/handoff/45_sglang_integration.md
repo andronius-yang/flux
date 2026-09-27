@@ -338,3 +338,11 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   Reading: ITL is FLAT with concurrency for every arm (fixed-cost / launch-bound regime for all of them);
   the gap ours vs graphs-off stays ~2.1-2.2x from 16 to 512 concurrent (2 -> 32 tokens/rank). ours at
   1024/2048 timed out under the 1800 s bench cap on the first pass; rerun in flight.
+- 09-27 14:45 regime rerun: ours c=1024: 990 tok/s, mean ITL 182 ms (achieved concurrency 649 ~ 40 tokens/rank),
+  growths 0; c=2048 timed out again under the 1500 s bench cap (ours needs ~2x the baseline's wall time per
+  concurrency level). ITL for ours is flat at 180 ms from 2 to 40 tokens/rank: the per-layer fixed cost is not
+  amortized in this range; the baseline's ITL is flat at ~80 ms (also fixed-cost bound). All allocations
+  released (58963326, 58965213, 58968164). Session state: moe_ep sglang-dev ae703df (stage 1 + S-A), research
+  tree handoff up to date. USER DECISIONS: (1) swap band floor / decision semantics in the decode regime;
+  (2) stage 3 (S-B/S-C/S-D, 24-36 days) is NO-GO for decode parity by the gate unless paired with a small-M
+  path; (3) whether the e2e claim scope becomes correctness + prefill parity + mechanism fidelity.
