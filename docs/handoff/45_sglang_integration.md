@@ -221,3 +221,13 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   GPUs holds concurrency/16 tokens per rank, far below the paper's regime (>= 128/rank); larger
   deployments shrink per-rank batches further. Parity is expected only for prefill-heavy traffic or very
   high concurrency -> prefill-heavy benchmark (ISL 2048, OSL 32) on the 235B next (`chain_prefill_nn.sh`).
+- 09-27 02:15 235B PREFILL-HEAVY (4 hbm80g nodes, random ISL 2048 +-50 %, OSL 32, 128 prompts, c=32;
+  `prefill_p235_report.txt`):
+  | arm | req/s | mean TTFT ms | median TTFT ms | mean ITL ms | median E2E ms |
+  | moe_ep overlap, rebalance OFF | 1.66 | 2255 | 2087 | 682 | 18705 |
+  | moe_ep overlap, rebalance ON | 2.37 | 1667 | 1181 | 455 | 12221 |
+  | baseline none, graphs off | 3.35 | 1717 | 1001 | 312 | 8988 |
+  Reading: in the prefill phase (per-rank batches of ~128 tokens after rebalancing = the paper's b1 regime)
+  the moe_ep arm reaches TTFT parity (mean better, median 18 % worse); without rebalancing one rank's
+  2048-token chunk makes the other 15 pad 16k rows each (TTFT 2.1 s). Decode remains the gap (ITL 455 vs
+  312 ms, ~1.5x): the fixed per-step latency at 2 tokens per rank. Rebalance stays ON by default.
