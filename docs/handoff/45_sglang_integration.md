@@ -328,3 +328,13 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   reach decode parity; the device-side fixed cost (barriers, all-gathers, persistent kernels at tiny M)
   is structural. S-B/S-C/S-D = NO-GO as the route to decode parity unless paired with a small-M path
   (fewer barriers, one exchange, no relay rounds for tiny payloads). User decision pending.
+- 09-27 14:23 REGIME SWEEP 30B 4n (40 GB nodes, job 58968164, ShareGPT 4096 prompts, MAXRR 256/rank, no timing
+  collector; regime_reg30b_report.txt / bench_rreg30b_*):
+  | conc | ours tok/s / mean ITL | baseline graphs off | baseline graphs on |
+  | 256 | 948 / 181 ms | 2021 / 83 | 2508 / 77 |
+  | 512 | 1032 / 180 | 2176 / 85 | 2565 / 81 |
+  | 1024 | (rerun below) | 2233 / 78 | 2776 / 72 |
+  | 2048 | (rerun below) | 2215 / 81 | 2715 / 75 |
+  Reading: ITL is FLAT with concurrency for every arm (fixed-cost / launch-bound regime for all of them);
+  the gap ours vs graphs-off stays ~2.1-2.2x from 16 to 512 concurrent (2 -> 32 tokens/rank). ours at
+  1024/2048 timed out under the 1800 s bench cap on the first pass; rerun in flight.
