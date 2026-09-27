@@ -122,3 +122,11 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   conn=24 pin, handoff 42); the overlap arm survived but ran throttled. Fix in our patch: `setdefault`.
   The 4n chain (run under 4 connections) was stopped after its overlap arm (gsm8k 0.950, 48 tokens
   saved, bench c=16: 108 tok/s, TTFT 261 ms, ITL 127 ms; `chain_n4_conn4_report.txt`) and restarts.
+- 09-26 22:55 4n moe_ep OVERLAP (conn=24, real-routing calibration, 0 growths): gsm8k 100q 0.960;
+  bench_serving ShareGPT 256 prompts: c=16 106 tok/s out, median TTFT 268 ms, mean ITL 130 ms;
+  c=64 212 tok/s out, median TTFT 297 ms, mean ITL 140 ms (`chain_n4b_report.txt`). Baseline arms
+  (graphs off A/B, graphs on) running now on the same nodes for the comparison. The swap arm still hangs
+  under conn=24 (first layer-step with moves; receiving rank's combine GEMM waits on its moved-slot
+  gate) — the connection count was a real but not the only cause; device-memory probe of the lane's
+  signal words in flight (`repro_sw7`). SGLang's scheduler watchdog (300 s) kills hung workers, so probes
+  run with `--watchdog-timeout 3600`.
