@@ -31,3 +31,15 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   (48 moves, correct); tiny shape PASS. Forced growth (`--caps-scale 0.1`) HANGS at the 4th
   growth (first in-step growth at layer 2, step 8; deterministic); GPUs 1,2 spin at 100 %,
   0,3 idle. Under investigation with a gdb watchdog (`logs/sglang/hang_probe.sh`).
+- 09-26 20:45 Forced-growth hang ROOT-CAUSED (gdb + cuda-gdb watchdog, `logs/sglang/probe_grow{3,5}.log`):
+  after the 4th op rebuild the first forward deadlocks — two GPUs spin in kernels, two have NO
+  resident kernel yet never drain (streams blocked on memop waits), all hosts in the post-step
+  `torch.cuda.synchronize()`. Rebuilding whole ops re-creates dedicated streams (16 combine wire
+  lanes + dispatch streams per instance), re-primes transports and restarts the signal epoch,
+  which reshuffles the stream→hardware-queue mapping under the CUDA_DEVICE_MAX_CONNECTIONS=24
+  pin (the same class of stall the pin was chosen against, handoff 42). Decision: growth =
+  in-place `resize_capacities` on both ops (reallocates only the capacity-sized symmetric panels;
+  streams, events, signals, run epoch untouched; no re-priming) — C++ methods added to
+  DispatchGemmOp / CombineWire / GemmCombineOp + bindings; Python `OverlapComm.resize`,
+  `DirectComm.resize` (wires have no stream state; rebuild kept), `SharedComm._grow` no longer
+  detaches/attaches the swap lane. Rebuilding the torch 2.6 tree to re-test.
