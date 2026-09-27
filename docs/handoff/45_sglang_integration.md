@@ -130,3 +130,21 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   gate) — the connection count was a real but not the only cause; device-memory probe of the lane's
   signal words in flight (`repro_sw7`). SGLang's scheduler watchdog (300 s) kills hung workers, so probes
   run with `--watchdog-timeout 3600`.
+- 09-26 23:15 4n COMPARISON (Qwen3-30B-A3B, tp=dp=ep=16, ShareGPT 256 prompts; `chain_n4b_report.txt`):
+  | arm | c | out tok/s | median TTFT ms | mean ITL ms | median E2E ms |
+  | moe_ep overlap (graphs off) | 16 | 106 | 268 | 130 | 16954 |
+  | baseline none (graphs off) | 16 | 190 | 145 | 72 | 9467 |
+  | baseline none (graphs on) | 16 | 408 | 105 | 34 | 4442 |
+  | moe_ep overlap (graphs off) | 64 | 212 | 297 | 140 | 19401 |
+  | baseline none (graphs off) | 64 | 403 | 146 | 69 | 9350 |
+  | baseline none (graphs on) | 64 | 307 | 272 | 163 | 22258 |
+  Correctness at 4n: moe_ep gsm8k 0.960 vs baseline 0.940; token agreement baseA-vs-ours 22/48 identical,
+  71.9 % prefix = baseA-vs-baseB 22/48, 66.0 % (noise floor). Performance: the moe_ep arm is ~2x slower
+  than the matched baseline at this scale (30B, H 2048, 48 layers, per-rank batches of a few tokens: the
+  per-layer planning cost, host syncs and eager launches dominate; the paper's regime starts at 128
+  tokens per rank). This is the S3 baseline reading; the performance question moves to the 235B model
+  and larger batches. Swap arm: still hangs (see below).
+- 09-26 23:16 Swap hang #3 narrowed (stream-state dump, `repro_sw10`): on both exchange partners phase 0
+  completed, all four movement streams are stuck before phase 1's pushes, whose only gate is the COMBINE
+  op's GEMM-start mark; the combine GEMMs are resident (launched) — so the combine mark was not written
+  (or not to the tensor the lane waits on) in the serving process, while the dispatch op's mark works.
