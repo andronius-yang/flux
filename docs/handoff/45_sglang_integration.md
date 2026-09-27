@@ -76,3 +76,11 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   Latency of the direct arm at this stage 107 s vs 38 s baseline for the gsm8k batch (eager, plain
   all-to-all, no placement data yet) — performance is S3's job. Token-agreement check (48 prompts)
   made concurrent; second 1-node allocation 58935447 for the calibration recording (recorder fixed).
+- 09-26 21:45 Calibration recorded on 1n (baseline, gsm8k 100q as traffic, accuracy 0.950; recorder
+  fixed by our patch): 4 per-rank per_token dumps (`logs/sglang/dumps_b30cal`), 1.1 M token rows over
+  48 layers; `calibrate.py` now attributes tokens per rank (each dump = that rank's attention DP
+  shard). Configs `calib_30b_{overlap_s0,overlap_s1,direct_s0}` (caps recv 52684 incl. pad allowance
+  16384). On ONE node the placement cannot replicate (one instance per node by design), so the
+  redundant slots stay empty; replication is exercised from 4 nodes on. Chain v2 on job 58935447:
+  ours overlap, ours overlap+swap (gsm8k 100 + 48-prompt greedy token run each), two baseline token
+  runs (noise floor). 4-node interactive allocation requested.
