@@ -166,3 +166,15 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   which is also why the conn=24 pin was ever needed. Fix (moe_ep 3ca62cd): the lane's waits become a
   one-warp spin KERNEL (`stream_wait_geq`, new binding); kernels never block a channel. Memop waits stay
   available as `MOE_EP_LANE_WAIT=memop`. Rebuilding; then the swap arm re-test.
+- 09-27 00:30 SWAP ARM SERVES. Checkpoint events showed both exchange partners blocked at phase 1's mark
+  wait itself, and the spin-wait kernels never became resident: their launches sat behind blocking
+  entries of other streams in shared hardware channels (the serving process's stream layout; not
+  controllable from Python). Decision: serving uses an INLINE movement mode (moe_ep commit "inline swap
+  movement"): on the forward stream right before each GEMM, push outgoing slots into the peers' staging
+  + flag, spin-wait (one-warp kernel) for incoming flags, copy staging -> slot; no side streams, marks or
+  tile gates. Deviation from the paper's 3D schedule: in serving the movement is not hidden under the
+  GEMM (cost ~ the NVLink copy of <= 8 experts per swapping layer-step); the overlapped lane remains the
+  benchmark's mechanism (`MOE_EP_LANE_MODE=overlap`). Follow-up for full fidelity: issue the movement from
+  inside the ops on their own streams after the GEMM launch (C++), where the channel ordering is known.
+  Reproduction sw22: swap arm answers correctly (token-identical first generation), 1632 layer-steps.
+  Full 1n gate (gsm8k 100 + token run) running; 4n allocation requested for the swap arm's gate + bench.
