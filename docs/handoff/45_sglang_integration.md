@@ -231,3 +231,8 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   the moe_ep arm reaches TTFT parity (mean better, median 18 % worse); without rebalancing one rank's
   2048-token chunk makes the other 15 pad 16k rows each (TTFT 2.1 s). Decode remains the gap (ITL 455 vs
   312 ms, ~1.5x): the fixed per-step latency at 2 tokens per rank. Rebalance stays ON by default.
+- 09-27 02:20 235B prefill-heavy, baseline graphs ON: 3.52 req/s, mean TTFT 1717, median 945, ITL 300 ms
+  (prefill-bound: graphs change little). 235B per-layer timing under the prefill-heavy load (decode-
+  dominated average, H 4096): total 2.5 ms = pads+loads 0.23, route+xchg 0.19, meta+check 0.36, dispatch
+  0.92, act 0.07, combine 0.72 (`server_timing_p235prefill.log`). Prefill-only (OSL 1) timing split by
+  step size running to isolate the large-batch layer-step.
