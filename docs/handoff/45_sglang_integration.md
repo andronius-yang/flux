@@ -88,3 +88,8 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   baseline 0.950 (same questions); gsm8k batch latency 62 s (direct arm 107 s, baseline 32 s at this
   one-node, 30B, tiny-batch scale — the fixed per-layer planning cost dominates; performance is read at
   4 nodes+). ShareGPT prompt file cached at `caches/hf/ShareGPT_V3_unfiltered_cleaned_split.json`.
+- 09-26 21:58 1n TOKEN AGREEMENT (48 prompts, greedy, 64 new tokens, 16 concurrent; bf16 batching
+  makes greedy outputs vary between runs): baseline vs baseline 24/48 identical, 67.1 % agreeing prefix
+  (the noise floor); baseline vs moe_ep overlap 26/48 identical, 70.8 % — the moe_ep arm is at the noise
+  floor (`logs/sglang/chain_v2_report.txt`, `tok_v2_*.json`). moe_ep overlap: 0 growths. The swap arm
+  (ov1) server died during gsm8k — under investigation.
