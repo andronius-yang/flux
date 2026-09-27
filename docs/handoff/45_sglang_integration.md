@@ -68,3 +68,11 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   output back. SGLang v0.5.3 bug found: `ExpertDistributionReq` lacks `@dataclass` (recorder
   endpoints 500) — fixed in our patch. Chain c1 (ours gsm8k -> token agreement ours vs baseline)
   running on job 58931804.
+- 09-26 21:27 S2 GATE (1 node, 30B, moe_ep `direct`, uniform calibration): gsm8k 50q accuracy 0.960
+  (baseline 0.920 on the same questions; 50-question noise), first generation token-identical, 0
+  capacity growths (`logs/sglang/smoke_smoke_c2_status.txt`, adapter fix b924fd9: SGLang's
+  synchronized `global_num_tokens_cpu` are padded batch sizes, `num_token_non_padded_cpu` is the exact
+  local count; the layer buckets from the synchronized bound and gathers exact counts only for swap).
+  Latency of the direct arm at this stage 107 s vs 38 s baseline for the gsm8k batch (eager, plain
+  all-to-all, no placement data yet) — performance is S3's job. Token-agreement check (48 prompts)
+  made concurrent; second 1-node allocation 58935447 for the calibration recording (recorder fixed).
