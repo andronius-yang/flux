@@ -155,3 +155,14 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   copy kernel behind the resident gated GEMM (lazy loading; the harness never swaps before warming up).
   CUDA_MODULE_LOADING=EAGER breaks SGLang startup (NCCL unhandled cuda error), so the fix is a lane warm-up
   (every push/pull primitive once to self at first use) — under test (`repro_sw16`).
+- 09-27 00:15 Swap hang ROOT CAUSE (final): hardware work-queue aliasing of stream MEMORY-OPERATION waits.
+  Evidence: memop primitive self-test passes in the process; marks force-written from the forward stream
+  change nothing; lane warm-up (module preloading) changes nothing; 32 connections and high-priority lane
+  streams change nothing; issuing the phases BEFORE the op forward flips which ranks spin (receivers ->
+  pushers) = FIFO channel semantics. A `cuStreamWaitValue64` blocks its channel until satisfied; with more
+  streams than CUDA_DEVICE_MAX_CONNECTIONS (SGLang's own streams + ~22 op streams + 4 movement streams)
+  a movement stream shares a channel with a combine wire lane whose queued kernels finish only after the
+  GEMM, which waits for the movement -> deadlock. The benchmark process has a different (benign) layout,
+  which is also why the conn=24 pin was ever needed. Fix (moe_ep 3ca62cd): the lane's waits become a
+  one-warp spin KERNEL (`stream_wait_geq`, new binding); kernels never block a channel. Memop waits stay
+  available as `MOE_EP_LANE_WAIT=memop`. Rebuilding; then the swap arm re-test.
