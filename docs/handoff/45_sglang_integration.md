@@ -43,3 +43,15 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   DispatchGemmOp / CombineWire / GemmCombineOp + bindings; Python `OverlapComm.resize`,
   `DirectComm.resize` (wires have no stream state; rebuild kept), `SharedComm._grow` no longer
   detaches/attaches the swap lane. Rebuilding the torch 2.6 tree to re-test.
+- 09-26 20:49 S1 DONE: in-place resize verified — one-node matrix on the resize build (moe_ep 7a7550e,
+  torch 2.6 tree; job 58931804) 7/7 PASS, 0 bad rows everywhere: forced growth overlap (4 growths incl.
+  the formerly deadlocking mid-step one), direct (2), overlap (1), forced growth direct (6), swap +
+  load shift (48 moves, 1 growth), swap + growth (3 growths, 48 moves), tiny shape with swap.
+  `logs/sglang/matrix_r1_status.txt`. Same commit built for torch 2.8 in `moe_ep_t28`.
+  SGLang v0.5.3 patch (`integrations/sglang/patches/sglang-v0.5.3.patch`, 4 files) applied to the
+  clone and installed editable with the adapter (`moe_ep_sglang`) into the sglang env; launch
+  scripts (`integrations/sglang/launch/{env_launch.sh,server.sh}`), `calibrate.py`, README written.
+  Rule learned: never rebuild the fused ops inside a process; grow panels in place.
+- 09-26 20:49 S0/S2 start: stock SGLang baseline smoke on 1n with Qwen3-30B-A3B (tp=dp=ep=4, DP
+  attention, flashinfer, graphs off) + per-token expert-routing recording + gsm8k 50q
+  (`logs/sglang/smoke_b30_status.txt`).
