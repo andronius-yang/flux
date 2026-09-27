@@ -236,3 +236,21 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   dominated average, H 4096): total 2.5 ms = pads+loads 0.23, route+xchg 0.19, meta+check 0.36, dispatch
   0.92, act 0.07, combine 0.72 (`server_timing_p235prefill.log`). Prefill-only (OSL 1) timing split by
   step size running to isolate the large-batch layer-step.
+- 09-27 02:30 SESSION CLOSE. The prefill-only timing run (OSL 1) logged only decode-sized steps: the
+  collector dropped every step whose GPU work was still running at the next step (the prefill steps) —
+  fixed (steps queued until complete). The prefill-regime breakdown is therefore still to be measured.
+  All allocations released. State: moe_ep `sglang-dev` at the commit above (main untouched); patched
+  SGLang clone + adapter installed in `andrewy-sglang`; torch-2.8 build in `moe_ep_t28`; calibrations
+  `calib_30b4n_*`, `calib_235b4n_*`; all runs under `logs/sglang/`.
+  STATUS vs the plan: S0-S3 done (1n + 4n, 30B, all three settings correct at the noise floor, swap via
+  inline movement); S4 done for overlap (235B 4 hbm80g nodes: gsm8k 0.97, ShareGPT + prefill-heavy
+  benchmarks); S4 swap arm and 8n/16n (S5) not run. PERFORMANCE VERDICT so far: correctness and
+  integration goals met; prefill (large per-rank batches) at TTFT parity with the stock server on the 235B
+  once batches are rebalanced; decode (1-4 tokens per rank under DP attention) 1.5-2x slower because of
+  the fused design's ~2.2-2.5 ms fixed per-layer-step latency (dispatch 0.9, combine 0.7, metadata+check
+  0.36, plan collectives 0.4) vs the stock path's ~0.5 ms. NEXT: (1) measured prefill-step breakdown
+  (fixed collector); (2) trim the fixed cost: fold the loads exchange into the routing exchange, drop the
+  per-step host sync where the check can run on device, skip the per-layer combine metadata derive when
+  the routing is unchanged in shape...; (3) ops-side fixed latency (barriers, persistent launches) is C++
+  work; (4) decide with the user whether the e2e claim is "TTFT parity + correct integration" or requires
+  decode parity (likely needs a decode-specialized small-batch path).
