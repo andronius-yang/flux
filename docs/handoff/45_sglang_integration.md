@@ -279,3 +279,24 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   closed-form). Branch state: sglang-dev f7716ea (42 commits over master); stray bench outputs moved to
   `logs/sglang/results/`. NEXT: plan 2 = (1) swap off the critical path per (a), (2) remove the host sync
   per (b); then the regime tests (30B 4n 40G concurrency sweep; 16n 40G prefill-heavy, -q regular).
+- 09-27 (session 2) PLAN 2 APPROVED (plan file; sequencing: swap fix -> S-A device groundwork immediately,
+  gate + regime tests in parallel, S-B/S-C/S-D on GO). STAGE 1 DONE in code: moe_ep 9d14e35 "staged"
+  swap lane (default MOE_EP_LANE_MODE=staged): sender pushes into the peer's staging + raises the
+  peer's per-slot GATE word on its forward stream; the GEMM reads the moved expert FROM THE STAGING via a
+  per-expert weight pointer override (both workspace kernels, `weight_ptr_override`), moved-last, tile
+  gates spin only until the push lands; gated commit after the GEMM. No side streams.
+  1n (torch-2.8 build, small/tiny shapes): PASS 0 bad rows + every hosted slot == its expert after each
+  swap step; late-push test (rank 0 pushes ~3 ms late via MOE_EP_LANE_DELAY): receivers spin on the gate,
+  output exact; starved rank with swaps PASS (gated commit on a rank that skips its GEMM); inline and
+  overlap modes still PASS; bench replay --check PASS swap 0/1. Per-phase (swap layer-steps, small shape,
+  ~4.6 moves/rank): lane GPU phases push0 0.18 commit0 0.08 push1 0.08 commit1 0.03 = 0.37 ms; the
+  HOST swap decision (orbit) 0.96 ms in every mode.
+  4n 30B swap arm (chain s1a, ov1 = calib_30b4n_overlap_s1): gsm8k 0.960 (baseline 0.94-0.97), tokens
+  saved; per-phase decode: decode+swap class 199 of 200 layer-steps (!), swap_decide 1.53 ms, lane
+  phases 0.27 ms (push0 0.16), dispatch 0.83, combine 0.70 -> the band test trips on nearly every
+  decode step at 2-4 tokens/rank (routing noise); the paper's regime (>=128 tok/rank) never saw this.
+  OPEN for the user: a minimum-load floor / hysteresis on the band trigger in the decode regime.
+  S-A started: `a2av_meta_arena_impl` (device rebuild of the dispatch pinned arena incl. the minmove
+  water-fill, target = my node) + `a2av_arena_compare_impl`; `a2av_demands_impl` (device demand check,
+  7 demands + violation mask, returned by `derive_routed_meta(topk, caps, direct)` on the same sync);
+  knob MOE_EP_DEVICE_META 0/1/2 (dispatch_gemm.cc + overlap.py). Built (build_t28_devmeta/_demands).
