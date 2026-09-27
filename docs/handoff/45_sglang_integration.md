@@ -55,3 +55,16 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
 - 09-26 20:49 S0/S2 start: stock SGLang baseline smoke on 1n with Qwen3-30B-A3B (tp=dp=ep=4, DP
   attention, flashinfer, graphs off) + per-token expert-routing recording + gsm8k 50q
   (`logs/sglang/smoke_b30_status.txt`).
+- 09-26 21:15 S0 DONE / S2 in progress (1 node, Qwen3-30B-A3B, tp=dp=ep=4, DP attention, flashinfer,
+  graphs off): stock SGLang baseline serves (load 100 s, KV 82k tokens), gsm8k 50q accuracy 0.920
+  (`logs/sglang/gsm8k_b30.log`). moe_ep arm (`direct`, uniform calibration `calib_30b_uni_direct`,
+  heap 6 GiB, `--mem-fraction-static 0.85`): serves; first greedy generation token-identical to the
+  baseline. Adapter fixes on the way (moe_ep 25c1114..833e727): slot-view shape assert; construct
+  moe_ep state under `torch.device("cpu")` (SGLang builds the model with CUDA default device ->
+  pinned host buffers landed on GPU); rebind `param.data` to the slot views instead of new
+  Parameters (the replaced storage stayed reserved, ~15 GB, KV sizing failed); strip DP-attention
+  padding rows (SGLang pads every rank's batch to the longest one, padded rows carry top-k id -1 ->
+  device assert in the router) using `global_num_tokens_cpu` / `num_token_non_padded_cpu`, pad the
+  output back. SGLang v0.5.3 bug found: `ExpertDistributionReq` lacks `@dataclass` (recorder
+  endpoints 500) — fixed in our patch. Chain c1 (ours gsm8k -> token agreement ours vs baseline)
+  running on job 58931804.
