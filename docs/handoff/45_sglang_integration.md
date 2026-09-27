@@ -202,3 +202,7 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   per rank, KV pool 155k tokens, healthy in 150 s, gsm8k 100q 0.960 in 57 s, 16 per-token routing dumps
   (`dumps_b235cal4n`), 48 baseline generations (`tok_b235cal4n.json`). Calibration (16 ranks, 94 layers,
   overlap s0/s1) running; then the moe_ep arms + benchmarks on the same allocation (job 58942974).
+- 09-27 01:33 235B moe_ep OVERLAP (rebalanced batches, exact buckets, real-routing calibration, 4 hbm80g
+  nodes): weights+heap 61.7 GB per rank, KV 38k tokens, healthy in 190 s, gsm8k 100q **0.970** (stock 0.960).
+  Benchmarks running (ours overlap, ours swap, baseline graphs off/on). 30B rebalanced overlap: gsm8k 0.940
+  (= baseline on these nodes); bench pending.
