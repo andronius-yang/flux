@@ -102,3 +102,8 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   harness gets `--starve-rank` (zero-row rank + swap). 4n baseline: the v0.5.3 per-token recorder buffer
   (`chunked_prefill_size * 8`) overflowed on the DP-gathered batch (20649 > 16384 rows) -> patched to
   `* dp_size`; calibration rerun on job 58936312.
+- 09-26 22:20 Mark fix verified at layer level (both trees rebuilt, moe_ep 8316a38): harness `--starve-rank`
+  with swap (rank 0 receives no rows, 16 moves) PASS, without swap PASS. 4n baseline (Qwen3-30B, tp=dp=ep=16):
+  healthy in 180 s, gsm8k 100q 0.950 in 38 s, 16 per-rank routing dumps (`dumps_b30cal4n2`), 48 baseline
+  generations (`tok_b30cal4n2.json`). Cleanup rule: a crashed multi-node server leaves ~36-70 processes per
+  node that block the next srun step ("Requested nodes are busy") — kill by pid on every node first.
