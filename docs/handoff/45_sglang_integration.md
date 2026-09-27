@@ -206,3 +206,8 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   nodes): weights+heap 61.7 GB per rank, KV 38k tokens, healthy in 190 s, gsm8k 100q **0.970** (stock 0.960).
   Benchmarks running (ours overlap, ours swap, baseline graphs off/on). 30B rebalanced overlap: gsm8k 0.940
   (= baseline on these nodes); bench pending.
+- 09-27 01:40 NEGATIVE RESULT: the rebalanced 30B overlap arm is SLOWER (4n, c=16: 92 tok/s, TTFT 307 ms,
+  ITL 149 ms vs 106 / 268 / 130 unrebalanced; c=64: 184 / 324 / 158 vs 212 / 297 / 140). Padding was not the
+  dominant cost; the three extra all-to-alls and the exact-bucket planners cost more than the pads saved
+  at this scale. Attribution now measured, not inferred: `MOE_EP_TIMING=1` per-phase CUDA-event
+  breakdown runs (rebalance on/off) on the 30B 4n allocation (`logs/sglang/server_timing_*.log`).
