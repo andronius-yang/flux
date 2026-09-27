@@ -311,3 +311,20 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   on the band trigger for the decode regime (routing noise at 2-4 tok/rank trips it constantly); (b) the
   per-step loads sync is inherent to a same-step host decision (paper semantics); a one-step-deferred
   decision would remove it but deviates. Logs: server_s1a_ov{0,1}.log, bench_s1a_*.
+- 09-27 13:20 S-A ACCEPTED + COMMITTED (moe_ep sglang-dev, "S-A: device-side derivation ..."): device
+  dispatch arena / demands / combine tables agree bitwise with the host on 1n and 4n (mode 2), device-
+  authoritative mode 1 passes serving checks + bench replay --check on 4n. One real fix found by the
+  compare: stale minmove piece entries beyond the step's piece count (host re-zeroes; kernel now
+  zeroes the tail). Mode 2 hangs in the bench path (its syncs ride the late combine derive's side
+  stream) - acceptance runs use serving_check. NOT done in S-A: fixed shapes (S-A.3) and device epochs
+  (S-A.5), which only pay off under graph capture (see the gate).
+  DECISION GATE (nsys, 2 nodes, qwen3 shape, replay --isolated, logs/sglang/nsys/): per layer-step at
+  8 tokens/rank: span 2.47 ms = GPU busy 1.27 + host-induced gap 1.19, 132 launches; at 128 tok/rank:
+  2.85 = 1.83 + 1.02. GPU busy at 8 tok/rank breaks down (per step): CUTLASS GEMMs 0.41, NVSHMEM
+  on-stream barriers 0.35 (3 per step), the two NCCL all-gathers 0.33 (LL, inter-node), combine
+  prereduce 0.25 + pack 0.16, proxy signal 0.13, memcpy 0.11. Serving check at 8 tok/rank: 2.86 =
+  1.62 busy + 1.26 gap (the loads all-gather dominates there). VERDICT: capture removes at most the gap
+  (~1.2 ms) -> best case ~1.3 ms per layer-step vs ~0.5 ms for the stock path: graphs alone CANNOT
+  reach decode parity; the device-side fixed cost (barriers, all-gathers, persistent kernels at tiny M)
+  is structural. S-B/S-C/S-D = NO-GO as the route to decode parity unless paired with a small-M path
+  (fewer barriers, one exchange, no relay rounds for tiny payloads). User decision pending.
