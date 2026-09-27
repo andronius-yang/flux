@@ -178,3 +178,6 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   inside the ops on their own streams after the GEMM launch (C++), where the channel ordering is known.
   Reproduction sw22: swap arm answers correctly (token-identical first generation), 1632 layer-steps.
   Full 1n gate (gsm8k 100 + token run) running; 4n allocation requested for the swap arm's gate + bench.
+- 09-27 00:33 1n SWAP ARM GATE (inline movement, real-routing calibration `calib_30b_overlap_s1`): gsm8k
+  100q accuracy 0.950 = baseline, 0 growths (`smoke_sw_full_status.txt`). 4n chain n4c (swap arm gsm8k +
+  token run + bench, fresh baseline) running on job 58942368.
