@@ -84,3 +84,7 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   redundant slots stay empty; replication is exercised from 4 nodes on. Chain v2 on job 58935447:
   ours overlap, ours overlap+swap (gsm8k 100 + 48-prompt greedy token run each), two baseline token
   runs (noise floor). 4-node interactive allocation requested.
+- 09-26 21:50 1n moe_ep `overlap` (real-routing calibration, swap off): gsm8k 100q accuracy 0.950 =
+  baseline 0.950 (same questions); gsm8k batch latency 62 s (direct arm 107 s, baseline 32 s at this
+  one-node, 30B, tiny-batch scale — the fixed per-layer planning cost dominates; performance is read at
+  4 nodes+). ShareGPT prompt file cached at `caches/hf/ShareGPT_V3_unfiltered_cleaned_split.json`.
