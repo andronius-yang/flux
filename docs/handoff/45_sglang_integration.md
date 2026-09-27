@@ -113,3 +113,12 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   (x1.5 + pad allowance 16384). Chain n4 on job 58936312: ours overlap, ours overlap+swap, baseline A/B,
   baseline-graph; gsm8k 100q, 48-prompt token agreement, bench_serving (ShareGPT 256 prompts, c=16 and 64).
   Swap-arm serving re-test (fixed build) running on 1n (job 58935447).
+- 09-26 22:35 Swap-arm hang #2 ROOT-CAUSED (SIGUSR1/USR2 probes + cuda-gdb, `logs/sglang/repro_sw3`):
+  after the first layer with moves, the receiving rank's combine GEMM stays resident (its moved-slot
+  weight gate never opens), the other GPUs idle, all hosts at the next layer's first host sync. Cause:
+  SGLang's `engine.py::_set_envs_and_config` unconditionally sets `CUDA_DEVICE_MAX_CONNECTIONS=4`
+  (and `CUDA_MODULE_LOADING=AUTO`) in every worker, overriding the launcher's 24 — with 4 hardware
+  queues the swap lane's `cuStreamWaitValue64` waits deadlock (the false-dependency class behind the
+  conn=24 pin, handoff 42); the overlap arm survived but ran throttled. Fix in our patch: `setdefault`.
+  The 4n chain (run under 4 connections) was stopped after its overlap arm (gsm8k 0.950, 48 tokens
+  saved, bench c=16: 108 tok/s, TTFT 261 ms, ITL 127 ms; `chain_n4_conn4_report.txt`) and restarts.
