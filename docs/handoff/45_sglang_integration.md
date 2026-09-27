@@ -107,3 +107,9 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   healthy in 180 s, gsm8k 100q 0.950 in 38 s, 16 per-rank routing dumps (`dumps_b30cal4n2`), 48 baseline
   generations (`tok_b30cal4n2.json`). Cleanup rule: a crashed multi-node server leaves ~36-70 processes per
   node that block the next srun step ("Requested nodes are busy") — kill by pid on every node first.
+- 09-26 22:25 16-rank calibration from the 4n recording (`calib_30b4n_{overlap_s0,overlap_s1,direct_s0}`):
+  2.0 M token rows, replicas max 4 per expert (the node-level replication is live), caps recv 57531 /
+  dispatch_recv 66424 / stage 18431 / relay 9612 / combine_send 60322 / conv 30857 / wire 18710 / pair 33375
+  (x1.5 + pad allowance 16384). Chain n4 on job 58936312: ours overlap, ours overlap+swap, baseline A/B,
+  baseline-graph; gsm8k 100q, 48-prompt token agreement, bench_serving (ShareGPT 256 prompts, c=16 and 64).
+  Swap-arm serving re-test (fixed build) running on 1n (job 58935447).
