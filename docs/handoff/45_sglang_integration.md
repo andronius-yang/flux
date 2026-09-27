@@ -148,3 +148,10 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   completed, all four movement streams are stuck before phase 1's pushes, whose only gate is the COMBINE
   op's GEMM-start mark; the combine GEMMs are resident (launched) — so the combine mark was not written
   (or not to the tensor the lane waits on) in the serving process, while the dispatch op's mark works.
+- 09-26 23:36 4n direct arm: gsm8k 0.920; bench c=16 86 tok/s, TTFT 415 ms, ITL 161 ms (slower than
+  overlap, as in the paper's regime ordering). Swap hang #3: memop primitive self-test PASSES in the serving
+  process (kernel and H2D releases); writing the marks from the forward stream does not help -> the
+  exchange partners block at phase-1's PUSH copies, not the mark. Hypothesis: first-launch module load of a
+  copy kernel behind the resident gated GEMM (lazy loading; the harness never swaps before warming up).
+  CUDA_MODULE_LOADING=EAGER breaks SGLang startup (NCCL unhandled cuda error), so the fix is a lane warm-up
+  (every push/pull primitive once to self at first use) — under test (`repro_sw16`).
