@@ -300,3 +300,14 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   water-fill, target = my node) + `a2av_arena_compare_impl`; `a2av_demands_impl` (device demand check,
   7 demands + violation mask, returned by `derive_routed_meta(topk, caps, direct)` on the same sync);
   knob MOE_EP_DEVICE_META 0/1/2 (dispatch_gemm.cc + overlap.py). Built (build_t28_devmeta/_demands).
+- 09-27 12:02 STAGE 1 4n GATE (chain s1a, 30B, MOE_EP_TIMING=1 on both arms, so absolute numbers carry the
+  collector's overhead; compare arms within the chain): no-swap ov0 c=16 88 tok/s ITL 156 ms, c=64 178 /
+  166, gsm8k 0.930; swap ov1 (staged lane) c=16 53 / 260, c=64 115 / 250, gsm8k 0.960, growths 0 both.
+  Per layer-step (decode): ov0 2.21 ms; ov1 3.25 (no-swap steps) / 4.31 (swap steps, 73 of 200 in the
+  bench window). ov1 lane phases push0 0.12 commit0 0.02 push1 0.02 commit1 0.004 = 0.17 ms in swap steps
+  -> the MOVEMENT is off the critical path (stage 1 goal met); the remaining gap is entirely the host
+  decision path: swap_decide 1.39 ms in swap steps (orbit) and 0.49 ms in every other step (the
+  `loads.cpu()` sync = lost host run-ahead). USER DECISION NEEDED: (a) a minimum-load floor / hysteresis
+  on the band trigger for the decode regime (routing noise at 2-4 tok/rank trips it constantly); (b) the
+  per-step loads sync is inherent to a same-step host decision (paper semantics); a one-step-deferred
+  decision would remove it but deviates. Logs: server_s1a_ov{0,1}.log, bench_s1a_*.
