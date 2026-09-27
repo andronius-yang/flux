@@ -198,3 +198,7 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   (T*H bytes vs the stock all-gather's W*T*H); the layer uses EXACT buckets (multiples of K, lazy planners,
   eager tail) so residual padding is < K per rank. Re-measure on 4n 30B next (job 58942368); 235B stock
   baseline + recording loading on hbm80g job 58942974.
+- 09-27 01:10 S4 START: Qwen3-235B-A22B bf16 stock baseline on 4 hbm80g nodes (tp=dp=ep=16): weights 40.3 GB
+  per rank, KV pool 155k tokens, healthy in 150 s, gsm8k 100q 0.960 in 57 s, 16 per-token routing dumps
+  (`dumps_b235cal4n`), 48 baseline generations (`tok_b235cal4n.json`). Calibration (16 ranks, 94 layers,
+  overlap s0/s1) running; then the moe_ep arms + benchmarks on the same allocation (job 58942974).
