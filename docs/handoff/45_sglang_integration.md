@@ -186,3 +186,15 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   Published bench path on the branch: `bench/replay.py --check 1` Qwen b1 overlap+swap 1n PASS (2.79 ms).
   Experiment switches removed from the code; `MOE_EP_TRACE` debug aids (per-layer trace, dump thread,
   checkpoints, memop self-test) kept. 1n allocation released.
+- 09-27 01:05 USER GOAL RESTATED: performance at least on par with the baseline, verified at larger
+  deployments; small-model slowness must be attributed (overhead vs regime). 4n swap arm (inline
+  movement): gsm8k 0.940 = baseline; bench c=16 60 tok/s / ITL 230 ms (`chain_n4c_report.txt`).
+  DIAGNOSIS: under DP attention the per-rank token counts are wildly uneven per step (one rank prefills
+  2048 while 15 decode a few tokens); the fused ops need equal shards, so the adapter padded every rank to
+  the bucket and every pad token cost its K GEMM rows + local wire work (15 x 2048 pads vs 2048 real:
+  ~1.2 ms/layer, ~60 ms/step = the observed ITL gap 130 vs 72 ms). The stock path gathers the exact token
+  sum. FIX (moe_ep 2fe1b96): the adapter REBALANCES the step's real tokens evenly across ranks before the
+  layer (all-to-all of hidden + packed top-k; exact counts gathered once per pass) and sends outputs back
+  (T*H bytes vs the stock all-gather's W*T*H); the layer uses EXACT buckets (multiples of K, lazy planners,
+  eager tail) so residual padding is < K per rank. Re-measure on 4n 30B next (job 58942368); 235B stock
+  baseline + recording loading on hbm80g job 58942974.
