@@ -181,3 +181,8 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
 - 09-27 00:33 1n SWAP ARM GATE (inline movement, real-routing calibration `calib_30b_overlap_s1`): gsm8k
   100q accuracy 0.950 = baseline, 0 growths (`smoke_sw_full_status.txt`). 4n chain n4c (swap arm gsm8k +
   token run + bench, fresh baseline) running on job 58942368.
+- 09-27 00:40 Layer-level harness on the final code (main tree build): inline swap PASS (48 moves), inline
+  swap with a starved rank PASS (16 moves), overlapped lane (memop waits, benchmark path) PASS (48 moves).
+  Published bench path on the branch: `bench/replay.py --check 1` Qwen b1 overlap+swap 1n PASS (2.79 ms).
+  Experiment switches removed from the code; `MOE_EP_TRACE` debug aids (per-layer trace, dump thread,
+  checkpoints, memop self-test) kept. 1n allocation released.
