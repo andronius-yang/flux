@@ -254,3 +254,28 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   the routing is unchanged in shape...; (3) ops-side fixed latency (barriers, persistent launches) is C++
   work; (4) decide with the user whether the e2e claim is "TTFT parity + correct integration" or requires
   decode parity (likely needs a decode-specialized small-batch path).
+- 09-27 (session 2) DEVIATION REVIEW with the user, verified in code, decides the scope of the second plan.
+  (a) SWAP IS ON THE CRITICAL PATH: `SwapLane.inline_phase(k)` runs on the forward stream right before
+  the GEMM that reads matrix k (push outgoing slots into the peers' staging + flag, spin for every
+  incoming flag, copy staging->slot, then the GEMM). The paper's 3D schedule hid the movement (side
+  streams, moved-last GEMM order, tile gates). Measured: swap arm 60 tok/s / ITL 230 ms vs 106 / 130
+  (30B 4n ShareGPT c=16). MECHANISM deviation; the swap arm must not be quoted until fixed. Restoration
+  design (no side streams, which hang in the SGLang process by hardware-channel aliasing): sender pushes
+  into the destination staging + flag on its forward stream (exists); the receiver's GEMM reads the moved
+  expert FROM THE STAGING through a per-group weight pointer table, moved-last with the existing tile
+  gates; staging->slot copy after the GEMM off the gated path. Residual: the sender's push-copy issue time.
+  (b) THE LAST HOST SYNC is not the capacity check (free numpy on landed arrays) but host-side schedule
+  metadata derivation in BOTH ops: dispatch `derive_routed_meta` (event sync on sps/uc D2H, host region /
+  staging / relay layout), combine `derive_combine_meta` (host loops over splits_per_source, index builds,
+  piece-table D2H). Removing it = device-side metadata derivation + device demand check with a trap on
+  violation (growth becomes a restart; zero growths observed, consistent with no-fallback). Payoff beyond
+  the ~0.3 ms: the layer-step becomes CUDA-graph capturable, opening SGLang's decode graphs (graphs-on
+  baseline = 2x graphs-off in decode). Audits needed: host-side NVSHMEM barriers on the ops' forward path;
+  the host-side swap decision (`decide_swaps` on `loads.cpu()`).
+  (c) Plan tail graph (`use_graph=False` for lazy exact-bucket planners) is a small pure-perf toggle
+  (4 elementwise kernels, ~20-40 us), not the 0.3 ms guessed earlier. (d) Rebalance, padding, growth path
+  = integration deviations (accepted). (e) The per-pass count gather is one int per rank for rebalance
+  splits + pad histogram; NOT the paper's loads exchange (unchanged, per layer) and exact (pads are
+  closed-form). Branch state: sglang-dev f7716ea (42 commits over master); stray bench outputs moved to
+  `logs/sglang/results/`. NEXT: plan 2 = (1) swap off the critical path per (a), (2) remove the host sync
+  per (b); then the regime tests (30B 4n 40G concurrency sweep; 16n 40G prefill-heavy, -q regular).
