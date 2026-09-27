@@ -93,3 +93,12 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   (the noise floor); baseline vs moe_ep overlap 26/48 identical, 70.8 % — the moe_ep arm is at the noise
   floor (`logs/sglang/chain_v2_report.txt`, `tok_v2_*.json`). moe_ep overlap: 0 growths. The swap arm
   (ov1) server died during gsm8k — under investigation.
+- 09-26 22:10 Swap arm HANG root-caused (1n, warm-up request; every rank stuck at the first host sync of
+  the next layer): the dispatch op wrote the GEMM-start mark only when it had rows to compute
+  (`if (M_this_ep > 0)`); a rank that receives no rows in a step (possible in serving when the bucket has
+  no pad rows) never released the swap lane's movement streams, which had been armed by
+  `before_dispatch` -> `ev_done` never recorded -> the next collective deadlocked. The combine op already
+  wrote its mark unconditionally. Fix: dispatch writes the mark whenever armed (moe_ep commit above);
+  harness gets `--starve-rank` (zero-row rank + swap). 4n baseline: the v0.5.3 per-token recorder buffer
+  (`chunked_prefill_size * 8`) overflowed on the DP-gathered batch (20649 > 16384 rows) -> patched to
+  `* dp_size`; calibration rerun on job 58936312.
