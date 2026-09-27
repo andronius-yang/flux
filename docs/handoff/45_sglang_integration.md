@@ -211,3 +211,13 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   dominant cost; the three extra all-to-alls and the exact-bucket planners cost more than the pads saved
   at this scale. Attribution now measured, not inferred: `MOE_EP_TIMING=1` per-phase CUDA-event
   breakdown runs (rebalance on/off) on the 30B 4n allocation (`logs/sglang/server_timing_*.log`).
+- 09-27 01:55 ATTRIBUTION MEASURED (30B, 4n, ShareGPT c=16 load, `MOE_EP_TIMING`, mean ms per layer-step on
+  the forward stream): rebalance ON total 2.18 = pads+loads 0.19, route+xchg 0.16, meta+check 0.34,
+  dispatch 0.84, act 0.07, combine 0.60; rebalance OFF total 2.37 (pads+loads 0.40, rest equal) but
+  end-to-end faster (ITL 138 vs 156 ms): the adapter's three all-to-alls cost more than the pads at this
+  scale. Conclusion: the gap is the fused design's FIXED per-step latency (~2 ms/layer: wire handshakes,
+  device barriers, persistent-kernel launches, planning collectives, one host sync), not padding and not
+  a bug; token-proportional work is negligible at 1-4 tokens per rank. Decode under DP attention on 16
+  GPUs holds concurrency/16 tokens per rank, far below the paper's regime (>= 128/rank); larger
+  deployments shrink per-rank batches further. Parity is expected only for prefill-heavy traffic or very
+  high concurrency -> prefill-heavy benchmark (ISL 2048, OSL 32) on the 235B next (`chain_prefill_nn.sh`).
