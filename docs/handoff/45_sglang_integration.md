@@ -358,3 +358,12 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   the working repo (filter-branch msg-filter, refs/original dropped, reflog expired, gc); pre-rewrite backup
   `logs/moe_ep_prerename_20260928_0034.bundle`. No attribution lines are added to that repo from now on.
   The research tree (this repo) is untouched by the rewrite.
+- 09-28 01:00 RENAME VERIFIED. Final tips after the history rewrite: lopep master cf5b146, sglang-dev c38fa02 (the
+  first sglang-dev rename commit had nested the package under python/lopep/moe_ep because a stale python/lopep
+  directory existed on the checkout; fixed and amended), lopep_release 303b586. lopep_release built from
+  scratch (fresh CUTLASS submodule clone) and passed on 1n: layer_demo PASS (max|err| 2.4e-4), replay --check
+  PASS qwen3 overlap/swap/direct and k2 overlap (2.38 / 2.57 / 4.86 / 5.40 ms at b1 1n). lopep_t28 rebuilt
+  from scratch; `import lopep`/`lopep_sglang` OK under andrewy-sglang; serving_check PASS (staged swap, 112
+  moves) and PASS with LOPEP_DEVICE_META=2. Leak scan of the release: only the NERSC comment in
+  env/perlmutter.sh and the default Slurm account in scripts/reproduce.sh (both pre-existing). No Claude /
+  Anthropic text in any reachable commit of the working repo; the release is a single commit by "LoPEP authors".
