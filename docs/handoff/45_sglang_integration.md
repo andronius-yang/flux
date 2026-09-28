@@ -346,3 +346,15 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   tree handoff up to date. USER DECISIONS: (1) swap band floor / decision semantics in the decode regime;
   (2) stage 3 (S-B/S-C/S-D, 24-36 days) is NO-GO for decode parity by the gate unless paired with a small-M
   path; (3) whether the e2e claim scope becomes correctness + prefill parity + mechanism fidelity.
+- 09-28 RENAME moe_ep -> LoPEP (Locality-Preferred Expert Parallelism; user decision after an arXiv/GitHub/PyPI
+  collision check: LoPEP is unclaimed; LOCALE collides with the Python stdlib module and ~10k i18n repos).
+  Working repo `$PSCRATCH/workspace/andrewy/lopep` (was moe_ep; branches master 9f24fb8, sglang-dev dd67a16;
+  package `lopep`, adapter `lopep_sglang`, library `liblopep_cuda`, env prefix `LOPEP_*`, class `LoPEPFusedMoE`,
+  SGLang backend string "lopep"; calibrate writes `lopep_config.json`, old calib dirs got symlinks); build
+  worktree `lopep_t28` (linked worktree repaired, full rebuild); release snapshot `lopep_release` (single
+  commit 303b586 "Initial release" by "LoPEP authors", file list identical to the old snapshot modulo the
+  rename, CUTLASS gitlink df8a550); the SGLang clone re-patched; ops scripts under logs/ renamed.
+  HISTORY REWRITE (user request): all Claude co-authorship trailers removed from every commit on every ref of
+  the working repo (filter-branch msg-filter, refs/original dropped, reflog expired, gc); pre-rewrite backup
+  `logs/moe_ep_prerename_20260928_0034.bundle`. No attribution lines are added to that repo from now on.
+  The research tree (this repo) is untouched by the rewrite.
