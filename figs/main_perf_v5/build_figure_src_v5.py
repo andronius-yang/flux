@@ -25,9 +25,11 @@ import subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 V4 = os.path.join(REPO, "figs", "main_perf_v4", "figure_src.csv")
-OSS = os.path.join(os.environ["PSCRATCH"], "workspace", "andrewy", "moe_ep")
-MEASURED = os.path.join(OSS, "results", "measured")
-OSS_SHA = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=OSS, capture_output=True, text=True).stdout.strip()
+# the open-source measurements are archived IN THIS TREE (figs/main_perf_v5/oss_measured, copied from the
+# repository's results/ on 2026-09-28 before they were removed from the public tree); OSS_SHA is the build.
+OSS = HERE
+MEASURED = os.path.join(OSS, "oss_measured", "measured")
+OSS_SHA = "e252095"  # the open-source build the archived measurements came from (pre-rename repo)
 PLOTTED = (1, 4, 16)
 MODEL = {"qwen3": "Qwen", "k2": "K2"}
 ROW = {("overlap", False): ("ours12", "1+2"),
