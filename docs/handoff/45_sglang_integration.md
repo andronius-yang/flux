@@ -367,3 +367,11 @@ working repo (`$PSCRATCH/workspace/andrewy/moe_ep`); `main` there stays the publ
   moves) and PASS with LOPEP_DEVICE_META=2. Leak scan of the release: only the NERSC comment in
   env/perlmutter.sh and the default Slurm account in scripts/reproduce.sh (both pre-existing). No Claude /
   Anthropic text in any reachable commit of the working repo; the release is a single commit by "LoPEP authors".
+- 09-28 01:40 RELEASE RULES + CLEAN PUBLIC TREE (user rulings; CLAUDE.md "LoPEP open-source release rules",
+  `scripts/oss_audit.sh`): (1) no Claude/Anthropic/co-authorship, usernames, site paths, Slurm accounts or
+  old names anywhere incl. history; (2) no latency/throughput data anywhere (results/ removed, README tables
+  and every numeric timing in comments removed; reproduce.sh requires --account and compares only against a
+  user-supplied --expected CSV; README says the numbers are in the paper Fig. 9 / artifact); (3) short README
+  modeled on FAST/Flux (96 lines). The open-source measurements are archived in this tree at
+  figs/main_perf_v5/oss_measured/ (only copy; the v5 builder reads them from there; v5 has 52 Ours rows from
+  build e252095). Tips: lopep master 09ce1a8, sglang-dev 5a801a2; lopep_release b19a91c (118 files) -> AUDIT PASS.

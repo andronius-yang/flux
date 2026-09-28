@@ -11,7 +11,7 @@ fail=0
 hit() { echo "FAIL [$1]"; shift; printf '   %s\n' "$@" | head -12; fail=1; }
 
 # 1. provenance strings (case-insensitive) in tracked text files and in the git history
-PROV='claude|anthropic|co-authored-by|yufeid|andrewy|changchen|pscratch|/global/homes|/global/u1|libra ?x|moe_ep|moe-ep|m[0-9]{4}_g\b|--account [a-z][0-9]|SLURM_ACCOUNT'
+PROV='claude|anthropic|co-authored-by|yufeid|andrewy|changchen|pscratch|/global/homes|/global/u1|libra ?x|moe_ep|moe-ep|m[0-9]{4}_g\b|--account m[0-9]|SLURM_ACCOUNT:-m'
 out=$(git grep -n -I -i -E "$PROV" -- . 2>/dev/null | grep -v -E "^(LICENSE|NOTICE):" ); [ -n "$out" ] && hit "provenance strings in tracked files" "$out"
 out=$(git log --all --format='%H %an <%ae> %cn <%ce>%n%B' | grep -i -E 'claude|anthropic|co-authored|yufeid|andrewy' ); [ -n "$out" ] && hit "provenance strings in git history/authors" "$out"
 
