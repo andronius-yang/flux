@@ -194,3 +194,28 @@ with one or two **non-trivial comprehension questions** — questions that test
 whether the key implication or design choice actually landed, and that require
 transferring the idea to a new situation (never answerable by restating the
 explanation). Wait for the answer and correct any misunderstanding.
+
+## LoPEP open-source release rules (user rulings 2026-09-28)
+
+The public repository is `$PSCRATCH/workspace/andrewy/lopep` (branches `master` = published tree,
+`sglang-dev`) and its single-commit snapshot `$PSCRATCH/workspace/andrewy/lopep_release`. Before any
+snapshot is refreshed or pushed, run `scripts/oss_audit.sh [repo]` from this tree; it must print
+`AUDIT PASS`. The rules it enforces, which also bind every edit to that repository:
+
+1. **No provenance leaks.** No Claude / Anthropic / co-authorship text in files, commit messages, or
+   authors (never add `Co-Authored-By` lines there); no usernames (`yufeid`, `andrewy`, `changchen`);
+   no site paths (`/pscratch`, `$PSCRATCH`, `/global/homes`, `/global/u1`); no Slurm accounts anywhere
+   (no `m5350_g`/`m5424_g`/... defaults, no `--account <id>` examples: scripts must require the user
+   to pass the account); no old names (`moe_ep`, `LibraX`). Commit author of the snapshot: `LoPEP authors`.
+2. **No latency or throughput data anywhere.** No `results/` directory, no CSV/PNG/PDF/JSONL data
+   files, no measured numbers with time or throughput units in the README, docs, scripts, or code
+   comments, no speedup ratios. The measurements live in the paper (Figure 9) and, in this tree, under
+   `figs/main_perf_v5/oss_measured/` (the archived open-source `results/`, the only copy) and
+   `figs/main_perf_v5/figure_src.csv`. The README must say where the measurements are published.
+3. **Simplicity over completeness** for the public README: title, one-paragraph description with the
+   paper reference, layout, build, run, using the layer, license. Model: FAST's 30-line README and the
+   "Getting started" section of Flux. Mechanism detail belongs in `docs/design.md`, process detail
+   stays in this tree's `docs/handoff/`.
+4. The working repository's history was rewritten on 2026-09-28 to remove attribution trailers
+   (backup bundle under `$PSCRATCH/workspace/andrewy/logs/`); the snapshot is always a fresh single
+   commit made from `master` with `git archive` + `git init`, never a copy of the working history.
