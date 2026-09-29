@@ -1,0 +1,237 @@
+# Local profiling bracket for the SGLang v0.5.3 clone (applied ON TOP of the shipped lopep patch; never shipped).
+# Apply inside python/sglang/srt: patch -p1 < 47_layer_bracket_sglang.patch
+--- a/models/qwen3_moe.py	2026-09-28 12:49:23.848738647 -0700
++++ b/models/qwen3_moe.py	2026-09-28 12:50:08.000000000 -0700
+@@ -36,6 +36,7 @@
+ from sglang.srt.layers.communicator import LayerCommunicator, LayerScatterModes
+ from sglang.srt.layers.dp_attention import get_attention_tp_rank, get_attention_tp_size
+ from sglang.srt.layers.layernorm import RMSNorm
++from sglang.srt.layers.layer_step_timing import get_layer_timing
+ from sglang.srt.layers.linear import (
+     QKVParallelLinear,
+     ReplicatedLinear,
+@@ -598,9 +599,15 @@
+                 forward_batch=forward_batch,
+             )
+ 
++        _lt = None if get_is_capture_mode() else get_layer_timing()
++        if _lt is not None:
++            _lt.begin(self.layer_id, forward_batch, hidden_states.shape[0])
++
+         hidden_states, residual = self.layer_communicator.prepare_mlp(
+             hidden_states, residual, forward_batch
+         )
++        if _lt is not None:
++            _lt.mark("pre")
+ 
+         should_allreduce_fusion = (
+             self.layer_communicator.should_fuse_mlp_allreduce_with_next_layer(
+@@ -616,6 +623,8 @@
+         hidden_states = self.mlp(
+             hidden_states, forward_batch, should_allreduce_fusion, use_reduce_scatter
+         )
++        if _lt is not None:
++            _lt.mark("moe")
+ 
+         if should_allreduce_fusion:
+             hidden_states._sglang_needs_allreduce_fusion = True
+@@ -623,6 +632,9 @@
+             hidden_states, residual = self.layer_communicator.postprocess_layer(
+                 hidden_states, residual, forward_batch
+             )
++        if _lt is not None:
++            _lt.mark("post")
++            _lt.end()
+ 
+         return hidden_states, residual
+ 
+--- a/model_executor/model_runner.py	2026-09-28 12:49:23.852738617 -0700
++++ b/model_executor/model_runner.py	2026-09-28 12:50:08.000000000 -0700
+@@ -186,6 +186,12 @@
+ logger = logging.getLogger(__name__)
+ 
+ 
++def _layer_nvtx_enabled():
++    from sglang.srt.layers.layer_step_timing import nvtx_enabled
++
++    return nvtx_enabled()
++
++
+ if _is_npu:
+     import torch_npu
+ 
+@@ -1975,6 +1981,12 @@
+     ) -> Tuple[Union[LogitsProcessorOutput, PPProxyTensors], bool]:
+         self.forward_pass_id += 1
+ 
++        _nvtx = _layer_nvtx_enabled()
++        if _nvtx:
++            torch.cuda.nvtx.range_push(
++                f"fwd {forward_batch.forward_mode.name} bs={forward_batch.batch_size} "
++                f"n={forward_batch.input_ids.shape[0]}"
++            )
+         with get_global_expert_distribution_recorder().with_forward_pass(
+             self.forward_pass_id,
+             forward_batch,
+@@ -1986,6 +1998,8 @@
+                 reinit_attn_backend,
+                 split_forward_count,
+             )
++        if _nvtx:
++            torch.cuda.nvtx.range_pop()
+ 
+         if self.eplb_manager is not None:
+             self.eplb_manager.on_forward_pass_end()
+--- /dev/null	2026-09-22 17:38:21.457213082 -0700
++++ b/layers/layer_step_timing.py	2026-09-28 14:20:19.000000000 -0700
+@@ -0,0 +1,150 @@
++"""Per-layer-step CUDA-event brackets around a decoder layer's MoE block (identical span for every
++MoE backend: pre-MLP communication, the MoE block, post-MLP communication).
++
++Debug aid, off by default. Env:
++  SGLANG_LAYER_TIMING=1        enable (events are read back one step later; nothing blocks)
++  SGLANG_LAYER_TIMING_RANK=r   the rank that records (default 0)
++  SGLANG_LAYER_TIMING_EVERY=n  log every n completed layer-steps (default 500)
++  SGLANG_LAYER_TIMING_DIR=d    write the raw samples to d/layer_timing_<rank>.csv at exit
++  SGLANG_LAYER_NVTX=1          also emit an NVTX range per layer-step and an NVTX mark per phase
++Each layer-step is keyed by (forward mode, DP padding mode, tokens-per-rank bin); the log prints the
++per-phase mean per key and a least-squares fit t = a + b * n_pad per (mode, padding, phase).
++"""
++import atexit
++import csv
++import os
++
++import torch
++
++BINS = (8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384)
++RAW_CAP = 1500   # raw samples kept per (mode, pad, bin) key
++
++
++def _bin(n):
++    for b in BINS:
++        if n <= b:
++            return b
++    return BINS[-1] * 2
++
++
++class LayerStepTiming:
++    def __init__(self, rank, every=500, nvtx=False, out_dir=None):
++        self.rank, self.every, self.nvtx, self.out_dir = rank, every, nvtx, out_dir
++        self.cur = None          # (key, names, events, meta)
++        self.pending = []
++        self.acc, self.n = {}, {}
++        self.raw = []            # (mode, pad, n_pad, n_real, T, layer, phase, ms); capped PER bin
++        self.raw_n = {}
++        self.steps = 0
++        if out_dir:
++            atexit.register(self.dump)
++
++    @staticmethod
++    def _event():
++        ev = torch.cuda.Event(enable_timing=True)
++        ev.record()
++        return ev
++
++    def begin(self, layer_id, forward_batch, n_pad):
++        self.flush()
++        mode = forward_batch.forward_mode.name
++        pm = forward_batch.dp_padding_mode
++        pad = "-" if pm is None else ("MAX" if pm.is_max_len() else "SUM")
++        n_real = forward_batch.num_token_non_padded_cpu
++        n_real = int(n_pad) if n_real is None else int(n_real)
++        g = forward_batch.global_num_tokens_cpu
++        T = int(sum(g)) if g is not None else -1
++        key = (mode, pad, _bin(int(n_pad)))
++        meta = (mode, pad, int(n_pad), n_real, T, int(layer_id))
++        if self.nvtx:
++            torch.cuda.nvtx.range_push(f"moe_layer L{layer_id} {mode} {pad} n={n_pad}")
++        self.cur = (key, ["start"], [self._event()], meta)
++
++    def mark(self, name):
++        if self.cur is None:
++            return
++        self.cur[1].append(name)
++        self.cur[2].append(self._event())
++        if self.nvtx:
++            torch.cuda.nvtx.mark(name)
++
++    def end(self):
++        if self.cur is None:
++            return
++        if self.nvtx:
++            torch.cuda.nvtx.range_pop()
++        self.pending.append(self.cur)
++        self.cur = None
++
++    def flush(self):
++        while self.pending and self.pending[0][2][-1].query():
++            key, names, evs, meta = self.pending.pop(0)
++            acc = self.acc.setdefault(key, {})
++            for i in range(1, len(evs)):
++                ms = evs[i - 1].elapsed_time(evs[i])
++                acc[names[i]] = acc.get(names[i], 0.0) + ms
++                if self.raw_n.get(key, 0) < RAW_CAP:
++                    self.raw.append(meta + (names[i], ms))
++            self.raw_n[key] = self.raw_n.get(key, 0) + 1
++            self.n[key] = self.n.get(key, 0) + 1
++            self.steps += 1
++            if self.steps % self.every == 0:
++                self.report()
++
++    def report(self):
++        for key in sorted(self.acc):
++            a, n = self.acc[key], self.n[key]
++            parts = " ".join(f"{k} {v / n:.3f}" for k, v in a.items())
++            print(f"[layer timing rank {self.rank}] {key[0]} {key[1]} n_pad<={key[2]}: mean ms per layer-step over {n}: "
++                  f"total {sum(a.values()) / n:.3f} | {parts}", flush=True)
++        # least-squares t = a + b * n_pad per (mode, pad, phase) over the retained raw samples
++        groups = {}
++        for (mode, pad, n_pad, n_real, T, layer, phase, ms) in self.raw:
++            groups.setdefault((mode, pad, phase), []).append((n_pad, ms))
++        for (mode, pad, phase), pts in sorted(groups.items()):
++            if len(pts) < 8 or len({p[0] for p in pts}) < 2:
++                continue
++            xs = [p[0] for p in pts]
++            ys = [p[1] for p in pts]
++            mx, my = sum(xs) / len(xs), sum(ys) / len(ys)
++            sxx = sum((x - mx) ** 2 for x in xs)
++            b = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
++            print(f"[layer timing rank {self.rank}] fit {mode} {pad} {phase}: {my - b * mx:.4f} + {b * 1e3:.4f}e-3 * n_pad ms "
++                  f"({len(pts)} samples)", flush=True)
++        self.acc, self.n = {}, {}
++
++    def dump(self):
++        try:
++            os.makedirs(self.out_dir, exist_ok=True)
++            with open(os.path.join(self.out_dir, f"layer_timing_{self.rank}.csv"), "w", newline="") as f:
++                w = csv.writer(f)
++                w.writerow(["mode", "pad", "n_pad", "n_real", "T", "layer", "phase", "ms"])
++                w.writerows(self.raw)
++        except Exception as e:  # never break the server at exit
++            print(f"[layer timing] dump failed: {e}", flush=True)
++
++
++_TIMING = None
++_INIT = False
++
++
++def get_layer_timing():
++    """The process-wide collector, or None when disabled or on another rank."""
++    global _TIMING, _INIT
++    if _INIT:
++        return _TIMING
++    _INIT = True
++    if not int(os.environ.get("SGLANG_LAYER_TIMING", "0")):
++        return None
++    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
++    if rank != int(os.environ.get("SGLANG_LAYER_TIMING_RANK", "0")):
++        return None
++    _TIMING = LayerStepTiming(rank, every=int(os.environ.get("SGLANG_LAYER_TIMING_EVERY", "500")),
++                              nvtx=bool(int(os.environ.get("SGLANG_LAYER_NVTX", "0"))),
++                              out_dir=os.environ.get("SGLANG_LAYER_TIMING_DIR"))
++    print(f"[layer timing] enabled on rank {rank}", flush=True)
++    return _TIMING
++
++
++def nvtx_enabled():
++    return bool(int(os.environ.get("SGLANG_LAYER_NVTX", "0")))
