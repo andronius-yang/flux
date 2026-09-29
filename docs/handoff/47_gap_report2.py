@@ -62,6 +62,7 @@ def main():
     ap.add_argument("--range", default="", help="range text prefix (default: auto)")
     ap.add_argument("--csv", default="", help="per-instance per-phase rows")
     ap.add_argument("--top", type=int, default=8, help="top kernel names per phase")
+    ap.add_argument("--by-label", type=int, default=1, help="also summarize per range label (NVTX 'class ...' marks)")
     a = ap.parse_args()
     db = sqlite3.connect(a.sqlite)
     tabs = {r[0] for r in db.execute("select name from sqlite_master where type='table'")}
@@ -104,7 +105,8 @@ def main():
             s, e, st, c = row[:4]
             name = strs.get(row[4], str(row[4])) if namecol else tab.split("_")[-1].lower()
             acts.setdefault(c, []).append((s, e, st, name))
-    tmarks = sorted((s, n) for (s, n, g) in marks if g == tid)
+    tmarks = sorted((s, n) for (s, n, g) in marks if g == tid and not n.startswith("class "))
+    labels = sorted((s, n[len("class "):]) for (s, n, g) in marks if g == tid and n.startswith("class "))
     print(f"process {pid} thread {tid}: {len(inst)} '{pref}' ranges, {len(rt)} runtime calls, "
           f"{sum(len(v) for v in acts.values())} GPU activities, {len(tmarks)} marks")
 
@@ -143,11 +145,33 @@ def main():
             phase_rows.append((k, pname, (pe - ps) / 1e3, busy / 1e3, n_launch, sync_ns / 1e3,
                                {c: v / 1e3 for c, v in by_cls.items()}, {c: v / 1e3 for c, v in by_name.items()}))
         busy_all = union(all_iv)
+        lab = [n for (s, n) in labels if rs <= s <= re]
         per_inst.append(dict(span=(re - rs) / 1e3, busy=busy_all / 1e3, gap=(re - rs - busy_all) / 1e3,
-                             tail=(last_end - re) / 1e3, launches=all_n, name=name))
+                             tail=(last_end - re) / 1e3, launches=all_n, name=name, label=lab[-1] if lab else ""))
     print(f"per instance (median of {len(per_inst)}): span {med([d['span'] for d in per_inst]):.1f} us, "
           f"GPU busy {med([d['busy'] for d in per_inst]):.1f}, gap {med([d['gap'] for d in per_inst]):.1f}, "
           f"GPU tail after range end {med([d['tail'] for d in per_inst]):.1f}, launches {med([d['launches'] for d in per_inst]):.0f}")
+    groups = sorted({d["label"] for d in per_inst})
+    if a.by_label and len(groups) > 1:
+        for g in groups:
+            idx = {i for i, d in enumerate(per_inst) if d["label"] == g}
+            sub = [d for i, d in enumerate(per_inst) if i in idx]
+            print(f"\n[label '{g or '-'}'] {len(sub)} instances: span {med([d['span'] for d in sub]):.1f} us, busy "
+                  f"{med([d['busy'] for d in sub]):.1f}, gap {med([d['gap'] for d in sub]):.1f}, launches "
+                  f"{med([d['launches'] for d in sub]):.0f}")
+            names = []
+            for r in phase_rows:
+                if r[0] in idx and r[1] not in names:
+                    names.append(r[1])
+            for pn in names:
+                rows = [r for r in phase_rows if r[0] in idx and r[1] == pn]
+                clsm = defaultdict(list)
+                for r in rows:
+                    for c, v in r[6].items():
+                        clsm[c].append(v)
+                cls_txt = " ".join(f"{c}={med(v):.0f}" for c, v in sorted(clsm.items(), key=lambda kv: -med(kv[1])) if med(v) >= 1)
+                print(f"  {pn:<14}{med([r[2] for r in rows]):>10.1f}{med([r[3] for r in rows]):>10.1f}"
+                      f"{med([r[4] for r in rows]):>8.0f}{med([r[5] for r in rows]):>9.1f}  {cls_txt}")
     pnames = []
     for r in phase_rows:
         if r[1] not in pnames:
