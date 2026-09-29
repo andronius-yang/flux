@@ -124,3 +124,59 @@ one token per running request, so the budget = running requests per rank. Qwen3-
   Open after this job: step 2 at 8n (forced growth, debug QOS) + the 235B 2048 re-test (5 runs); step 1 arming
   ~0.2 ms left (target < 0.1: parse + prepare on device); Phase 3 (8n re-diagnosis); Phase 4 figure chains with the
   KV pin (smaller pool, e.g. 491065/rank at 4n decode) on both arms.
+- ROUND 2 (user: "go ahead with all your proposed next steps"; report timestamps of this round are UTC).
+  Arming, rest of step 1 (python, lopep working tree, synced to lopep_t28 before any round-2 job; to commit after
+  the checks): the decision parse reads only this node's move lists (the lane needs its own pulls and its node
+  peers' pulls from it; compare mode still parses and checks every rank's); the host mirror no longer rebuilds l2p
+  (the device tables are authoritative, nothing reads the mirror's l2p on the device path); SwapLane.prepare uploads
+  the unchanged-slot index from a pinned buffer (was a pageable torch.tensor(..., device=cuda)), fills both gate
+  blocks with one index_fill_ on a [2, gpe] view, and scans only this node's lists; the staged lane skips the
+  side-stream ev_pre record. Checks: harness staged_ref_dev (torch reference on, device decision, swaps every 2
+  steps) and staged_cmp (host vs device decisions every step), at 4n and 8n.
+  Jobs: 59080319 4n interactive 4 h (job4nB.sh: arming checks, 235B LCB calibration, 235B 2048 re-test x5, 235B
+  prefill figure data 128/512/2048 x ours/stock graphs off/on pinned to ours' pool, 30B decode figure data 256/1024/4096
+  x stock graphs on/ours/stock graphs off pinned at 480000); 59080285 8n debug (job8nA.sh: handoff-48 8n fault
+  configuration + arming checks + forced growth, then 30B prefill at 8n SMAX 2048/1024 ours vs stock); 59080328 8n
+  debug (job8nD.sh: 8n decode calibration + unpinned decode probe). Shared functions logs/sglang/lib49.sh.
+- (UTC) 08:20 arming checks at 4n on e268463 sources: staged_ref_dev PASS (torch reference, device decision,
+  122880 rows/rank, 0 bad, max_err 0.0127, 60 swap moves); staged_cmp PASS (host vs device decision every step, 63
+  moves). lopep e268463 committed (the arming change).
+- 08:27 235B LiveCodeBench history calibration at 4n (239 requests, SMAX 2048, MAXRR 32/rank): calib_235b4n_lcbp_
+  overlap_s1 (32 redundant experts, recv_cap 85717). Ours' KV pool with it: 12949 tokens/rank (the factor-2.5
+  capacities enlarge the symmetric heap; the gsm8k calibration left 38493). Enough for prefill (32 requests x ~340
+  tokens/rank), and the prefill arms are pinned to it, but it is one more reason for 8n/16n in the prefill figure.
+- 08:31-08:35 235B RE-TEST at 2048 tokens/rank (the pre-fix 2-in-5 intermittent hang): 5/5 benchmark runs clean
+  (960 requests each, 0 growths, 0 tracebacks); input throughput 14.1-15.8k tok/s, mean TTFT 2.84-3.14 s.
+  Ledger S<=2048 10.5-11.3 ms per layer-step; swap share S<=2048 7/244 (3 %), S<=512 24/94, S<=16 ~82 %.
+  ARMING on swap steps now: arm_sync 0.021-0.025 + arm_parse 0.031-0.033 + arm_mirror 0.021-0.022 + prepare
+  0.022-0.064 = 0.10-0.14 ms (0.72-0.76 before the round-1 l2p fix).
+- 08:35-09:27 235B PREFILL at 4n (LCB eval, MAXRR 32/rank, KV pinned 12949/rank on every arm, ours = device decision):
+    SMAX/rank      ours in tok/s  stock (graphs off)  ratio   mean TTFT ours/stock   MoE layer-step ours / stock layer   swap %
+    128 (1 MiB)    4700           6927                0.68x   8.59 / 5.05 s          3.628 / 2.421 ms                    29.7
+    512 (4 MiB)    11004          9690                1.14x   2.75 / 3.70 s          4.550 / 6.863 ms                    19.1
+    2048 (16 MiB)  no data: bench1 needed lcb_exec_eval_x32.json, never generated (now generated); rerun queued after
+                   stage 4 on the same nodes with the same pin (job8nP.sh 59080319 "2048", tag j4nP).
+  Stock graphs on (baseline-graph) cannot start on the 235B at 4n: CUDA graph capture overflows flashinfer's
+  workspace (batch_prefill_tmp_v 536 MB, graph batch sizes up to 512) and the server does not exit; SGLang graphs only
+  decode steps, so the prefill figure's stock arm is graphs off (the graphs-on starts were cancelled on sight).
+  (layer-step: ours = lopep ledger class S<=SMAX weighted over swap / no-swap; stock = SGLang decoder bracket total
+  of the EXTEND class, i.e. gather + MoE + scatter.)
+- 09:27-09:52 30B DECODE FIGURE DATA at 4n (LCB eval truncated t48, OSL 48, --enable-dp-lm-head, KV pinned 480000
+  tokens/rank on every arm, 2 waves per point, scheduler decode intervals 16 ranks x 12 each):
+    run/rank       stock graphs on        stock graphs off        ours (device decision)   ours vs best stock
+    256 (1 MiB)    78.23 (77.1-83.3) G    81.45 (80.2-86.1)       203.73 (187.3-220.9)     0.38x
+    1024 (4 MiB)   258.24 (254.0-278.1)   257.60 (254.4-279.1)    284.29 (264.4-320.3)     0.91x
+    4096 (16 MiB)  990.43 (982.6-1067.0)  1001.18 (981.5-1131.4)  746.24 (722.8-845.9)     1.33x
+  (decode step median, IQR, ms; G = graphed: stock graphs cover up to 512 requests per rank, so 1024/4096 run eager on
+  both stock arms.) Output tok/s per GPU: stock on 3273/3965/4136, off 3143/3975/4091, ours 1260/3608/5490.
+  Per-layer bracket (rank 0): stock off 1.384/4.551/17.999 ms, ours 3.578/4.761/12.552 ms. Ours' swap share 5.2 /
+  9.4 / 7.5 % of layer-steps. 0 growths, 0 tracebacks on every arm. Ours pinned = ours unpinned (probe) within 1 %.
+- 09:52-10:09 235B 2048 prefill pair rerun on the same 4n nodes (job8nP.sh, tag j4nP, PIN 12949): ours 16521 in tok/s,
+  mean TTFT 2.82 s, MoE layer-step 10.84 ms, swap share 0.4 %; stock graphs off 9986 in tok/s, mean TTFT 5.52 s,
+  decoder layer bracket 30.69 ms. 10:09 job 59080319 scancelled by the driver.
+  235B PREFILL AT 4n, COMPLETE (KV 12949/rank on every arm, LCB eval x2/x8/x32, ~80 prefill steps each):
+    SMAX/rank      in tok/s ours / stock   ratio   mean TTFT ours / stock   layer ours / stock (ms)   swap %
+    128 (1 MiB)    4700 / 6927             0.68x   8.59 / 5.05 s            3.63 / 2.42               29.7
+    512 (4 MiB)    11004 / 9690            1.14x   2.75 / 3.70 s            4.55 / 6.86               19.1
+    2048 (16 MiB)  16521 / 9986            1.65x   2.82 / 5.52 s            10.84 / 30.69             0.4
+  Queue at 10:10: 8n debug jobs estimated ~14:10 / ~14:40 (drivers start on grant), 16n regular no estimate.
