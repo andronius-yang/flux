@@ -237,3 +237,24 @@ one token per running request, so the budget = running requests per rank. Qwen3-
   S<=2048 swap layer-steps 7.97 ms vs no-swap 8.64-9.75 ms (first windows include start-up effects).
   8n prefill point on the way: 30B SMAX 2048 ours 46123 vs stock 38894 in tok/s (1.19x), mean TTFT 1.67 vs 2.65 s
   (unpinned pools: ours 540132, stock 683133 per rank). SMAX 512: ours 35354 in tok/s (no stock arm in this job).
+- 13:33-13:51 4n refresh piece 1 on 068e5e4 (job8nP.sh "2048", PIN 12949): 235B SMAX 2048 ours 16775 vs stock
+  9827 in tok/s (1.71x; e268463 run 1.65x), mean TTFT 2.81 vs 5.62 s, layer-step 11.76 vs 31.02 ms, swap 2.7 %.
+  chainfig.sh BUG: the spec was read on stdin inside the loop and salloc/srun consumed it, so every chain stopped
+  after its first piece. Fixed (spec on fd 3, commands on /dev/null). The three 8n/16n chains still waiting for
+  their first allocation were stopped (by PID, pending jobs cancelled) and relaunched on the fixed runner; the 4n
+  remainder relaunched as c4nb.
+- 13:33-14:40 4n FIGURE DATA ON 068e5e4 (device lane), same 4 nodes per piece, every arm KV-pinned, 0 growths,
+  0 tracebacks. PREFILL Qwen3-235B (LCB eval x2/x8/x32, MAXRR 32/rank, KV 12949/rank):
+    SMAX/rank      in tok/s ours / stock   ratio   mean TTFT ours / stock   layer ms ours / stock   swap %
+    128 (1 MiB)    4807 / 6714             0.72x   6.79 / 4.90 s            3.23 / 2.50              13.1
+    512 (4 MiB)    11276 / 9544            1.18x   2.47 / 3.36 s            4.51 / 6.31              7.4
+    2048 (16 MiB)  16775 / 9827            1.71x   2.81 / 5.62 s            11.76 / 31.02            2.7
+  DECODE Qwen3-30B (truncated LCB eval, OSL 48, dp-lm-head, KV 480000/rank, 2 waves; step median, IQR, ms):
+    run/rank       stock graphs on        stock graphs off       ours                   ours vs best stock
+    256 (1 MiB)    77.08 (76.1-82.2) G    80.95 (79.2-85.7)      186.47 (179.9-190.5)   0.41x
+    1024 (4 MiB)   256.89 (253.6-281.1)   257.19 (252.6-277.3)   265.67 (260.5-294.2)   0.97x
+    4096 (16 MiB)  985.52 (975.6-1065.5)  996.03 (974.6-1085.3)  724.91 (718.5-857.9)   1.36x
+  Per-layer bracket: stock off 1.385 / 4.53 / 17.89 ms, ours 3.60 / 4.72 / 12.43 ms; ours' swap share 27 / 9.5 / 7.7 %
+  (last window). Versus the e268463 rows: prefill 0.68/1.14/1.65x -> 0.72/1.18/1.71x, decode 0.38/0.91/1.33x ->
+  0.41/0.97/1.36x (device lane + used-rows zeroing).
+  8n / 16n chains: first pieces (calibrations) still pending at 14:40.
