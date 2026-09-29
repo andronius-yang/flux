@@ -180,3 +180,60 @@ one token per running request, so the budget = running requests per rank. Qwen3-
     512 (4 MiB)    11004 / 9690            1.14x   2.75 / 3.70 s            4.55 / 6.86               19.1
     2048 (16 MiB)  16521 / 9986            1.65x   2.82 / 5.52 s            10.84 / 30.69             0.4
   Queue at 10:10: 8n debug jobs estimated ~14:10 / ~14:40 (drivers start on grant), 16n regular no estimate.
+- ROUND 3 (user, local ~12:30: "why did you not implement the device kernel? ... host to device sync ... detrimental
+  ... at smaller batches"; "queue with small walltimes for better backfill"; "is the 8n 95 % swap cause solved?").
+  Answer given: the kernel was skipped on an average-swap-share estimate (arming ~0.1 ms x 3-12 %), which was the
+  wrong basis: swaps concentrate at small steps (S<=16 80-90 %, S<=128 30 %, S<=256 5-12 %, S<=2048 0.4-6 % of
+  layer-steps), and every swap also forced a full stream sync on the next step of that layer (host pad-table rebuild
+  uploaded from pageable memory), which I had not counted. The per-layer planning sync (host dispatch metadata +
+  capacity check) exists on every layer-step and is NOT removed by the lane kernel. Also found: comm.prep zeroed the
+  whole GEMM output buffer every layer-step (recv_cap x ffn1: ~500 MB on the 30B decode calibration, ~0.26 ms).
+  8n 95 %: mechanism (small, noisy steps trip the band) supported by the 4n S-dependence; the 95 % was measured at 8
+  running requests per rank (launcher bug); 8n re-measure queued (job8nS). USER DECISION (AskUserQuestion): "Swap
+  path first" (device lane + device pad table + zero only used rows; the planning sync stays for now).
+  Queue: cancelled the 30 min / 1.5 h requests; resubmitted short: 8nH 12 min (started within ~20 min), 8nS 15 min.
+- 12:46-12:50 STEP 2 AT 8n PASS (job8nH, e268463 binary): f2048_flip (the handoff-48 8n fault configuration) PASS
+  1 growth; f2048_flip_staged PASS 447 swap moves; staged_cmp (host vs device decision every step) PASS 259 moves;
+  flip_staged (caps x0.5) PASS 3 growths 447 moves; 0 illegal, 0 tracebacks. Job 4 minutes, scancelled by driver.
+- DEVICE LANE (lopep working tree, built into lopep_t28 at ~13:00, cmake re-run): src/planner/lane_device.cu
+  lane_arm (gate words of unchanged slots, moved-last encoding, overrides), lane_push (matrix k: P2P copy of every
+  slot given to a node peer into its staging, system fence, last block raises the peer gate words), lane_commit
+  (after the GEMM: wait gate, staging -> slot, clear override), pad_rebuild (next step's pad table from the new
+  p2l), lane_device_preload (lazy-loading guard); all return at once when the block reports no swap. serving.py:
+  arm + pad rebuild launched right after swap_decide; after the planning sync the host reads only its own pulls
+  (GEMM kwargs); no host mirror / host pad refresh in device mode; compare mode rebuilds the device pad table into a
+  scratch and checks it against the host rebuild. LOPEP_LANE_DEVICE=0 keeps the python lane (A/B). OverlapComm.prep
+  (used_only=True) zeroes only out_buf[:m] in serving; the benchmark keeps the full zero outside its timed window.
+  tests/test_lane_device.py (1 GPU). Validation job jobV.sh (4n, 30 min) queued; the 8n swap-rate job waits on the
+  .validating lock.
+- 12:55-13:08 validation try 1 (jobV, 4n): unit tests PASS (test_lane_device: 149 swap steps, 2636 rank checks, 1924
+  quiet checks; test_swap_decide PASS); harness: staged_cmp PASS, staged_ref_pylane PASS, but staged_ref_dev and
+  s4096_swap_dev FAILED on the harness's own slot check, which compared slot weights with the HOST mirror placement
+  (st_l.placement.p2l) that the device lane deliberately no longer updates. Fix: the harness checks against the
+  device table (st_l.p2l), valid in every mode (lopep examples/serving_check.py).
+- 13:08-13:21 validation try 2 (jobV, 4n): all PASS: staged_ref_dev (torch reference, device lane, 122880 rows/rank,
+  0 bad, max_err 0.012, 60 moves, slot checks vs the device table), staged_cmp (host vs device decision + device vs
+  host pad table at every refresh, 63 moves), s4096_swap_dev (52 moves), staged_ref_pylane. Lock removed. lopep
+  068e5e4 committed (device lane) = runtime lopep_t28 sources.
+  SAME-BINARY A/B, 30B decode 4n, KV 480000/rank, dp-lm-head, 2 waves (decode step median, IQR, ms):
+    run/rank   device lane             python lane (LOPEP_LANE_DEVICE=0)   earlier figure row (e268463)   stock (best)
+    256        187.25 (180.2-195.9)    208.54 (188.2-227.9)                203.73                         78.23
+    1024       266.31 (260.5-295.8)    279.04 (263.8-316.0)                284.29                         257.60
+  Ledger (S<=1024): pad+loads 0.09 (device) vs 0.11-0.38 ms (python; the post-swap pageable pad upload), no-swap
+  layer-step 4.42-4.47 vs 4.47-4.74 ms; push0 0.046 ms in both (was 0.265: the full out_buf memset, fixed for both
+  arms). Remaining per-layer host cost at small S: the planning sync (meta+check 0.46-0.52 ms). Swap share in decode
+  varies strongly by phase of a wave (windows from 1 % to 99 % of S<=1024 layer-steps).
+- 13:21 job8nS started on 068e5e4 (8n swap rate, 30B LCB prefill).
+- 13:21-13:30 8n SWAP RATE RE-MEASURED (job8nS, 068e5e4, 30B LCB prefill eval x8, MAXRR 32/rank fixed, 8n
+  calibration C 1/4). Swap share of layer-steps by bucket, summed over every ledger window of the server run:
+    8n SMAX 2048: all 66.5 % | S<=8 91 %, S<=16 93 %, S<=512 54 %, S<=1024 68 %, S<=2048 17 %
+    8n SMAX 512:  all 49.1 % | S<=8..256 95-100 %, S<=512 27 %
+    4n for comparison: 30B SMAX 2048 S<=2048 2 %, S<=512 29 %; 235B S<=2048 1 %, S<=512 18-26 %, S<=128 18 %;
+    30B decode S<=256 50 %, S<=1024 50-54 %, S<=4096 5-21 %.
+  Reading: the handoff-48 95 % was dominated by small steps (8 running requests per rank under the launcher bug);
+  with it fixed, full 2048-token steps swap on 17 % at 8n vs 1-2 % at 4n, and partial steps (S<=512-1024) on
+  27-68 % vs 18-54 % at 4n. Decisions are the paper's (8n compare mode PASS: device = host every step); C stays 1/4
+  per ruling, so this is reported, not tuned. The handoff-47 8n combine growth on swap steps is gone: steady-state
+  S<=2048 swap layer-steps 7.97 ms vs no-swap 8.64-9.75 ms (first windows include start-up effects).
+  8n prefill point on the way: 30B SMAX 2048 ours 46123 vs stock 38894 in tok/s (1.19x), mean TTFT 1.67 vs 2.65 s
+  (unpinned pools: ours 540132, stock 683133 per rank). SMAX 512: ours 35354 in tok/s (no stock arm in this job).
