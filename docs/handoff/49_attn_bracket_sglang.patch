@@ -1,0 +1,96 @@
+# Local profiling addition to 47_layer_bracket_sglang.patch (apply after it, inside python/sglang/srt; never shipped):
+# SGLANG_LAYER_TIMING_ATTN=1 starts the per-layer bracket at the top of the decoder layer ("attn") and adds a whole-forward bracket per step.
+--- a/layers/layer_step_timing.py
++++ b/layers/layer_step_timing.py
+@@ -7,6 +7,8 @@
+   SGLANG_LAYER_TIMING_EVERY=n  log every n completed layer-steps (default 500)
+   SGLANG_LAYER_TIMING_DIR=d    write the raw samples to d/layer_timing_<rank>.csv at exit
+   SGLANG_LAYER_NVTX=1          also emit an NVTX range per layer-step and an NVTX mark per phase
++  SGLANG_LAYER_TIMING_ATTN=1   start the bracket at the top of the decoder layer ("attn": input norm + attention
++                               before "pre") and add a whole-forward bracket per step (key FWD:<mode>, phase "fwd")
+ Each layer-step is keyed by (forward mode, DP padding mode, tokens-per-rank bin); the log prints the
+ per-phase mean per key and a least-squares fit t = a + b * n_pad per (mode, padding, phase).
+ """
+@@ -36,6 +38,8 @@
+         self.raw = []            # (mode, pad, n_pad, n_real, T, layer, phase, ms); capped PER bin
+         self.raw_n = {}
+         self.steps = 0
++        self.attn = bool(int(os.environ.get("SGLANG_LAYER_TIMING_ATTN", "0")))
++        self.cur_fwd = None
+         if out_dir:
+             atexit.register(self.dump)
+ 
+@@ -60,6 +64,24 @@
+             torch.cuda.nvtx.range_push(f"moe_layer L{layer_id} {mode} {pad} n={n_pad}")
+         self.cur = (key, ["start"], [self._event()], meta)
+ 
++    def fwd_begin(self, forward_batch):
++        """Whole-forward bracket (SGLANG_LAYER_TIMING_ATTN): every layer plus embedding, final norm, LM head."""
++        if not self.attn:
++            return
++        mode = forward_batch.forward_mode.name
++        pm = forward_batch.dp_padding_mode
++        pad = "-" if pm is None else ("MAX" if pm.is_max_len() else "SUM")
++        n = int(forward_batch.input_ids.shape[0])
++        self.cur_fwd = (("FWD:" + mode, pad, _bin(n)), ["start"], [self._event()], ("FWD:" + mode, pad, n, n, -1, -1))
++
++    def fwd_end(self):
++        if self.cur_fwd is None:
++            return
++        self.cur_fwd[1].append("fwd")
++        self.cur_fwd[2].append(self._event())
++        self.pending.append(self.cur_fwd)
++        self.cur_fwd = None
++
+     def mark(self, name):
+         if self.cur is None:
+             return
+--- a/models/qwen3_moe.py
++++ b/models/qwen3_moe.py
+@@ -588,6 +588,11 @@
+         residual: Optional[torch.Tensor],
+     ) -> Tuple[torch.Tensor, torch.Tensor]:
+ 
++        _lt = None if get_is_capture_mode() else get_layer_timing()
++        _lt_attn = _lt is not None and _lt.attn
++        if _lt_attn:
++            _lt.begin(self.layer_id, forward_batch, hidden_states.shape[0])
++
+         hidden_states, residual = self.layer_communicator.prepare_attn(
+             hidden_states, residual, forward_batch
+         )
+@@ -599,8 +604,9 @@
+                 forward_batch=forward_batch,
+             )
+ 
+-        _lt = None if get_is_capture_mode() else get_layer_timing()
+-        if _lt is not None:
++        if _lt_attn:
++            _lt.mark("attn")
++        elif _lt is not None:
+             _lt.begin(self.layer_id, forward_batch, hidden_states.shape[0])
+ 
+         hidden_states, residual = self.layer_communicator.prepare_mlp(
+--- a/model_executor/model_runner.py
++++ b/model_executor/model_runner.py
+@@ -1987,6 +1987,11 @@
+                 f"fwd {forward_batch.forward_mode.name} bs={forward_batch.batch_size} "
+                 f"n={forward_batch.input_ids.shape[0]}"
+             )
++        from sglang.srt.layers.layer_step_timing import get_layer_timing
++
++        _lt = get_layer_timing()
++        if _lt is not None:
++            _lt.fwd_begin(forward_batch)
+         with get_global_expert_distribution_recorder().with_forward_pass(
+             self.forward_pass_id,
+             forward_batch,
+@@ -1998,6 +2003,8 @@
+                 reinit_attn_backend,
+                 split_forward_count,
+             )
++        if _lt is not None:
++            _lt.fwd_end()
+         if _nvtx:
+             torch.cuda.nvtx.range_pop()
+ 

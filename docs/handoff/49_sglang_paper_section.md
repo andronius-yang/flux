@@ -258,3 +258,42 @@ one token per running request, so the budget = running requests per rank. Qwen3-
   (last window). Versus the e268463 rows: prefill 0.68/1.14/1.65x -> 0.72/1.18/1.71x, decode 0.38/0.91/1.33x ->
   0.41/0.97/1.36x (device lane + used-rows zeroing).
   8n / 16n chains: first pieces (calibrations) still pending at 14:40.
+- ROUND 4 (user, 15:4x: "how have we not secured allocations for 8n/16n yet? how long have we been queueing? ... what
+  are the sequence length and batch size of prefill / decode? ... how much time is spent on attention (and is DP
+  attention properly configured, with what params) and how much on MoE?").
+  QUEUE: 8n debug waits so far 19 / 53 / 52 / 109 min per piece (hbm80g, reason Priority; fair-share 0.23 on
+  m5350_g; debug QOS: 2 running / 5 submitted per user); 16n regular never started (08:58-12:30 and 13:33 onward).
+  Perlmutter has ~256 general hbm80g GPU nodes (241 allocated, 4 idle at 15:5x) vs ~1530 hbm40g. The chains ran
+  pieces SEQUENTIALLY (each piece paid a full queue wait): restructured to parallel pieces with fixed per-topology
+  KV pins (prefill 12949, decode 480000 = the 4n pins; pin_j*.txt): 8n prefill "2048" (kept queue position) +
+  "512 128", 8n decode ours (kept) + baseA + baseG, 16n calib (kept) + "2048" + "512 128" with
+  --dependency=afterany:<calib job>. Done so far at 8n: both calibrations (235B prefill 14:51, 30B decode 15:47).
+- ATTENTION VS MoE (jobA.sh, 4n, 068e5e4, SGLang bracket with SGLANG_LAYER_TIMING_ATTN=1 = 49_attn_bracket_sglang.patch;
+  49_breakdown.py; rank 0 CUDA events; per layer ms, per step = x layers):
+  30B decode (48 layers), attn | MoE block (stock = gather + MoE + scatter) per layer, shares of the step:
+    256/rank   ours attn 0.171 | MoE 3.846   step 186.7 ms: attn 4 %, MoE 99 %*
+               stock attn 0.166 | MoE 1.488 (0.431 + 0.548 + 0.510)   step 82.1 ms: attn 10 %, MoE 87 %
+    1024/rank  ours attn 0.477 | MoE 5.091   step 264.4: attn 9 %, MoE 92 %*
+               stock attn 0.477 | MoE 4.774 (0.987 + 1.984 + 1.803)   step 261.0: attn 9 %, MoE 88 %
+    4096/rank  ours attn 1.636 | MoE 13.322  step 729.6: attn 11 %, MoE 88 %*
+               stock attn 1.647 | MoE 18.869 (3.924 + 8.036 + 6.909)  step 1040.5: attn 8 %, MoE 87 %
+    (* bracket means include slow outlier steps, scheduler step times are medians: ours' shares sum slightly
+    above 100 %; rest of forward 3-24 ms, time outside the forward ~0-24 ms.)
+  235B prefill (94 layers), full 2048-token steps: ours attn 1.740 | MoE 11.350 -> forward 1233 ms/step: attn 13 %,
+    MoE 87 %; stock attn 1.591 | MoE 27.418 (gather 6.775 + MoE 20.610) -> forward 2730 ms: attn 5 %, MoE 94 %.
+  Attention per layer is the same in both arms (control holds); stock's MoE block at 16 MiB decode is more
+  communication (gather + scatter 10.8 ms) than expert compute (8.0 ms).
+  CAVEAT: decode contexts are 56 -> 104 tokens (truncated prompts, so 4096 requests per rank fit in KV); attention
+  per decode step grows with context, so at realistic contexts its share would be larger than 4-11 %.
+  SEQUENCE LENGTH / BATCH: prefill 235B: prompts 273-424 tokens (median 337, chat template), output 4; batch = the
+  per-rank chunk SMAX 128 / 512 / 2048 tokens per step (0.4 / 1.5 / 6 prompts per rank per step; chunked prefill
+  splits long prompts), running cap 32 requests/rank, client concurrency 16/rank. Decode 30B: prompt 55-56 tokens
+  (last 48 of the LCB prompt + template), output 48 (ignore_eos) -> context 56 -> 104; batch = running requests per
+  rank 256 / 1024 / 4096 = decode tokens per rank per step.
+  DP ATTENTION CONFIG (ServerArgs): tp = dp = ep = 16 at 4n (32 at 8n), enable_dp_attention (attention TP 1: every
+  GPU holds the full attention weights and runs attention for its own requests), attention_backend flashinfer (prefill
+  and decode), load_balance round_robin, schedule fcfs, page_size 1, radix cache off, overlap schedule off, CUDA
+  graphs off except the stock graphs-on arm (cuda_graph_max_bs 512), enable_dp_lm_head on decode runs,
+  mem_fraction_static 0.85, chunked_prefill_size = SMAX per rank, max_prefill_tokens 16384, context_length 2048
+  (prefill) / 256 (decode), max_total_tokens pinned; DP padding: DECODE MAX, EXTEND SUM; moe_a2a_backend none (stock:
+  all-gather -> local experts -> scatter) vs lopep (ours, 32 redundant experts).
