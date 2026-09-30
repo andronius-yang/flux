@@ -297,3 +297,21 @@ one token per running request, so the budget = running requests per rank. Qwen3-
   mem_fraction_static 0.85, chunked_prefill_size = SMAX per rank, max_prefill_tokens 16384, context_length 2048
   (prefill) / 256 (decode), max_total_tokens pinned; DP padding: DECODE MAX, EXTEND SUM; moe_a2a_backend none (stock:
   all-gather -> local experts -> scatter) vs lopep (ours, 32 redundant experts).
+- ROUND 5 (user: "switch to 40g so we can actually get 16n runs"; can 16 MiB decode run at 16n on 40 GB with shorter
+  sequences?). 40 GB budget ~33.5 GB for weights + heap + KV (mem_fraction_static 0.85 of ~39.4). Heap
+  (lopep.heap, 6 GiB floor): 235B 4n 9 / 8n 12 GiB at 3x headroom, 6-7 GiB at 1.5x; 30B decode 4n 9 / 8n 11 at 3x,
+  6 at 1.5x. After weight load at 4n (80 GB): 235B stock 40.3 GB, ours 64.0 GB (+9 heap, +7 redundant slots, +8
+  buffers); 30B decode ours 21.3 GB. ESTIMATES at 16n on 40 GB: 235B ours ~36+ GB before KV (attention weights are
+  replicated by DP attention, ~12 GB) -> does not fit; 30B ours 15-22 GB -> KV ~115-190k tokens/rank -> 16 MiB decode
+  (4096/rank) fits only with ~28-46 tokens per request (vs 56 -> 104 now); 1 and 4 MiB fit.
+  USER DECISIONS: 16n prefill = BOTH (30B prefill at 16n on 40 GB now + keep the 235B 16n pieces on 80 GB); decode
+  context = short ctx ONLY at 16n (4n / 8n keep 56 -> 104).
+  16n 40 GB pieces (regular QOS, chainfig2.sh GPU_C=gpu&hbm40g): 59103871 p49_n16g40p1_1 (p1_16n.sh: 30B prefill
+  calibration SMAX 4096 + decode calibration, both C 1/2, then jobD16 probe: ours unpinned with heap at 1.5x
+  headroom -> pin, heap and context T/OSL files), then with --dependency=afterany:59103871: 59103899 p49_n16g40p2_1
+  (jobP30 30B prefill SMAX 4096 / 1024 / 256, LCB_REP 128 / 32 / 8, ours pinned at min(pool, 50000), stock at ours'
+  pool), 59103896 p49_n16g40p3_1 (jobD16 ours + stock graphs off), 59103895 p49_n16g40p4_1 (jobD16 stock graphs on).
+  Other sessions of the same Unix user have jobs named pz* in the queue (not ours; pzd_async1n shares our debug
+  per-user limit).
+- 17:10-17:24 8n DECODE ours (job 59092316 p49_c8nD_2, 30B, KV 480000, 2 waves): 256/rank 219.38 ms (IQR 218.6-226.5),
+  1024/rank 378.16 (366.4-422.1), 4096/rank 1056.31 (1025.6-1232.4); 1 growth, 0 tracebacks. Stock arms at 8n queued.
