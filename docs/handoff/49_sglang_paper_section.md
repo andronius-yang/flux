@@ -373,3 +373,48 @@ one token per running request, so the budget = running requests per rank. Qwen3-
   single-block swap decision kernel 216 us every layer-step on the critical path; blocking NVSHMEM proxy puts (CXI
   wire-ordering rule) and 3 barriers per layer. The ~41.5k small pageable D2H copies per rank in the capture fall
   outside the steady-state window (between-forward work is equal in both arms: ~55 vs 50 calls, 3.6 vs 16.9 ms).
+- ROUND 8 (user: recreate the evidence behind the 1 MiB root cause, to plan fixed-cost campaigns next). Re-derived
+  from the capture (49_hostcalls.py rerun -> logs/sglang/nsys49/deep_ours_v2.txt), the clean ledger and a code map of
+  lopep 068e5e4 (= the captured source; lopep_t28 src + python identical). CORRECTIONS to round 7 marked (C).
+  FIT SOURCE: SGLang bracket least squares over 4788 layer-steps of j4nD (80 GB, 4n decode): stock pre 0.128 + moe
+  0.356 + post 0.136 = 0.62 ms + 4.51 us/token; ours 3.128 + 2.54 us/token. Two-point fits from jA give stock
+  0.33-0.39 ms: stock's fixed cost is 0.3-0.6 ms; crossover 1300-1400 tokens/rank either way.
+  CLEAN LEDGER at S<=256 (j4nD, unprofiled, LOPEP_TIMING on): no-swap 3.08 ms = dispatch 0.96, combine 0.92,
+  meta+check 0.45, pad+loads 0.24, route+xchg 0.20, swap_decide 0.09, act 0.09, rest 0.13; swap steps 3.45 (+0.37:
+  swap_decide +0.21, push0 +0.06, route +0.05, push1 +0.04, arm_parse +0.03); swap share 51 % at 256 and 1024, 21 %
+  at 4096. The nsys window was 671 of 672 swap steps at S<=256 (whole jN run: 61 %).
+  (C1) The two all-gathers are DEPENDENT (planner.py:105-118): loads d[R,G] -> route kernel -> all-gather of this
+  rank's routed slots + gate weights. One collective is possible only by gathering the raw top-k ids + weights once
+  (same bytes as today's second gather) and routing every rank's tokens locally (the route tables are identical on
+  every rank; verify the route kernel is a pure function of (d, placement, rank, ids)).
+  (C2) swap_decide_kernel: p10 8 us (no swap), p25-p90 199-351 us (orbit rounds, <<<1,256>>>): a swap-step cost.
+  (C3) The dispatch phase's host window holds THREE things: the dispatch host tables (dispatch_gemm.cc:832-1077), the
+  dispatch issue, and the COMBINE metadata derive (plan_overlap 2 at <= 16 MiB, overlap.py:42/214-223). Its 5 pinned
+  H2D = 1 dispatch arena (dg:1082, 8.7 KB) + 4 combine tables (gc:439/440/666/667); the compress_plan_* kernels,
+  searchsorted and most direct_copy kernels are the combine's derive.
+  (C4) LOPEP_DEVICE_META=1 keeps the D2H + sync and the host table loops (host values size every copy, put,
+  index_select, out_buf slice and torch::empty); it replaces only the uploads and the numpy check. Removing the
+  planning sync needs device-sized data movement.
+  (C5) cudaEventQuery x12 is not a poll: PyTorch pinned-allocator event checks (per-step pinned allocations at
+  gc:334/367/574/584). (C6) Peer copies: NVSHMEM lowers each intra-node put_signal on stream to a data copy + an
+  8-byte signal copy (measured: dispatch 12.8 data of 2.40 MB + 24 tiny, combine 9.4 data of 2.47 MB + 12 tiny); the
+  code issues 12 puts per phase (dispatch: 3 round-0 + 9 gateway forwards; combine: 9 conv + 3 intra). The 8-byte
+  pageable H2D x4 per phase are likely NVSHMEM self-signals (inferred from counts).
+  PLANNING KERNELS (critical path: the planning sync waits on them; replicated over all ranks' routing, 32768 pairs):
+  a2av_stable_scatter_pass2 = thread 0 of each of 16 blocks walks 2048 entries serially (sort_util.cu:406-426),
+  constant 163 us; a2av_meta_counts = 16 blocks, per-token global atomics, no shared-memory aggregation (p50 28, p90
+  280 us). Host after the sync: ~250 us numpy demands + capacity check (overlap.py:113-130, capacity.py:29-55).
+  DUPLICATION: combine re-derives cumA/offA/offR_of_A/expert_base (gc:340-362/592 vs dg:861-899); C per layer 3x
+  (dg:839, gc:559, gc:1318); expert-of-copy 2x (stage1 serial prefix per block, gc:655 searchsorted);
+  prepare_workspace <<<1,768>>> recomputes the splits prefix. UNUSED WORK: cumA/offR_of_A uploaded but read only by
+  unreachable non-fused branches; ssc unused at NN>1; 4 piece_* memsets for the disabled pieces feature (gc:1463);
+  combine publishes to and joins all 16 wire streams (20 waits + 20 records + 20 waits, gc:1475-1491/2069-2086) while
+  3 carry puts; ready_event / hier_dispatch_event_ / relay_send_event_ recorded, never waited.
+  GPU FIXED LATENCY: barriers x3 (dg:2710, gc:3417, gc:3453): min 14, p10 137, p50 273, p90 603 us = mostly waiting
+  for the slowest rank; code reading says the only cross-rank hazard is write-after-read on destination panels by the
+  next layer's puts, which one barrier per layer covers (UNPROVEN: needs a proof + randomized-payload stress).
+  Blocking inter-node puts: min 58, p10 87, p50 197 us each; combine's 3 are already one per remote node on separate
+  streams. prereduce (551 us) and pack spin on peers' conv signals / GEMM flags (waiting, not work); bucket_reduce
+  x6.7 = 317 us real work on 8 CTAs. GPU busy 2.60 ms in the capture therefore includes spin-waits.
+  OPEN: intra-node data bytes at 256 tokens/rank look large (dispatch ~31 MB, combine ~23 MB per layer per GPU):
+  check exact vs capacity-sized copies; ~0.4 ms per layer-step sits outside the lopep step (bracket vs ledger).
