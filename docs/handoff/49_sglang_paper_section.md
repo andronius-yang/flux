@@ -418,3 +418,53 @@ one token per running request, so the budget = running requests per rank. Qwen3-
   x6.7 = 317 us real work on 8 CTAs. GPU busy 2.60 ms in the capture therefore includes spin-waits.
   OPEN: intra-node data bytes at 256 tokens/rank look large (dispatch ~31 MB, combine ~23 MB per layer per GPU):
   check exact vs capacity-sized copies; ~0.4 ms per layer-step sits outside the lopep step (bracket vs ledger).
+- ROUND 9 = PLAN 6 (user 09-30: 4n / 8n x prefill / decode x 1 / 2 / 4 MiB per rank on 40 GB NODES ONLY, current
+  implementation, goal = positive speedups showing correct and efficient integration). Plan file rewritten (plan 6).
+  Decisions: stock graphs-on at SGLang's default (cap 160 on 40 GB -> no decode point graphed); ours repeated at 2 / 4
+  MiB (and at every decode point, one server serves all three). Measurement settings: ours LOPEP_TIMING=0; SGLang
+  bracket on ours + stock graphs-off; ours heap 6G (lopep.heap --headroom 1.5; 9G / 11G at 3x for the 4n / 8n decode
+  calibrations, 6G either way for prefill). Existing calibrations (history half): lcbtd (decode), lcbp (prefill).
+  Drivers logs/sglang/jobD6.sh, jobP6.sh; specs spec_p6_4n.txt (interactive), spec_p6_8nD / 8nP.txt (8n moved from
+  debug to REGULAR QOS, same short walltimes: the other session's 5 pzd_* jobs fill the per-user debug submit limit of
+  5; not touched). Chains p6n4 (59115359, 59115686), p6n8d (59115360), p6n8p (59115361, 59115722...).
+  4n DECODE (40 GB, KV pin = ours' pool 143794/rank, MAXRR 1024/rank, 0 growths / 0 tracebacks on all 4 arms; step
+  median ms, IQR; per-layer MoE-block bracket ms):
+    run/rank   stock off       stock on (eager)   ours / ours again          best stock / ours   layer ours / stock off
+    256        84.45           84.29              166.85 / 164.32            0.51x              3.25 / 1.51  (0.46x)
+    512        142.97          143.32             186.91 / 188.78            0.76x              3.59 / 2.59  (0.72x)
+    1024       271.43          270.67             259.97 / 260.73            1.04x (WIN)        4.90 / 5.01  (1.02x)
+  Ours' repeat within 1.5 % (0.3 % at 1024). Stock on = stock off within 0.3 % (SGLang bracket costs stock nothing;
+  no graphs at >= 256/rank on 40 GB). Ours at 256: 166.9 ms vs 186.5 on 80 GB with LOPEP_TIMING=1 (not like-for-like).
+  4n PREFILL (40 GB, pin 50000/rank, LCB eval x4 / x8 / x16, 0 growths / 0 tracebacks on all 8 arms):
+    SMAX   in tok/s ours (again) / stock      ratio          mean TTFT ms ours (again) / stock   ratio         layer ours (again) / stock
+    256    16807 / 25662                      0.65x          1514 / 1234                         0.81x         3.48 / 2.35 (0.68x)
+    512    27727 (27998) / 33365              0.83-0.84x     1227 (1013) / 857                   0.70-0.85x    3.57 (3.31) / 3.52 (0.99-1.06x)
+    1024   40520 (39007) / 38600              1.01-1.05x     940 (916) / 1194                    1.27-1.30x    4.59 (4.50) / 6.34 (1.38-1.41x)
+  (layer = SGLang bracket EXTEND SUM class n_pad <= SMAX, full-chunk steps, rank 0.) At 4 MiB the MoE layer is 1.4x
+  faster but throughput only 1.01-1.05x: part of ours' step time lies outside the bracket (hypothesis: host gaps
+  between layers, the round-7 host-bound finding; CUDA-event brackets do not see GPU idle between layers).
+  8n DECODE (40 GB, KV pin = ours' pool 160242/rank, MAXRR 1024/rank; D1 = ours + stock off on job 59115360, D2 =
+  stock on + ours again on job 59117189 (different nodes); 0 growths / 0 tracebacks on all 4 arms):
+    run/rank   stock off (D1)   stock on, eager (D2)   ours D1 / ours D2    ratio D1 / D2      layer ours / stock off
+    256        148.59           147.71                 213.07 / 212.07      0.70x / 0.70x      4.19 / 2.88  (0.69x)
+    512        255.33           254.85                 260.51 / 260.05      0.98x / 0.98x      5.11 / 4.99  (0.98x)
+    1024       482.75           481.25                 373.03 / 370.92      1.29x / 1.30x WIN  7.40 / 9.59  (1.30x)
+  Ours repeats across different node sets within 0.6 %. Output tok/s per GPU at 1024: ours 2746-2761 vs stock
+  2121-2128. From 4n to 8n at 1024/rank stock's step grows 271 -> 482 ms, ours' 260 -> 373 ms.
+  8n PREFILL (40 GB, pin 50000/rank, eval x8 / x16 / x32, one piece per SMAX: jobs 59115361 / 59115722 / 59117102;
+  0 growths / 0 tracebacks on all 8 arms):
+    SMAX   in tok/s ours (again) / stock      ratio          mean TTFT ms ours (again) / stock   ratio          layer ours (again) / stock
+    256    26836 / 29425                      0.91x          2010 / 1985                         0.99x          4.40 / 4.43 (1.01x)
+    512    41353 (42385) / 37859              1.09-1.12x WIN 1441 (1310) / 2045                  1.42-1.56x     4.88 (5.01) / 6.49 (1.30-1.33x)
+    1024   57224 (58977) / 42806              1.34-1.38x WIN 1237 (1390) / 1576                  1.13-1.27x     6.60 (6.48) / 12.24 (1.86-1.89x)
+  PLAN 6 SUMMARY (stock / ours; > 1 = ours faster; all 40 GB, one binary, equal KV, 0 growths / 0 tracebacks on all
+  24 arms; ~9.7 node-hours, 40 GB only):
+    cell                 1 MiB           2 MiB                  4 MiB
+    4n decode step       0.51x           0.76x                  1.04x (win, drift 0.3 %)
+    8n decode step       0.70x           0.98x (parity)         1.29-1.30x (win)
+    4n prefill tput      0.65x           0.83-0.84x             1.01-1.05x (parity; TTFT 1.27-1.30x, layer 1.38-1.41x)
+    8n prefill tput      0.91x (TTFT     1.09-1.12x (win;       1.34-1.38x (win; TTFT 1.13-1.27x, layer 1.86-1.89x)
+                         0.99x)          TTFT 1.42-1.56x)
+  Reading: ours wins at 4 MiB everywhere and at 2 MiB prefill on 8n; the advantage grows with node count (stock's
+  all-gather volume per GPU grows with ranks); 1 MiB remains a loss except near-parity 8n prefill (fixed per-layer
+  cost, rounds 7-8). Stock graphs-on = stock graphs-off within 0.6 % everywhere (no graphs at >= 256/rank on 40 GB).
