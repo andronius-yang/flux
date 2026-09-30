@@ -331,3 +331,45 @@ one token per running request, so the budget = running requests per rank. Qwen3-
   decode. Done at 8n: both calibrations (235B prefill, 30B decode) and the 30B decode ours arm. Scripts ready to
   resubmit when the user allows: spec_p8a.txt / job8nP.sh, jobD.sh (8n), p1_16n.sh + spec_16n40_p*.txt (16n 40 GB,
   chainfig2.sh GPU_C=gpu&hbm40g), spec_p16a/b.txt (16n 80 GB).
+- ROUND 7 (user: root-cause the 1 MiB loss; nsys evidence?; deep dive of each step: remaining host work, is the
+  metadata computation fused or repeated host calls; "the mechanisms are there ... not sure the best way to achieve
+  and plan them is in place"). FIT DECOMPOSITION (4n, 30B decode, SGLang bracket = MoE block incl. communication):
+  stock 0.62 ms + 4.5 us/token, ours 3.14 ms + 2.5 us/token per layer-step -> crossover ~1300 tokens/rank (~5 MiB);
+  predicts 0.47x / 0.91x / 1.40x at 256 / 1024 / 4096 (measured 0.41 / 0.94 / 1.42). Ours' per-token cost is 44 %
+  lower, its fixed cost 5x higher. Old nsys (09-27, 2n, harness, pre-fix) supported it; no capture of the current path.
+  NSYS CAPTURE (user OK; job 59112026, 4 x 40 GB nodes, 21:54-22:04, jobN.sh): SGLang serving, 30B decode 256/rank,
+  KV 100000 both arms, node 0, 20 forward steps, NVTX (SGLang layer + lopep phases, LOPEP_TIMING on = ~17 event marks
+  per layer-step). Reports logs/sglang/nsys49/n_{ours,stock}_d256.{nsys-rep,sqlite}; analyzers 47_gap_report2.py and
+  49_hostcalls.py (per phase: host / in-API / host-code / sync us, API calls, copies by direction and memory kind,
+  kernels). Caveats: 40 GB GPUs; ours' instrumentation heavier than stock's (17 vs 4 marks per layer); nsys API tracing
+  inflates host time in proportion to call count (forward in capture ours 266 ms vs 187 unprofiled, stock 76 vs 78).
+  OURS per layer-step (median of 912): span 3.87 ms, GPU busy 2.60, GPU IDLE 1.27 (host-bound), 479 CUDA API calls,
+  212 GPU activities. STOCK MoE layer incl. attention: span 1.73 ms, GPU busy 1.61, idle 0.13, ~82 calls, 25 activities.
+    phase        host us (API/code/sync)   GPU us   calls  content
+    pad+loads    333 (98/231/0)            115      25     Python pads, 6 D2D copies, NCCL all-gather of loads (94)
+    swap_decide  126 (45/81/0)             233      10     swap_decide kernel 216 us (single block), pad_rebuild, lane_arm
+    route+xchg   277 (94/179/0)            138      26     router kernels 66, a SECOND NCCL all-gather (105)
+    meta+check   594 (337/250/276)         211      16     scatter/count kernels, 2 D2H (pinned 6 KB) + the planning SYNC,
+                                                           host table derive + capacity check
+    dispatch     1426 (630/797/7)          783      181    51 cudaMemcpyAsync (37 intra-node peer copies ~0.84 MB, 5 pinned
+                                                           H2D metadata uploads ~6.8 KB, 4 pageable 8 B), 46 launches,
+                                                           31 event records, 15 stream waits, 12 event polls, 6 memsets;
+                                                           kernels: GEMM1 711 (incl. gate waits), blocking NVSHMEM proxy
+                                                           puts 655 (x2.9), NVSHMEM barrier 387, compress-plan scan/conv/red
+                                                           156, gathers / searchsorted / workspace prep ~120
+    act          99                        25-68    5
+    combine      576 (381/191/8)           871      183    55 stream waits, 36 event records, 31 copies (21 peer ~1.1 MB),
+                                                           21 launches, 9 memsets, 14 stream memops; kernels: blocking
+                                                           proxy puts 1512 (x2.7, summed), pre-reduce 551, barriers 454,
+                                                           bucket reduce 317 (x6.7), GEMM2 204, pack 175
+    arming/pushes/commits/marks ~300 host (mostly instrumentation; lane kernels 56 + 33 + 13 + 8 us GPU)
+  FINDINGS: (1) at 1 MiB ours is host-bound (GPU idle 1.27 ms/layer-step vs stock 0.13); (2) the host work left is the
+  dispatch / combine ORCHESTRATION (364 of 479 calls: per-peer intra-node copies issued one cudaMemcpyAsync each,
+  multi-stream event record / wait choreography, event polling, per-round metadata uploads) plus the planning sync with
+  host table building (meta+check); the swap path is no longer a host cost; (3) metadata is NOT fused: counts / scatter
+  on GPU -> D2H + sync -> host tables + capacity check -> 5 H2D uploads -> more plan kernels in dispatch (compress plan,
+  searchsorted, gathers, consumer build, workspace prep) -> the combine derives its own metadata again (meta derive,
+  bucket map / scan / scatter); two NCCL all-gathers per layer (loads, routing exchange); (4) GPU fixed latency: the
+  single-block swap decision kernel 216 us every layer-step on the critical path; blocking NVSHMEM proxy puts (CXI
+  wire-ordering rule) and 3 barriers per layer. The ~41.5k small pageable D2H copies per rank in the capture fall
+  outside the steady-state window (between-forward work is equal in both arms: ~55 vs 50 calls, 3.6 vs 16.9 ms).
