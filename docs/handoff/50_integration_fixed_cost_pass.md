@@ -63,9 +63,13 @@ The grouped GEMMs are already device-driven (problem sizes read on the device, t
 1. **Intra-node data movement stays on copy engines, not SMs.** SM copy kernels are rejected as the default (they
    take SMs from the grouped GEMMs; the design deliberately keeps the post-launch wire SM-free, design.md
    "dispatch_gemm" item 4). Section 4 is the research on driving copy engines without the host main thread.
-2. **One routing exchange instead of two** (user proposal, to be measured): gather the PRE-routing top-k ids +
-   gate weights once, then every GPU computes the loads (histogram) and routes ALL ranks locally. Section 5.
-3. Paper mechanisms unchanged; wire-ordering hard rule (CLAUDE.md invariant 5) unchanged; measure at b1/b4/b16
+2. **One routing exchange instead of two** (user proposal): gather the PRE-routing top-k ids + gate weights once,
+   every GPU computes the loads and routes ALL ranks locally. Already tried as "route-global" on 08-29 (handoff 26)
+   and CLOSED as a net loss; section 5 has the history and why it stays last in this pass.
+3. **Order (user, 09-30): probe device-initiated copies FIRST, then tables on the GPU and the copy path; the routing
+   merge only after those, and only if new evidence reopens it.** A device-initiated copy may need an SM (a thread)
+   to issue it, but its throughput must not depend on how many SMs are given to copying (section 4a).
+4. Paper mechanisms unchanged; wire-ordering hard rule (CLAUDE.md invariant 5) unchanged; measure at b1/b4/b16
    budgets first (invariant 6) and at 1 / 2 / 4 MiB in serving (plan 6 methodology, 40 GB nodes).
 
 ## 4. Copy engines without the host main thread: what CUDA supports (researched 09-30)
@@ -90,48 +94,95 @@ Design consequences:
   rows through a consumer index, so aliasing into fixed slots is compatible) and variable lengths chosen by size
   bucket (pow2 buckets: <= 2x bytes; finer buckets: more nodes) or per-chunk IF nodes.
 - The host proxy keeps exact sizes and today's packed layout; it changes who issues the copies, not the layout.
-- Recommended probes before choosing (1 node, 4 GPUs, 0.5 / 1 / 2.4 MB P2P copies, the plan-6 sizes):
-  P1 device-launched graph memcpy node to a peer: copy engine or kernel (Nsight activity kind, SM occupancy), launch
-     latency; P2 host-launched graph with a SWITCH node selecting size-bucketed peer copies, condition set by a kernel:
-     latency from condition write to copy start; P3 proxy thread: device flag -> copy start latency, single copy and
-     `cudaMemcpyBatchAsync` of 12-37 copies; P4 device-side `cudaMemcpyAsync` (CDP2): copy engine or kernel.
 
-## 5. One routing exchange instead of two (user proposal)
+## 4a. Probe first: are device-initiated intra-node copies independent of SMs? (stage 0, before any redesign)
+
+Acceptance criterion (user, 09-30): a mechanism may use an SM (a thread) to ISSUE a copy, but the copy's throughput
+must not be limited by the SMs dedicated to copying, i.e. it must run on a copy engine. Setup: 1 node, 4 A100 40 GB,
+peer copies of 0.5 / 1 / 2.4 MB (the plan-6 per-copy sizes) and 16 MB (bandwidth), NVSHMEM symmetric buffers and
+plain peer-mapped buffers.
+
+| probe | mechanism | measure |
+|---|---|---|
+| P0 | host `cudaMemcpyAsync` (today's copy-engine baseline) and an SM copy kernel with k = 1, 2, 4, 8, 16 SMs | reference bandwidth / latency curves; the SM kernel's bandwidth grows with k, a copy engine's does not |
+| P1 | device-launched graph (`cudaGraphLaunch` from a kernel, fire-and-forget) with one peer memcpy node | Nsight activity kind (MEMCPY on a copy engine vs a kernel), launch-to-start latency, bandwidth |
+| P2 | host-launched graph with a SWITCH / IF node choosing among size-bucketed peer memcpy nodes, condition set by a planning kernel (`cudaGraphSetConditional`) | condition-write-to-copy-start latency, bucket overhead |
+| P3 | host proxy thread: kernel writes descriptors to pinned memory, a dedicated CPU thread issues `cudaMemcpyAsync` / `cudaMemcpyBatchAsync` (12-37 copies) | device-flag-to-copy-start latency, CPU cost, bandwidth |
+| P4 | device-side `cudaMemcpyAsync` (CDP2, -rdc) | copy engine or kernel (Nsight), latency |
+
+SM-independence test for every probe: run it (a) alone and (b) concurrently with a persistent kernel that occupies
+EVERY SM (a spin kernel, and separately the real dispatch GEMM at sm_margin 0). Pass = bandwidth and latency within
+noise of (a) AND Nsight shows a MEMCPY activity (no extra kernel doing the movement). A mechanism that slows down
+when the SMs are busy, or scales with the SMs it is given, is SM copying in disguise and fails the constraint.
+Also record `cudaDevAttrAsyncEngineCount` (how many copy engines can run concurrently) and whether concurrent copies
+to 3 peers overlap.
+
+## 4b. Where tables on the GPU and the copy path stand without the routing merge
+
+Both are independent of the routing exchange: derive_routed_meta already runs on the gathered routing of all ranks,
+so the tables can move to the device with today's relaxed router and two collectives unchanged. Tables on the device
+alone (stage B) remove the host table loops and uploads but NOT the planning sync while copies are host-issued with
+host-known sizes; the sync goes away only with the copy path of stage C (a mechanism from 4a that takes sizes from
+device memory, or the proxy thread) plus the deferred capacity verdict.
+
+## 5. One routing exchange instead of two: already tried, closed, kept last
 
 Today (`planner.py:105-118`): gather loads d[R, G] -> route own picks (needs global d) -> gather routed slots + gate
-weights [R, 2 x S x K]. The two collectives are serially dependent. Correction to the proposal's premise: the
-pre-routing top-k ids of other GPUs are NOT known today (only their per-expert counts are). Proposal: gather the raw
-top-k ids + gate weights ONCE (the same bytes as today's second gather), compute d locally (histogram of all ids,
-pads included as today), run the swap decision, then route ALL R ranks locally; derive_routed_meta already consumes
-the full [R x S, K] routing, so everything downstream is unchanged.
+weights [R, 2 x S x K]; serially dependent. The proposal gathers the raw top-k ids + weights once (the pre-routing
+top-k of other GPUs is NOT known today, only their per-expert counts) and routes all R ranks on every GPU.
 
-- Saves: one collective (~94-105 us GPU each at 4n) + ~25 host calls + the serial dependency.
-- Costs: router work x R (16n 1 MiB: 64 x 256 x 8 = 131k entries, one thread each — small, to measure).
-- BLOCKER (found 09-30): the device router is NOT bitwise deterministic per token. `route_kernel`
-  (`routing.cu:231-253`) takes a ticket with `atomicAdd(&cnt[g], 1)`, and the vacate pass consumes release/extra
-  budgets with atomics (`routing.cu:416-448`). Per-replica COUNTS are deterministic, but WHICH token lands on which
-  replica depends on thread timing. Harmless today (each GPU routes its own picks once and ships the result); fatal
-  for replicated routing (two GPUs could disagree on the same token -> wrong rows moved). Required change: a
-  deterministic router with the same shares and budgets — ticket = stable ordinal of the entry among the source's
-  entries of that expert (the stable-scatter ordinal, flat order), vacate in token-index order (the host
-  `reference_route` in `routing.py:228` is already a deterministic all-ranks model to validate against). Paper
-  semantics unchanged (shares, budgets, C); only tie-breaking becomes fixed.
-- Validation: compare mode (every GPU's local routing of rank r == rank r's own routing, bitwise) over serving
-  traffic at 4n / 8n; then measure route-all cost vs the saved collective at 1 / 2 / 4 MiB.
+History (searched 09-30):
+- **08-21, handoff 08 (PLACE-lambda port):** the integrated deterministic arm was a GLOBAL torch router
+  (`loccap_gpu`, CPU == GPU bit-identical) at 52-67 ms per iteration (launch / sync-bound). User ruling: bit-identity
+  RELAXED; sender-local redesign = shared tables as order-independent functions of the d all-gather, per-row decisions
+  owned by the sending rank, relaxed atomic tickets -> 0.40-0.45 ms per rank. Premise recorded then: "agreement
+  across ranks comes from the phys-row allgather, never from replaying each other's decisions." The current pv3c
+  kernel (`routing.cu`: `atomicAdd` ticket at :242, vacate atomics at :416-448) inherits this contract; its tables are
+  bit-exact and its ticket invariants order-independent (handoff 40 section 6; network incidence +0.4..+1.3 % above
+  the deterministic host reference `reference_route`, `routing.py:228`).
+- **08-29, handoff 26 ("route-global", user-directed):** exactly this proposal. One top-k + probs all-gather
+  (byte-identical to the phys + probs exchange) replaced the d all-gather + relaxed kernel + decisions all-gather;
+  every rank recomputed every rank's assignment. Torch version (`route_global_quota`): correct end to end at 4n,
+  2.8 ms (b1) / 13.1 ms (b8) even graph-replayed. Fused deterministic CUDA kernel (`placelambda_route_global`, flux
+  ae0dd16: stable ordinals + closed-form quota windows): bitwise-proven, gates green 4n + 8n, 0.67-0.74 ms flat
+  across scale. **Perf verdict NEGATIVE at 4n and 8n (+0.07..+0.92 ms everywhere), CLOSED.** Reason (arithmetic, not
+  implementation): the exchange bytes are irreducible (raw top-k or routed decisions, same size), so the merge only
+  saves the small FLAT d all-gather (~0.08 ms), while the single exchange's latency scales with tokens and the global
+  kernel routes R x the entries of the per-rank relaxed route. "The 8/21 sender-local relaxation had already banked
+  the available win; route-global re-centralizes the computation it distributed."
+
+What is different today, and why it still stays last:
+- Serving is host-bound: the loads gather also costs ~25 host calls and Python work (~0.1-0.2 ms host), not just
+  ~0.1 ms of GPU. That could shift the balance slightly, but only once stages B-D have removed the bigger host costs
+  would it show; the route-all kernel's extra GPU time lands on the same critical path.
+- The router changed (pv3c water-fill + budget + vacate vs the 08-29 LocCap/quota router): the retained kernel is
+  not a drop-in; a pv3c route-global needs deterministic tickets AND a deterministic vacate (budgets consumed per
+  source in token order), and the vacate is the part most at risk of serializing (the 16n cost of the old serial
+  per-expert largest-remainder loops, handoff 38 section 6.9, is the precedent for how such loops scale).
+- Reopen only if, after stage D, the loads gather is measurably on the critical path; then measure route-all vs the
+  saved collective at 1 / 2 / 4 MiB, 4n / 8n / 16n, with a bitwise cross-rank compare mode.
+
+A different, never-attempted idea from the same history (08-21 next-fusion list): a COUNTS-ONLY exchange instead of
+the per-row routing all-gather. Receivers need per-(source, copy) counts and the dedup unions (sps, uc rows) to size
+and place their receive regions, not every other rank's per-row decisions; per-row positions are the sender's
+business and consumer aliasing could travel in-band. That would shrink both the second exchange (flat in tokens) and
+the replicated W x S x K planning work that grows with node count (16n 1 MiB prefill layer: ours 7.05 ms, vs 3.48 at
+4n). A redesign of the metadata contract, not a stage of this pass; recorded as a candidate.
 
 ## 6. Proposed order for the pass (each stage measured on its own, plan-6 methodology)
 
 | stage | change | removes | risk |
 |---|---|---|---|
+| 0 | copy-mechanism probes (section 4a): SM-independence and latency of P1-P4 vs P0 | decides stage C's copy path; no serving change | none |
 | A | parallel stable scatter (bitwise-identical output), shared-memory meta_counts, parallel swap orbit | ~0.15-0.17 ms/layer GPU on the sync's critical path; up to ~0.3 ms on swap steps | low |
-| B | deterministic router + one exchange (section 5) | one collective + its host calls per layer | medium (determinism) |
-| C | all tables on the device (dispatch + combine + receiver lanes; extend LOPEP_DEVICE_META), drop duplicated / unused host work (combine re-derives dispatch tables, C computed 3x, unused uploads / memsets, 16 joined wire streams for 3 used) | host table loops, most uploads, ~40 event calls | low-medium |
-| D | copy issue off the main thread: batched copies (`cudaMemcpyBatchAsync`) first, then the proxy thread or graph-selected copies per the section-4 probes; device-initiated inter-node puts after the wire probe; device capacity verdict (identical on every GPU because planning is replicated), read at the end of the forward, redo the forward on overflow (0 growths so far) | the planning sync and most of the ~480 calls | high (redesign) |
-| E | whole-layer CUDA graph per bucket (launch sequence fixed once sizes are device-resident; per-step epoch moved to device memory) | per-layer host issue down to ~1 launch | medium (NVSHMEM ops in graphs) |
+| B | all tables on the device (dispatch + combine + receiver lanes; extend LOPEP_DEVICE_META), drop duplicated / unused host work (combine re-derives dispatch tables, C computed 3x, unused uploads / memsets, 16 joined wire streams for 3 used) | host table loops, most uploads, ~40 event calls (the sync stays, section 4b) | low-medium |
+| C | copy issue off the main thread per stage 0: batched copies (`cudaMemcpyBatchAsync`) as the immediate step, then the proxy thread or graph-selected copies; device-initiated inter-node puts after the wire probe; device capacity verdict (identical on every GPU because planning is replicated), read at the end of the forward, redo the forward on overflow (0 growths so far) | the planning sync and most of the ~480 calls | high (redesign) |
+| D | whole-layer CUDA graph per bucket (launch sequence fixed once sizes are device-resident; per-step epoch moved to device memory) | per-layer host issue down to ~1 launch | medium (NVSHMEM ops in graphs) |
+| E | routing merge (section 5): only if reopened by evidence after D | one flat collective (~0.1 ms) | closed 08-29 |
 
-What remains after E: collective latency (one gather), put latency through the NVSHMEM proxy, barriers (3 per layer;
-round 8 code reading suggests 1 suffices for the write-after-read hazard — unproven, needs a proof + randomized-payload
-stress). Measure each stage's fixed term (the a in t = a + b n) at 4n / 8n; success = the crossover moving below 1 MiB.
+What remains after D: two collectives, put latency through the NVSHMEM proxy, barriers (3 per layer; round 8 code
+reading suggests 1 suffices for the write-after-read hazard — unproven, needs a proof + randomized-payload stress).
+Measure each stage's fixed term (the a in t = a + b n) at 4n / 8n / 16n; success = the crossover moving below 1 MiB.
 
 ## 7. Where to look
 
