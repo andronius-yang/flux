@@ -315,3 +315,19 @@ one token per running request, so the budget = running requests per rank. Qwen3-
   per-user limit).
 - 17:10-17:24 8n DECODE ours (job 59092316 p49_c8nD_2, 30B, KV 480000, 2 waves): 256/rank 219.38 ms (IQR 218.6-226.5),
   1024/rank 378.16 (366.4-422.1), 4096/rank 1056.31 (1025.6-1232.4); 1 growth, 0 tracebacks. Stock arms at 8n queued.
+- ROUND 6 (user, ~20:00: "why is 8n decode slower than 4n?"; "are these allocations blocking other users?").
+  8n vs 4n ours decode, per layer-step, same per-rank batch (ledger over all windows): S<=256 3.27 -> 4.10 ms,
+  S<=1024 4.84 -> 6.60, S<=4096 12.26 -> 18.08; dispatch + combine grow the most (4096: 10.39 -> 15.14 ms: 7/8 of every
+  token's copies leave the node vs 3/4, fewer copies merged per destination node, fixed per-GPU inter-node bandwidth,
+  more peers), planning (route+xchg + meta+check) 1.12 -> 1.70 ms (load exchange over 32 ranks, 32 x 32 host tables),
+  swap share 21 -> 34 % (256: 51 -> 81 %). Stock's all-gather volume per GPU also doubles at 8n (its 8n arms were queued).
+  QUEUE CONTENTION: account m5350_g is shared; user yuetu had 37 pending 1-node 24 h hbm80g jobs (fe4-espin-*), and
+  yufeid is 71 % of the account's decayed usage (every user on the account shares fair-share 0.228; 25.6 node-hours
+  today). Our 80 GB 8n / 16n requests competed for the same ~256-node hbm80g pool. USER RULING: "cancel ours only and
+  let them get priority over us, dont change ANY of their jobs". 20:07:33-34 cancelled all 11 of ours (p49_*, IDs from
+  our own salloc logs, names verified before each scancel); yuetu's 37 untouched. (The other session's pz_verl1n /
+  pz_naive1n / pz_overlap_decode were cancelled at 19:53:34 by that session, not by us; pzd_async1n still pending.)
+  NOT DONE (cancelled): 8n 235B prefill arms, 8n 30B decode stock arms, 16n 235B prefill, 16n 30B (40 GB) prefill and
+  decode. Done at 8n: both calibrations (235B prefill, 30B decode) and the 30B decode ours arm. Scripts ready to
+  resubmit when the user allows: spec_p8a.txt / job8nP.sh, jobD.sh (8n), p1_16n.sh + spec_16n40_p*.txt (16n 40 GB,
+  chainfig2.sh GPU_C=gpu&hbm40g), spec_p16a/b.txt (16n 80 GB).
