@@ -494,3 +494,7 @@ one token per running request, so the budget = running requests per rank. Qwen3-
   (COMET+EPLB 3.75, COMET 4.46, NVSHMEM a2av 5.14, EPIC 6.98), SGLang's production all-gather path 2.42 ms (235B 4n
   1 MiB prefill) and 1.51 ms (30B 4n 1 MiB decode). USER + POSTDOC DECISION (09-30): run the fixed-cost reduction
   campaign (handoff 50) with the goal of >= 1.1x at 1 MiB, paper semantics kept.
+  PLAN-6 DATA FILES (fallback record, generated from the reports + server logs, not hand-copied):
+  docs/handoff/49_plan6_arms.csv (60 rows: one per arm and point, incl. repeats, allocation job, KV pin, heap, per-layer
+  bracket, growths, tracebacks), docs/handoff/49_plan6_cells.csv (39 rows: ratios inside one allocation, > 1 = ours
+  faster), generator docs/handoff/49_plan6_csv.py (--logs $PSCRATCH/workspace/andrewy/logs/sglang).
