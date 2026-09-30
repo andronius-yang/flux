@@ -468,3 +468,29 @@ one token per running request, so the budget = running requests per rank. Qwen3-
   Reading: ours wins at 4 MiB everywhere and at 2 MiB prefill on 8n; the advantage grows with node count (stock's
   all-gather volume per GPU grows with ranks); 1 MiB remains a loss except near-parity 8n prefill (fixed per-layer
   cost, rounds 7-8). Stock graphs-on = stock graphs-off within 0.6 % everywhere (no graphs at >= 256/rank on 40 GB).
+  16n (09-30, 40 GB, regular QOS, short pieces; plan-6 methodology). CALIBRATION recorded at 16n on stock (record-only
+  pieces jobC6.sh, ~4 min each: decode = truncated history t48 x16, 3824 requests, 64 dumps; prefill = history x4, 956
+  requests, 64 dumps), solved on the LOGIN node (run16.sh; no nodes held), C = 1/2 (main-perf rule), 128 redundant
+  experts: calib_30b16n_lcbtd_overlap_s1 (heap at 1.5x = 8G: the hard-coded 6G would have been too small; jobD6 /
+  jobP6 now compute the heap per calibration), calib_30b16n_lcbp_overlap_s1 (6G).
+  16n DECODE (KV pin = ours' pool 144285/rank; D1 = ours + stock off on job 59129175, D2 = stock on + ours again on
+  job 59132691, different nodes; 0 growths / 0 tracebacks on all 4 arms):
+    run/rank   stock off (D1)   stock on, eager (D2)   ours D1 / ours D2    ratio D1 / D2        layer ours / stock off
+    256        274.97           274.69                 315.71 / 317.16      0.87x / 0.87x        6.43 / 5.48  (0.85x)
+    512        468.67           469.69                 381.56 / 381.61      1.23x / 1.23x WIN    7.78 / 9.51  (1.22x)
+    1024       883.37           880.54                 529.67 / 527.71      1.67x / 1.67x WIN    10.98 / 18.06 (1.65x)
+  16n PREFILL (pin 50000/rank, eval x16 / x32 / x64; jobs 59129121 / 59129660 / 59132633; 0 growths / 0 tracebacks):
+    SMAX   in tok/s ours (again) / stock      ratio          mean TTFT ms ours (again) / stock   ratio          layer ours (again) / stock
+    256    35755 / 31320                      1.14x WIN      3563 / 4286                         1.20x          7.05 / 8.16 (1.16x)
+    512    55806 (55626) / 40504              1.37-1.38x WIN 2188 (2057) / 3610                  1.65-1.76x     7.77 (7.91) / 13.06 (1.65-1.68x)
+    1024   75675 (73882) / 45156              1.64-1.68x WIN 2250 (1866) / 4250                  1.89-2.28x     10.40 (9.76) / 23.93 (2.30-2.45x)
+  PLAN 6 COMPLETE (4n / 8n / 16n x prefill / decode x 1 / 2 / 4 MiB, 40 GB only; stock / ours for decode steps, ours /
+  stock for prefill throughput; > 1 = ours faster):
+    decode    4n 0.51 / 0.76 / 1.04    8n 0.70 / 0.98 / 1.29    16n 0.87 / 1.23 / 1.67
+    prefill   4n 0.65 / 0.83 / 1.01-1.05    8n 0.91 / 1.09-1.12 / 1.34-1.38    16n 1.14 / 1.37-1.38 / 1.64-1.68
+  Stock graphs-on (SGLang default, cap 160 on 40 GB) = graphs-off within 0.3-0.6 % at every node count.
+  MAIN PERF vs PRODUCTION (09-30): the same layer's fixed cost shows in both (235B 4n 1 MiB: ours 2.80 ms/layer in the
+  harness, 3.63 in SGLang); the difference is the baseline: main-perf baselines at 1 MiB cost 3.75-10 ms/layer
+  (COMET+EPLB 3.75, COMET 4.46, NVSHMEM a2av 5.14, EPIC 6.98), SGLang's production all-gather path 2.42 ms (235B 4n
+  1 MiB prefill) and 1.51 ms (30B 4n 1 MiB decode). USER + POSTDOC DECISION (09-30): run the fixed-cost reduction
+  campaign (handoff 50) with the goal of >= 1.1x at 1 MiB, paper semantics kept.
