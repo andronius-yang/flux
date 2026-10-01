@@ -356,6 +356,91 @@ Required before removal (plan, stage D): the argument extended over swap steps (
 weight staging, not these panels) and forced growth (`resize_capacities` device-syncs on every rank), a
 randomized-payload stress at 4n/8n/16n with swaps and `--caps-scale 0.5`, and an epoch-tagged panel check.
 
+### Gates for the C2b proxy (with drain points) and the D1 one-barrier mode (10-01, job 59151902, dev tree binary)
+
+- Proxy (`LOPEP_WIRE_PROXY=1`, 3 barriers): 1n `staged_ref_dev`, 4n `staged_ref_dev` and `flip_staged` (forced growth +
+  staged swaps) PASS. The two earlier failures were design bugs, both fixed: NVSHMEM 3.2.5 grants only SERIALIZED
+  (process-wide host lock), and the lazy-loading deadlock (drain points).
+- One barrier (`LOPEP_LAYER_BARRIERS=1`, proxy off): 1n `staged_ref_dev`; 4n `staged_ref_dev`, `s4096_swap_dev`,
+  `flip_staged` PASS. 4n `flip_ref` (reference on, forced growth, popularity flips) reports 5 bad rows on ranks 5, 9,
+  13, 15 with max_err 0.013-0.0145; the CONTROL with 3 barriers on the same binary and allocation reports the identical
+  5 rows, ranks and errors: the one-barrier outputs are identical, the rows are the pre-existing bf16 tolerance edge of
+  that seed at 16 ranks (a buffer-reuse race would leave stale rows from the previous step: the payload changes every
+  step, so errors of order 1). D1 gate status at 4n: PASS; 8n / 16n stress still required before the old path goes.
+
+### Round 8 (10-01, job 59151902): same-binary knob A/B, development tree (A1+B4+C1+C2b+D1 knobs)
+
+Decode, 4n, plan-6 protocol, one binary, knobs only (rows `49_round8_*.csv` when complete):
+
+| running / rank | 3 barriers | 1 barrier | change |
+|---|---|---|---|
+| 256 (1 MiB) | 152.88 ms | 151.60 | -0.8 % |
+| 512 (2 MiB) | 181.08 | 164.28 | -9.3 % |
+| 1024 (4 MiB) | 250.76 | 230.13 | -8.2 % |
+
+Repeats: 3 barriers 158.02 / 179.49 / 249.61 ms; 1 barrier 152.64 / 163.24 / 228.88 ms; stock graphs-off 86.40 / 144.89
+/ 273.63 ms. Means of two runs: 1 barrier vs 3 = -2.2 % (inside the 3-barrier spread of 3 %), -9.0 %, -8.4 %; ours vs
+stock with 1 barrier 0.57x / 0.885x / 1.19x (3 barriers 0.56x / 0.81x / 1.09x).
+
+Reading: the end-of-dispatch and pre-GEMM-2 barriers cost little latency of their own; what they cost is forcing every
+rank to wait for the slowest one twice more per layer. At 2-4 MiB the skew is large and the ranks now pipeline across
+it; at 1 MiB the ranks already re-synchronize every layer on the two NCCL all-gathers and on the planning sync, so
+removing the barriers frees nothing. Per-layer bracket (rank 0, `49_round8_arms.csv`): 1 barrier 2.90 / 2.93, 3.13 / 3.07,
+4.29 / 4.30 ms vs 3 barriers 2.98 / 2.95, 3.44 / 3.41, 4.63 / 4.69 ms at 1 / 2 / 4 MiB (-1.5 %, -9.5 %, -8 %); stock
+1.54 / 2.61 / 5.08 ms. Prefill (cut short by the allocation end): 1 MiB 1 barrier 19,404 vs 3 barriers 18,893 tok/s
+(+2.7 %, inside the prefill spread); stock and repeats not reached. D1 verdict: keep, default flips to 1 after the 8n/16n
+stress; old path deleted then.
+
+C2b in serving: the proxy arm decoded at about a quarter of the normal rate (428 vs ~1650 tok/s per rank) and then
+stalled (killed after 24 min). Likely cause: `WireProxy::run` pins the thread to the LAST core of the task's affinity
+mask; SGLang's 4 GPU workers per node share one Slurm task mask, so all 4 proxies spin on one core and the main threads
+drain-wait on them. Fix before any further C2b measurement: pick the core by local rank (or do not pin), and replace
+the spin with a condition-variable wait when idle. C2b stays out of the defaults.
+
+**Where the 1 MiB fixed cost is now (synthesis of the ledger, round-7 trace, and the null results of C1 / D1).** The
+1 MiB layer (3.0 ms vs stock 1.5) is a chain of serialized all-rank round trips per layer: (1) the NCCL all-gather of
+loads, (2) the NCCL all-gather of routed slots (~0.1 ms each), (3) the planning sync: counts D2H, the GPU idles while
+the host runs the Python checks and the C++ table loops and only then launches the pack (round 7: 1.27 ms of GPU idle
+per layer-step at 1 MiB), (4) the multi-hop wire of dispatch and combine (NVLink -> blocking network put through the
+NVSHMEM CPU proxy -> NVLink). The cheap stages attacked GPU planning kernels (A1: real, -0.21..-0.27 ms), dead work (B4),
+host ISSUE of copies (C1/C2b: not critical, it overlaps the GEMM) and barriers (D1: matters only with skew). What is
+left at 1 MiB is (3) above all: stage B (plan block on the device) + C3 (device-sized copies) + C4 (deferred verdict, no
+sync) + D2 (per-layer graph). Estimated GPU-side floor at 4n decode 1 MiB: ~0.9-1.2 ms per layer (gathers ~0.2,
+planning kernels ~0.1, two wire chains ~0.3 each, one barrier, activation), against the 1.37 ms needed for 1.1x.
+Out-of-plan, semantics-neutral candidates: NVSHMEM on-stream gathers instead of the two NCCL calls (~0.1 ms), A2 (the
+parallel swap kernel, ~0.2 ms on swap steps), and the stage-B prerequisite bug: `LOPEP_DEVICE_META=1` hangs serving
+at 4n (the 4n `devmeta_ref` gate progressed but slowly; serving stalls after the first prefill batches).
+
+### Round 8 Nsight capture: where the 1 MiB layer-step goes (10-01, job 59153644, `logs/sglang/nsys50/`)
+
+Capture: SGLang serving, 4n decode 256 running per rank, node 0, 20 forward steps, development binary with 1 barrier per
+layer, proxy off, ledger marks on (`LOPEP_TIMING=1 LOPEP_NVTX=1`), Nsight with CUDA + NVTX + OS runtime + CPU and Python
+sampling. Instrumentation inflates host time (API tracing, sampling, ~17 ledger events per layer-step); read the
+proportions. Analyzer `50_idle_attrib.py` (new): for every `lopep.step` range of one rank, the GPU window (first to last
+activity launched by the step), its idle gaps, and what the main thread was doing during each gap.
+
+910 layer-steps, medians: host range 3745 us, GPU window 3799 us, **GPU idle inside it 1865 us (49 %)**. Idle by cause
+(mean per layer-step):
+
+| cause | us | content |
+|---|---|---|
+| host code, dispatch phase (after `push0`) | 427 | `a2av_dispatch` host tables + the combine's derive (`build_a2av_compress_indices_fast`, `build_a2av_combine_indices`, issued from `issue_combine_meta_late`), CPU samples 21 + 24 + 7 |
+| host code after `route+xchg` | 289 | `plan_meta` Python, the host capacity check (numpy, `LOPEP_DEVICE_META=0`), the derive's host side |
+| `cudaLaunchKernel` | 244 | dozens of small launches per layer while the GPU waits |
+| `cudaEventSynchronize` | 132 | the planning sync (median 40: wake-up latency; tail = waits) |
+| host code after `counts` | 123 | pad / loads Python (buffer copies, histogram, gather setup) |
+| `cudaMemcpyAsync` | 107 | copy issue |
+| remaining API + host | ~550 | event records / queries / creates (partly the ledger's own), memsets, swap arm / parse / commits, activation |
+
+GPU busy by class (summed, overlapping streams): proxy puts 2149 us (blocking inter-node puts span the wire drain), pack /
+pre-reduce / bucket reduce 1107, GEMM 906 (incl. arrival spin), memcpy 810, planning kernels 657, barrier 293 (one per
+layer), NCCL 180.
+
+Conclusion: at 1 MiB the layer is host-bound by a direct measure: the GPU idles ~half of every layer-step waiting for
+host planning, host table building and launch issue. This is why C1 (copy issue during the GEMM) and D1 (barriers) did
+not move 1 MiB. The removal order follows the table: tables on the device (B: the 427 us dispatch-phase host code), the
+deferred verdict (C4: the sync + the 289 us of host checks after it), then the per-layer graph (D2: launch overhead).
+
 ## 4b. Where tables on the GPU and the copy path stand without the routing merge
 
 Both are independent of the routing exchange: derive_routed_meta already runs on the gathered routing of all ranks,
