@@ -441,6 +441,18 @@ host planning, host table building and launch issue. This is why C1 (copy issue 
 not move 1 MiB. The removal order follows the table: tables on the device (B: the 427 us dispatch-phase host code), the
 deferred verdict (C4: the sync + the 289 us of host checks after it), then the per-layer graph (D2: launch overhead).
 
+### Stage-B prerequisite: the device-metadata hang, root-caused and fixed (10-01, job 59153644; lopep 8d3a8a0)
+
+`LOPEP_DEVICE_META=1` (device-built tables, the starting point of stage B) hung at 4n in the harness and in serving.
+It was not a table error: modes 1 and 2 are bitwise right when the combine derive runs before the dispatch. It was a
+GPU block-scheduler deadlock. The overlapped combine derive launched a 512-thread x 84-register tables kernel while the
+dispatch GEMM (128 threads x 240 registers per block, on every SM) spun on arrivals. No SM could hold that block, and
+the work distributor then held back the later same-priority wire kernels the GEMM was waiting for. Present since
+plan 6, the proxy only changed the timing. Fixed by a 128-thread tables kernel; 4n harness green with varying
+per-rank counts, zero-row ranks, swaps, the torch reference and the proxy on. Full probe matrix, mechanism and the
+new design rule R5 (kernels launched beside a spinning kernel must fit beside one of its blocks): handoff 51
+section 4a-4b. Serving re-run with mode 1 on the fixed binary: next allocation.
+
 ## 4b. Where tables on the GPU and the copy path stand without the routing merge
 
 Both are independent of the routing exchange: derive_routed_meta already runs on the gathered routing of all ranks,
