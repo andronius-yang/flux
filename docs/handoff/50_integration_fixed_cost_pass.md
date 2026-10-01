@@ -286,6 +286,24 @@ C1 attacks the issue count and removes SM copy kernels; it keeps today's sizes, 
   1n/4n serving harness with the reference on (payload changes every step), then a stage check against the A1+B4
   binary on one allocation.
 
+### Stage C1 measured (10-01, job 59151902, same protocol; C1 binary vs the A1+B4 binary on the same nodes)
+
+| decode, running / rank | A1+B4 (step / layer) | C1 run 1, run 2 (step / layer) | change |
+|---|---|---|---|
+| 256 (1 MiB) | 156.24 ms / 2.999 ms | 154.51, 154.98 / 3.048, 2.987 | step -1.0 %, layer +0.6 % (noise) |
+| 512 (2 MiB) | 179.35 / 3.417 | 181.62, 179.59 / 3.498, 3.419 | +0.7 % / +1.2 % (noise) |
+| 1024 (4 MiB) | 249.38 / 4.702 | 250.75, 248.98 / 4.709, 4.697 | +0.2 % / 0.0 % |
+
+C1 is neutral: batching the intra-node copies and replacing the 12 gateway put kernels by copy-engine batches did not
+move the layer time. The issue calls it saved were not on the critical path (they run while the GEMM computes), and
+the copies were already on the copy engines. Gates passed (unit 4/4; 1n 5/6 + the pre-existing tolerance row; 4n
+4/4). By the plan's rule a neutral stage is reverted; C1 is kept in the tree ONLY because C2b issues the same batches
+from the proxy, and its fate is decided by the C2b measurement (C2b with `LOPEP_CE_BATCH=1` vs `0`): if C2b gains
+and the batches do not contribute, C1 is reverted before any commit. Prefill (same allocation): 1 MiB 19,641 / 19,098
+vs 18,566 tok/s (+3-6 %), 2 MiB 29,928 / 29,275 vs 29,125 (+0.5-2.8 %), 4 MiB 42,052 / 40,350 vs 41,953 (0 to -4 %):
+neutral within the prefill spread. Rows: `49_round7_*.csv`, alloc_job 59151902 (the "ours_plan6_binary" arm of that
+job is the A1+B4 binary, the comparison binary of that check).
+
 ### Stage C2b written (10-01, uncommitted until gated): the wire-issue proxy thread
 
 Shape chosen: the main thread keeps every offset and size computation (the host tables of the stage-B maps) and
@@ -307,9 +325,12 @@ the program order and every wait are the ones the main thread issued before; onl
   by the main stream at the GEMM-launch join in the dispatch and at the tail join in the combine), so the enqueue
   order between the threads is irrelevant. Growth: `resize_capacities` quiesces first; destructors quiesce before
   their streams go.
-- NVSHMEM: `init_flux_shm` now requests `NVSHMEM_THREAD_MULTIPLE` (`nvshmemx_init_attr` asked for SERIALIZED); the
-  proxy issues the BLOCKING inter-node puts and the signal-op fallbacks concurrently with the main thread's
-  on-stream barriers.
+- NVSHMEM thread level (found by the first gate run, 10-01 00:25): the Perlmutter NVSHMEM 3.2.5 build grants at
+  most `NVSHMEM_THREAD_SERIALIZED` (provided = 2 when MULTIPLE is requested), so a THREAD_MULTIPLE init aborts every
+  rank at startup. SERIALIZED allows several threads, one call at a time: the init stays the stock request and every
+  NVSHMEM host call runs under one process-wide recursive mutex (`nvshmem_host_mutex()`), held by the proxy for each
+  posted step and taken by the main thread at its five in-step call sites (dispatch pack announce, dispatch barrier,
+  combine group barriers, the Python barrier binding, peer-pointer lookups).
 - Not changed: sizes stay host-known (C3 = device-sized puts needs stage B's plan blocks), the capacity verdict
   stays synchronous (C4), the 3 barriers stay (D1).
 - Gate: unit tests; 1n / 4n serving harness with the reference on and forced growth, `LOPEP_WIRE_PROXY=1` and 0;

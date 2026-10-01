@@ -28,7 +28,10 @@ GROW = re.compile(r"^\S+ ((?:d30|p30)_\w+): growths (\d+) tracebacks (\d+)")
 LAUNCH = re.compile(r"^\S+ ((?:d30|p30)_\w+): conn=(\S+) heap=(\S+)")
 BRK = re.compile(r"layer timing rank 0\] (DECODE MAX|EXTEND SUM) n_pad<=(\d+): mean ms per layer-step over (\d+): "
                  r"total ([0-9.]+)")
-ARM = {"ours": ("ours", 1), "oursR": ("ours", 2), "oursB": ("ours_plan6_binary", 1), "baseA": ("stock_graphs_off", 1), "baseG": ("stock_graphs_on", 1)}
+ARM = {"ours": ("ours", 1), "oursR": ("ours", 2), "oursB": ("ours_plan6_binary", 1), "baseA": ("stock_graphs_off", 1), "baseG": ("stock_graphs_on", 1),
+       # round 8 (plan 7 knob A/B, development tree): k<label>[R]
+       "kb3": ("ours_bar3", 1), "kb3R": ("ours_bar3", 2), "kb1": ("ours_bar1", 1), "kb1R": ("ours_bar1", 2),
+       "kp1": ("ours_proxy_bar3", 1), "kp1b1": ("ours_proxy_bar1", 1)}
 MIB = {256: 1, 512: 2, 1024: 4}
 
 
