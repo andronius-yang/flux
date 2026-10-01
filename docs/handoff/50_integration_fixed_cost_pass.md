@@ -231,6 +231,38 @@ The real-GEMM-at-sm_margin-0 variant was not run: the serving stage check measur
   (reference + compare mode, 60 steps x 3 layers at 16 ranks) reached only step 0 inside the 300 s cap with no
   mismatch or error — inconclusive by time, to be rerun with `--steps 10` on the next allocation.
 
+### Stage check after A1 + B4 (10-01, job 59150611, 4 nodes 40 GB, plan-6 protocol with frozen pins; `49_round7_*.csv`)
+
+Decode (LCB t48, OSL 48, 2 waves; step = median decode step over 192 intervals; layer = SGLang bracket of the MoE
+block, rank 0, mean over ~4.5k layer-steps). All four arms on ONE allocation; "ours" twice, both runs listed.
+
+| running / rank | plan-6 binary 068e5e4 | A1+B4 3011c6f (run 1 / 2) | cut per step | cut per layer | stock graphs-off | ours vs stock (step) |
+|---|---|---|---|---|---|---|
+| 256 (1 MiB) | 166.69 ms / 3.209 ms | 154.77, 155.77 / 2.994, 3.014 | -11.4 ms (-6.8 %) | -0.21 ms | 85.49 / 1.510 | 0.55x (plan 6: 0.51x) |
+| 512 (2 MiB) | 187.62 / 3.591 | 178.16, 178.54 / 3.391, 3.396 | -9.3 (-4.9 %) | -0.20 | 143.35 / 2.603 | 0.80x (0.77x) |
+| 1024 (4 MiB) | 261.22 / 4.933 | 248.33, 249.05 / 4.674, 4.670 | -12.5 (-4.8 %) | -0.26 | 270.49 / 4.986 | 1.09x (1.02x) |
+
+Fixed term (a + b x tokens per GPU over the three points, rank-0 layer): ours a = 2.43 ms, b = 2.19 us/token (plan 6:
+2.70 / 2.15); the cut is flat in the token count, i.e. fixed cost, 0.27 ms per layer-step, from the metadata chain
+(A1: 5 launches + 3 memsets -> 3 launches, the serial scatter walk gone) and the dead work (B4). The ours-vs-ours
+spread is 0.6 % (step) / 0.7 % (layer), the cut 5-7 %: a real effect. Verdict: stage A/B4 PASS (no cell slower;
+the drop is inside the A1 + B4 estimate of 0.2-0.45 ms, A2 and A1b still deferred). Distance to the 1 MiB target:
+ours 2.99 ms per layer vs 1.37 needed (stock 1.51 / 1.1), i.e. the fixed term must still fall by ~1.6 ms at 4n decode;
+the levers left are the host issue (stage C) and the GPU floors (stage D).
+
+Prefill (LCB eval, full prompts, MAXRR 32/rank, OSL 4, concurrency 16/rank, pin 50000; throughput = input tokens/s
+of the benchmark; layer = SGLang bracket, rank 0, mean over ~3.7k layer-steps; TTFT = mean). Same allocation.
+
+| SMAX / rank | plan-6 binary (tok/s / layer ms) | A1+B4 run 1, run 2 | throughput vs plan-6 binary | stock graphs-off | ours vs stock (throughput) |
+|---|---|---|---|---|---|
+| 256 (1 MiB) | 17,654 / 3.331 | 18,749, 19,022 / 3.127, 3.032 | +6.2 %, +7.7 % | 27,225 / 2.212 | 0.69x, 0.70x (plan 6: 0.65x) |
+| 512 (2 MiB) | 27,782 / 3.612 | 30,463, 29,438 / 3.342, 3.234 | +9.7 %, +6.0 % | 33,484 / 3.501 | 0.91x, 0.88x (plan 6: 0.99-1.06x, other allocation) |
+| 1024 (4 MiB) | 38,375 / 4.344 | 41,248, 41,283 / 4.153, 4.233 | +7.5 %, +7.6 % | 38,005 / 6.082 | 1.085x, 1.086x (plan 6: ~1.0x) |
+
+The prefill layer time fell by 0.2-0.3 ms at every SMAX (same order as decode); throughput +6-10 % over the plan-6
+binary on the same allocation, with the ours-vs-ours spread 1.5-3.4 %. TTFT is noisier (mean over few requests).
+Stage A1 + B4 verdict stands for prefill too; no cell slower.
+
 ### Stage C1 written (10-01, uncommitted until gated): batched copy-engine issue with host-known sizes
 
 Why before stage B: the stage-B maps (`50_stageB_dispatch_map.md`, `50_stageB_combine_map.md`) show the host table
@@ -253,6 +285,55 @@ C1 attacks the issue count and removes SM copy kernels; it keeps today's sizes, 
 - Expected per layer at 4n: ~40 fewer host calls plus the 12 gateway SM-copy kernels gone; gate = unit tests,
   1n/4n serving harness with the reference on (payload changes every step), then a stage check against the A1+B4
   binary on one allocation.
+
+### Stage C2b written (10-01, uncommitted until gated): the wire-issue proxy thread
+
+Shape chosen: the main thread keeps every offset and size computation (the host tables of the stage-B maps) and
+hands the API CALLS to a dedicated thread, as a program of closures with pointers and sizes captured by value,
+executed in posting order. This generalizes the op's own deferred-wire replay (`DeferredWireOp`) and keeps L7:
+the program order and every wait are the ones the main thread issued before; only the issuing thread changes.
+- `src/core/wire_proxy.{h,cc}`: process-wide `WireProxy` (lazily created on the first post, `cudaSetDevice` of
+  the creating thread, pinned to the last core of the task's affinity mask, spin then 1 ms condvar waits after
+  2 ms idle); `post(fn)` (inline when `LOPEP_WIRE_PROXY=0`), `quiesce()` (every posted step issued), `shutdown()`
+  (quiesce + join; also the static destructor and a Python `atexit` through `C.wire_proxy_shutdown`); a failure
+  inside the proxy is stored and rethrown on the main thread at the next post / quiesce.
+- Ownership: dispatch `cp_stream`, `cp_stream_inter_node`, `pull_streams_[0]`, the `pack_stream_` tail; combine
+  `a2av_intra_stream_`, `internode_stream`, `internode_streams2_[]`, `a2av_conv_stream_`. Main-owned and unchanged:
+  the forward streams, `pack_str`, the combine `reduce` and `prered` streams (they carry main-launched kernels).
+- Edges: main-before-proxy = events the main thread records before posting (`pack_seg_events_`, `ready_event`,
+  `staging_reset_event`); proxy-internal = the existing events (`relay_pull_events_`, `relay_put_events_`,
+  `fetch_remote_event`, `a2av_inter*_done_`, `a2av_conv_done_`); main-after-proxy = a device word per op
+  (`wire_done_`, `CUStreamWriteValue64(run_id)` by the proxy after its last op, `CUStreamWaitValue64(GEQ run_id)`
+  by the main stream at the GEMM-launch join in the dispatch and at the tail join in the combine), so the enqueue
+  order between the threads is irrelevant. Growth: `resize_capacities` quiesces first; destructors quiesce before
+  their streams go.
+- NVSHMEM: `init_flux_shm` now requests `NVSHMEM_THREAD_MULTIPLE` (`nvshmemx_init_attr` asked for SERIALIZED); the
+  proxy issues the BLOCKING inter-node puts and the signal-op fallbacks concurrently with the main thread's
+  on-stream barriers.
+- Not changed: sizes stay host-known (C3 = device-sized puts needs stage B's plan blocks), the capacity verdict
+  stays synchronous (C4), the 3 barriers stay (D1).
+- Gate: unit tests; 1n / 4n serving harness with the reference on and forced growth, `LOPEP_WIRE_PROXY=1` and 0;
+  then a stage check against the C1 binary on one allocation.
+
+### Stage D1 audit, first pass (10-01; argument only, no change yet)
+
+Per layer-step on the main stream of every rank: dispatch wire -> GEMM 1 -> **B_d** (`dispatch_gemm.cc` end of
+forward_impl) -> activation -> **B_c1** (`gemm_combine.cc` before GEMM 2) -> GEMM 2 -> lanes -> join -> **B_c2**.
+Cross-rank buffer hazards and which barrier orders them:
+- H1 dispatch(k+1) puts into d's recv / relay staging vs d's GEMM 1(k) reads: any barrier after GEMM 1(k) and before
+  dispatch(k+1) on d; B_c1(k) and B_c2(k) both qualify, B_d is not needed for it.
+- H2 relay pulls of step k read a peer's send buffer vs that peer's pack(k+1): pulls precede GEMM 1(k); same cover.
+- H3 combine(k) puts into d's recv panel vs d's bucket reduce(k-1) reads; H4 conv puts vs the gateway's pre-reduce(k-1)
+  reads: B_c2(k-1) orders both (d passes it only after its step k-1 combine, join included), so B_c1(k) is not needed.
+- H5 send-panel / conv-panel reuse by GEMM 2(k): the readers are this rank's own lanes of step k-1, joined into the
+  main stream through the done word before B_c2(k-1): local, no barrier needed.
+- "Quiet our outstanding nbi puts" (B_d's comment): after C1 every intra-node transfer is a copy-engine batch,
+  complete when its stream passes it; inter-node puts are blocking; the only nbi call left is the getmem fallback
+  for a peer without a P2P mapping (never on one node). Epoch signals are never reset.
+Conclusion to prove: ONE barrier per layer (B_c2) covers H1-H5; B_d and B_c1 are removable (2 x ~0.27 ms at 4n).
+Required before removal (plan, stage D): the argument extended over swap steps (lane pushes / commits touch the
+weight staging, not these panels) and forced growth (`resize_capacities` device-syncs on every rank), a
+randomized-payload stress at 4n/8n/16n with swaps and `--caps-scale 0.5`, and an epoch-tagged panel check.
 
 ## 4b. Where tables on the GPU and the copy path stand without the routing merge
 
