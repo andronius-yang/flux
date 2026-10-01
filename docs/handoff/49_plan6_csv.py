@@ -33,7 +33,12 @@ ARM = {"ours": ("ours", 1), "oursR": ("ours", 2), "oursB": ("ours_plan6_binary",
        "kb3": ("ours_bar3", 1), "kb3R": ("ours_bar3", 2), "kb1": ("ours_bar1", 1), "kb1R": ("ours_bar1", 2),
        "kp1": ("ours_proxy_bar3", 1), "kp1b1": ("ours_proxy_bar1", 1),
        "kb1dm0": ("ours_bar1_hosttables", 1), "kb1dm0R": ("ours_bar1_hosttables", 2),
-       "kb1dm1": ("ours_bar1_devtables", 1), "kb1dm1R": ("ours_bar1_devtables", 2)}
+       "kb1dm1": ("ours_bar1_devtables", 1), "kb1dm1R": ("ours_bar1_devtables", 2),
+       # round 10 (plan 8 stage-B check): r9 = round-9 binary (lopep_d1rt), b8 = stage-B integration (lopep_int)
+       "kr9": ("ours_round9", 1), "kr9R": ("ours_round9", 2), "kb8": ("ours_stageB", 1), "kb8R": ("ours_stageB", 2),
+       # round 11 (plan 8 stage check after C3 + C4): b8f = stage B + NH-1 fix (lopep_int), c4 = C3 + C4 (lopep_c4,
+       # deferred verdict + plan-driven wire + proxy, no per-layer planning sync)
+       "kb8f": ("ours_stageB_fix", 1), "kb8fR": ("ours_stageB_fix", 2), "kc4": ("ours_C3C4", 1), "kc4R": ("ours_C3C4", 2)}
 MIB = {256: 1, 512: 2, 1024: 4}
 
 
