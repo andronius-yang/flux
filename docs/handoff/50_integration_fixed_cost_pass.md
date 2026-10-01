@@ -117,6 +117,57 @@ when the SMs are busy, or scales with the SMs it is given, is SM copying in disg
 Also record `cudaDevAttrAsyncEngineCount` (how many copy engines can run concurrently) and whether concurrent copies
 to 3 peers overlap.
 
+### 4a-R. Stage 0 results (09-30, 1 node nid001553, job 59144224; sources + CSV in `50_copy_probes/`)
+
+Setup: A100-SXM4-40GB x4, driver 580.178 (CUDA 13.0 capable), CUDA 12.9 runtime (the sglang-dev toolchain),
+`cudaDevAttrAsyncEngineCount = 5`; one process per GPU, CUDA-IPC peer mappings (what NVSHMEM uses intra-node with
+`NVSHMEM_DISABLE_CUDA_VMM=1`) and NVSHMEM 3.2.5 symmetric buffers (`nvshmem_ptr`), identical results on both.
+Per-copy sizes 0.5 / 1 / 2.4 / 16 MB; medians of 25 iterations, rank 0; full table `50_copy_probes/results.csv`.
+
+| probe | mechanism | verdict | key numbers (idle SMs) |
+|---|---|---|---|
+| P0 | host `cudaMemcpyAsync` to a peer | copy engine (reference) | 9.3 / 14.8 / 30.2 / 182 us for 0.5 / 1 / 2.4 / 16 MB = ~4 us + bytes / 95 GB/s; **5.3 us of host time per call**; 3 peers at once from one GPU: 256 GB/s aggregate (3 engines in parallel, no slowdown per copy) |
+| P0 | SM copy kernel, k blocks x 1024 threads | SM-bound, FAILS the constraint | 29 GB/s at k = 1, 56 at k = 2, 85 at k >= 4 (saturates NVLink); throughput scales with the SMs it is given |
+| P1 | device-launched graph (`cudaGraphLaunch` from a kernel) | **UNSUPPORTED here**: launching the kernel that calls `cudaGraphLaunch` returns `cudaErrorNotSupported` on this A100 / driver, after a successful `cudaGraphInstantiateWithFlags(DeviceLaunch)` + `cudaGraphUpload` | n/a |
+| P2 | host-launched graph, planning kernel sets a conditional (IF chain of size buckets / SWITCH, CUDA 12.8) | copy engine; conditional overhead small | condition write -> copy start 6.5 us (SWITCH, 4 buckets), 7.1 us (one IF), 8.5 us (4 IF nodes); the copy itself runs at the P0 rate (0.5 MB 9.5 us, 16 MB 193 us); host launch 5 us (SWITCH) / 8.7 us (4 IFs) per graph |
+| P3 | host proxy thread (kernel writes descriptors to pinned memory, a pinned CPU thread issues the copies) | copy engine | device flag -> copy done 20 us for one 0.5 MB copy (= 7 us detection, 5.6 us issue, 9 us copy); one `cudaMemcpyAsync` per copy costs the proxy 3.6 us (12 copies 43 us, 37 copies 127 us); `cudaMemcpyBatchAsync` (12.8+) 2.6 us per copy (12 copies 31 us, 37 copies 91 us); 12 x 2.4 MB: batch 288 us vs loop 471 us |
+| P4 | device-side `cudaMemcpyAsync` (CDP2, `-rdc`) | **SM copy kernel (Nsight: `memcpy128`), FAILS**; 88 GB/s at 16 MB like a many-block SM copy, plus ~35 us of fixed latency per call (0.5 MB: 39 us vs 9 us host) | |
+| P5 | `cuStreamWriteValue64` to a peer-mapped signal word after the data copy; receiver kernel `ld.acquire.sys` then verifies every payload word (payload = epoch, new every iteration) | **accepted and ordered**: 0 API errors, 0 timeouts, 0 payload violations in 60 iterations x 3 sizes x 2 buffer kinds; the 8-byte `cudaMemcpyAsync` fallback also 0/0/0 | |
+
+Two findings that bind the stage C design:
+- **Lazy module loading deadlocks against a spinning kernel.** With `CUDA_MODULE_LOADING=LAZY` (the CUDA 12 default,
+  and what `bench/launch.sh` exports), the FIRST launch of any kernel loads its module, and that load waits for the
+  GPU to drain; a persistent kernel that spins on a flag never drains, so the launching thread blocks forever (the
+  busy-SM passes hung at exactly this point until `CUDA_MODULE_LOADING=EAGER`; the idle passes had loaded everything
+  first). The GEMM tiles spin on arrival signals, so any kernel a stage-C issuer launches for the first time while a
+  GEMM is resident (descriptor kernel, pack, signal kernels) must be warmed up at init or loaded eagerly.
+- **Warp-scheduler starvation is real for co-resident kernels**: a resident block whose warps are always ready (a
+  pure FMA spin, or every warp polling one L2 line) stops a younger co-resident block from issuing at all (a
+  4 x 1024-thread copy took 845 ms instead of 0.17 ms next to 108 polling blocks, `50_copy_probes/cores.cu`).
+  A memory-stalled GEMM does not behave like that, but an SM-based copy mechanism inherits whatever the GEMM leaves.
+
+Decision (unchanged from the plan, now evidence-backed): the stage C issuer is the **host proxy thread** issuing
+ordinary `cudaMemcpyAsync` / `cudaMemcpyBatchAsync` (P0 rate, zero SMs, exact sizes from device memory) with
+`cuStreamWriteValue64` signals (P5). P1 is unavailable; P2 (conditional graphs) is a valid fixed-shape fallback with
+~7 us of extra latency per graph; P4 is a copy engine at the cost of ~35 us per call and keeps a kernel resident.
+Batching is worth it: 37 x 0.5 MB copies issue in 91 us batched vs 127 us looped vs ~196 us from today's per-copy
+`nvshmemx_putmem_signal_nbi_on_stream` host calls (5.3 us each).
+
+**Nsight activity kinds (`nsys profile -t cuda --cuda-graph-trace=node`, idle SMs, P2 + P3 + P4, 3 iterations;
+reports `logs/p50/nsys_p234_<rank>.nsys-rep`):** the P2 graph memcpy nodes and every P3 proxy copy appear ONLY as
+`[CUDA memcpy Peer-to-Peer]` activities (780 of them, no copy kernel) = copy engines. The P4 device-side
+`cudaMemcpyAsync` appears as SM kernels: `memcpy128` (48 instances, avg 103 us) + `memcpy32_post` (60 instances),
+exactly one per P4 call. **P4 is an SM copy in disguise and FAILS the constraint**; its "copy-engine bandwidth" was
+the bandwidth of a many-block copy kernel. Verdict column above corrected accordingly.
+
+**Busy-SM passes (incomplete, carried to the next allocation):** the full busy passes could not be completed in this
+allocation. What was measured: with every SM slot held by a resident busy grid (nanosleep-spinning warps, no memory
+traffic), the host memcpy and the proxy thread copies ran at the idle rate (host memcpy 0.5 MB 9.3 us, 16 MB 183 us;
+3-peer aggregate 257 GB/s) — a copy engine does not care whether SMs are occupied — while the busy grid, lazy
+loading and warp-scheduler effects above dominated the SM-side measurements. The remaining pass (P3 under an
+HBM-saturating kernel, and the real dispatch GEMM at sm_margin 0) runs on the stage-check allocation with the fixed
+probe (`CUDA_MODULE_LOADING=EAGER`, idle warm-up before the busy grid, `--free` / `--onepersm` busy shapes).
+
 ## 4b. Where tables on the GPU and the copy path stand without the routing merge
 
 Both are independent of the routing exchange: derive_routed_meta already runs on the gathered routing of all ranks,
