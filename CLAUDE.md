@@ -120,6 +120,8 @@ python sweeps/sweep.py run --platform aws --variants hier,hier_compress_union \
 
 Each invocation writes one immutable capsule under `sweeps/results/runs/<run_id>/` (manifest + resolved spec + per-iteration `metrics.csv` + `cells.csv`) — the runner prints the `git add && git commit` command, a human commits. Raw rank logs stay at the platform data root (`sweeps/platforms/*.yaml`), never in the repo.
 
+**Home-quota layout (2026-09-30):** this home checkout is sparse (omits all `sweeps/results/runs/*/metrics.csv`, which stay committed in `.git`); the full copy for anything that reads `metrics.csv` is the detached worktree `$PSCRATCH/workspace/andrewy/flux-data` (refresh: `git -C <it> checkout --detach main`); commit new capsules with `git add --sparse`, then `git sparse-checkout reapply`; never symlink `sweeps/` (git records it as deleting every capsule).
+
 **Canonical model shape (user decision 2026-08-20): Kimi K3.** Unless a spec
 says otherwise, sweeps and traffic tests use the K3 authentic setup —
 `--G 896 --topk 16 --H 3584 --ffn_hidden_size 3072` (K3 technical report

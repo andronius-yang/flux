@@ -2504,7 +2504,7 @@ def cmd_run(spec, jobid_arg, dry):
             print(f"  {r['cell_id']}: {r['status']}  {r['notes']}")
     print("\nto persist:")
     rel = os.path.relpath(capsule, REPO_ROOT)
-    print(f"  git add {rel} && git commit -m 'sweep: {run_id} {spec['notes']}'".rstrip())
+    print(f"  git add --sparse {rel} && git commit -m 'sweep: {run_id} {spec['notes']}'".rstrip())
 
 
 def parse_list(s):
