@@ -31,7 +31,9 @@ BRK = re.compile(r"layer timing rank 0\] (DECODE MAX|EXTEND SUM) n_pad<=(\d+): m
 ARM = {"ours": ("ours", 1), "oursR": ("ours", 2), "oursB": ("ours_plan6_binary", 1), "baseA": ("stock_graphs_off", 1), "baseG": ("stock_graphs_on", 1),
        # round 8 (plan 7 knob A/B, development tree): k<label>[R]
        "kb3": ("ours_bar3", 1), "kb3R": ("ours_bar3", 2), "kb1": ("ours_bar1", 1), "kb1R": ("ours_bar1", 2),
-       "kp1": ("ours_proxy_bar3", 1), "kp1b1": ("ours_proxy_bar1", 1)}
+       "kp1": ("ours_proxy_bar3", 1), "kp1b1": ("ours_proxy_bar1", 1),
+       "kb1dm0": ("ours_bar1_hosttables", 1), "kb1dm0R": ("ours_bar1_hosttables", 2),
+       "kb1dm1": ("ours_bar1_devtables", 1), "kb1dm1R": ("ours_bar1_devtables", 2)}
 MIB = {256: 1, 512: 2, 1024: 4}
 
 

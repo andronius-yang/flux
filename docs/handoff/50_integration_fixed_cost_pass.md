@@ -451,7 +451,23 @@ the work distributor then held back the later same-priority wire kernels the GEM
 plan 6, the proxy only changed the timing. Fixed by a 128-thread tables kernel; 4n harness green with varying
 per-rank counts, zero-row ranks, swaps, the torch reference and the proxy on. Full probe matrix, mechanism and the
 new design rule R5 (kernels launched beside a spinning kernel must fit beside one of its blocks): handoff 51
-section 4a-4b. Serving re-run with mode 1 on the fixed binary: next allocation.
+section 4a-4b. Serving with mode 1 on the fixed binary: healthy (job 59155602).
+
+### Round 9 (10-01, job 59155602): device tables (mode 1) vs host tables, same binary, 4n decode 1 MiB
+
+Plan-6 protocol (frozen pin 143794, heap 6G, `LOPEP_TIMING=0`), development tree binary `bin/dev_ct128` (lopep
+8d3a8a0 + the uncommitted C1/C2b/D1 sources), proxy off, one barrier per layer in both ours arms, 256 running per
+rank only. `49_round9_arms.csv` (driver `logs/sglang/jobK9.sh`).
+
+| arm | decode step median, run 1 / run 2 | layer bracket | ours vs stock |
+|---|---|---|---|
+| host tables (mode 0) | 152.25 / 151.74 ms | 2.98 / 2.92 ms | 0.56x |
+| device tables (mode 1) | 144.32 / 144.24 ms | 2.76 / 2.77 ms | 0.59x |
+| stock SGLang (graphs off) | 85.22 ms | 1.52 ms | - |
+
+Device tables cut the 1 MiB decode step by 5.1 % (repeat spread 0.3 %), ~0.2 ms per layer. What mode 1 removes
+today is small: the device demand check replaces the host numpy check, and the combine's table uploads go; the host
+still builds every table. Stage B (B1-B3: delete the host table code, read one plan block) is the next cut.
 
 ## 4b. Where tables on the GPU and the copy path stand without the routing merge
 

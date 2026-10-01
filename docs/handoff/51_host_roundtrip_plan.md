@@ -66,13 +66,35 @@ Design rules (to be proven by probe P6 below before any C3 code):
   explicit warm-up that touches every kernel (`cudaFuncGetAttributes` per lopep kernel; one full forward per bucket);
 - R2 no implicit device sync on the main thread in steady state (pinned buffers only, caching allocator never frees,
   no pageable copies);
-- R3 the proxy never needs a lock the main thread can hold while blocked: either driver-API-only issue in the proxy
-  (if P6 shows the driver lets it progress during a load), or R1 alone;
+- R3 the proxy never needs a lock the main thread can hold while blocked. P6 (below) settled the option: driver-API-only
+  issue does NOT help (its work is held on the GPU during a load), so R1 alone carries it;
 - R4 NVSHMEM host calls are serialized by one process lock (done: `nvshmem_host_mutex`, NVSHMEM 3.2.5 grants only
   THREAD_SERIALIZED), and no main-thread call holds it across anything that can block.
 - P6 (probe, 1 node): thread A launches a kernel that spins on a flag; thread B must write the flag with (a) a runtime
   call, (b) a driver call (`cuStreamWriteValue32`), after thread A starts a first launch of a never-loaded kernel.
-  Outcomes decide R3.
+  Outcomes decide R3. RESULT 10-01 (job 59155602; `50_copy_probes/p6_lazy.cu`, `p6_cold.cu`, `run_p6.sh`; logs
+  `logs/p50/p6_lazy*.log`; A100, driver 580.178, LAZY loading unless noted):
+
+  | cold kernel placement | B releases the spinner with | A's first launch | B's call | spinner |
+  |---|---|---|---|---|
+  | same module (function-level load) | host store to mapped memory, after 0.2 s / after 3 s | returns at once | (no call) | released |
+  | same module | driver stream write / runtime copy | returns at once | returns | NEVER released |
+  | separate library (module-level load) | host store, after 0.2 s / after 3 s | returns only when the spinner ends | (no call) | released |
+  | separate library | driver stream write | NEVER returns | returns | never released |
+  | separate library | runtime copy | NEVER returns | NEVER returns (loader holds the lock) | never released |
+  | same module, EAGER | driver / runtime | returns at once | returns | released |
+  | separate library (own static cudart), EAGER | driver | NEVER returns | returns | never released |
+  | controls without the cold launch | driver / runtime | - | returns | released within 0.5 ms |
+
+  Reading: while code is being loaded with another kernel resident, the GPU executes NO newly submitted work from any
+  thread until the resident kernel ends (a load needs the device idle); for a module-level load the launching thread
+  also blocks until then, and other threads' runtime calls block behind it. A spinning kernel can then be released
+  only by something that needs no GPU work (a host store to memory it polls). So R3 is answered NO: a proxy thread,
+  runtime or driver API, cannot rescue a spinner during a lazy load. R1 is mandatory, in its explicit form: every
+  kernel of every library the steady state uses is launched once in warm-up (EAGER does not cover a library whose
+  runtime instance initializes late, and fails with NCCL in the torch process). Gate for R1: in an Nsight capture of
+  the steady state, no `cuKernelGetFunction` / `cudaGetFuncBySymbol` call above ~100 us and no library or module load
+  call. Today's serving steady state passes it (round-8 capture: 2740 + 7447 lookups, max 31 us).
 
 Other hangs seen today, root causes:
 - C2b in serving: all four GPU workers' proxies pinned to the same core (the last core of the node's shared task mask)
@@ -121,7 +143,10 @@ Mechanism (resource numbers from `cuobjdump --dump-resource-usage`):
    then waits in the other priority's queue and no longer blocks the wire kernels.
 5. Fix: the tables kernel is 128 threads with launch bounds (128, 4) (~11K registers per block). The earlier proxy-on
    harness hang (`dm_comb`, full batches) and the serving mode-1 stall of 00:45 (proxy off, varying counts) are this
-   same deadlock; the serving path is still to be re-run with mode 1 on the fixed binary (first item next allocation).
+   same deadlock. Serving re-run 10-01 04:25 (job 59155602, 4n decode, 256 running per rank, timing ledger on, fixed
+   binary `bin/dev_ct128`): healthy, the wave completes, 0 growths, 0 tracebacks. Diagnostic ledger, same
+   allocation, mode 1 vs mode 0 (never for ratios): layer bracket 3.02 vs 3.27 ms; `meta+check` 0.156 vs 0.273 ms
+   (the device demand check replaces the host numpy check); decode step median 168.6 vs 178.7 ms.
 
 ### 4b. Why the hangs exist, and the rule set the round-trip removal must follow
 
@@ -141,6 +166,21 @@ GEMMs. So, in addition to R1-R4:
   chain, swap-lane kernels, NVSHMEM put / signal / barrier kernels, the future descriptor kernel), checked against
   the GEMM's per-SM leftover; the B1 / B3 plan kernels and the descriptor kernel are launched BEFORE GEMM 1 (B3 already
   moves the combine tables between `derive_routed_meta` and the sync, which removes this case by construction).
+  R5 baseline (10-01, from the round-8 Nsight capture, mode 0, one rank, every kernel that STARTS while a spinning
+  kernel runs, block registers rounded to the allocation unit):
+
+  | spinning kernel | one block | leftover beside one block | kernel kinds starting during it | any not fitting |
+  |---|---|---|---|---|
+  | dispatch GEMM (stream-K, grid 200) | 128 thr x 240 reg = 30.7K reg, 66.6 KB smem | 34.8K reg, 101 KB smem | 21 (planning chain, torch elementwise / scan / searchsorted, NVSHMEM put and signal kernels) | none |
+  | combine GEMM (gather-RS, grid 152) | 128 thr x 254 reg = 32.8K reg, 65.6 KB smem | 32.8K reg | 7 | none |
+  | resident pre-reduce (grid 6) | 512 thr x 44 reg = 24.6K reg | 41.0K reg | 7 | none |
+  | bucket reduce (grid 8) | 512 thr x 28 reg = 16.4K reg | 49.2K reg | 2 | none |
+
+  Kernels that must stay AHEAD of GEMM 1 (do not fit): the dispatch arena kernel (512 thr x 119 reg = 61.4K reg, mode
+  1, today launched before the GEMM) and the old combine tables kernel (45.1K reg, fixed to 11.3K). Budget for any new
+  kernel that may run beside a spinning GEMM (plan block, descriptor kernel, device verdict): <= ~32K registers and
+  <= ~100 KB shared memory per block; note that on the 92 SMs holding two dispatch GEMM blocks only ~4K registers stay
+  free, so such kernels land on the remaining 16 SMs (keep their grids small).
 - R1 note: `CUDA_MODULE_LOADING=EAGER` fails in the torch process (NCCL init: `ncclUnhandledCudaError`, 10-01), so R1
   must be the explicit warm-up form, not the environment switch.
 
@@ -158,7 +198,7 @@ there is a separate decision for the user.
 ## 6. Proposed order (each step: gates, stage check against the previous binary on one allocation, then commit)
 
 0. Root-cause and fix the mode-1 hang (prerequisite: the device plan block must be trusted). DONE 10-01 (section 4a,
-   lopep 8d3a8a0); remaining: serving re-run with mode 1 on the fixed binary, probe P6, the R5 resource table.
+   lopep 8d3a8a0); serving re-run healthy, P6 done (R3: no; R1 explicit warm-up mandatory), R5 baseline table done.
 1. B1/B2: the dispatch's plan block on the device; the host reads the plan block (one D2H with the existing sync)
    instead of building tables -> removes most of the 427 us dispatch-phase host code; sync still there.
 2. B3 (+A1b): the combine's tables on the device (`a2av_combine_tables_kernel` extended), persistent capacity-sized
