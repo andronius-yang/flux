@@ -160,13 +160,99 @@ reports `logs/p50/nsys_p234_<rank>.nsys-rep`):** the P2 graph memcpy nodes and e
 exactly one per P4 call. **P4 is an SM copy in disguise and FAILS the constraint**; its "copy-engine bandwidth" was
 the bandwidth of a many-block copy kernel. Verdict column above corrected accordingly.
 
-**Busy-SM passes (incomplete, carried to the next allocation):** the full busy passes could not be completed in this
-allocation. What was measured: with every SM slot held by a resident busy grid (nanosleep-spinning warps, no memory
-traffic), the host memcpy and the proxy thread copies ran at the idle rate (host memcpy 0.5 MB 9.3 us, 16 MB 183 us;
-3-peer aggregate 257 GB/s) — a copy engine does not care whether SMs are occupied — while the busy grid, lazy
-loading and warp-scheduler effects above dominated the SM-side measurements. The remaining pass (P3 under an
-HBM-saturating kernel, and the real dispatch GEMM at sm_margin 0) runs on the stage-check allocation with the fixed
-probe (`CUDA_MODULE_LOADING=EAGER`, idle warm-up before the busy grid, `--free` / `--onepersm` busy shapes).
+**Busy-SM pass (job 59150611, 10-01, HBM-saturating busy grid = 212 resident 1024-thread blocks streaming a 1 GB
+buffer with read-modify-writes, every SM issuing memory ops; probe warmed up idle first, `CUDA_MODULE_LOADING=EAGER`):**
+
+| mechanism | bytes | blocks | idle us | HBM-saturated us | slowdown |
+|---|---|---|---|---|---|
+| host_memcpy | 0.5 MB | 1 | 9.3 | 18.7 | 2.0x |
+| sm_copy | 0.5 MB | 1 | 22.8 | 174.5 | 7.7x |
+| sm_copy | 0.5 MB | 2 | 15.4 | 101.4 | 6.6x |
+| sm_copy | 0.5 MB | 4 | 12.8 | 77.0 | 6.0x |
+| sm_copy | 0.5 MB | 8 | 12.5 | 67.4 | 5.4x |
+| sm_copy | 0.5 MB | 16 | 12.7 | 69.8 | 5.5x |
+| sm_copy | 0.5 MB | 32 | 11.8 | 69.6 | 5.9x |
+| host_memcpy | 1.0 MB | 1 | 14.8 | 25.3 | 1.7x |
+| sm_copy | 1.0 MB | 1 | 39.0 | 398.3 | 10.2x |
+| sm_copy | 1.0 MB | 2 | 23.5 | 202.8 | 8.6x |
+| sm_copy | 1.0 MB | 4 | 18.9 | 111.4 | 5.9x |
+| sm_copy | 1.0 MB | 8 | 18.4 | 132.1 | 7.2x |
+| sm_copy | 1.0 MB | 16 | 18.8 | 114.7 | 6.1x |
+| sm_copy | 1.0 MB | 32 | 18.2 | 117.7 | 6.5x |
+| host_memcpy | 2.4 MB | 1 | 30.2 | 47.5 | 1.6x |
+| sm_copy | 2.4 MB | 1 | 84.4 | 874.9 | 10.4x |
+| sm_copy | 2.4 MB | 2 | 46.4 | 484.8 | 10.4x |
+| sm_copy | 2.4 MB | 4 | 35.5 | 244.4 | 6.9x |
+| sm_copy | 2.4 MB | 8 | 35.2 | 245.1 | 7.0x |
+| sm_copy | 2.4 MB | 16 | 35.5 | 256.2 | 7.2x |
+| sm_copy | 2.4 MB | 32 | 35.4 | 284.5 | 8.0x |
+| host_memcpy | 16.0 MB | 1 | 182.2 | 270.1 | 1.5x |
+| sm_copy | 16.0 MB | 1 | 570.8 | 5613.7 | 9.8x |
+| sm_copy | 16.0 MB | 2 | 297.0 | 2779.1 | 9.4x |
+| sm_copy | 16.0 MB | 4 | 198.9 | 1526.9 | 7.7x |
+| sm_copy | 16.0 MB | 8 | 197.4 | 1509.2 | 7.6x |
+| sm_copy | 16.0 MB | 16 | 196.9 | 1536.5 | 7.8x |
+| sm_copy | 16.0 MB | 32 | 196.4 | 1431.5 | 7.3x |
+
+The copy engine slows only by the HBM bandwidth it has to share (1.5 to 2x); the SM copy kernel slows 5 to 10x at
+every block count, because it competes for issue slots and residency as well as for bandwidth. With
+a resident busy grid that holds every slot but does not touch memory (FMA bursts + nanosleep), both the host memcpy
+and the SM copy ran at the idle rate (the sleeping warps leave the schedulers free), which says the SM copy's cost
+is set by what the resident GEMM leaves it, while the copy engine's is not. The P3 proxy-thread pass under the
+busy grid wedged twice inside the probe's own issue path (the planning kernel + host polling) and is not reported;
+its idle numbers and the P0 host-memcpy busy numbers (the proxy issues exactly those calls) stand in for it.
+The real-GEMM-at-sm_margin-0 variant was not run: the serving stage check measures that condition directly.
+
+### Stage A1 + B4 landed (10-01; lopep sglang-dev 5cafd2d = metadata chain, 3011c6f = dead work)
+
+- A1: `derive_routed_meta` is three launches (per-source whole-token tiles -> one block scan -> warp-level stable
+  scatter) with no memsets and no global atomics, replacing 5 launches + 3 memsets; op-free bindings
+  `C.routed_meta` / `C.a2av_demands`; `tests/test_meta_device.py` = 104 routings bitwise identical to
+  `routing.meta_from_virtual_route` and `capacity.demands_from_meta` (W 4-64, S 8-1024, K 8 and 6, adversarial
+  routings), plus every capacity-violation bit.
+- B4 (dispatch): deleted `cp_stream_signal`, `hier_dispatch_event_` (+ its deferred-op kind), `relay_send_event_`,
+  the empty `f1_quiet`, the whole-pack `pack_ready` announce (the relay pulls gate on the per-segment signals since
+  wave-pack) and the six `t_*` / `issue_put` / `stage_off_u` lambdas nothing called. `ready_event` and the
+  `wave_pack_` flag STAY: wave-pack is set only when the relay is built (nnodes > 1); at one node the whole-pack
+  event is the live path (found by the 1n gate). B4 (combine): the four per-step memsets of the piece buffers go
+  (pieces are off, `a2av_piece_config` want = 0; the buffers stay, zeroed at init). NOT done from the B4 list: the
+  lane fan-out/join (the lane choice `(sid * (NN-1) + gi) % S` does use every lane when S > NN-1, so the join is
+  live), the `record_stream` and pinned-table items (stage B0).
+- Deferred explicitly, not dropped: A1b (expert of a copy = `routing_ids[p]`, deleting the stage-1 binary search
+  and the combine `searchsorted` chain) folds into stage B3 where the combine tables move to the device anyway;
+  A2 (parallel swap orbit; swap steps only) after stage B.
+- Gates (job 59150611, 10-01): unit 4/4 PASS (`test_meta_device`, `test_capacity_host`, `test_swap_decide`,
+  `test_lane_device`); 1n serving harness `static`, `staged_ref_dev`, `staged_cmp`, `s4096_swap_dev`,
+  `flip_staged` PASS (forced growth via `--caps-scale 0.5` included); `flip_ref` and `devmeta_ref` (reference on,
+  popularity flip every 5 steps, forced growth) report ONE bad row of 1.47 M (rank 0, step 50, err 0.0119 vs atol
+  1e-2, every rank's max_err 0.012-0.013) — the plan-6 binary 068e5e4 reports the identical row on the same
+  allocation, so it is a pre-existing bf16 tolerance edge of that seed, not a metadata change (`devmeta_ref`'s
+  device-vs-host assertions all pass). 4n gates (job 59150611): `staged_ref_dev`, `staged_cmp`, `s4096_swap_dev`, `flip_staged` PASS; `devmeta_ref`
+  (reference + compare mode, 60 steps x 3 layers at 16 ranks) reached only step 0 inside the 300 s cap with no
+  mismatch or error — inconclusive by time, to be rerun with `--steps 10` on the next allocation.
+
+### Stage C1 written (10-01, uncommitted until gated): batched copy-engine issue with host-known sizes
+
+Why before stage B: the stage-B maps (`50_stageB_dispatch_map.md`, `50_stageB_combine_map.md`) show the host table
+loops are small at 4n (W = 16) and the device arena already exists (LOPEP_DEVICE_META=1, unused in serving); the
+fixed-cost levers measured in §1-2 are the host ISSUE (~480 CUDA calls, 5.3 us each in P0) and the planning sync.
+C1 attacks the issue count and removes SM copy kernels; it keeps today's sizes, order and gating (L5-L7).
+
+- `include/flux/cuda/ce_batch.h`: `CeBatch` (one `cudaMemcpyBatchAsync` per group of intra-node copies; a loop of
+  `cudaMemcpyAsync` below CUDA 12.8) and `CeSignals` (SET signals as `cuStreamWriteValue64` at the peer-mapped
+  slot from `nvshmem_ptr`, issued after the batch on the same stream = NVSHMEM's own intra-node lowering, P5-proven);
+  a peer without a P2P mapping falls back to the NVSHMEM call; knob `LOPEP_CE_BATCH` (default 1, 0 = today's path).
+- Dispatch: (a) `issue_deferred_wire` coalesces the self copy and the round-0 intra-node puts into one batch and
+  their signals after it (a front-end wait flushes what precedes it); (b) the gateway forwards: per source node one
+  batch of the L windows + L signal writes, replacing L BLOCKING intra-node `putmem_signal_on_stream` calls that ran
+  a device kernel each (`flux_rs_put_signal`'s comment); (c) relay pulls: every readiness wait of the round first,
+  then the round's pieces as one batch (the round's put needs every piece anyway, so the coarser gate loses nothing).
+- Combine: the convergence ladder (L copies + L signals per (tn, sid)) and the intra-node ladder (self + L-1 peers
+  per split) each become one batch + signal writes.
+- Untouched: every inter-node put (blocking, CLAUDE.md invariant 5), the proxy `getmem` fallback, all waits.
+- Expected per layer at 4n: ~40 fewer host calls plus the 12 gateway SM-copy kernels gone; gate = unit tests,
+  1n/4n serving harness with the reference on (payload changes every step), then a stage check against the A1+B4
+  binary on one allocation.
 
 ## 4b. Where tables on the GPU and the copy path stand without the routing merge
 

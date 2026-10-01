@@ -17,7 +17,7 @@ import os
 import re
 from collections import defaultdict
 
-HDR = re.compile(r"^\S+ job(D6|P6) (\d+): (\d+) nodes")
+HDR = re.compile(r"^\S+ job(D\d|P\d) (\d+): (\d+) nodes")
 WAVES = re.compile(r"^\S+ (d30_\w+): waves at")
 DEC = re.compile(r"^running/rank (\d+): (\d+) intervals over (\d+) ranks \| decode step median ([0-9.]+) ms "
                  r"\(IQR ([0-9.]+)-([0-9.]+)\) \| output tok/s per GPU median (\d+) \| cuda graph \[([^\]]*)\]")
@@ -28,7 +28,7 @@ GROW = re.compile(r"^\S+ ((?:d30|p30)_\w+): growths (\d+) tracebacks (\d+)")
 LAUNCH = re.compile(r"^\S+ ((?:d30|p30)_\w+): conn=(\S+) heap=(\S+)")
 BRK = re.compile(r"layer timing rank 0\] (DECODE MAX|EXTEND SUM) n_pad<=(\d+): mean ms per layer-step over (\d+): "
                  r"total ([0-9.]+)")
-ARM = {"ours": ("ours", 1), "oursR": ("ours", 2), "baseA": ("stock_graphs_off", 1), "baseG": ("stock_graphs_on", 1)}
+ARM = {"ours": ("ours", 1), "oursR": ("ours", 2), "oursB": ("ours_plan6_binary", 1), "baseA": ("stock_graphs_off", 1), "baseG": ("stock_graphs_on", 1)}
 MIB = {256: 1, 512: 2, 1024: 4}
 
 
@@ -141,11 +141,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--logs", required=True)
     ap.add_argument("--out", default="49_plan6")
+    ap.add_argument("--lopep", default="068e5e4", help="lopep commit of the measured binary")
+    ap.add_argument("--round", default="6", help="report suffix: 6 = plan 6 (jobD6/jobP6), 7 = plan-7 stage checks (jobD7/jobP7)")
     a = ap.parse_args()
-    rows = [r for N in (4, 8, 16) for kind in ("D6", "P6") for r in read(a.logs, N, kind)]
+    rows = [r for N in (4, 8, 16) for kind in (f"D{a.round}", f"P{a.round}") for r in read(a.logs, N, kind)]
     rows.sort(key=lambda r: (r["phase"], r["nodes"], r["budget_mib"], r["arm"], r["run"]))
     for r in rows:
-        r.update(model="Qwen3-30B-A3B", gpu="A100-40GB", lopep="068e5e4")
+        r.update(model="Qwen3-30B-A3B", gpu="A100-40GB", lopep=a.lopep)
     write(f"{a.out}_arms.csv", rows)
     cl = cells(rows)
     write(f"{a.out}_cells.csv", cl)

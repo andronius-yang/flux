@@ -2,7 +2,7 @@
 # run_probe.sh <jobid> <busy: none|spin|stream> [extra probe args...]  -> CSV on stdout
 J=$1; BUSY=$2; shift 2
 BIN=${BIN:-$PSCRATCH/workspace/andrewy/logs/p50/bin/probe_ce}
-srun --jobid=$J --nodes=1 --ntasks=${NT:-4} --gpus-per-node=4 --cpu-bind=cores --overlap bash -lc "export CUDA_VISIBLE_DEVICES=${CVD:-0,1,2,3}
+srun --jobid=$J --nodes=1 ${NODEW:-} --ntasks=${NT:-4} --gpus-per-node=4 --cpu-bind=cores --overlap bash -lc "export CUDA_VISIBLE_DEVICES=${CVD:-0,1,2,3}
 source /opt/cray/pe/cpe/25.09/restore_lmod_system_defaults.sh >/dev/null 2>&1
 module unload nccl nvshmem cudatoolkit 2>/dev/null
 module load libfabric/1.20.1 gcc-native/12.3 cudatoolkit/12.9 nccl/2.24.3 nvshmem/3.2.5-1 >/dev/null 2>&1
