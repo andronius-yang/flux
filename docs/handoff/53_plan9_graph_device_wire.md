@@ -327,3 +327,24 @@ its quiet. Kept (correct, slightly better).
 ## S6 / M2 launched (10-02 ~03:10): `logs/p50/m2.sh` (one allocation per node count, every arm on it: stock, c4s,
 plan 9 with every S5 knob = g9k; decode 256 / 512 / 1024 and prefill SMAX 256; 40 GB nodes); 8n and 16n in regular
 QOS, 4n interactive.
+
+## M2 at 4n (jobs 59196117 decode, 59196669 prefill; `logs/sglang/j4n{D,P}m2_report.txt`; lopep p9-e3 f9fdd4f)
+- Decode step ms (x stock), one allocation: stock 85.73 / 145.31 / 273.45; **plan 9 every knob (g9k) 113.57 (0.755)
+  / 149.66 (0.971) / 232.46 (1.176)**; **c4s 115.01 (0.745) / 141.65 (1.026) / 216.67 (1.262)**. Best ours at 4n:
+  0.755x at 1 MiB (plan 9), 1.03x at 2 MiB and 1.26x at 4 MiB (c4s).
+- Prefill SMAX 256 input tok/s: stock 26306, plan 9 25605 (0.973), c4s 25563 (0.972).
+- vs 9/30 (plan-6 binary, 4n): decode 0.51 / 0.76 / 1.04 -> 0.755 / 1.03 / 1.26; prefill 1 MiB 0.65 -> 0.97.
+
+## Latest serving capture (n16, job 59195847; plan 9 every knob, `logs/sglang/nsys50/n_ours_g9k_d256`)
+- Layer window 2164 us (was 2557 in NG); idle per layer period 195 us (was 238): before NCCL all-gather kernels 47,
+  SGLang norms / elementwise ~80, before the graph's first kernel 27, once-per-forward HtoD 25, remaining memcpys 35.
+- Chain (us from the staging kernel): all-gather 1 69-125, swap decide 125-183, routing -276, all-gather 2 -400,
+  planning -598, dispatch pack-push 598-787, wire 684-1070, forward -1127, GEMM 1 879-~1240, GEMM 2 -1374, combine
+  pack -1585, pre-reduce -1622, combine puts -1809, bucket reduce -1850, sync 1883-2149.
+
+## Wide combine push (job 59196379, lopep p9-e4 5a74129, LOPEP_COMBINE_TAIL_PUSH=216): gates PASS (graph flips,
+eager CDMC 1, graph growth, graph full); serving 116.42 / 149.53 / 231.02 vs 115.92 / 149.39 / 231.33 without:
+no effect. These steps take the wave path (the tail kernel returns at once); the in-GEMM pack kernel (20 blocks on
+the 10 SMs GEMM 2 reserves for it) pushes every wave: ~8 MiB at ~38 GB/s, the 211 us tail. Next: more SMs for the
+pack (LOPEP_COMBINE_PACK_SMS, lopep p9-e5 72aa61b; GEMM 2's persistent grid shrinks by the same margin, no
+co-residency change).
