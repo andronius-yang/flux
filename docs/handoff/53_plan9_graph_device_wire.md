@@ -194,3 +194,19 @@ graph edge, C4 on own C2 slot words, D2 warp on own pre-reduce flags, D1 on own 
   warm-up and capture and takes that memory, and the graphs keep writing GEMM workspace into it. The harness
   allocates nothing after the capture, so the stale writes hit nothing. Fix (lopep 6bf04e5): a superseded workspace
   stays allocated (scratch: a graph using its own older buffer is correct), and every growth is logged.
+- Root cause CONFIRMED (job 59190751, `logs/p50/hang_r14b_g.log`): with growth logging, the dispatch GEMM workspace
+  grows DURING the capture on every rank (16384 -> 29184 -> 38784 bytes, 32 growths with `capturing 1`): the
+  small-bucket graphs were captured against the 16 KB warm-up workspace, which the old code freed to the general
+  allocator. With superseded workspaces kept (lopep 6bf04e5), round 14b served both plan-9 arms with zero tracebacks.
+
+## Round 14b (job 59190751; `52_round14b_arms.csv`, `logs/sglang/j4n{D,P}14b_report.txt`)
+- lopep p9-dw3 6bf04e5 (tree lopep_b1): device-issued wire, layer graphs (480 per process, all buckets), early
+  wire fork, workspace fix. Same allocation, decode step median ms (per-layer bracket ms) at 256 / 512 per rank:
+  stock 88.83 (1.596) / 151.16 (2.762); c4b 119.49 (2.172) / 153.28 (2.769); plan 9 130.26 (2.311) and 135.08
+  (2.381) / 164.23 (2.954) and 166.65 (2.973). 1024: stock 286.98, c4b 228.27 (1.26x); plan 9 not measured (the
+  graphs' memory shrank the KV pool: 111k tokens vs 139k, KV usage 0.50 at 512).
+- Prefill SMAX 256 input tok/s: stock 25655, c4b 25026 (0.98x), plan 9 24649 (0.96x).
+- Plan 9 is SLOWER than c4b in serving (+6-13 % decode at 256) although its isolated harness layer (1.87 ms GPU
+  window) beats c4b's (2.35). The per-layer bracket (SGLang patch 47: prepare_mlp + mlp + postprocess; for lopep
+  only the mlp is non-empty) is 2.31-2.38 ms vs the harness 1.87: Nsight serving captures NG (plan 9) and NC4b2
+  (`logs/sglang/jobN14.sh`, `--cuda-graph-trace=node`) to find the 0.45 ms.

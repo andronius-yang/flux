@@ -1,0 +1,14 @@
+nodes,phase,budget_mib,tokens_per_rank,arm,run,alloc_job,server,decode_step_ms,step_iqr_lo,step_iqr_hi,out_tok_s_per_gpu,cuda_graph_used,intervals,layer_ms,layer_steps,kv_pin_tokens,heap,growths,tracebacks,model,gpu,lopep,in_tok_s,mean_ttft_ms,median_ttft_ms,requests,bench_s
+4,decode,1,256,ours_C3C4_bounded,1,,d30_kc4b,119.49,111.52,131.18,2147,False,192,2.172,4512,139463,,0,0,Qwen3-30B-A3B,A100-40GB,p9-dw3 6bf04e5 (g9e) | p8-c5 a2b248e (c4b),,,,,
+4,decode,1,256,ours_plan9_graphs,1,,d30_kg9e,130.26,120.16,141.02,1970,False,192,2.311,4512,102130,,0,0,Qwen3-30B-A3B,A100-40GB,p9-dw3 6bf04e5 (g9e) | p8-c5 a2b248e (c4b),,,,,
+4,decode,1,256,ours_plan9_graphs,2,,d30_kg9e2,135.08,124.18,147.63,1899,False,192,2.381,4512,102130,,0,0,Qwen3-30B-A3B,A100-40GB,p9-dw3 6bf04e5 (g9e) | p8-c5 a2b248e (c4b),,,,,
+4,decode,1,256,stock_graphs_off,1,,d30_baseA,88.83,87.72,93.25,2882,False,192,1.596,4512,143794,,0,0,Qwen3-30B-A3B,A100-40GB,p9-dw3 6bf04e5 (g9e) | p8-c5 a2b248e (c4b),,,,,
+4,decode,2,512,ours_C3C4_bounded,1,,d30_kc4b,153.28,145.05,172.5,3344,False,192,2.769,4512,139463,,0,0,Qwen3-30B-A3B,A100-40GB,p9-dw3 6bf04e5 (g9e) | p8-c5 a2b248e (c4b),,,,,
+4,decode,2,512,ours_plan9_graphs,1,,d30_kg9e,164.23,156.76,182.41,3120,False,192,2.954,4512,102130,,0,0,Qwen3-30B-A3B,A100-40GB,p9-dw3 6bf04e5 (g9e) | p8-c5 a2b248e (c4b),,,,,
+4,decode,2,512,ours_plan9_graphs,2,,d30_kg9e2,166.65,157.66,183.52,3074,False,192,2.973,4512,102130,,0,0,Qwen3-30B-A3B,A100-40GB,p9-dw3 6bf04e5 (g9e) | p8-c5 a2b248e (c4b),,,,,
+4,decode,2,512,stock_graphs_off,1,,d30_baseA,151.16,149.99,160.33,3387,False,192,2.762,4464,143794,,0,0,Qwen3-30B-A3B,A100-40GB,p9-dw3 6bf04e5 (g9e) | p8-c5 a2b248e (c4b),,,,,
+4,decode,4,1024,ours_C3C4_bounded,1,,d30_kc4b,228.27,221.3,256.94,4487,False,192,4.135,4080,139463,,0,0,Qwen3-30B-A3B,A100-40GB,p9-dw3 6bf04e5 (g9e) | p8-c5 a2b248e (c4b),,,,,
+4,decode,4,1024,stock_graphs_off,1,,d30_baseA,286.98,284.43,303.79,3568,False,192,5.34,4464,143794,,0,0,Qwen3-30B-A3B,A100-40GB,p9-dw3 6bf04e5 (g9e) | p8-c5 a2b248e (c4b),,,,,
+4,prefill,1,256,ours_C3C4_bounded,1,,p30_kc4b_s256,,,,,,,2.159,3696,50000,,0,0,Qwen3-30B-A3B,A100-40GB,p9-dw3 6bf04e5 (g9e) | p8-c5 a2b248e (c4b),25026.35,1091.03,723.9,960,12.94
+4,prefill,1,256,ours_plan9_graphs,1,,p30_kg9e_s256,,,,,,,2.199,3696,50000,,0,0,Qwen3-30B-A3B,A100-40GB,p9-dw3 6bf04e5 (g9e) | p8-c5 a2b248e (c4b),24648.57,1200.26,866.72,960,13.14
+4,prefill,1,256,stock_graphs_off,1,,p30_baseA_s256,,,,,,,2.327,3744,50000,,0,0,Qwen3-30B-A3B,A100-40GB,p9-dw3 6bf04e5 (g9e) | p8-c5 a2b248e (c4b),25655.0,1344.84,1065.24,960,12.62
