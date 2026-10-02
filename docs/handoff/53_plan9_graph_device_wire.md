@@ -127,3 +127,70 @@ graph edge, C4 on own C2 slot words, D2 warp on own pre-reduce flags, D1 on own 
 
 ## Log
 - 10-01: plan 9 approved; plan-8 text preserved; handoff opened.
+
+## Nsight of the harness layer-step (job 59188611, `logs/p50/nsys9/h_{c4b,bare,graph}`, analyzer `53_harness_kernels.py`)
+- Recipe: node 0's torchrun process tree under nsys, `-t cuda,nvtx --cuda-graph-trace=node`, capture range =
+  `serving_check --nsys 1` (isolated layer-steps from step 20: a sync before and after each). `-t ...,osrt`
+  crashes NVSHMEM init ("double free detected in tcache 2" in every traced process): never trace osrt here.
+- Isolated layer-step (host range / GPU window, us): c4b 2440 / 2350, device wire eager 2357 / 2272, device wire +
+  layer graphs 1958 / 1873. Pipelined harness medians (same binaries): 1.69 / 1.95 / 1.89 ms.
+- Why c4b looks better pipelined: the harness layers are independent (every layer reads the same input), so the
+  eager c4b code overlaps a layer's prologue (exchanges, planning) with the previous layer's combine tail. A model
+  cannot (layer l+1's routing needs layer l's output), and a layer graph cannot either (graphs serialize). Serving is
+  the arbiter; the isolated number is the GPU chain of the plan-9 layer.
+- Graph layer-step, main stream timeline (us from the first copy-in): copy-in + graph launch 0-79; loads all-gather
+  110-199 (89); swap decide, lane arm, pad rebuild, route tables (23), budget (14), route, vacate (34) 199-294;
+  routing all-gather 299-365 (66); planning chain 365-528 (torch elementwise 14, meta pass1/scan/pass2 32, dispatch
+  plan 38, demands 11, 4 D2H mirror copies 13, meta arena 27); pack-push 528-655 (127); GEMM1 prep 655-694; relay /
+  wire warp / forward 694-1087 (3 serialized puts ~105 us each, forward done 1087); GEMM1 719-1189; GEMM2 1228-1363;
+  combine pack / pre-reduce / wire warp 1229-1640, bucket reduce done 1661; barrier 1664-1858 (195).
+  Combine-side planning (tables 47, plan block 31, compress plan 50) runs on the meta stream, off the critical path.
+- Barrier: even the latest of node 0's four ranks waits ~177 us (median): mostly ranks on other nodes finishing
+  later (rank skew), plus the barrier latency (P11c: ~35 us at 2n).
+- Planning kernels are single-block: dispatch plan (1 x 256, 38 us), meta arena (1 x 512, 27), route tables (1 x
+  128 threads, one per expert, 255 registers, 23), combine tables (1 x 128, 48), combine plan block (1 x 128, 32),
+  compress plan scan (1 x 256, 23), demands (1 x 512, 11), meta scan (1 x 256, 12): the E1 target.
+
+## Copy knobs and the early wire fork (jobs 59188611, 59189027; `logs/p50/dw2_ab.log`, `dw3_ab.log`)
+- lopep p9-dw2 570aa53 (LOPEP_DWIRE_UNROLL[_PACK|_RELAY|_FWD], LOPEP_DWIRE_{PACK,RELAY,FWD}_BLOCKS), harness with
+  graphs, layer-step median ms at 256 / 1024: base 1.877 / 3.707; relay x4 loads in flight 1.897 / 3.722; + 32 relay
+  blocks 1.892 / 3.652; pack x4 1.886 / 3.722; 64 forward blocks 2.026 / 3.761 (spinner blocks take GEMM 1's SM
+  room); all 2.045. No gain: defaults kept. All knobs on: correctness PASS (flips).
+- lopep p9-dw3 04a6bbc (LOPEP_DWIRE_EARLY_FORK): the pack-push is split, remote segments first, then the relay /
+  wire / forward kernels are enqueued, then the own-node push (no spinner waits on own-node data, so a spinner
+  ahead of the own-node push in an aliased hardware queue only delays it). Correctness: graph flips, eager flips,
+  eager CDMC 1, graph growth: PASS. Harness: 256: 1.833 vs base 1.896 / 1.874 (-2.8 %); 1024: 3.608 vs 3.748
+  (-3.7 %). Fewer spinner blocks on top: no further gain (16 forward: 1.877; 16 forward + 8 relay: 1.834).
+
+## Round 14 (serving, job 59188614, `logs/sglang/j4nD14_report.txt`)
+- Decode step median ms at 256 / 512 / 1024 per rank: stock 86.45 / 144.29 / 274.27, c4b 116.73 / 149.24 / 220.84.
+- Plan-9 graph arm (g9, g9b): 480 graphs (48 layers x 10 buckets) captured in 104-105 s, server healthy, then an
+  illegal memory access at the first wave's forward (reported at the replay's output copy), both runs. Under
+  investigation (`logs/p50/g9dbg.sh`: 4096-bucket harness cell, GPU core dumps, graphs capped at 1024).
+- Latent bug found on the way (not this crash: the device lane never marks the pad table dirty): `_refresh_pads`
+  rebound `pad_table` to a new tensor while captured graphs write it by address; fixed in place (lopep 4438740).
+
+## P12: barrier latency (job 59189979, `50_copy_probes/p12_barrier.cu`, `logs/p50/p12_n{2,4}.log`)
+- `nvshmemx_barrier_all_on_stream`, one PE per GPU, idle: 4n (16 PEs) 34.0 us back-to-back, 33.6 us inside a CUDA
+  graph, 38 us single (host skew included); 2n 25 / 24.5 / 29 us. With 100 us injected on PE 0, the others wait
+  140 us (4n): skew + latency, additive.
+- So the ~180-200 us end-of-layer barrier of the harness layer-step is ~34 us of barrier and ~150 us of waiting
+  for slower ranks on other nodes (node 0's four ranks finish their combines within 35 us of each other, 1308-1342
+  us after the routing all-gather, which all ranks leave within 5 us). E2 alone buys ~34 us; the rest is rank skew.
+
+## Serving illegal access of the layer graphs (round 14, then jobs 59189479, 59190067, 59190590)
+- Every serving arm with graphs crashed at the first real wave (decode and prefill, all buckets or graphs capped
+  at the 1024 bucket), one rank each time (DP6 x4, DP2), inside a graph replay; health-check forwards before it
+  replayed fine. The harness never reproduced it: 4096 bucket (3 layers), 48 layers x 8 buckets (384 graphs, shared
+  weights, 11200 swap moves, 480 replays): no access error; 3-4 out-of-tolerance rows of millions with max error
+  0.0133-0.0136 = the known bf16 tolerance edge.
+- Tools that failed: GPU core dumps (truncated, unreadable by cuda-gdb 12.9 on driver 580: the process dies while
+  dumping); CUDA_DEVICE_WAITS_ON_EXCEPTION + cuda-gdb 12.9 attach ("Selected thread is running", probes timed out);
+  a private pool per graph (OOM at 48 layers; the follow-on "capturing stream has unjoined work" is that OOM).
+- Leading root cause (being verified, round 14b): both GEMM workspaces grow on demand (dispatch
+  `lazy_init_buffer_tensor`, combine `create_workspace_or_expand`): a growth replaces the member and FREES the old
+  buffer. A layer graph captured before the growth keeps the old address. Freed outside a capture, the old buffer
+  returns to the general caching allocator; SGLang allocates its KV cache and index pools right after lopep's
+  warm-up and capture and takes that memory, and the graphs keep writing GEMM workspace into it. The harness
+  allocates nothing after the capture, so the stale writes hit nothing. Fix (lopep 6bf04e5): a superseded workspace
+  stays allocated (scratch: a graph using its own older buffer is correct), and every growth is logged.

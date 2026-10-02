@@ -16,3 +16,6 @@ $NV p9_push.cu -o $OUT/p9_push -I$MATH/targets/x86_64-linux/include -L$MATH/lib6
 $NV -rdc=true $MPI_CFLAGS -I$NVSHMEM_HOME/include p10_dev_put.cu -o $OUT/p10_dev_put -L$NVSHMEM_HOME/lib \
   -lnvshmem_host -lnvshmem_device -lcudadevrt -lcuda $MPI_LIBS -Xlinker -rpath=$NVSHMEM_HOME/lib \
   -Xlinker -rpath=$CUDA_HOME/lib64 2>&1 | grep -v "warning #\|Remark\|^$"; ls $OUT/p10_dev_put >/dev/null 2>&1 && echo "p10 OK"
+$NV -rdc=true $MPI_CFLAGS -I$NVSHMEM_HOME/include p12_barrier.cu -o $OUT/p12_barrier -L$NVSHMEM_HOME/lib \
+  -lnvshmem_host -lnvshmem_device -lcudadevrt -lcuda $MPI_LIBS -Xlinker -rpath=$NVSHMEM_HOME/lib \
+  -Xlinker -rpath=$CUDA_HOME/lib64 2>&1 | grep -v "warning #\|Remark\|^$"; ls $OUT/p12_barrier >/dev/null 2>&1 && echo "p12 OK"

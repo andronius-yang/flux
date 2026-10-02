@@ -23,22 +23,23 @@ def load(path):
     have = tables(con)
     strings = dict(con.execute("select id, value from StringIds"))
     ranges = []
-    for start, end, text, tid in con.execute("select start, end, text, textId from NVTX_EVENTS where end is not null"):
+    for start, end, text, tid, gtid in con.execute("select start, end, text, textId, globalTid from NVTX_EVENTS "
+                                                   "where end is not null"):
         name = text if text is not None else strings.get(tid, "")
         if name == "iter":
-            ranges.append((start, end))
+            ranges.append((start, end, gtid >> 24))  # the process (a node-0 process-tree capture holds every local rank)
     ranges.sort()
-    acts = []  # (start, end, name, kind)
-    for s, e, nid, sid in con.execute("select start, end, coalesce(shortName, demangledName), streamId "
-                                      "from CUPTI_ACTIVITY_KIND_KERNEL"):
-        acts.append((s, e, strings.get(nid, str(nid)), "K", sid))
+    acts = []  # (start, end, name, kind, stream, process)
+    for s, e, nid, sid, gp in con.execute("select start, end, coalesce(shortName, demangledName), streamId, globalPid "
+                                          "from CUPTI_ACTIVITY_KIND_KERNEL"):
+        acts.append((s, e, strings.get(nid, str(nid)), "K", sid, gp >> 24))
     if "CUPTI_ACTIVITY_KIND_MEMCPY" in have:
-        for s, e, kind, nbytes, sid in con.execute("select start, end, copyKind, bytes, streamId "
-                                                   "from CUPTI_ACTIVITY_KIND_MEMCPY"):
-            acts.append((s, e, f"memcpy kind{kind}", "C", sid))
+        for s, e, kind, nbytes, sid, gp in con.execute("select start, end, copyKind, bytes, streamId, globalPid "
+                                                       "from CUPTI_ACTIVITY_KIND_MEMCPY"):
+            acts.append((s, e, f"memcpy kind{kind}", "C", sid, gp >> 24))
     if "CUPTI_ACTIVITY_KIND_MEMSET" in have:
-        for s, e, sid in con.execute("select start, end, streamId from CUPTI_ACTIVITY_KIND_MEMSET"):
-            acts.append((s, e, "memset", "S", sid))
+        for s, e, sid, gp in con.execute("select start, end, streamId, globalPid from CUPTI_ACTIVITY_KIND_MEMSET"):
+            acts.append((s, e, "memset", "S", sid, gp >> 24))
     acts.sort()
     return ranges, acts
 
@@ -57,16 +58,17 @@ def union(iv):
     return tot
 
 
-def analyze(path, top):
+def analyze(path, top, by_start=False):
     ranges, acts = load(path)
     import bisect
     starts = [a[0] for a in acts]
     per = []
-    for rs, re_ in ranges:
+    for rs, re_, pid in ranges:
         i = bisect.bisect_left(starts, rs)
         sel = []
         while i < len(acts) and acts[i][0] <= re_:
-            sel.append(acts[i])
+            if acts[i][5] == pid:
+                sel.append(acts[i])
             i += 1
         if not sel:
             continue
@@ -92,7 +94,7 @@ def analyze(path, top):
         dur = defaultdict(int)
         first = {}
         last = {}
-        for s, e, name, kind, sid in p[5]:
+        for s, e, name, kind, sid, _ in p[5]:
             cnt[name] += 1
             dur[name] += e - s
             first.setdefault(name, s - w0)
@@ -103,6 +105,8 @@ def analyze(path, top):
             by[name]["s"].append(first[name] / 1e3)
             by[name]["e"].append(last[name] / 1e3)
     rows = sorted(by.items(), key=lambda kv: -med(kv[1]["dur"]) * len(kv[1]["dur"]) / len(per))
+    if by_start:
+        rows = sorted(rows[:top], key=lambda kv: med(kv[1]["s"]))
     print(f"   {'kernel / activity':58s} {'n':>4s} {'sum_us':>8s} {'first_start':>11s} {'last_end':>9s}  (medians)")
     for name, d in rows[:top]:
         print(f"   {name[:58]:58s} {med(d['n']):4.0f} {med(d['dur']):8.1f} {med(d['s']):11.1f} {med(d['e']):9.1f}"
@@ -113,9 +117,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("sqlite", nargs="+")
     ap.add_argument("--top", type=int, default=30)
+    ap.add_argument("--by-start", action="store_true", help="the top rows ordered by their median start (timeline)")
     a = ap.parse_args()
     for p in a.sqlite:
-        analyze(p, a.top)
+        analyze(p, a.top, a.by_start)
 
 
 if __name__ == "__main__":
