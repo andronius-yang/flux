@@ -210,3 +210,23 @@ graph edge, C4 on own C2 slot words, D2 warp on own pre-reduce flags, D1 on own 
   window) beats c4b's (2.35). The per-layer bracket (SGLang patch 47: prepare_mlp + mlp + postprocess; for lopep
   only the mlp is non-empty) is 2.31-2.38 ms vs the harness 1.87: Nsight serving captures NG (plan 9) and NC4b2
   (`logs/sglang/jobN14.sh`, `--cuda-graph-trace=node`) to find the 0.45 ms.
+
+## Serving Nsight: NG (plan 9) vs NC4b2 (c4b) (job 59192086; `logs/sglang/nsys50/n_ours_{g9e,c4b}_d256`, jobN14.sh)
+- 52_timeline.py: plan 9 host range 561 us per layer-step, host lead ~29 ms (the host runs far ahead: GPU-bound),
+  GPU window 2557 us with 131 us idle; c4b host range 2653 us = GPU window 2687 us with 707 us idle (host-bound).
+- Per-layer period (MoE window start -> next window start), profiled: plan 9 2876 us (window 2557 + 321 gap, 188
+  busy in the gap = attention etc.), c4b 4072 us (window 2687 + 1354 gap, 186 busy: 1.17 ms of host-induced idle,
+  heavier under the profiler than in the clean run, where c4b's period is ~2.49 ms and plan 9's ~2.71 ms).
+- So plan 9 removed the host bottleneck; what limits it is its GPU chain (~2.43 ms busy per layer in serving vs
+  1.87 ms in the harness). Serving-only costs on the critical path (graph node timeline, us from window start):
+  swap_decide 205-448 (210 us; 8 us in the harness: real loads trigger rounds), lane_push x2 819-915 (140 us, the
+  expert-weight pushes of real moves, IN LINE on the forward stream between the derive and the dispatch planning),
+  routing all-gather ends 696 (+100 us skew), pack-push 213 us, combine GEMM2 end -> bucket reduce end 483 us
+  (harness 298), barrier 270 us. c4b pays the same swap_decide (212) and lane_push (136).
+- Fixes (lopep p9-dw3, tree lopep_b1): LOPEP_LANE_PUSH_SIDE=1 (a1e6113, python): the pushes run on a side stream
+  forked where they are issued (ahead of GEMM 1 in any shared hardware queue: no K2), joined before the first
+  commit (a commit may overwrite a slot a push reads) and at the end of the layer-step. LOPEP_SWAP_DECIDE_WARP=1
+  (e541763): one warp per heavy/light pair (slot ranks, memberships, the 64 exchange candidates in parallel, warp
+  max of the unique selection key) instead of one thread per pair (8 of 256 threads busy at 4n): bitwise identical
+  (test_swap_decide 840 cases: 401 swap decisions, 8683 moves, both variants PASS), 479 -> 91 us at 5 rounds,
+  708 -> 117 us at 8 rounds (R=16, L=4, G=128, nlp=10, strongly skewed loads; ~85-95 -> ~13-15 us per round).
