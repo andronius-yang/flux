@@ -55,7 +55,10 @@ ARM = {"ours": ("ours", 1), "oursR": ("ours", 2), "oursB": ("ours_plan6_binary",
        # + sync-only end-of-layer barrier (g9y), all S5 knobs without it (g9a)
        "kg9f": ("ours_plan9_cflat", 1), "kg9f2": ("ours_plan9_cflat", 2), "kg9ff": ("ours_plan9_dcflat", 1),
        "kg9ff2": ("ours_plan9_dcflat", 2), "kg9y": ("ours_plan9_sync", 1), "kg9y2": ("ours_plan9_sync", 2),
-       "kg9a": ("ours_plan9_dcflat", 3)}
+       "kg9a": ("ours_plan9_dcflat", 3),
+       # round 16 (lopep p9-e3 eeeb772, tree lopep_c4): + copy trims (staging kernel, no output clone, no pinned
+       # mirrors) on top of all S5 knobs + sync-only barrier (g9t)
+       "kg9t": ("ours_plan9_trims", 1), "kg9t2": ("ours_plan9_trims", 2)}
 MIB = {256: 1, 512: 2, 1024: 4}
 
 

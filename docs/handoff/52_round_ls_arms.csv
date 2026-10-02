@@ -1,0 +1,10 @@
+nodes,phase,budget_mib,tokens_per_rank,arm,run,alloc_job,server,decode_step_ms,step_iqr_lo,step_iqr_hi,out_tok_s_per_gpu,cuda_graph_used,intervals,layer_ms,layer_steps,kv_pin_tokens,heap,growths,tracebacks,model,gpu,lopep
+4,decode,1,256,ours_plan9_dcflat,3,,d30_kg9a,118.83,116.22,123.46,2155,False,192,2.115,4512,110727,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e3 eeeb772 / p9-e2 4ad89fa
+4,decode,1,256,ours_plan9_sync,1,,d30_kg9y,117.34,113.83,121.55,2183,False,192,2.075,4512,110727,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e3 eeeb772 / p9-e2 4ad89fa
+4,decode,1,256,stock_graphs_off,1,,d30_baseA,84.37,83.27,89.61,3034,False,192,1.506,4512,143794,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e3 eeeb772 / p9-e2 4ad89fa
+4,decode,2,512,ours_plan9_dcflat,3,,d30_kg9a,152.81,150.68,160.73,3351,False,192,2.71,4512,110727,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e3 eeeb772 / p9-e2 4ad89fa
+4,decode,2,512,ours_plan9_sync,1,,d30_kg9y,152.39,149.45,159.5,3360,False,192,2.693,4512,110727,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e3 eeeb772 / p9-e2 4ad89fa
+4,decode,2,512,stock_graphs_off,1,,d30_baseA,143.85,142.39,153.64,3559,False,192,2.605,4464,143794,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e3 eeeb772 / p9-e2 4ad89fa
+4,decode,4,1024,ours_plan9_dcflat,3,,d30_kg9a,234.9,233.98,249.05,4359,False,192,4.184,4176,110727,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e3 eeeb772 / p9-e2 4ad89fa
+4,decode,4,1024,ours_plan9_sync,1,,d30_kg9y,236.03,234.68,250.02,4339,False,192,4.197,4128,110727,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e3 eeeb772 / p9-e2 4ad89fa
+4,decode,4,1024,stock_graphs_off,1,,d30_baseA,271.5,269.22,285.13,3772,False,192,5.008,3984,143794,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e3 eeeb772 / p9-e2 4ad89fa

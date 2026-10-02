@@ -301,3 +301,14 @@ its quiet. Kept (correct, slightly better).
   only by the next replay of the same (layer, bucket)), LOPEP_NO_D2H_MIRRORS (no dispatch demands / plan block and
   combine plan block mirrors on deferred device-wire steps: no host reader); f9fdd4f LOPEP_PLANNER_KCOPY (the planner
   copies as bit-exact elementwise kernels). sps / uc mirrors kept (host combine readers not yet audited).
+
+## Round 16 (job 59195062; `52_round_16_arms.csv`) - copy trims, one allocation
+- Decode step ms at 256 / 512 / 1024 (x stock): stock 84.86 / 144.21 / 271.98; c4s 116.84 (0.73) / 140.53 (1.03) /
+  215.47 (1.26); plan 9 all S5 + sync (g9y) 117.96 / 152.85 / 236.45; **+ copy trims (g9t) 114.02 and 116.81 /
+  150.12 and 150.25 / 233.04 and 232.80**. Gates r16_*: graph flips, eager CDMC 1, graph growth, graph full: PASS.
+- Trajectory of plan 9 at 256 per rank: 130.3 (14b) -> 118.8 (swap fixes) -> 117.8 (fence fixes) -> 117.3 (sync
+  barrier) -> 115.4 (copy trims): each S5 item buys 1-4 ms; parity (84.9) needs ~30 ms more. The structural gap is
+  the inter-node transport: NVSHMEM device puts ~13 GB/s per GPU at the wire's ~1 MiB messages (P14), ~0.6-0.7 ms of
+  puts per layer, while stock's NCCL DP gather moves ~12 MiB of cross-node data per GPU in ~0.45 ms (~27 GB/s).
+  Probe P15 (NCCL send/recv in the SGLang environment on the wire's pairs) decides whether a NCCL inter-node wire
+  is worth proposing.
