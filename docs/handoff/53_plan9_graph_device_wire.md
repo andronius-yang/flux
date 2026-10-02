@@ -521,3 +521,43 @@ co-residency change).
 - **sglang-dev fast-forwarded to 288abfe** (60 commits over 8d3a8a0; local branch, not pushed).
 - Lopep serving note: lib49 OURS_ENV pins LOPEP_DEVICE_META=0 for every ours arm; a defaults arm sets LOPEP_DEVICE_META=1
   back (M4 = M2 on the default binary, logs/p50/m4.sh).
+- Prefill SMAX 256, input tok/s (x stock), same allocation: 8n defaults (job 59208503, lopep p9-f) 41902.23 vs stock
+  29588.02 (1.416x); 16n k17 (job 59204199, lopep p9-e14) 49932.16 vs 30996.39 (1.611x). 8n decode on the defaults:
+  job 59208504.
+- 8n decode on the defaults (job 59208504): stock 148.63 / 255.16 at 256 / 512 per rank; plan 9 defaults 133.77
+  (1.111x) / 184.10 (1.386x).
+
+## Plan 9 closed (10-02 09:40)
+- Final numbers, x stock, same allocation each:
+
+| nodes | decode 256 / rank | decode 512 | decode 1024 | prefill SMAX 256 | binary |
+|---|---|---|---|---|---|
+| 4 | 0.867 | 1.123 | 1.355 | (0.97 with the M2 binary) | k17, p9-e14 (round 17) |
+| 8 | 1.111 | 1.386 | - | 1.416 | defaults, p9-f |
+| 16 | 1.367 | 1.805 | - | 1.611 | k17, p9-e14 |
+
+  9/30 (plan-6 binary, 4n): 0.51 / 0.76 / 1.04, prefill 0.65. The one point below parity is 4n at 256 per rank.
+- Landed: every validated knob is default (lopep p9-f 0429f75, README 288abfe); local sglang-dev fast-forwarded to
+  288abfe (not pushed). Gates green at 4n (graph flips, CDMC 1, growth + forced abort, full, eager) and 8n.
+- Open: (1) the grouped non-blocking wire (LOPEP_WIRE_NBI_GROUP, default 3) batches the signals of a group's rounds
+  behind one nvshmem_quiet: data, sizes, destinations and issue order are unchanged, but round 1's consumers (gateway
+  forward, GEMM 1 tiles; combine receivers) wait for the group's slowest put, a departure from the paper's per-round
+  pipeline (paper section 4.2); the flat gateway forward also writes a window to all local GPUs in one pass (signals
+  still in cyclic order, after the pass). User decision pending: keep, or restore the per-round form (NBI_GROUP=0,
+  FWD_FLAT=0). Per-round signals with overlapping rounds are likely impossible on this stack (one NIC, one proxy
+  thread, a fence request between a put and its signal; the device put-signal implementation is compiled, so that is
+  inferred). (2) S3.5 (delete the proxy / plan ring / host builders) deferred. (3) nothing pushed.
+- Remaining gap at 4n / 256: ~0.27 ms per layer (2.07 vs 1.80 clean): MoE bracket 1.72 vs 1.54, the rest 0.09 per
+  layer. In the k17 capture the control plane before the first push is ~535 us (stock's routing ~50): AG1 + skew,
+  swap decision 43, routing chain ~60, AG2 ~95, planning chain ~140 (8 single-block kernels after the exchange,
+  7 before it: not fused).
+- Plan 10 candidates (user, 10-02): fuse the planning chain and the swap-decision + routing chain (1a / 1b); GEMM 1
+  tile stages: delivery-order scheduling IS implemented (workspace_util.cu calc_sorted_problem_schedule_v2: stage =
+  the tile's latest source, stage-major order), but each expert's rows are in source-RANK order while delivery order
+  is rotated per receiving rank, so at 256 per rank a 128-row tile spans ~10 sources incl. a late node (e.g. rank 6:
+  tile 0 holds node 0 = last round): probe with a per-tile trace, then deliver-order row layout (GEMM gather order +
+  combine indices; buffers unchanged) and / or smaller M tiles. Dropped: per-round-faithful wire overlap (above),
+  per-step trims (too small). Protocol-level (needs approval): one-step-stale swap decision, one exchange, fp8 wire.
+- Trees (lopep worktrees under $PSCRATCH/workspace/andrewy): lopep_c3 p9-f (defaults, = sglang-dev); lopep_b3 p9-e14
+  (k17 binary of round 17 / M3); lopep_b1 p9-e16; lopep_c4 p9-e3 (M2 binary). Knob-only branches p9-e7 .. p9-e15 hold
+  the debug traces (LOPEP_PACK_TRACE, LOPEP_WIRE_TRACE), HAG, ROUTE_SMEM, RELAY_SLOTS, the collapse tail: all off.
