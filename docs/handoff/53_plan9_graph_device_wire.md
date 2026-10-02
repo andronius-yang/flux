@@ -469,3 +469,26 @@ co-residency change).
   which slows c4s's host-issued wire (clean serving: c4s 0.33 ms per layer faster). Plan 9's start of GEMM 1 is ~290 us
   later at 1024: the SM pack-push of the own-node rows (4x the 256 volume, at the old ~30 GB/s) sits before GEMM 1,
   where c4s's copy-engine copies run beside it; the row-warp pushes address exactly this.
+
+## M2 at 8n (job 59200144, regular QOS, 25 min; lopep p9-e3 f9fdd4f = g9k knobs; `logs/sglang/j8nDm2_report.txt`)
+- Decode step ms (x stock), one allocation: stock 148.81 / 255.82 at 256 / 512 per rank; plan 9 (g9k) 161.94 (0.919x) /
+  219.28 (1.167x). c4s: the server took no request after its health check (no decode batch in either wave, the client
+  disconnected after 60 s, no traceback): a c4s hang at 8n, not a measurement.
+
+## M2 at 16n (job 59200143, regular QOS 25 min; lopep p9-e3 f9fdd4f, g9k knobs; `logs/sglang/j16nDm2_report.txt`)
+- Decode step ms (x stock): stock 274.32 / 471.43 at 256 / 512 per rank; plan 9 (g9k) 250.62 (1.095x) / 326.90 (1.442x).
+  c4s hung the same way as at 8n (no request served after the health check). Plan 9 beats stock at 1 MiB from 16
+  nodes on, even with the M2 binary (none of the 10-02 knobs).
+- LOPEP_RELAY_SLOTS=3 (lopep p9-e15 3d5bc0e; all three dispatch rounds of a 4n step in one nbi group; job 59204317):
+  gates PASS (incl. CDMC 1) but slower: 256 1.553 vs 1.498 (group capped at 2 slots), 1024 3.234 vs 3.048. One quiet
+  for all rounds holds back the first round's signal (the gateways' forwards and GEMM 1's first windows); the
+  two-round group is the better trade. Kept off.
+
+## Round 17 (job 59203750; `52_round_17b_arms.csv`; lopep p9-e14 c09762e, tree lopep_b3) - every 10-02 knob, one allocation
+- k17 = g9k + LOPEP_NO_D2H_MIRRORS=2, PLANNER_FUSED, COUNTS_HOST=1, COMBINE_PUSH_ROWWARP, DWIRE_PUSH_ROWWARP,
+  DWIRE_FWD_FLAT, WIRE_NBI_GROUP=3 (dispatch capped at the 2 relay slots), PLAN_SMEM, LAYER_SYNC=2.
+- Decode step ms at 256 / 512 / 1024 (x stock): stock 86.25 / 145.02 / 274.19; c4s 114.90 (0.75) / 143.15 (1.01) /
+  216.19 (1.27); g9k 120.18 / 150.10 / 230.72; **k17 99.19 and 99.74 (0.867) / 128.65 and 129.75 (1.123) / 203.81 and
+  200.91 (1.355)**: -17 / -14 / -12 % vs g9k; plan 9 now beats c4s at every point (the 512 / 1024 regression is gone).
+- Per-layer bracket at 256: k17 1.72 ms vs stock 1.54 (8.7 ms per step); the rest of the step: k17 ~16.9 ms vs stock
+  12.3 (4.6 ms per step outside the MoE). Capture of k17 at d256 (jN17, n_ours_k17_d256) for both.

@@ -1,0 +1,21 @@
+nodes,phase,budget_mib,tokens_per_rank,arm,run,alloc_job,server,decode_step_ms,step_iqr_lo,step_iqr_hi,out_tok_s_per_gpu,cuda_graph_used,intervals,layer_ms,layer_steps,kv_pin_tokens,heap,growths,tracebacks,model,gpu,lopep,in_tok_s,mean_ttft_ms,median_ttft_ms,requests,bench_s
+4,decode,1,256,ours_C3C4_swapfix,1,,d30_kc4s,115.01,114.15,117.77,2226,False,192,2.109,4512,139463,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,,,,,
+4,decode,1,256,ours_plan9_g9k,1,,d30_kg9k,113.57,110.35,116.42,2254,False,192,2.004,4512,110770,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,,,,,
+4,decode,1,256,stock_graphs_off,1,,d30_baseA,85.73,84.62,90.79,2986,False,192,1.533,4512,143794,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,,,,,
+4,decode,2,512,ours_C3C4_swapfix,1,,d30_kc4s,141.65,137.88,149.42,3615,False,192,2.525,4512,139463,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,,,,,
+4,decode,2,512,ours_plan9_g9k,1,,d30_kg9k,149.66,147.51,157.61,3421,False,192,2.66,4512,110770,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,,,,,
+4,decode,2,512,stock_graphs_off,1,,d30_baseA,145.31,144.5,155.05,3524,False,192,2.639,4464,143794,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,,,,,
+4,decode,4,1024,ours_C3C4_swapfix,1,,d30_kc4s,216.67,214.65,232.77,4726,False,192,3.858,4128,139463,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,,,,,
+4,decode,4,1024,ours_plan9_g9k,1,,d30_kg9k,232.46,231.11,245.71,4405,False,192,4.139,4176,110770,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,,,,,
+4,decode,4,1024,stock_graphs_off,1,,d30_baseA,273.45,271.41,291.63,3745,False,192,5.078,4080,143794,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,,,,,
+8,decode,1,256,ours_plan9_g9k,1,,d30_kg9k,161.94,157.05,165.82,1581,False,384,2.998,4512,119090,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,,,,,
+8,decode,1,256,stock_graphs_off,1,,d30_baseA,148.81,146.92,160.46,1720,False,384,2.907,4416,160242,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,,,,,
+8,decode,2,512,ours_plan9_g9k,1,,d30_kg9k,219.28,214.59,233.38,2335,False,384,4.14,4368,119090,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,,,,,
+8,decode,2,512,stock_graphs_off,1,,d30_baseA,255.82,253.46,278.62,2001,False,384,4.992,4176,160242,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,,,,,
+16,decode,1,256,ours_plan9_g9k,1,,d30_kg9k,250.62,244.81,262.02,1021,False,768,4.87,4512,94173,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,,,,,
+16,decode,1,256,stock_graphs_off,1,,d30_baseA,274.32,270.36,294.08,933,False,768,5.471,4512,144285,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,,,,,
+16,decode,2,512,ours_plan9_g9k,1,,d30_kg9k,326.9,322.04,361.67,1566,False,768,6.516,4224,94173,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,,,,,
+16,decode,2,512,stock_graphs_off,1,,d30_baseA,471.43,464.8,512.12,1086,False,384,9.527,2208,144285,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,,,,,
+4,prefill,1,256,ours_C3C4_swapfix,1,,p30_kc4s_s256,,,,,,,2.261,3936,50000,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,25563.34,1278.01,1135.16,960,12.67
+4,prefill,1,256,ours_plan9_g9k,1,,p30_kg9k_s256,,,,,,,1.979,3744,50000,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,25605.34,1229.96,930.43,960,12.65
+4,prefill,1,256,stock_graphs_off,1,,p30_baseA_s256,,,,,,,2.188,3792,50000,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53,26306.45,1236.36,1028.23,960,12.31

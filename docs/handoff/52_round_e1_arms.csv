@@ -1,0 +1,16 @@
+nodes,phase,budget_mib,tokens_per_rank,arm,run,alloc_job,server,decode_step_ms,step_iqr_lo,step_iqr_hi,out_tok_s_per_gpu,cuda_graph_used,intervals,layer_ms,layer_steps,kv_pin_tokens,heap,growths,tracebacks,model,gpu,lopep
+4,decode,1,256,ours_plan9_e1,1,,d30_ke1,116.77,113.94,120.92,2193,False,192,2.093,4512,111175,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53
+4,decode,1,256,ours_plan9_e1_check,1,,d30_ke1c,119.43,116.64,122.98,2144,False,192,2.13,4512,111175,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53
+4,decode,1,256,ours_plan9_e1_pack40,1,,d30_ke1p,126.44,122.82,132.05,2025,False,192,2.277,4512,111175,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53
+4,decode,1,256,ours_plan9_g9k,1,,d30_kg9k,116.34,112.82,122.25,2201,False,192,2.076,4512,110770,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53
+4,decode,1,256,ours_plan9_g9k,2,,d30_kg9k2,117.79,115.22,122.02,2174,False,192,2.105,4512,110770,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53
+4,decode,2,512,ours_plan9_e1,1,,d30_ke1,147.37,145.28,156.88,3475,False,192,2.621,4512,111175,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53
+4,decode,2,512,ours_plan9_e1_check,1,,d30_ke1c,148.27,145.7,156.61,3454,False,192,2.623,4512,111175,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53
+4,decode,2,512,ours_plan9_e1_pack40,1,,d30_ke1p,155.58,152.94,163.48,3291,False,192,2.787,4512,111175,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53
+4,decode,2,512,ours_plan9_g9k,1,,d30_kg9k,150.3,147.62,157.57,3407,False,192,2.667,4512,110770,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53
+4,decode,2,512,ours_plan9_g9k,2,,d30_kg9k2,149.96,147.55,159.09,3415,False,192,2.672,4512,110770,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53
+4,decode,4,1024,ours_plan9_e1,1,,d30_ke1,226.56,225.38,242.05,4520,False,192,4.037,4128,111175,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53
+4,decode,4,1024,ours_plan9_e1_check,1,,d30_ke1c,228.5,226.26,243.61,4481,False,192,4.063,4032,111175,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53
+4,decode,4,1024,ours_plan9_e1_pack40,1,,d30_ke1p,233.85,231.99,248.16,4379,False,192,4.157,4080,111175,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53
+4,decode,4,1024,ours_plan9_g9k,1,,d30_kg9k,233.32,230.62,245.86,4389,False,192,4.138,4176,110770,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53
+4,decode,4,1024,ours_plan9_g9k,2,,d30_kg9k2,231.21,229.4,245.98,4429,False,192,4.129,4128,110770,,0,0,Qwen3-30B-A3B,A100-40GB,see handoff 53

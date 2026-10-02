@@ -58,7 +58,15 @@ ARM = {"ours": ("ours", 1), "oursR": ("ours", 2), "oursB": ("ours_plan6_binary",
        "kg9a": ("ours_plan9_dcflat", 3),
        # round 16 (lopep p9-e3 eeeb772, tree lopep_c4): + copy trims (staging kernel, no output clone, no pinned
        # mirrors) on top of all S5 knobs + sync-only barrier (g9t)
-       "kg9t": ("ours_plan9_trims", 1), "kg9t2": ("ours_plan9_trims", 2)}
+       "kg9t": ("ours_plan9_trims", 1), "kg9t2": ("ours_plan9_trims", 2),
+       # rounds e1 / 17b (lopep p9-e6 5e9e89a tree lopep_w; p9-e14 c09762e tree lopep_b3): E1 planning trims (e1, e1c =
+       # counts check mode, e1p = + 40 pack SMs); k17 = every 10-02 knob (row-warp pushes, flat forward, grouped nbi
+       # wire, PLAN_SMEM, LAYER_SYNC=2, E1 trims); c4s and g9k as before on the same binary
+       "ke1": ("ours_plan9_e1", 1), "ke1c": ("ours_plan9_e1_check", 1), "ke1p": ("ours_plan9_e1_pack40", 1),
+       "kk17": ("ours_plan9_k17", 1), "kk172": ("ours_plan9_k17", 2),
+       # g9k = plan 9 with every S5 knob (M2 arm; rounds m2, e1, 17b), g9k2 its repeat; g9h = + LOPEP_HAG (round hg)
+       "kg9k": ("ours_plan9_g9k", 1), "kg9k2": ("ours_plan9_g9k", 2), "kg9h": ("ours_plan9_hag", 1),
+       "kg9h2": ("ours_plan9_hag", 2)}
 MIB = {256: 1, 512: 2, 1024: 4}
 
 
