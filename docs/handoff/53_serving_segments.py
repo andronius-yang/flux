@@ -2,7 +2,8 @@
 
   python 53_serving_segments.py seg  <capture.sqlite>   # period, pre-MoE, MoE start -> GEMM 1, GEMMs, combine tail, end sync
   python 53_serving_segments.py tail <capture.sqlite>   # every activity from GEMM 2 to the end sync, offsets from GEMM 2 end
-Layer periods are delimited by the end-of-layer barrier / sync kernels; decode-like periods = < 1.4x the median.
+Layer periods are delimited by the end-of-layer barrier / sync kernels; decode-like periods = < 1.4x the median, or
+BAND=lo_us,hi_us (e.g. a capture that also holds prefill steps).
 """
 import sys
 
@@ -24,7 +25,10 @@ def seg():
                          g1g2=(gm[1][0]-gm[0][1])/1e3, g2=(gm[1][1]-gm[1][0])/1e3, tail=(bs-gm[1][1])/1e3, bar=(be-bs)/1e3,
                          moe=(be-st0)/1e3))
     med=st.median(r['period'] for r in rows)
-    R=[r for r in rows if r['period']<1.4*med]
+    import os
+    band = os.environ.get("BAND")
+    lo, hi = (float(v) for v in band.split(",")) if band else (0.0, 1.4 * med)
+    R=[r for r in rows if lo <= r['period'] < hi]
     print("%s: %d layer periods (%d decode-like)"%(sys.argv[1].split('/')[-1],len(rows),len(R)))
     for k in ['period','pre','moe','to_g1','g1','g1g2','g2','tail','bar']:
         v=sorted(r[k] for r in R); print("  %-6s median %7.1f  p10 %7.1f  p90 %7.1f us"%(k,st.median(v),v[len(v)//10],v[9*len(v)//10]))
@@ -40,8 +44,11 @@ def tail():
     bars=[i for i,x in enumerate(K) if ('barrier_on_stream' in x[2] or 'sync_on_stream' in x[2])]
     agg=collections.defaultdict(lambda: [[],[],[],0,[]]); n=0; tails=[]
     per=[K[b1][1]-K[b0][1] for b0,b1 in zip(bars,bars[1:])]; med=st.median(per)
+    import os
+    band = os.environ.get("BAND")
+    lo, hi = (float(v) * 1e3 for v in band.split(",")) if band else (0.0, 1.4 * med)
     for (b0,b1),p in zip(zip(bars,bars[1:]),per):
-        if p>1.4*med: continue
+        if not (lo <= p < hi): continue
         seg=K[b0+1:b1+1]
         gm=[(s,e) for s,e,nm,g in seg if nm=='Kernel' and g>=64]
         if len(gm)<2: continue

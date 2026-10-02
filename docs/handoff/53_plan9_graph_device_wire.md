@@ -437,3 +437,35 @@ co-residency change).
 - Harness layer-step ms (job 59202662, row-warp + flat forward = "f"): f 1.702; + PLAN_SMEM 1.670; + PLAN_SMEM +
   LAYER_SYNC=2 1.542 (1024: 3.276). With the sync gone the median is dominated by the skew wait, which hides the
   planning gain: serving round 17 (stock, c4s, plan 9, plan 9 + every gated knob, one allocation) decides.
+
+## Stock vs plan 9 per layer at 256 per rank (captures n_stock_base_d256 job 59201915, n_ours_g9k_d256; `53_stock_layers.py`, `53_serving_segments.py`)
+- Stock (eager, profiled): layer period 1994 us; DP all-gather start -> last reduce-scatter end 1555 us: all-gather 374
+  (16 MiB out + rank skew), fused_moe 283, act 113, moe_sum_reduce 118, sort / align / topk ~50, reduce-scatter 456;
+  350 us of GPU idle per period (host-bound launches).
+- Plan 9 (g9k, profiled): period 2409 = 311 outside the MoE + 2108 MoE: control plane 0 -> 615 (all-gather 1 with skew
+  ~130-175, swap decision 55-75, routing ~90, all-gather 2 ~104, planning ~150), data path 615 -> 1850 (dispatch, GEMMs,
+  combine: 1235 us vs stock's ~1380 for all-gather + experts + reduce-scatter), end sync ~260.
+- So at 1 MiB our data path already beats stock's dense all-gather / reduce-scatter; the whole gap is the control plane
+  (~600 us: swap decision, routing, the second exchange, planning) plus the end-of-layer sync (removed by LAYER_SYNC=2,
+  its skew wait moves into the next all-gather). Stock pays ~350 us of host-bound idle per layer outside the MoE that
+  graph replay does not.
+- Dispatch / combine wire timestamps (job 59202964, harness 256, rank 0): dispatch puts 88 / 88 / 92 us for 162 / 161 /
+  195 rows (0.66-0.8 MB, ~8 GB/s each, issued one after another: 270 us); combine puts 100 / 85 / 98 us, each waiting for
+  the previous put's return (ready 148 / 249 / 334); flat forward 14-19 us per window. 1024: dispatch 248 / 199 / 194 us
+  (681 / 629 / 777 rows), combine 205 / 213 / 207 us. P10 (one target per GPU): 1 MiB 110 us per iteration alone, 4 x 1
+  MiB 327 us (~13 GB/s injection), so overlapping puts to the three different nodes is tested next
+  (LOPEP_WIRE_NBI_GROUP: nbi puts, one quiet, then the signals = P10 variant nqs, signal after data).
+- Grouped non-blocking wire (lopep p9-e14 c09762e, LOPEP_WIRE_NBI_GROUP; job 59203293, on top of row-warp + flat
+  forward + PLAN_SMEM + LAYER_SYNC=2): gates PASS for ROUTE_SMEM, group 2, group 3, group 3 at CDMC 1 (0 bad rows).
+  Harness layer-step ms: 256 base 1.511, ROUTE_SMEM 1.534 (no gain, kept off), group 2 1.493, group 3 1.483; 1024 base
+  3.393, group 3 3.055 (-10 %). Wire timestamps (256): the dispatch's second round is ready at 65 us instead of 114 (its
+  relay no longer waits for put 0), the group's signals land after one quiet (~120 us), round 3 (third slot reuse:
+  relay slots = 2 caps the dispatch group at 2) ends at ~252 vs 297; the combine's three puts all complete by ~315 us
+  vs 447 (each put no longer waits for the previous one's return). 1024: dispatch 623 vs 654, combine ~830 vs 944.
+- 1024 per rank captures (job 59201915, n_ours_{c4s,g9k}_d1024; the 20 profiled steps hold prefill too, decode layer
+  periods = BAND 3.5-6 ms): c4s 417 periods, median 4672 us (MoE 4097: to GEMM 1 892, GEMM 1 941, GEMM 1 -> 2 184,
+  GEMM 2 184, tail 1476, barrier 393); plan 9 (g9k, before row-warp / flat forward / grouped wire) 515 periods, 4672
+  (MoE 4050: to GEMM 1 1185, GEMM 1 760, -> GEMM 2 128, GEMM 2 244, tail 1292, sync 366). Equal under the profiler,
+  which slows c4s's host-issued wire (clean serving: c4s 0.33 ms per layer faster). Plan 9's start of GEMM 1 is ~290 us
+  later at 1024: the SM pack-push of the own-node rows (4x the 256 volume, at the old ~30 GB/s) sits before GEMM 1,
+  where c4s's copy-engine copies run beside it; the row-warp pushes address exactly this.
