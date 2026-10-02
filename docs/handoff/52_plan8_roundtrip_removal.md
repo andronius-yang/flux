@@ -387,3 +387,27 @@ MoE (CSV layer_ms, includes attention-side bookkeeping of the hook): c4b 2.173 /
 Capture recipe fix #2: the two-step split cannot work (each Slingshot job step has its own network VNI; NCCL init
 hung in `ncclCommInitRank` on every rank, round 12, job 59179882, NB lost); `jobN11.sh` back to the round-8 single
 step (node 0 under nsys, `--capture-range-end=stop-shutdown --kill=sigterm`).
+
+### Round 13 prefill + capture NC4b (job 59181642): the post-C4 floor list
+Prefill SMAX 256 (input tok/s): b8f 21310 / 22225, **c4b 24974 / 25176**, stock 24149 (stock was 27132 on the round-12
+allocation: prefill stock varies across allocations; within this one c4b = 1.04x stock, +15 % over b8f).
+Capture `nsys50/n_ours_nc4b_d256.nsys-rep` (jobN11 single-step recipe, works), analysis `timeline_nc4b.txt`,
+`hostcalls_nc4b.txt` (medians per layer-step, 910 steps, S<=256 decode, timing ledger on):
+- T1 planning end -> first wire 68.6 us (round 8: 719); T1p first payload 244.6; host blocked in syncs 0 (round 8: 103).
+- GPU window 2707 us, GPU idle 1052 (363 during main-thread API calls, 685 during host code); host range 2691 us ~=
+  GPU window, GPU start - call start 6-16 us: the layer-step is HOST-BOUND (as in round 8: 3745 / 3799).
+- Main thread per layer (host us / of which API): pad+loads 364 / 103, swap_decide 101 / 31, route+xchg 300 / 93,
+  meta+check 140 / 62, push0 93 / 25, dispatch 849 / 268 (385 host code before the GEMM 1 launch: pack x7, workspace,
+  consumer build; drain wait ~86; combine derive + scale ~390), commit0 39, act 54, push1 32, combine 536 / 148,
+  commit1 40, pad_out 42; 214 API calls / 801 us of API per layer. Proxy: 408 us of API per layer (130 calls), first
+  call 1375 us into the step (the wire program is posted at the pack points, so it inherits the main thread's pace).
+- GPU critical-path items: two NCCL all-gathers 71.5 + 82.5 us (loads, routing), NVSHMEM barrier kernel 196 us
+  (includes cross-rank skew), pre-reduce 223 us and join 148 us (spins), GEMM 1 398 us (spins on wire), GEMM 2 104.
+- Leftovers in the deferred path: 4-5 unread D2H copies per layer after the demands kernel (64 B, 1664 B x2, 11264 B,
+  1280 B: the legacy host copies of the plan / counts), 32 event records, 16 cudaEventCreate per layer.
+Floor list for the 1 MiB point (target 1.1x stock = ~1.25 ms per MoE layer from c4b 2.17): the host is the floor.
+Ranked levers: (A) the routing / planning prologue (pad+loads, swap_decide, route+xchg, meta+check: ~905 us of host per
+layer, now free of host reads since C4) as one CUDA graph per bucket; (B) dispatch / combine host code (pack launches
+fused, unread D2H copies, event create / record churn, the B5 host-builder deletion): ~300-400 us; (C) one routing
+exchange instead of two (closed 08-29, user decision); (D) the per-layer barrier (196 us GPU incl. skew) via parity
+buffers.
