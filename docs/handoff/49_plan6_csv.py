@@ -47,7 +47,10 @@ ARM = {"ours": ("ours", 1), "oursR": ("ours", 2), "oursB": ("ours_plan6_binary",
        "kc4b": ("ours_C3C4_bounded", 1), "kc4bR": ("ours_C3C4_bounded", 2), "kc4u": ("ours_C3C4_unbounded", 1),
        # round 14b (plan 9, lopep p9-dw3 6bf04e5 in tree lopep_b1): device-issued wire + one CUDA graph per (layer,
        # bucket) + early wire fork; c4b as round 13 (tree lopep_c3)
-       "kg9e": ("ours_plan9_graphs", 1), "kg9e2": ("ours_plan9_graphs", 2)}
+       "kg9e": ("ours_plan9_graphs", 1), "kg9e2": ("ours_plan9_graphs", 2),
+       # round 15 (lopep p9-dw3 e541763, tree lopep_b1): + side-stream lane pushes + warp swap decision (g9s), the
+       # same two knobs on the c4b config of that binary (c4s)
+       "kg9s": ("ours_plan9_swapfix", 1), "kg9s2": ("ours_plan9_swapfix", 2), "kc4s": ("ours_C3C4_swapfix", 1)}
 MIB = {256: 1, 512: 2, 1024: 4}
 
 

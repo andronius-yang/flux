@@ -230,3 +230,27 @@ graph edge, C4 on own C2 slot words, D2 warp on own pre-reduce flags, D1 on own 
   max of the unique selection key) instead of one thread per pair (8 of 256 threads busy at 4n): bitwise identical
   (test_swap_decide 840 cases: 401 swap decisions, 8683 moves, both variants PASS), 479 -> 91 us at 5 rounds,
   708 -> 117 us at 8 rounds (R=16, L=4, G=128, nlp=10, strongly skewed loads; ~85-95 -> ~13-15 us per round).
+
+## Round 15 (job 59192670; `52_round15_arms.csv`, `logs/sglang/j4nD15_report.txt`) - swap fixes, one allocation
+- Decode step median ms at 256 / 512 / 1024 per rank (x stock): stock 84.49 / 144.09 / 271.92; c4b 116.05 (0.73) /
+  146.87 (0.98) / 218.88 (1.24); **c4s** = c4b config on the p9-dw3 e541763 binary + LOPEP_LANE_PUSH_SIDE=1 +
+  LOPEP_SWAP_DECIDE_WARP=1: **113.83 (0.74) / 141.02 (1.02) / 215.99 (1.26)**; plan 9 as round 14b 127.73 / 159.50
+  / 240.43; plan 9 + both swap fixes (g9s) 120.17 and 117.47 / 153.44 and 152.56 / 234.60 and 233.84. Gates (r15_*):
+  graph flips, eager flips, eager CDMC 1, graph growth, c4s flips: all PASS.
+- The swap fixes help both paths (-4..-8 ms plan 9, -2..-6 ms c4b); c4s clears stock at 512 per rank. Plan 9 stays
+  3-8 % behind the eager path: GPU-bound, its deficit is GPU-chain time. It remains the route to parity at 256
+  (c4b runs into its host floor; plan 9's host is ~0.56 ms per layer): the per-layer period must go from ~2.45 to
+  ~1.76 ms (stock 84.49 / 48).
+
+## Fence flattening (S5)
+- Serving combine detail (NG capture, relative to GEMM2 end): the combine pack-push (20 blocks x 512) ends +213 us,
+  the pre-reduce +211, the three combine puts +368, the barrier +780. Cause: per (node, destination) the push ends
+  with `__threadfence_system()` + `__syncthreads()` before the last-block signal: 16 serial round-trip-latency-bound
+  push rounds per block. LOPEP_COMBINE_PUSH_FLAT (lopep cd87b8a): a node's rows of all its L destinations in one
+  pass, one fence, then the per-destination arrivals (signals still after their data, every block still arrives
+  once per destination). The dispatch pack-push has the same pattern (a fence per segment): LOPEP_DWIRE_PACK_FLAT
+  (lopep p9-e1, tree lopep_c4). Gates: graph flips, eager CDMC 1, graph growth PASS (combine); graph flips PASS
+  (both). Harness A/B (graphs, layer-step ms): combine flat 1.891 vs 1.869 / 1.871 at 256 (neutral), 3.653 vs
+  3.724 / 3.731 at 1024 (-2 %); the harness never had serving's long combine tail: serving A/B decides.
+- Not parallelizable as hoped: the meta arena reads the step's counts, which the demands kernel zeroes on a
+  degenerate (aborted) layer, so the arena must follow the demands (K11).
