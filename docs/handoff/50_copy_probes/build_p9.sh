@@ -19,3 +19,7 @@ $NV -rdc=true $MPI_CFLAGS -I$NVSHMEM_HOME/include p10_dev_put.cu -o $OUT/p10_dev
 $NV -rdc=true $MPI_CFLAGS -I$NVSHMEM_HOME/include p12_barrier.cu -o $OUT/p12_barrier -L$NVSHMEM_HOME/lib \
   -lnvshmem_host -lnvshmem_device -lcudadevrt -lcuda $MPI_LIBS -Xlinker -rpath=$NVSHMEM_HOME/lib \
   -Xlinker -rpath=$CUDA_HOME/lib64 2>&1 | grep -v "warning #\|Remark\|^$"; ls $OUT/p12_barrier >/dev/null 2>&1 && echo "p12 OK"
+NCCLD=${NCCL_HOME:-$NCCL_DIR}
+$NV -rdc=true $MPI_CFLAGS -I$NVSHMEM_HOME/include -I$NCCLD/include p13_allgather.cu -o $OUT/p13_allgather -L$NVSHMEM_HOME/lib \
+  -L$NCCLD/lib -lnccl -lnvshmem_host -lnvshmem_device -lcudadevrt -lcuda $MPI_LIBS -Xlinker -rpath=$NVSHMEM_HOME/lib \
+  -Xlinker -rpath=$NCCLD/lib -Xlinker -rpath=$CUDA_HOME/lib64 2>&1 | grep -v "warning #\|Remark\|^$"; ls $OUT/p13_allgather >/dev/null 2>&1 && echo "p13 OK"

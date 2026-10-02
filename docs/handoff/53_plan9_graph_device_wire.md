@@ -254,3 +254,15 @@ graph edge, C4 on own C2 slot words, D2 warp on own pre-reduce flags, D1 on own 
   3.724 / 3.731 at 1024 (-2 %); the harness never had serving's long combine tail: serving A/B decides.
 - Not parallelizable as hoped: the meta arena reads the step's counts, which the demands kernel zeroes on a
   degenerate (aborted) layer, so the arena must follow the demands (K11).
+
+## Rank skew in serving (job 59194370; every node under nsys, `logs/sglang/jobN15.sh`; analyzer `53_rank_skew.py`)
+- Plan 9 with all S5 knobs, decode 256 per rank: 16 ranks, 907 layer-steps aligned on the end-of-layer barrier
+  exits (residual < 26 us; the lopep NVTX ranges exist on rank 0 only, layer-steps are delimited by the barrier
+  kernel). Median barrier time per rank 205-284 us; the LAST arriving rank still spends 154 us in it (p10 140, p90
+  170) vs 34 us for an idle barrier (P12); arrival spread first -> last rank median 183 us (p90 260); the slowest
+  rank rotates (node 2 rank 3 in 200 of 907, node 3 rank 3 in 161, ...); on it the combine (GEMM2 end -> last
+  bucket reduce) takes 555 us vs 453 on the median rank, every other segment equal.
+- So the barrier costs ~120 us more than a barrier per layer: `nvshmemx_barrier_all_on_stream` quiets first (waits
+  for the remote completion of every NVSHMEM operation of the PE: the combine puts were just issued). Every put of
+  the layer has a consumer that waited for its signal before entering the barrier (signal after data, P10), so the
+  synchronization alone keeps K4: LOPEP_LAYER_SYNC=1 (lopep p9-e2 4ad89fa) uses `nvshmemx_sync_all_on_stream`.
