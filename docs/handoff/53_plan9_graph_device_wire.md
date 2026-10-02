@@ -348,3 +348,92 @@ no effect. These steps take the wave path (the tail kernel returns at once); the
 the 10 SMs GEMM 2 reserves for it) pushes every wave: ~8 MiB at ~38 GB/s, the 211 us tail. Next: more SMs for the
 pack (LOPEP_COMBINE_PACK_SMS, lopep p9-e5 72aa61b; GEMM 2's persistent grid shrinks by the same margin, no
 co-residency change).
+
+## E3: hierarchical all-gather (job 59201100, lopep p9-e5 2adf5cb, LOPEP_HAG=1): null result
+- `src/dwire/hag.cu`: the layer's two exchanges (loads, routing) without NCCL: NVLink stores into every node peer's
+  copy of the output + release signal, then per remote node ONE blocking device put-with-signal of the node block
+  (signal after data, P10) by the local rank j = lr (mod L), then an NVLink forward by the receiver; same bytes and
+  layout as all_gather_into_tensor. Cross-rank waits acyclic (step 1 waits for nothing, step 2 for the node's step 1,
+  step 3 for a remote step 2); buffers reused only after the end-of-layer sync (K4); spins poll the kill word.
+- Gates PASS (graph flips, eager CDMC 1, graph growth 3 growths / 2 redos, graph full; 0 bad rows). Harness layer-step
+  ms (graphs): 256 nccl 1.806 / hag 1.798 / nccl 1.780; 1024 nccl 3.572 / hag 3.498 / nccl 3.542.
+- Serving decode (one allocation): HAG 117.03 / 150.00 / 232.93 and 119.52 / 150.50 / 234.40 vs NCCL 115.26 / 149.28 /
+  233.21: no gain (+2-4 ms at 256, noise above). The exchanges' time in serving is mostly the ranks' arrival skew
+  (attention under DP is per-rank work; the swap decision follows the first exchange): a faster transport waits for
+  the same last rank. The ~47 us idle before the captured NCCL kernel goes, the wait moves into the HAG kernel. Knob
+  kept, off.
+
+## Where plan 9 loses (analysis of the n16 capture `n_ours_g9k_d256` vs `n_ours_nc4b_d256`; scratchpad analyzers)
+- Per layer (rank 0, medians, us; `g_seg.py`): plan 9 period 2409 = pre-MoE 311 + MoE 2108 (MoE start -> GEMM 1 start
+  849, GEMM 1 320, GEMM 1 -> GEMM 2 62, GEMM 2 76, combine tail 504, end sync 257); c4b period 4117 (host-bound) =
+  pre-MoE 1628 + MoE 2472 (to GEMM 1 1120, GEMM 1 360, GEMM 1 -> 2 339, GEMM 2 103, tail 346, barrier 194).
+- **The combine tail is 158 us longer in plan 9** (`g_tail.py`, offsets from GEMM 2's end): c4b's pack kernel only packs
+  locally (ends +7.5 us), the intra-node rows go by copy engine (4 x 1.39 MB peer copies + 4 x 0.48 MB, done at +74),
+  the proxied puts +105..+334; plan 9's pack kernel pushes every row over NVLink with SM stores and ends at +203 (8 MiB
+  in ~280 us from its start = ~30 GB/s), the pre-reduce follows (+230), the device wire puts end +415. The dispatch
+  pack-push shows the same rate (~1.6 MiB in 56 us). The SM push rate per SM is ~3 GB/s, far below NVLink: the pushes
+  are latency-bound (index -> gathered row -> remote store, one 16-byte pack per thread per iteration).
+- Non-MoE time per step (step - 48 x bracket, round 16): stock 12.6 ms, c4s 14.3, plan 9 16.7-17.6; at 512 / 1024 plan
+  9's MoE bracket is 0.15 / 0.3 ms per layer LONGER than c4s's (2.66-2.70 vs 2.51; 4.13-4.21 vs 3.84): plan 9 loses to
+  c4s at 2 and 4 MiB in serving. Captures next (stock d256, c4s and plan 9 d1024; `logs/sglang/jobN17.sh`).
+- Decode step boundary (`g_steps2.py`, `g_turn2.py`): the host runs ~150 ms ahead inside a forward (graphs), blocks in
+  forward_check's event wait for the whole forward, then needs 7.4-8.2 ms (profiled) to the next forward's first graph
+  launch (sampling, scheduling, the next batch, the counts all-gather of `_prefetch_counts` with its host read, layer 0's
+  attention) with the GPU ~0.7 ms busy in it. LOPEP_COUNTS_HOST (below) removes the counts all-gather and its host read.
+
+## E1 trims (lopep p9-e6 5e9e89a, tree lopep_w; job 59201915 gates + serving A/B)
+- LOPEP_NO_D2H_MIRRORS=2: also the routed counts' mirrors (sps 11264 B, uc 1280 B DtoH per layer, ~13 us with their
+  bubbles) on deferred device-wire steps. Audit: every host reader of sps / uc is on a non-deferred path (combine host
+  tables under !deferred or device meta 0 / 2; dispatch uses the pinned tensor's pointer as an identity token only), and
+  no host wait follows these copies on a deferred step, so a host read would already race them.
+- LOPEP_PLANNER_FUSED=1: the routing exchange's send packing (2 kernels -> 1) and the plan tail after the exchange
+  (gate-weight copy, floor division, remainder, multiply-add: 6 kernels, ~13 us -> 1), bitwise (torch floor / remainder
+  semantics).
+- LOPEP_COUNTS_HOST=1 (SGLang runtime): the forward's per-rank counts from `ForwardBatch.global_num_tokens_cpu` (the
+  scheduler's MLP sync, unpadded until model_runner.forward pads it) instead of a GPU all-gather + host read before
+  every forward; =2 also gathers and asserts equality.
+
+## Combine pack kernel timestamps (job 59202014, debug 4n; lopep p9-e7 2e28d69 LOPEP_PACK_TRACE, p9-e8 50453b8)
+- Per block %globaltimer at entry, per wave (flag seen, pushes done, fence + arrivals done), exit; harness layer-step
+  with graphs and every knob, last layer of the run, rank 0 (median / max over the 20 blocks, us from the first entry):
+  - 256 per rank: w0 flag 46, pushed 70, fenced 88/122; w1 flag 89 (already set: the pack is BEHIND GEMM 2), pushed
+    106, fenced 119/170; w2 157; w3 pushed 189, fenced 198/275. Per wave ~20 us of pushes and ~10-18 us of fence; the
+    slowest block lags the median by 30-75 us.
+  - 1024: pushes 85 / 45 / 82 / 141 us per wave (32 MiB at ~90 GB/s), fences ~10-14 us each, exit 469/533.
+- Warp-per-row pushes (LOPEP_COMBINE_PUSH_ROWWARP, LOPEP_DWIRE_PUSH_ROWWARP: the row's index, source and destination
+  once per warp, four independent 16-byte loads per lane before the stores): correctness cell PASS (graph flips, 0 bad
+  rows). Pack exit 256: 155/217 (was 198/275; w0's 2 MiB pushed in 14 us = 150 GB/s, after which the pack waits for
+  GEMM 2's waves); 1024: 357/393 (was 469/533). Harness layer-step: 256 1.794 -> 1.763 (combine only 1.761); 1024
+  3.543 -> 3.580 (the combine at 1024 is bound by its inter-node wire, ~11 MB per GPU, not by the pack).
+- E1 serving (job 59201915, one allocation, decode ms 256 / 512 / 1024): g9k 116.34 / 150.30 / 233.32; + MIRRORS=2 +
+  PLANNER_FUSED + COUNTS_HOST=2 (check mode: the scheduler's counts equalled the gathered ones in every forward, 0
+  tracebacks) 119.43 / 148.27 / 228.50; + COUNTS_HOST=1 116.77 / 147.37 / 226.56: -3 / -7 ms at 512 / 1024, neutral at
+  256.
+
+## Copy-path knobs (debug jobs 59202014, 59202228; lopep p9-e8 50453b8, p9-e9 5f5c532 / 22a7903, p9-e10 75538f6)
+- LOPEP_DWIRE_FWD_FLAT (gateway forward: a window to all L destinations in one pass, each 16 bytes loaded once and
+  stored L times, one fence, then the arrivals; was one copy + fence per destination): gate PASS; harness 256 1.778
+  (row-warp) -> 1.736.
+- Forced wave collapse (LOPEP_COMBINE_WAVE_ADAPT=1) + flat wide tail push (LOPEP_COMBINE_TAIL_PUSH=216): 256 1.838
+  (worse: the single-pass GEMM 2 cannot overlap the pushes), and its gate FAILED with 1 bad row (2 with SYNC=2):
+  isolation in job pt5 (original per-node tail push vs the flat one; the collapsed path also runs by default for small
+  batches, so a race there would matter beyond this experiment).
+- LOPEP_LAYER_SYNC=2 (no end-of-layer synchronization; the next layer-step's NCCL exchanges order the buffer reuse, see
+  the gemm_combine.cc comment and below): harness 256 1.736 -> 1.542 (the per-layer timing window now holds the skew
+  wait only inside a forward; the last layer of a forward hides it, so serving decides).
+  K4 argument: a rank's cross-rank writes of layer k+1 (pushes, puts, forwards, lane pushes, relay sources) are all
+  stream-ordered after its routing all-gather of k+1, which completes only once every rank has issued it, i.e. after
+  every rank's whole layer-k stream / graph work; reads of a peer's buffer in layer k (relay pulls) complete before the
+  put they feed, which a remote node's layer k (and so its all-gather of k+1) waits for. Not with LOPEP_HAG (its first
+  step writes the peers' buffers before any wait; serving.py asserts).
+- Gates (job 59202662, lopep p9-e11 6d32cc2, row-warp + flat forward on): LOPEP_LAYER_SYNC=2 PASS; LOPEP_PLAN_SMEM=1
+  PASS; both PASS. Forced collapse with the original per-node tail push FAILS the same way as with the flat one: one
+  element of one row on rank 14, deterministic (same rank, same row count, max abs err 0.0122 vs atol 1e-2 with a small
+  reference): the collapsed path's numerics (bf16 GEMM output, then x the row scale, rounded again; the wave path folds
+  the scale into GEMM 2's input), not a race. Pre-existing behaviour of the collapsed path, which the default ratio
+  (48) selects only below ~540 remote rows; noted, not pursued (collapse is also slower at 256 / 1024).
+- LOPEP_COMBINE_PACK_SMS=40 on top of the E1 trims (job 59201915): 126.44 / 155.58 / 233.85 vs 116.77 / 147.37 / 226.56
+  without: worse (GEMM 2 loses the SMs). Dropped.
+- Harness layer-step ms (job 59202662, row-warp + flat forward = "f"): f 1.702; + PLAN_SMEM 1.670; + PLAN_SMEM +
+  LAYER_SYNC=2 1.542 (1024: 3.276). With the sync gone the median is dominated by the skew wait, which hides the
+  planning gain: serving round 17 (stock, c4s, plan 9, plan 9 + every gated knob, one allocation) decides.
