@@ -492,3 +492,32 @@ co-residency change).
   200.91 (1.355)**: -17 / -14 / -12 % vs g9k; plan 9 now beats c4s at every point (the 512 / 1024 regression is gone).
 - Per-layer bracket at 256: k17 1.72 ms vs stock 1.54 (8.7 ms per step); the rest of the step: k17 ~16.9 ms vs stock
   12.3 (4.6 ms per step outside the MoE). Capture of k17 at d256 (jN17, n_ours_k17_d256) for both.
+
+## M3 = M2 rerun on the round-17 stack (k17, lopep p9-e14 c09762e; regular QOS 20 min pieces)
+- 16n decode (job 59204196): stock 278.35 / 473.75 at 256 / 512 per rank; **k17 203.66 (1.367x) / 262.50 (1.805x)**
+  (M2 binary g9k: 1.095x / 1.442x).
+- 8n decode / prefill (jobs 59204197 / 59204198): the k17 server failed in its warm-up: LOPEP_PLAN_SMEM launched the
+  dispatch plan kernel with ~30 KB of staged counts beside its ~31 KB of static scratch without the >48 KB opt-in
+  ("invalid argument"; 4n stages 12.6 KB, 16n stages nothing): jobs cancelled. Fix lopep p9-e16 02f78c2 (count the
+  static bytes, opt in above 48 KB, same rule for the arena and demands kernels); 8n debug gate + rerun follow.
+- NCCL_GRAPH_MIXING_SUPPORT=0 (job 59205804): gate PASS, harness 256 1.532 / 1.524 vs 1.493 / 1.487 with it on:
+  worse, not pursued.
+
+## Default flips and sglang-dev (lopep p9-f 0429f75 + 288abfe; tree lopep_c3)
+- Every round-17 knob is now the default (env still overrides): DEVICE_META 1, SWAP_DECIDE device, LAYER_BARRIERS 1,
+  DEFERRED_VERDICT 1, STEP_STATE 1, DWIRE 1, DWIRE_EARLY_FORK 1, LAYER_GRAPH on when its preconditions hold (an explicit 1
+  still asserts them), GRAPH_MAX_BUCKET 1024, LANE_PUSH_SIDE 1, SWAP_DECIDE_WARP 1, COMBINE_PUSH_FLAT 1, DWIRE_PACK_FLAT 1,
+  LAYER_SYNC 2 on the device wire (1 with LOPEP_HAG or the host-issued wire), GRAPH_STAGE_KERNEL 1, GRAPH_OUT_COPY 0,
+  NO_D2H_MIRRORS 2, PLANNER_KCOPY 1, PLANNER_FUSED 1, COUNTS_HOST 1, COMBINE/DWIRE_PUSH_ROWWARP 1, DWIRE_FWD_FLAT 1,
+  WIRE_NBI_GROUP 3, PLAN_SMEM 1, EXACT_BUCKETS 0, REBALANCE 0 (WIRE_PLAN / WIRE_PROXY stay 0). The integration README
+  describes the serving path and how to select the eager / host-issued paths.
+- PLAN_SMEM opt-in fix p9-e16 02f78c2 gated at 8n (debug job 59205934: k17 gates PASS incl. CDMC 1 and growth + forced
+  abort; harness layer-step 2.174 / 4.393 ms at 256 / 1024).
+- Defaults with an empty environment (debug job 59206994): gates PASS (graph flips, CDMC 1, growth + forced abort 3
+  growths / 2 redos, full, eager); harness layer-step 256 1.485 (defaults) vs 1.465 (the round-17 knobs set explicitly).
+- oss_audit.sh on the tree: the plan-8 comment with measured numbers removed; the remaining content findings
+  (env/perlmutter_sglang.sh, a conda path in the integration README) predate plan 9 on sglang-dev and are absent from
+  master (the release source); history findings apply to the release snapshot only.
+- **sglang-dev fast-forwarded to 288abfe** (60 commits over 8d3a8a0; local branch, not pushed).
+- Lopep serving note: lib49 OURS_ENV pins LOPEP_DEVICE_META=0 for every ours arm; a defaults arm sets LOPEP_DEVICE_META=1
+  back (M4 = M2 on the default binary, logs/p50/m4.sh).
