@@ -1,0 +1,16 @@
+nodes,phase,budget_mib,tokens_per_rank,arm,run,alloc_job,server,decode_step_ms,step_iqr_lo,step_iqr_hi,out_tok_s_per_gpu,cuda_graph_used,intervals,layer_ms,layer_steps,kv_pin_tokens,heap,growths,tracebacks,model,gpu,lopep
+4,decode,1,256,ours_C3C4_swapfix,1,,d30_kc4s,115.99,114.56,119.75,2207,False,192,2.129,4512,139463,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e1 27699cb / p9-cf cd87b8a
+4,decode,1,256,ours_plan9_cflat,1,,d30_kg9f,122.64,119.82,125.36,2088,False,192,2.191,4512,110727,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e1 27699cb / p9-cf cd87b8a
+4,decode,1,256,ours_plan9_dcflat,1,,d30_kg9ff,118.19,115.05,121.93,2166,False,192,2.087,4512,110727,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e1 27699cb / p9-cf cd87b8a
+4,decode,1,256,ours_plan9_dcflat,2,,d30_kg9ff2,117.35,113.43,119.84,2182,False,192,2.066,4512,110727,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e1 27699cb / p9-cf cd87b8a
+4,decode,1,256,stock_graphs_off,1,,d30_baseA,84.37,83.07,89.1,3035,False,192,1.489,4704,143794,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e1 27699cb / p9-cf cd87b8a
+4,decode,2,512,ours_C3C4_swapfix,1,,d30_kc4s,139.83,137.16,151.05,3662,False,192,2.509,4512,139463,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e1 27699cb / p9-cf cd87b8a
+4,decode,2,512,ours_plan9_cflat,1,,d30_kg9f,154.74,152.71,162.81,3309,False,192,2.762,4512,110727,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e1 27699cb / p9-cf cd87b8a
+4,decode,2,512,ours_plan9_dcflat,1,,d30_kg9ff,152.03,149.39,159.54,3368,False,192,2.692,4512,110727,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e1 27699cb / p9-cf cd87b8a
+4,decode,2,512,ours_plan9_dcflat,2,,d30_kg9ff2,152.04,150.29,159.52,3368,False,192,2.708,4512,110727,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e1 27699cb / p9-cf cd87b8a
+4,decode,2,512,stock_graphs_off,1,,d30_baseA,151.73,145.02,3856.29,3374,False,48,2.572,1200,143794,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e1 27699cb / p9-cf cd87b8a
+4,decode,4,1024,ours_C3C4_swapfix,1,,d30_kc4s,214.47,212.79,231.91,4775,False,192,3.829,4128,139463,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e1 27699cb / p9-cf cd87b8a
+4,decode,4,1024,ours_plan9_cflat,1,,d30_kg9f,237.4,235.3,249.98,4313,False,192,4.229,4080,110727,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e1 27699cb / p9-cf cd87b8a
+4,decode,4,1024,ours_plan9_dcflat,1,,d30_kg9ff,236.55,234.94,250.47,4329,False,192,4.196,4128,110727,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e1 27699cb / p9-cf cd87b8a
+4,decode,4,1024,ours_plan9_dcflat,2,,d30_kg9ff2,235.62,233.7,249.22,4346,False,192,4.206,4032,110727,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e1 27699cb / p9-cf cd87b8a
+4,decode,4,1024,stock_graphs_off,1,,d30_baseA,271.3,269.45,285.71,3775,False,192,5.001,4080,143794,,0,0,Qwen3-30B-A3B,A100-40GB,p9-e1 27699cb / p9-cf cd87b8a

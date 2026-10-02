@@ -23,3 +23,6 @@ NCCLD=${NCCL_HOME:-$NCCL_DIR}
 $NV -rdc=true $MPI_CFLAGS -I$NVSHMEM_HOME/include -I$NCCLD/include p13_allgather.cu -o $OUT/p13_allgather -L$NVSHMEM_HOME/lib \
   -L$NCCLD/lib -lnccl -lnvshmem_host -lnvshmem_device -lcudadevrt -lcuda $MPI_LIBS -Xlinker -rpath=$NVSHMEM_HOME/lib \
   -Xlinker -rpath=$NCCLD/lib -Xlinker -rpath=$CUDA_HOME/lib64 2>&1 | grep -v "warning #\|Remark\|^$"; ls $OUT/p13_allgather >/dev/null 2>&1 && echo "p13 OK"
+$NV -rdc=true $MPI_CFLAGS -I$NVSHMEM_HOME/include -I$NCCLD/include p14_p2p_bw.cu -o $OUT/p14_p2p_bw -L$NVSHMEM_HOME/lib \
+  -L$NCCLD/lib -lnccl -lnvshmem_host -lnvshmem_device -lcudadevrt -lcuda $MPI_LIBS -Xlinker -rpath=$NVSHMEM_HOME/lib \
+  -Xlinker -rpath=$NCCLD/lib -Xlinker -rpath=$CUDA_HOME/lib64 2>&1 | grep -v "warning #\|Remark\|^$"; ls $OUT/p14_p2p_bw >/dev/null 2>&1 && echo "p14 OK"

@@ -50,7 +50,12 @@ ARM = {"ours": ("ours", 1), "oursR": ("ours", 2), "oursB": ("ours_plan6_binary",
        "kg9e": ("ours_plan9_graphs", 1), "kg9e2": ("ours_plan9_graphs", 2),
        # round 15 (lopep p9-dw3 e541763, tree lopep_b1): + side-stream lane pushes + warp swap decision (g9s), the
        # same two knobs on the c4b config of that binary (c4s)
-       "kg9s": ("ours_plan9_swapfix", 1), "kg9s2": ("ours_plan9_swapfix", 2), "kc4s": ("ours_C3C4_swapfix", 1)}
+       "kg9s": ("ours_plan9_swapfix", 1), "kg9s2": ("ours_plan9_swapfix", 2), "kc4s": ("ours_C3C4_swapfix", 1),
+       # rounds cf / df (fence flattening): + combine flat push (g9f), + dispatch flat pack-push (g9ff); round ls:
+       # + sync-only end-of-layer barrier (g9y), all S5 knobs without it (g9a)
+       "kg9f": ("ours_plan9_cflat", 1), "kg9f2": ("ours_plan9_cflat", 2), "kg9ff": ("ours_plan9_dcflat", 1),
+       "kg9ff2": ("ours_plan9_dcflat", 2), "kg9y": ("ours_plan9_sync", 1), "kg9y2": ("ours_plan9_sync", 2),
+       "kg9a": ("ours_plan9_dcflat", 3)}
 MIB = {256: 1, 512: 2, 1024: 4}
 
 

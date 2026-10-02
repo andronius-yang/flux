@@ -266,3 +266,38 @@ graph edge, C4 on own C2 slot words, D2 warp on own pre-reduce flags, D1 on own 
   for the remote completion of every NVSHMEM operation of the PE: the combine puts were just issued). Every put of
   the layer has a consumer that waited for its signal before entering the barrier (signal after data, P10), so the
   synchronization alone keeps K4: LOPEP_LAYER_SYNC=1 (lopep p9-e2 4ad89fa) uses `nvshmemx_sync_all_on_stream`.
+
+## Fence fixes in serving (jobs 59193951 "cf", 59194077 "df"; `52_round_{cf,df}_arms.csv`)
+- Decode step ms at 256 / 512 / 1024 (same allocation each): cf: plan 9 + swap fixes 122.44 / 153.67 / 236.11,
+  + combine flat 118.13 / 154.39 / 237.16. df: stock 84.37 / 151.73 / 271.30; c4s 115.99 / 139.83 (1.09x) / 214.47
+  (1.26x); + combine flat 122.64 / 154.74 / 237.40; + both flats 118.19 and 117.35 / 152.03 and 152.04 / 236.55 and
+  235.62. Run-to-run noise ~3 ms. Both flats: -4 ms at 256, neutral at 512 / 1024. Harness: dispatch flat -3..-4 %
+  at 256, neutral at 1024.
+- Plan 9's MoE bracket is now SMALLER than c4s's (2.07-2.09 vs 2.13 ms at 256) but its step is longer: the non-MoE
+  part of the step is 18.1 ms (plan 9) vs 13.8 (c4s) vs 12.9 (stock).
+
+## Sync-only barrier in serving (job 59194592 "ls"): 117.34 / 152.39 / 236.03 vs barrier_all 118.83 / 152.81 /
+234.90 (stock 84.37 / 143.85 / 271.50): -1.5 ms at 256 only. Under load the barrier itself is slow, not mainly
+its quiet. Kept (correct, slightly better).
+
+## P13 / P14 (jobs 59194722, 59194871; `logs/p50/p13_n4.log`, `p14_n4.log`)
+- P13 (small all-gathers, NCCL vs NVSHMEM fcollect): INCONCLUSIVE - only the eager NCCL 512 B gather is
+  plausible (62.7 us, matches the layer); every other cell reads 1.3-18 ms per collective (probe harness problem,
+  not the collectives). fcollect showed nothing faster: E3-fcollect not pursued.
+- P14 (inter-node pairs, every GPU of a node sending at once): NVSHMEM device put-with-signal 8.3 GB/s at 256 KiB,
+  11.6 at 512 KiB, 12.9 at 1 MiB, 15.6 at 2 MiB, 17.2 at 4 MiB, 17.7 at 8 MiB (host on-stream puts the same). NCCL
+  send/recv in the probe's environment 1.3-5.6 GB/s (implausible: likely without the libfabric plugin) - not a valid
+  comparison. At the wire's ~1-1.5 MiB puts the device puts run ~13-14 GB/s; even large messages cap at ~18 GB/s.
+
+## GPU idle per layer in serving (n15 node 0, plan 9 all S5 knobs): period 2502 us, idle 238 us
+- Idle stretches by the activity they precede (us per layer): memcpy DtoD 73, NCCL all-gather kernels 67,
+  RMSNorm 39, memcpy HtoD 31 (once-per-forward uploads), SGLang elementwise 27, FusedAddRMSNorm 24, memcpy DtoH 18.
+- Copy-engine copies per layer: in the graph 5 DtoD (32 KB x 4 + 64 KB: the planner's set_routing / exchange
+  buffer copies) and 5 DtoH (pinned mirrors: dispatch demands 64 B, sps 1664 B, plan block 11264 B, uc 1280 B,
+  combine plan block 1420 B); eager 2 x 1 MiB (copy-in x, output clone) + 2 x 8 KB (ids, w). Each copy-engine copy
+  between kernels costs a scheduling bubble on a GPU-bound stream.
+- Trims (lopep p9-e3, tree lopep_c4): eeeb772 LOPEP_GRAPH_STAGE_KERNEL (one staging kernel for x / ids / w and the
+  pad rows), LOPEP_GRAPH_OUT_COPY=0 (the graph's output rows without a clone: y is the graph's own buffer, rewritten
+  only by the next replay of the same (layer, bucket)), LOPEP_NO_D2H_MIRRORS (no dispatch demands / plan block and
+  combine plan block mirrors on deferred device-wire steps: no host reader); f9fdd4f LOPEP_PLANNER_KCOPY (the planner
+  copies as bit-exact elementwise kernels). sps / uc mirrors kept (host combine readers not yet audited).
