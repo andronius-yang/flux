@@ -312,3 +312,18 @@ its quiet. Kept (correct, slightly better).
   puts per layer, while stock's NCCL DP gather moves ~12 MiB of cross-node data per GPU in ~0.45 ms (~27 GB/s).
   Probe P15 (NCCL send/recv in the SGLang environment on the wire's pairs) decides whether a NCCL inter-node wire
   is worth proposing.
+
+## P15: NCCL point-to-point in the SGLang environment (job 59195866; `logs/p50/p15_n4.log`)
+- torch NCCL 2.27.3 with the AWS libfabric plugin (as SGLang runs it), the wire's pairs (rank -> same local rank on
+  the next node, every rank at once), us per transfer / GB/s eager | graph: 256 KiB 81.8 / 3.2 | 59.9 / 4.4; 512 KiB
+  78.0 / 6.7 | 77.4 / 6.8; 1 MiB 115.3 / 9.1 | 109.7 / 9.6; 2 MiB 169.3 / 12.4 | 167.0 / 12.6; 4 MiB 295.4 / 14.2 |
+  279.9 / 15.0; 8 MiB 506.1 / 16.6 | 518.6 / 16.2. NVSHMEM device puts (P14) are faster at every size (1 MiB 12.9).
+- Stock's DP gather (all-gather of 256 x 2048 bf16 per rank, 16 MiB out): 382 us = 32.9 GB/s of remote data per
+  GPU, but each remote block crosses the network once per node and is replicated over NVLink: ~8 GB/s per NIC, the
+  same as our wire. So the transport is not the gap: a NCCL inter-node wire would be slower. The remaining ~0.6 ms per
+  layer at 256 per rank is the control plane: the two required exchanges + bubbles (~200-270 us), routing + swap
+  decision + planning (~250 us), barrier + rank skew (~150 us).
+
+## S6 / M2 launched (10-02 ~03:10): `logs/p50/m2.sh` (one allocation per node count, every arm on it: stock, c4s,
+plan 9 with every S5 knob = g9k; decode 256 / 512 / 1024 and prefill SMAX 256; 40 GB nodes); 8n and 16n in regular
+QOS, 4n interactive.
