@@ -227,3 +227,163 @@ NH-1 fix VERIFIED (job 59168891, `lopep_int` p8-int 4daa191, swaps on, `LOPEP_W2
 PASS (880 swap moves, W1 / W2 slot contents asserted after every swap, 0 bad rows); two servers at 1024 per rank x 4
 waves each: no hang (384 intervals each), decode step 231.2 / 230.9 ms (swap off on 59168202: 223.1 ms; stage-B arm
 with the late push: 228.5 / 230.7 ms).
+
+### C3 + C4 gate chain: two hangs, one cause (H1 lazy load in the warm-up, predicted class)
+`ns_abort_grow` (no-sync config + forced abort + `--caps-scale 0.5`) and `ns_c1` (no-sync config +
+`CUDA_DEVICE_MAX_CONNECTIONS=1`) hung in the WARM-UP, before the first timed step: main thread in `cudaLaunchKernel`
+-> `cuLibraryGetModule` (lazy code load) of torch's `silu` inside `activation` (`layer.py:26`) while the dispatch
+GEMM was resident spinning on proxy-issued wire (16 of 16 ranks in `ns_c1`). The no-sync config runs with
+`LOPEP_PROXY_DRAIN=0`, so the proxy's posted dispatch work was not drained before the main thread's first launch of
+an activation variant; P6 then holds all new GPU work behind the load: deadlock (class H1 of the plan's table, and
+the round-8 T6 signature: silu / mul first launches of 139-194 us). The other no-sync cells passed by the luck of
+which warm-up case first launched each variant. The single-row activation (m = 1) is the contiguous, vectorized
+silu / mul variant - a real decode case, so it could also first-launch in steady state.
+Fix (`p8-c34`): (1) the warm-up forces the per-layer drains on whatever `LOPEP_PROXY_DRAIN` says
+(`C.wire_proxy_force_drain`, around `SharedComm.warmup`; also covers the re-prime in `recover`); (2) the warm-up launches
+the activation's variants (m = 1, 2, 3) before any layer step. Re-gated in `logs/p50/stage34_go.sh` (both swap cells +
+the abort / growth cell), and the NC4 capture's T6 tripwire checks for loads after the warm-up.
+C3 + C4 chain final (job 59168080, binary dd7219dc4072): PASS ref, v1, v1_abort, v1_grow, v1_flip_abort, v1_proxy,
+ns, ns_flip, ns_full (9); HUNG ns_abort_grow, ns_c1 (H1 warm-up load, above); NOT RUN ns_delay, ns_audit (the 60-min
+allocation expired). `p8-c34` now: 0ec1643 (kept sequence word in the test; SGLang hook falls back to the plain
+forward for an older lopep_sglang), c9c7e2b (NH-1 fix + dump tooling, cherry-pick of p8-int 4daa191, applied also
+to C4's always-gated deferred branch), 7226206 (H1 warm-up fix). Re-gate of the failed / unrun cells + the stage check
+(decode, prefill, NB / NC4 captures): `logs/p50/stage34_go.sh` -> `logs/sglang/stage34.sh`, one driver per allocation.
+
+### Re-gate (job 59170930, `p8-c34` 7226206, binary a723f3c7f78d)
+`fix_flip_abort` PASS (880 swap moves, 1 redo); `fix_ns_flip` PASS (no-sync config, 880 swap moves);
+`fix_ns_abort_grow`: no hang (the H1 warm-up fix holds: warm-up with 4 skipped cases ran), but FAILED after growth #3
+(step 18, "MoE layer 0 of the forward", recover + re-prime + redo): every rank's proxy aborted with "dispatch plan
+ring: sequence 274 not published after 60 s (epoch 18)" - the ring's fail-fast guard. Seq 274 is the first to wrap
+back onto slot 18; its publish (D2H + epoch stream write in `derive_routed_meta`) never executed within 60 s, i.e.
+something ahead of it on the planning stream (the caller's stream) was blocked, plausibly a resident kernel waiting on
+proxy work queued after the ring waiter (a cycle through the proxy's in-order queue) on the redo-after-growth path.
+NOT yet root-caused: the abort came before the 300 s stack dump. Only the growth + redo path (serving runs at
+calibrated capacities with 0 growths: stage-check arms unaffected). Next: repro with the stack dump at 40 s and the
+ring waiter's slot / consumed / published counters in the abort message.
+`fix_ns_c1` (no-sync config + `CUDA_DEVICE_MAX_CONNECTIONS=1`): HUNG again, new signature, 16 of 16 ranks in the warm-up's
+combine forward, host in `GemmCombineOp::wait_plan_block` (`cudaEventSynchronize` on the combine plan block's D2H
+event, derived on the op-owned meta stream). With one connection every stream shares one hardware queue in enqueue
+order (G2), so a proxy-enqueued front-end wait ahead of the meta-stream derive blocks it; the same cell PASSED on
+`p8-c3` (`c3c_l2_c1`, `c3_plan_p1_c1`), so the inversion came with the C4 merge or the two fixes. Bisection running
+(`logs/p50/c1_bisect.sh`: C3-only knobs on the merged binary, proxy without the ring, inline, W2 late, stage-B tree).
+Production runs at 24 connections (the stage check is unaffected as a measurement), but C4 does not ship before this
+is closed. Ring-stall repro (`nh4_ring.sh`, job 59171358): PASSED (3 growths, 3 redos) - the ring stall is
+intermittent; its timed dump found no processes (nothing captured).
+Re-gate final: PASS `fix_flip_abort`, `fix_ns_flip`, `fix_ns_audit`; HUNG `fix_ns_c1` and `fix_ns_delay` (200 us proxy delay,
+default connections: 16 of 16 ranks in the warm-up, host in the next case's input copy = stream sync behind a stuck
+warm-up step); FAIL `fix_ns_abort_grow` (ring abort). Bisection (CDMC=1, same binary): deferred verdict OFF passes with
+plan ring + proxy, proxy alone, inline -> the warm-up hangs need the deferred-verdict path (C4's always-gated swap
+lane in the warm-up, where the NH-1 port moved the W2 push, or the forced warm-up drains).
+Bisection b4 (deferred verdict ON, `LOPEP_W2_EARLY=0`): still HUNG in `wait_plan_block` (16 / 16) -> the NH-1 port is
+cleared; the inversion lives in C4's deferred-verdict path itself and was masked before the H1 fix by the earlier
+H1 hang at the same warm-up point. Working hypothesis (unconfirmed): with the deferred verdict on, the swap lane takes
+C4's always-gated path, so the combine builds its device gate map and waits on the host for the combine plan block
+before the combine GEMM; that block is derived on the meta stream, which in a shared hardware queue sits behind
+proxy-issued front-end waits on remote signals. Repro with the enqueue-order audit and gdb / cuda-gdb dumps:
+`logs/p50/nh5_inv.sh`.
+
+### C4 deadlocks root-caused: dependent launches hold a shared hardware queue (class G3, probe P8)
+Diagnostics build (uncommitted, `p8-c34`): tagged checkpoint events (`LOPEP_DBG_EVENTS=1`, 14 per layer-step,
+printed by any timed-out waiter with the main thread's and the proxy's phase), ring / quiesce timeouts with
+counters. Runs (`logs/p50/nh8_diag.sh`, `nh9_diag.sh`, jobs 59178246 / 59178459):
+- CDMC=1 harness (`diag9_c1`), all 16 ranks identical: `cp replay start 1=ok`, `cp replay end 1=PEND`, dispatch GEMM
+  pending, combine `derive entry=ok`, `tables=PEND`; the proxy has issued everything (posted 2, done 2); the GEMM spins
+  on its OWN self-arrival signal (slot = own rank, value 0). So the replay's first ops (self copy, own signal) were
+  enqueued but never ran, and the queue was blocked between the derive entry and the tables kernel.
+- Serving (`d30_kc4f`, 24 connections): ring abort "sequence 111 not published after 150 s"; replay end ok on the
+  reporting ranks; nodes 2 and 3 (and DP6) spin in the dispatch GEMM's weight gate (all gate words at 59, target
+  above), the others in the combine pre-reduce waiting for those ranks' conv lanes. nh8 (same config): DP0 / DP3
+  spun on their self-arrival signal, as in the CDMC=1 cell. Different secondary states, one shape.
+Probe P8 (`50_copy_probes/p8_deporder.cu`, `run_p8.sh`, `run_p8b.sh`; logs `logs/p50/p8_deporder.log`,
+`p8b_deporder.log`), one GPU: a kernel spins on `main` waiting for a flag; then optionally one op on `main`; then on
+`cp` an event, a 4 MiB D2D copy and the flag's stream write.
+
+| op on `main` behind the spinner | 1 connection | 8 / 24 / 32 |
+|---|---|---|
+| none | released | released |
+| trivial kernel (stream-ordered behind the spinner) | BLOCKED | released |
+| one-warp spin join (the `wait_geq_kernel` shape) | BLOCKED | released |
+| event record | released | released |
+| event on `cp` FIRST, then the trivial kernel, then the copy (`pre12_dep`) | event ok, copy BLOCKED | released |
+| front-end wait on another stream (NR-02 class B, control) | BLOCKED | released |
+| any of the above with `cp` at the highest stream priority | BLOCKED at 1 | released |
+
+So (G3, new): a kernel launched behind a still-running kernel of its own stream holds the head of its hardware queue
+until that kernel finishes, exactly like a front-end wait; stream priority does not give a separate queue; at 8+
+connections, 80 pool streams created first still put `main` and `cp` on different queues (consistent with a
+round-robin assignment at creation: in a serving process which pairs collide is per-rank luck). `pre12_dep` is the
+`diag9_c1` signature exactly. Rule R7' was wrong: a spin-kernel join avoids the front-end wait on the word, but its
+LAUNCH is stream-ordered behind the GEMM and holds the queue all the same.
+Root cause of every C4 hang (CDMC=1 warm-up, proxy delay, serving, plausibly the abort+growth ring stall): the
+no-sync configuration ran with `LOPEP_PROXY_DRAIN=0`, so after the dispatch GEMM launch the main thread enqueued the
+join, the lane commit and the activation (all stream-ordered behind the spinning GEMM) BEFORE the proxy, still
+waiting for the plan block to be published, enqueued the GEMM's producers (self copy, round-0 puts, relay puts,
+gateway forwards). Any shared queue then deadlocks. The bisection never separated the knobs: every deferred-verdict-off
+cell ran with the drains on (default) and every C4 cell with them off.
+Fix (`p8-c34`): the drains are mandatory with the proxy on (`lopep_proxy_drain()` always true; `LOPEP_PROXY_DRAIN=0`
+aborts with a message; `wire_proxy_force_drain` removed); checkpoints behind `LOPEP_DBG_EVENTS` (default off). Rule
+R8 (replaces R7'): the main thread enqueues nothing stream-ordered behind a resident spinner, and no front-end wait,
+before every producer of that spinner that the proxy issues has been enqueued (a drain). Cost: under C4 the main
+thread now waits once per layer, at the end of the dispatch, until the proxy issued the layer's wire, i.e. until the
+dispatch plan block was published by the GPU; the pack and the GEMM are already enqueued then, so T1 (planning done ->
+first copy) keeps the proxy's latency, but the host can run at most to the dispatch end of the current layer ahead.
+Gates: `logs/p50/g10_drain.sh` (CDMC 1 / 8, 200 us proxy delay, abort + growth incl. at CDMC=1, swap flips, one
+serving arm).
+Committed `p8-c34` e2ebb95 (drains mandatory + diagnostics). Next knob, uncommitted until gated: `LOPEP_DERIVE_EARLY=1`
+(plan_overlap 2, proxy on): the dispatch op's end-of-step drain + join move into `finish()` (`set_split_finish`), and
+`OverlapComm.issue_combine_meta_late` enqueues the combine derive (op-owned meta stream; its only front-end wait is on
+the planning event, whose writer is enqueued before the GEMM, so no cycle) before calling it: the derive's host
+work overlaps the drain's wait for the plan block instead of following it. A step that misses `finish()` fails at
+the next `forward()` (FLUX_CHECK). Chain `logs/p50/s12_go.sh`: after g10, patch + build, gate (CDMC=1 and swap
+flips with the knob), then round 12 (`logs/sglang/stage12.sh`: decode 256/512/1024 + prefill, arms b8f | c4 | c4e |
+stock | b8fR | c4eR on one allocation, captures NB + NC4e via jobN11 with TAG jN12).
+G10 gates (job 59179098, `p8-c34` e2ebb95, binary c59172a99651, drains mandatory, checkpoints on): ALL PASS, bad rows 0
+everywhere: `d_c1` (CDMC=1, varying counts), `d_delay` (200 us proxy delay), `d_abort_grow` (3 growths, 3 redos, 880
+swap moves), `d_flip` (880 swap moves), `d_c8`, `d_c1_grow` (CDMC=1 + abort + growth: 3 growths, 3 redos, 816 moves);
+serving `d30_kc4d` (C4, swap lane on, two waves at 256 per rank) clean: 0 growths, 0 tracebacks, decode step median
+129.84 ms (IQR 120.91-141.58; checkpoints on; another allocation than round 11, so indicative only). Every cell
+that hung or aborted with `LOPEP_PROXY_DRAIN=0` passes: the G3 diagnosis stands. Round 12 (`s12_go.sh`) next.
+
+### Round 12 decode (job 59179882, one allocation; p8-c34 2fae7aa binary cb4c23b10e35 for c4 / c4e)
+Decode step medians, 4n, 256 / 512 / 1024 running per rank (ms): b8f 134.45 / 156.21 / 228.71, b8fR 134.42 / 157.03 /
+228.56 (repeat within 0.5 %), c4 129.88 / 179.09 / 285.62, c4e 130.98 / 182.98 / 289.93, stock 84.55 / 143.19 /
+273.23. SGLang per-layer MoE (median of the 480-step means): b8f 2.434 / 2.758 / 3.936, c4 2.241 / 3.196 / 5.126. So
+C4 with drains wins at 1 MiB (-3.4 % step, -0.19 ms per layer) and LOSES with the batch (+0.44 / +1.19 ms per layer);
+derive-early is neutral (inside the noise of c4).
+Knob A/B in the harness (`logs/p50/g11_ab.sh`, job 59180491, same binary, layer-step medians over 16 ranks, full tokens,
+swap on): 256 per rank: B 2.051, +C3 2.181, +C4 1.808, deferred verdict with the sync kept 1.953, C4 swap off 1.753,
+B swap off 1.987; 1024: B 3.705 / 3.683, +C3 3.765, +C4 3.626 / 3.637, deferred-sync 3.707, C4 swap off 3.593. In the
+harness C4 does not regress at 1024 (and C3's proxy issue alone costs ~0.13 ms at 256, which C4 recovers): the
+regression is serving-specific. Process CPU affinity is 0-127 in both (not a contention artifact).
+Root cause (code): on a deferred-verdict step `OverlapComm` bounds the step by `_m_cap = min(recv_cap, plan.vce.numel())`,
+but `vce` is the GLOBAL routing [R*S, K]; the serving capacities are sized for the 4096-token prefill chunk, so m_cap
+= R*S*K = 32k / 64k / 131k rows at 256 / 512 / 1024 per rank (vs ~2k / 4k / 8k computed rows), and every layer zeroes
+`out_buf[:m_cap]` (x 1536 bf16) and runs the eager SwiGLU (silu temp + mul) over m_cap rows: ~1 GB of HBM traffic per
+layer at 1024. The harness sizes its capacities for its own smax, hence no regression there. Fix (p8-c5, tree
+`lopep_c3`): `C.zero_rows_bounded` / `C.silu_mul_bounded` (planner/lane_device.cu, 16-byte vectors, registered for the
+warm-up preload) bounded by the dispatch plan block's row word (`dispatch_op.rows_dev()`, written by the planning
+kernels in stream order before the prep and the activation); knob `LOPEP_BOUNDED_ACT` (default 1). Gate + measure:
+`logs/p50/g13_bounded.sh` (round 13 decode: b8f | c4b | c4u = same binary unbounded | stock | repeats).
+Capture fix: round 11's NB / NC4 captures failed because the second srun step (nodes 1..NN-1, `--exclude` node 0)
+gets its own `SLURM_JOB_NODELIST`, so `server.sh` dialed the wrong dist-init head; `jobN11.sh` now exports the job's
+node list into both steps.
+
+### Round 13 decode (job 59180880, one allocation): the bounded fix (p8-c5 a2b248e, tree lopep_c3, binary d77ffc8e49d9)
+Gates first (reference check, bad rows 0): CDMC=1, swap flips (880 moves), abort + growth (3 growths, 3 redos),
+full batch at 1024 per rank. Decode step medians (ms), 256 / 512 / 1024 running per rank (`52_round13_arms.csv`):
+
+| arm | 256 | 512 | 1024 |
+|---|---|---|---|
+| b8f (stage B) / repeat | 135.34 / 134.57 | 157.40 / 159.20 | 229.44 / 228.61 |
+| **c4b (C3 + C4, bounded)** / repeat | **119.09 / 118.40** | **148.25 / 147.55** | **219.83 / 218.38** |
+| c4u (same binary, `LOPEP_BOUNDED_ACT=0`) | 133.26 | 182.43 | 285.87 |
+| stock | 86.11 | 144.65 | 273.41 |
+
+c4b vs b8f: -12.0 / -5.8 / -4.2 %; vs stock 0.72x / 0.98x / 1.24x (b8f: 0.64x / 0.92x / 1.19x). c4u reproduces round
+12's c4 on the same binary, so the regression was exactly the capacity-bounded zero + activation. SGLang per-layer
+MoE (CSV layer_ms, includes attention-side bookkeeping of the hook): c4b 2.173 / 2.66 / 3.968 vs stock 1.534 / 2.616 /
+5.017. Round-12 prefill (SMAX 256, input tok/s; c4 / c4e unbounded): stock 27132, b8f 22255 / 22619, c4 24823, c4e
+25020 / 25017 (+11 % over b8f); round-13 prefill with c4b and the NC4b capture: `logs/p50/g14_prefill_cap.sh`.
+Capture recipe fix #2: the two-step split cannot work (each Slingshot job step has its own network VNI; NCCL init
+hung in `ncclCommInitRank` on every rank, round 12, job 59179882, NB lost); `jobN11.sh` back to the round-8 single
+step (node 0 under nsys, `--capture-range-end=stop-shutdown --kill=sigterm`).

@@ -38,7 +38,13 @@ ARM = {"ours": ("ours", 1), "oursR": ("ours", 2), "oursB": ("ours_plan6_binary",
        "kr9": ("ours_round9", 1), "kr9R": ("ours_round9", 2), "kb8": ("ours_stageB", 1), "kb8R": ("ours_stageB", 2),
        # round 11 (plan 8 stage check after C3 + C4): b8f = stage B + NH-1 fix (lopep_int), c4 = C3 + C4 (lopep_c4,
        # deferred verdict + plan-driven wire + proxy, no per-layer planning sync)
-       "kb8f": ("ours_stageB_fix", 1), "kb8fR": ("ours_stageB_fix", 2), "kc4": ("ours_C3C4", 1), "kc4R": ("ours_C3C4", 2)}
+       "kb8f": ("ours_stageB_fix", 1), "kb8fR": ("ours_stageB_fix", 2), "kc4": ("ours_C3C4", 1), "kc4R": ("ours_C3C4", 2),
+       # round 12 (C3 + C4 with mandatory proxy drains, p8-c34 2fae7aa): c4 as round 11 but drained, c4e = c4 + the
+       # combine derive before the dispatch-end drain (LOPEP_DERIVE_EARLY=1)
+       "kc4e": ("ours_C3C4_derive_early", 1), "kc4eR": ("ours_C3C4_derive_early", 2),
+       # round 13 (p8-c5 in tree lopep_c3 = p8-c34 2fae7aa + row-bounded zero / activation on deferred steps):
+       # c4b = bounded (default), c4u = the same binary with LOPEP_BOUNDED_ACT=0 (round-12 c4 behaviour)
+       "kc4b": ("ours_C3C4_bounded", 1), "kc4bR": ("ours_C3C4_bounded", 2), "kc4u": ("ours_C3C4_unbounded", 1)}
 MIB = {256: 1, 512: 2, 1024: 4}
 
 
