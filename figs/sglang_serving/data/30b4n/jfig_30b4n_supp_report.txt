@@ -1,0 +1,70 @@
+00:13:16 serve_fig 30b4n: job 59253230, 4 nodes (16 GPUs), node0 nid200388, model /pscratch/sd/y/yufeid/workspace/andrewy/models/Qwen3-30B-A3B, ours 59bb9af580b7 3d83066 
+00:13:34 heaps: decode 6G prefill 6G; calibs /pscratch/sd/y/yufeid/workspace/andrewy/logs/sglang/calib_30b4n_lcbtd_overlap_s1 /pscratch/sd/y/yufeid/workspace/andrewy/logs/sglang/calib_30b4n_lcbp_overlap_s1
+00:15:46 p30_baseA_s1024: healthy after 90 s
+00:15:46 p30_baseA_s1024: CONTROL per-rank [max_total_num_tokens=50000, chunked_prefill_size=1024, max_prefill_tokens=16384, max_running_requests=32, context_len=2048, available_gpu_mem=67.44 GB] disable_cuda_graph=True cuda_graph_max_bs=512 enable_dp_lm_head=False
+00:15:46 p30_baseA_s1024: pool 50000 tokens per GPU (pinned 50000)
+00:15:46 p30_baseA_s1024: bench lcbp x16
+[p30_baseA_s1024 lcbp] Successful requests:                     3840      
+[p30_baseA_s1024 lcbp] Benchmark duration (s):                  32.92     
+[p30_baseA_s1024 lcbp] Input token throughput (tok/s):          39335.54  
+[p30_baseA_s1024 lcbp] Output token throughput (tok/s):         466.52    
+[p30_baseA_s1024 lcbp] Mean TTFT (ms):                          848.94    
+[p30_baseA_s1024 lcbp] Median TTFT (ms):                        785.78    
+[p30_baseA_s1024 lcbp] Mean ITL (ms):                           430.71    
+[p30_baseA_s1024 lcbp] Median ITL (ms):                         249.09    
+00:16:46 p30_baseA_s1024: prefill chunk tokens per GPU median 978 (SMAX 1024, np 3840, conc 256)
+00:16:46 p30_baseA_s1024: growths 0 tracebacks 0
+[p30_baseA_s1024] [layer timing rank 0] DECODE MAX n_pad<=16: mean ms per layer-step over 96: total 0.933 | pre 0.225 moe 0.533 post 0.175
+[p30_baseA_s1024] [layer timing rank 0] DECODE MAX n_pad<=8: mean ms per layer-step over 48: total 0.912 | pre 0.201 moe 0.562 post 0.150
+[p30_baseA_s1024] [layer timing rank 0] DECODE MAX n_pad<=16: mean ms per layer-step over 96: total 0.919 | pre 0.215 moe 0.539 post 0.165
+[p30_baseA_s1024] [layer timing rank 0] DECODE MAX n_pad<=16: mean ms per layer-step over 144: total 0.924 | pre 0.219 moe 0.541 post 0.164
+00:20:23 p30_kf_s1024: healthy after 170 s
+00:20:23 p30_kf_s1024: CONTROL per-rank [max_total_num_tokens=50000, chunked_prefill_size=1024, max_prefill_tokens=16384, max_running_requests=32, context_len=2048, available_gpu_mem=51.98 GB] disable_cuda_graph=True cuda_graph_max_bs=512 enable_dp_lm_head=False
+00:20:23 p30_kf_s1024: pool 50000 tokens per GPU (pinned 50000)
+00:20:23 p30_kf_s1024: bench lcbp x16
+[p30_kf_s1024 lcbp] Successful requests:                     3840      
+[p30_kf_s1024 lcbp] Benchmark duration (s):                  20.59     
+[p30_kf_s1024 lcbp] Input token throughput (tok/s):          62914.73  
+[p30_kf_s1024 lcbp] Output token throughput (tok/s):         746.16    
+[p30_kf_s1024 lcbp] Mean TTFT (ms):                          504.97    
+[p30_kf_s1024 lcbp] Median TTFT (ms):                        420.99    
+[p30_kf_s1024 lcbp] Mean ITL (ms):                           272.49    
+[p30_kf_s1024 lcbp] Median ITL (ms):                         172.86    
+00:21:03 p30_kf_s1024: prefill chunk tokens per GPU median 942 (SMAX 1024, np 3840, conc 256)
+00:21:03 p30_kf_s1024: growths 0 tracebacks 0
+[p30_kf_s1024] [layer timing rank 0] DECODE MAX n_pad<=32: mean ms per layer-step over 96: total 1.063 | pre 0.009 moe 1.052 post 0.002
+[p30_kf_s1024] [layer timing rank 0] DECODE MAX n_pad<=8: mean ms per layer-step over 48: total 1.094 | pre 0.008 moe 1.084 post 0.002
+[p30_kf_s1024] [layer timing rank 0] DECODE MAX n_pad<=8: mean ms per layer-step over 48: total 0.996 | pre 0.009 moe 0.984 post 0.002
+[p30_kf_s1024] [layer timing rank 0] DECODE MAX n_pad<=16: mean ms per layer-step over 144: total 1.047 | pre 0.009 moe 1.036 post 0.002
+00:22:54 p30_baseA_s4096: healthy after 60 s
+00:22:54 p30_baseA_s4096: CONTROL per-rank [max_total_num_tokens=50000, chunked_prefill_size=4096, max_prefill_tokens=16384, max_running_requests=64, context_len=2048, available_gpu_mem=67.42 GB] disable_cuda_graph=True cuda_graph_max_bs=512 enable_dp_lm_head=False
+00:22:54 p30_baseA_s4096: pool 50000 tokens per GPU (pinned 50000)
+00:22:54 p30_baseA_s4096: bench lcbp x64
+[p30_baseA_s4096 lcbp] Successful requests:                     15360     
+[p30_baseA_s4096 lcbp] Benchmark duration (s):                  111.70    
+[p30_baseA_s4096 lcbp] Input token throughput (tok/s):          46378.69  
+[p30_baseA_s4096 lcbp] Output token throughput (tok/s):         550.05    
+[p30_baseA_s4096 lcbp] Mean TTFT (ms):                          2134.81   
+[p30_baseA_s4096 lcbp] Median TTFT (ms):                        2199.79   
+[p30_baseA_s4096 lcbp] Mean ITL (ms):                           500.76    
+[p30_baseA_s4096 lcbp] Median ITL (ms):                         115.85    
+00:25:15 p30_baseA_s4096: prefill chunk tokens per GPU median 1607 (SMAX 4096, np 15360, conc 512)
+00:25:15 p30_baseA_s4096: growths 0 tracebacks 0
+[p30_baseA_s4096] [layer timing rank 0] DECODE MAX n_pad<=8: mean ms per layer-step over 96: total 0.871 | pre 0.169 moe 0.588 post 0.114
+[p30_baseA_s4096] [layer timing rank 0] DECODE MAX n_pad<=32: mean ms per layer-step over 96: total 0.979 | pre 0.257 moe 0.519 post 0.203
+[p30_baseA_s4096] [layer timing rank 0] DECODE MAX n_pad<=64: mean ms per layer-step over 48: total 1.043 | pre 0.330 moe 0.442 post 0.272
+[p30_baseA_s4096] [layer timing rank 0] DECODE MAX n_pad<=32: mean ms per layer-step over 144: total 0.979 | pre 0.260 moe 0.516 post 0.202
+00:28:40 p30_kf_s4096: healthy after 150 s
+00:28:40 p30_kf_s4096: CONTROL per-rank [max_total_num_tokens=50000, chunked_prefill_size=4096, max_prefill_tokens=16384, max_running_requests=64, context_len=2048, available_gpu_mem=51.98 GB] disable_cuda_graph=True cuda_graph_max_bs=512 enable_dp_lm_head=False
+00:28:40 p30_kf_s4096: pool 50000 tokens per GPU (pinned 50000)
+00:28:40 p30_kf_s4096: bench lcbp x64
+00:29:20 p30_kf_s4096: server traceback
+    raise RuntimeError(f"{n_max} tokens on one rank exceed max_tokens_per_rank {self.S_max}: bound the "
+RuntimeError: 3517 tokens on one rank exceed max_tokens_per_rank 2048: bound the per-rank tokens per step (prefill chunk, running requests) to the configured ceiling
+
+[2026-10-03 00:29:15 DP14 TP14 EP14] Scheduler hit an exception: Traceback (most recent call last):
+  File "/pscratch/sd/y/yufeid/workspace/andrewy/sglang/python/sglang/srt/managers/scheduler.py", line 2871, in run_scheduler_process
+00:29:20 p30_kf_s4096: prefill chunk tokens per GPU median 935 (SMAX 4096, np 15360, conc 512)
+00:29:20 p30_kf_s4096: growths 0 tracebacks 16
+[p30_kf_s4096] [layer timing rank 0] DECODE MAX n_pad<=8: mean ms per layer-step over 288: total 1.404 | pre 0.008 moe 1.394 post 0.002
+00:30:08 serve_fig 30b4n DONE

@@ -1,0 +1,35 @@
+dataset 30b4n_supp phases prefill
+job 59253230 nodes 4 constraint gpu&hbm80g walltime 30m nodelist nid[200388,200416,200476-200477]
+start 2026-10-03 00:13:16 end 2026-10-03 00:30:09
+ours tree lopep_p10f 3d83066 Plan-10 defaults: planning branches, fused meta front, wide tail reduce (one block per SM, capped at 128), fused router, host at most one layer graph ahead, sampling before the verdict wait, combine table prep beside the dispatch GEMM; the mid-graph throttle experiment removed (each env var still overrides, 0 restores the previous path) liblopep md5 59bb9af580b7c9f4ab8c9f27abc6acb3
+stock tree lopep_d1rt (launch scripts only; SGLang graphs off)
+sglang a4a3d82 chore: bump SGLang version to 0.5.3 (#11263) local changes:  9 files changed, 128 insertions(+), 9 deletions(-)
+lib49 md5 7ad6c2e4ac315228fc6908a2fc3c577f bench1 md5 3cc6edcbeac93163a11798e756e251e8
+calib /pscratch/sd/y/yufeid/workspace/andrewy/logs/sglang/calib_30b4n_lcbtd_overlap_s1 config md5 8ebdc9e56fa848b0351632a663e0a4cb
+calib /pscratch/sd/y/yufeid/workspace/andrewy/logs/sglang/calib_30b4n_lcbp_overlap_s1 config md5 151be9f41c1afc8cbba2dc4ac305185a
+CAL_D=/pscratch/sd/y/yufeid/workspace/andrewy/logs/sglang/calib_30b4n_lcbtd_overlap_s1
+CAL_P=/pscratch/sd/y/yufeid/workspace/andrewy/logs/sglang/calib_30b4n_lcbp_overlap_s1
+DEC_ARMS=o1 s1 s2 o2
+DEC_CAP=480000
+DEC_CTX=256
+DEC_KV_NEED=430080
+DEC_MAXRR=4096
+DEC_PROMPTS=/pscratch/sd/y/yufeid/workspace/andrewy/caches/hf/lcb/lcb_exec_eval_t48_x1.json
+DEC_PT_B=4096
+DEC_PTS_A=256 1024
+DEC_SMAX=4096
+MODEL=/pscratch/sd/y/yufeid/workspace/andrewy/models/Qwen3-30B-A3B
+PRE_CONC=16 32
+PRE_CONC_O=16 32
+PRE_MAXRR=32 64
+PRE_MAXRR_O=32 64
+PRE_ORDER_O=so so
+PRE_ORDER=so so
+PRE_PIN=50000
+PRE_REP=16 64
+PRE_REP_O=16 64
+PRE_SMAX=1024 4096
+PRE_SMAX_O=1024 4096
+TOK_ARMS=o1 s1 s2
+WAVES_A=2
+WAVES_B=1

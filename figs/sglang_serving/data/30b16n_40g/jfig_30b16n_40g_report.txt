@@ -1,0 +1,84 @@
+23:52:37 serve_fig 30b16n_40g: job 59250801, 16 nodes (64 GPUs), node0 nid002101, model /pscratch/sd/y/yufeid/workspace/andrewy/models/Qwen3-30B-A3B, ours 59bb9af580b7 3d83066 
+23:52:57 heaps: decode 8G prefill 6G; calibs /pscratch/sd/y/yufeid/workspace/andrewy/logs/sglang/calib_30b16n_lcbtd_overlap_s1 /pscratch/sd/y/yufeid/workspace/andrewy/logs/sglang/calib_30b16n_lcbp_overlap_s1
+23:56:48 d30_o1: healthy after 190 s
+23:56:48 d30_o1: CONTROL per-rank [max_total_num_tokens=93597, chunked_prefill_size=4096, max_prefill_tokens=16384, max_running_requests=4096, context_len=256, available_gpu_mem=5.26 GB] disable_cuda_graph=True cuda_graph_max_bs=160 enable_dp_lm_head=True
+23:56:48 d30_o1: pool 93597 tokens per GPU
+23:56:48 decode pin 93597 (every later arm)
+23:56:48 d30_o1: waves at 256 running requests per rank
+[wave] C=16384 (256/rank x 64) batch 512 -> 32 calls in flight, osl 48, prompt tokens with template min 24 median 24 max 24
+[wave] 0: 16384 requests, 786432 output tokens in 13.93 s (wave wall time; includes prefill) OK
+23:57:18 d30_o1: waves at 1024 running requests per rank
+[wave] C=65536 (1024/rank x 64) batch 512 -> 128 calls in flight, osl 48, prompt tokens with template min 24 median 24 max 24
+[wave] 0: 65536 requests, 3145728 output tokens in 58.98 s (wave wall time; includes prefill) OK
+running/rank 256: 384 intervals over 64 ranks | decode step median 200.51 ms (IQR 195.81-206.69) | output tok/s per GPU median 1277 | cuda graph [False] | KV usage max 0.19
+running/rank 1024: 328 intervals over 64 ranks | decode step median 444.42 ms (IQR 407.33-467.26) | output tok/s per GPU median 2304 | cuda graph [False] | KV usage max 0.70
+23:58:29 d30_o1: growths 0 tracebacks 0
+[d30_o1] [layer timing rank 0] DECODE MAX n_pad<=8: mean ms per layer-step over 48: total 13.655 | pre 0.008 moe 13.645 post 0.002
+[d30_o1] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 192: total 4.917 | pre 0.010 moe 4.905 post 0.002
+[d30_o1] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 384: total 4.074 | pre 0.010 moe 4.062 post 0.002
+[d30_o1] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 96: total 4.562 | pre 0.010 moe 4.550 post 0.002
+[d30_o1] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 3.967 | pre 0.010 moe 3.955 post 0.002
+[d30_o1] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 3.816 | pre 0.010 moe 3.804 post 0.002
+[d30_o1] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 3.724 | pre 0.010 moe 3.712 post 0.002
+[d30_o1] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 144: total 3.681 | pre 0.010 moe 3.669 post 0.002
+[d30_o1] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 336: total 9.780 | pre 0.013 moe 9.764 post 0.002
+[d30_o1] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 9.020 | pre 0.013 moe 9.004 post 0.002
+[d30_o1] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 8.305 | pre 0.014 moe 8.289 post 0.002
+[d30_o1] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 7.778 | pre 0.013 moe 7.762 post 0.002
+23:58:29 d30_o1: point 4096 INFEASIBLE: pool 93597 < 299008 tokens per GPU (fallback needs 266240)
+00:00:10 d30_s1: healthy after 60 s
+00:00:10 d30_s1: CONTROL per-rank [max_total_num_tokens=93597, chunked_prefill_size=4096, max_prefill_tokens=16384, max_running_requests=4096, context_len=256, available_gpu_mem=25.38 GB] disable_cuda_graph=True cuda_graph_max_bs=160 enable_dp_lm_head=True
+00:00:10 d30_s1: pool 93597 tokens per GPU
+00:00:10 d30_s1: waves at 256 running requests per rank
+[wave] C=16384 (256/rank x 64) batch 512 -> 32 calls in flight, osl 48, prompt tokens with template min 24 median 24 max 24
+[wave] 0: 16384 requests, 786432 output tokens in 23.40 s (wave wall time; includes prefill) OK
+00:00:50 d30_s1: waves at 1024 running requests per rank
+[wave] C=65536 (1024/rank x 64) batch 512 -> 128 calls in flight, osl 48, prompt tokens with template min 24 median 24 max 24
+[wave] 0: 65536 requests, 3145728 output tokens in 110.03 s (wave wall time; includes prefill) OK
+running/rank 256: 384 intervals over 64 ranks | decode step median 289.71 ms (IQR 283.43-299.87) | output tok/s per GPU median 884 | cuda graph [False] | KV usage max 0.18
+running/rank 1024: 384 intervals over 64 ranks | decode step median 944.54 ms (IQR 928.24-988.01) | output tok/s per GPU median 1084 | cuda graph [False] | KV usage max 0.72
+00:02:51 d30_s1: growths 0 tracebacks 0
+[d30_s1] [layer timing rank 0] DECODE MAX n_pad<=8: mean ms per layer-step over 288: total 3.885 | pre 3.156 moe 0.248 post 0.480
+[d30_s1] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 336: total 6.075 | pre 1.677 moe 1.984 post 2.413
+[d30_s1] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 5.818 | pre 1.540 moe 2.001 post 2.276
+[d30_s1] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 5.687 | pre 1.533 moe 1.986 post 2.167
+[d30_s1] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 5.610 | pre 1.533 moe 1.978 post 2.099
+[d30_s1] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 5.552 | pre 1.551 moe 2.000 post 2.001
+[d30_s1] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 48: total 19.721 | pre 4.082 moe 8.056 post 7.583
+[d30_s1] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 19.804 | pre 4.060 moe 7.553 post 8.192
+[d30_s1] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 18.970 | pre 4.052 moe 7.946 post 6.971
+[d30_s1] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 18.632 | pre 4.069 moe 7.646 post 6.916
+[d30_s1] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 18.436 | pre 4.076 moe 7.662 post 6.698
+00:02:51 d30_s1: point 4096 INFEASIBLE: pool 93597 < 299008 tokens per GPU (fallback needs 266240)
+00:04:39 p30_baseA_s256: healthy after 60 s
+00:04:39 p30_baseA_s256: CONTROL per-rank [max_total_num_tokens=50000, chunked_prefill_size=256, max_prefill_tokens=16384, max_running_requests=32, context_len=2048, available_gpu_mem=30.12 GB] disable_cuda_graph=True cuda_graph_max_bs=160 enable_dp_lm_head=False
+00:04:39 p30_baseA_s256: pool 50000 tokens per GPU (pinned 50000)
+00:04:39 p30_baseA_s256: bench lcbp x16
+[p30_baseA_s256 lcbp] Successful requests:                     3840      
+[p30_baseA_s256 lcbp] Benchmark duration (s):                  40.77     
+[p30_baseA_s256 lcbp] Input token throughput (tok/s):          31763.10  
+[p30_baseA_s256 lcbp] Output token throughput (tok/s):         376.71    
+[p30_baseA_s256 lcbp] Mean TTFT (ms):                          3924.14   
+[p30_baseA_s256 lcbp] Median TTFT (ms):                        2678.07   
+[p30_baseA_s256 lcbp] Mean ITL (ms):                           2212.43   
+[p30_baseA_s256 lcbp] Median ITL (ms):                         1731.52   
+00:05:49 p30_baseA_s256: prefill chunk tokens per GPU median 256 (SMAX 256, np 3840, conc 1024)
+00:05:49 p30_baseA_s256: growths 0 tracebacks 0
+[p30_baseA_s256] [layer timing rank 0] DECODE MAX n_pad<=8: mean ms per layer-step over 288: total 1.416 | pre 0.680 moe 0.332 post 0.404
+00:09:34 p30_kf_s256: healthy after 170 s
+00:09:34 p30_kf_s256: CONTROL per-rank [max_total_num_tokens=50000, chunked_prefill_size=256, max_prefill_tokens=16384, max_running_requests=32, context_len=2048, available_gpu_mem=14.16 GB] disable_cuda_graph=True cuda_graph_max_bs=160 enable_dp_lm_head=False
+00:09:34 p30_kf_s256: pool 50000 tokens per GPU (pinned 50000)
+00:09:34 p30_kf_s256: bench lcbp x16
+[p30_kf_s256 lcbp] Successful requests:                     3840      
+[p30_kf_s256 lcbp] Benchmark duration (s):                  22.08     
+[p30_kf_s256 lcbp] Input token throughput (tok/s):          58651.92  
+[p30_kf_s256 lcbp] Output token throughput (tok/s):         695.61    
+[p30_kf_s256 lcbp] Mean TTFT (ms):                          2335.32   
+[p30_kf_s256 lcbp] Median TTFT (ms):                        1159.57   
+[p30_kf_s256 lcbp] Mean ITL (ms):                           1082.89   
+[p30_kf_s256 lcbp] Median ITL (ms):                         823.37    
+00:10:24 p30_kf_s256: prefill chunk tokens per GPU median 256 (SMAX 256, np 3840, conc 1024)
+00:10:24 p30_kf_s256: growths 0 tracebacks 0
+[p30_kf_s256] [layer timing rank 0] DECODE MAX n_pad<=8: mean ms per layer-step over 288: total 3.291 | pre 0.008 moe 3.280 post 0.002
+[p30_kf_s256] [layer timing rank 0] DECODE MAX n_pad<=16: mean ms per layer-step over 48: total 4.686 | pre 0.009 moe 4.674 post 0.002
+00:11:18 serve_fig 30b16n_40g DONE

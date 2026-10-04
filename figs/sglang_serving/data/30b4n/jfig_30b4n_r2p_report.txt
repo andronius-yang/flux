@@ -1,0 +1,23 @@
+09:13:22 serve_fig 30b4n: job 59270150, 4 nodes (16 GPUs), node0 nid008216, model /pscratch/sd/y/yufeid/workspace/andrewy/models/Qwen3-30B-A3B, ours 59bb9af580b7 3d83066 
+09:13:41 heaps: decode 6G prefill 6G; calibs /pscratch/sd/y/yufeid/workspace/andrewy/logs/sglang/calib_30b4n_lcbtd_overlap_s1 /pscratch/sd/y/yufeid/workspace/andrewy/logs/sglang/calib_30b4n_lcbp_overlap_s1
+09:13:50 p30_kf_s4096: calibration calib_30b4n_lcbp4k_overlap_s1 heap 6G
+09:17:27 p30_kf_s4096: healthy after 170 s
+09:17:27 p30_kf_s4096: CONTROL per-rank [max_total_num_tokens=100000, chunked_prefill_size=4096, max_prefill_tokens=16384, max_running_requests=128, context_len=2048, available_gpu_mem=46.76 GB]   
+09:17:27 p30_kf_s4096: pool 100000 tokens per GPU (pinned 100000) front end: --tokenizer-worker-num 8
+09:17:27 p30_kf_s4096: bench lcbp x64
+[p30_kf_s4096 lcbp] Successful requests:                     15360     
+[p30_kf_s4096 lcbp] Benchmark duration (s):                  57.01     
+[p30_kf_s4096 lcbp] Input token throughput (tok/s):          90862.64  
+[p30_kf_s4096 lcbp] Output token throughput (tok/s):         1077.62   
+[p30_kf_s4096 lcbp] Mean TTFT (ms):                          1997.40   
+[p30_kf_s4096 lcbp] Median TTFT (ms):                        1949.74   
+[p30_kf_s4096 lcbp] Mean ITL (ms):                           512.19    
+[p30_kf_s4096 lcbp] Median ITL (ms):                         140.78    
+09:18:57 p30_kf_s4096: prefill chunk tokens per GPU median 3644 (SMAX 4096, np 15360, conc 1024)
+09:18:57 p30_kf_s4096: growths 0 tracebacks 0
+[p30_kf_s4096] [layer timing rank 0] DECODE MAX n_pad<=64: mean ms per layer-step over 48: total 1.231 | pre 0.010 moe 1.219 post 0.002
+[p30_kf_s4096] [layer timing rank 0] DECODE MAX n_pad<=128: mean ms per layer-step over 48: total 1.243 | pre 0.009 moe 1.232 post 0.002
+[p30_kf_s4096] [layer timing rank 0] DECODE MAX n_pad<=8: mean ms per layer-step over 192: total 1.021 | pre 0.009 moe 1.010 post 0.002
+[p30_kf_s4096] [layer timing rank 0] DECODE MAX n_pad<=8: mean ms per layer-step over 144: total 1.031 | pre 0.009 moe 1.020 post 0.002
+09:18:57 p30_kf_s4096: FILL FAIL median 3644 < 0.9 x 4096; rest of point 4096 skipped
+09:19:46 serve_fig 30b4n DONE

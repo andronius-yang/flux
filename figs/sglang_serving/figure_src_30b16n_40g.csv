@@ -1,0 +1,13 @@
+panel,nodes,budget_mib,per_gpu,system,value,runs,status,source
+decode,16,1,256,stock,289.71,289.71,measured,data/30b16n_40g/: jfig_30b16n_40g_report.txt:d30_s1
+decode,16,1,256,ours,200.51,200.51,measured,data/30b16n_40g/: jfig_30b16n_40g_report.txt:d30_o1
+decode,16,4,1024,stock,944.54,944.54,measured,data/30b16n_40g/: jfig_30b16n_40g_report.txt:d30_s1
+decode,16,4,1024,ours,444.42,444.42,measured,data/30b16n_40g/: jfig_30b16n_40g_report.txt:d30_o1
+decode,16,16,4096,stock,,,infeasible,
+decode,16,16,4096,ours,,,infeasible,
+prefill,16,1,256,stock,31763.10,31763.10,measured,data/30b16n_40g/: jfig_30b16n_40g_report.txt:p30_baseA_s256
+prefill,16,1,256,ours,58651.92,58651.92,measured,data/30b16n_40g/: jfig_30b16n_40g_report.txt:p30_kf_s256
+prefill,16,4,1024,stock,46009.92,46009.92,measured,data/30b16n_40g/: jfig_30b16n_40g_supp_report.txt:p30_baseA_s1024
+prefill,16,4,1024,ours,104015.13,104015.13,measured,data/30b16n_40g/: jfig_30b16n_40g_supp_report.txt:p30_kf_s1024
+prefill,16,16,4096,stock,48833.68,48833.68,measured,data/30b16n_40g/: jfig_30b16n_40g_supp_report.txt:p30_baseA_s4096
+prefill,16,16,4096,ours,,,missing,

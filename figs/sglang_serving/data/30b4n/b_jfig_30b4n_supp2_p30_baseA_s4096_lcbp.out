@@ -1,0 +1,13 @@
+bench jfig_30b4n_supp2_p30_baseA_s4096 lcbp np=15360 c=512
+rc=0
+Successful requests:                     15360     
+Benchmark duration (s):                  113.72    
+Request throughput (req/s):              135.06    
+Input token throughput (tok/s):          45553.25  
+Output token throughput (tok/s):         540.26    
+Concurrency:                             500.99    
+Median E2E Latency (ms):                 3632.79   
+Mean TTFT (ms):                          2137.45   
+Median TTFT (ms):                        2199.29   
+Mean ITL (ms):                           523.94    
+Median ITL (ms):                         120.30    

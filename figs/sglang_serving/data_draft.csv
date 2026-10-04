@@ -1,0 +1,13 @@
+panel,nodes,budget_mib,per_gpu,system,value,runs,status,source
+prefill,4,1,256,stock,26493.44,26213.04;26773.84,measured,Qwen3-30B; R8 job 59242113 logs/sglang/bench_j4nPr8_p30_baseA*_s256_lcbp.log input token throughput
+prefill,4,1,256,ours,35356.85,35356.85,measured,Qwen3-30B; R8 job 59242113 bench_j4nPr8_p30_kps7_s256_lcbp.log (lopep p10-s7 = p10-f code)
+prefill,4,4,1024,stock,,,pending,campaign
+prefill,4,4,1024,ours,,,pending,campaign
+prefill,4,16,4096,stock,,,pending,campaign (80 GB nodes)
+prefill,4,16,4096,ours,,,pending,campaign (80 GB nodes)
+decode,4,1,256,stock,88.56,88.45;88.66,measured,Qwen3-30B; R8 job 59242113 logs/sglang/j4nDr8_report.txt decode step median (= TPOT)
+decode,4,1,256,ours,85.07,85.02;85.12,measured,Qwen3-30B; R8 job 59242113 j4nDr8_report.txt
+decode,4,4,1024,stock,284.49,284.40;284.57,measured,Qwen3-30B; R8 job 59242113 j4nDr8_report.txt
+decode,4,4,1024,ours,186.62,186.51;186.73,measured,Qwen3-30B; R8 job 59242113 j4nDr8_report.txt
+decode,4,16,4096,stock,,,pending,campaign (80 GB nodes)
+decode,4,16,4096,ours,,,pending,campaign (80 GB nodes)

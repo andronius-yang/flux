@@ -1,0 +1,65 @@
+02:51:29 serve_fig 30b16n_40g: job 59254087, 16 nodes (64 GPUs), node0 nid001149, model /pscratch/sd/y/yufeid/workspace/andrewy/models/Qwen3-30B-A3B, ours 59bb9af580b7 3d83066 
+02:52:23 heaps: decode 8G prefill 6G; calibs /pscratch/sd/y/yufeid/workspace/andrewy/logs/sglang/calib_30b16n_lcbtd_overlap_s1 /pscratch/sd/y/yufeid/workspace/andrewy/logs/sglang/calib_30b16n_lcbp_overlap_s1
+02:54:43 p30_baseA_s1024: healthy after 90 s
+02:54:43 p30_baseA_s1024: CONTROL per-rank [max_total_num_tokens=50000, chunked_prefill_size=1024, max_prefill_tokens=16384, max_running_requests=32, context_len=2048, available_gpu_mem=30.12 GB] disable_cuda_graph=True cuda_graph_max_bs=160 enable_dp_lm_head=False
+02:54:43 p30_baseA_s1024: pool 50000 tokens per GPU (pinned 50000)
+02:54:43 p30_baseA_s1024: bench lcbp x64
+[p30_baseA_s1024 lcbp] Successful requests:                     15360     
+[p30_baseA_s1024 lcbp] Benchmark duration (s):                  112.59    
+[p30_baseA_s1024 lcbp] Input token throughput (tok/s):          46009.92  
+[p30_baseA_s1024 lcbp] Output token throughput (tok/s):         545.67    
+[p30_baseA_s1024 lcbp] Mean TTFT (ms):                          3657.77   
+[p30_baseA_s1024 lcbp] Median TTFT (ms):                        3290.98   
+[p30_baseA_s1024 lcbp] Mean ITL (ms):                           1251.56   
+[p30_baseA_s1024 lcbp] Median ITL (ms):                         350.30    
+02:57:23 p30_baseA_s1024: prefill chunk tokens per GPU median 1024 (SMAX 1024, np 15360, conc 1024)
+02:57:23 p30_baseA_s1024: growths 0 tracebacks 0
+[p30_baseA_s1024] [layer timing rank 0] DECODE MAX n_pad<=16: mean ms per layer-step over 48: total 1.296 | pre 0.570 moe 0.217 post 0.509
+[p30_baseA_s1024] [layer timing rank 0] DECODE MAX n_pad<=16: mean ms per layer-step over 48: total 1.279 | pre 0.555 moe 0.213 post 0.510
+[p30_baseA_s1024] [layer timing rank 0] DECODE MAX n_pad<=16: mean ms per layer-step over 48: total 1.274 | pre 0.551 moe 0.210 post 0.513
+[p30_baseA_s1024] [layer timing rank 0] DECODE MAX n_pad<=16: mean ms per layer-step over 48: total 1.286 | pre 0.553 moe 0.222 post 0.510
+02:57:23 p30_kf_s1024: calibration calib_30b16n_lcbp_overlap_s1 heap 6G
+03:00:54 p30_kf_s1024: healthy after 160 s
+03:00:54 p30_kf_s1024: CONTROL per-rank [max_total_num_tokens=50000, chunked_prefill_size=1024, max_prefill_tokens=16384, max_running_requests=32, context_len=2048, available_gpu_mem=14.16 GB] disable_cuda_graph=True cuda_graph_max_bs=160 enable_dp_lm_head=False
+03:00:54 p30_kf_s1024: pool 50000 tokens per GPU (pinned 50000)
+03:00:54 p30_kf_s1024: bench lcbp x64
+[p30_kf_s1024 lcbp] Successful requests:                     15360     
+[p30_kf_s1024 lcbp] Benchmark duration (s):                  49.81     
+[p30_kf_s1024 lcbp] Input token throughput (tok/s):          104015.13 
+[p30_kf_s1024 lcbp] Output token throughput (tok/s):         1233.61   
+[p30_kf_s1024 lcbp] Mean TTFT (ms):                          1397.20   
+[p30_kf_s1024 lcbp] Median TTFT (ms):                        1188.19   
+[p30_kf_s1024 lcbp] Mean ITL (ms):                           605.75    
+[p30_kf_s1024 lcbp] Median ITL (ms):                         481.15    
+03:02:24 p30_kf_s1024: prefill chunk tokens per GPU median 628 (SMAX 1024, np 15360, conc 1024)
+03:02:24 p30_kf_s1024: growths 0 tracebacks 0
+[p30_kf_s1024] [layer timing rank 0] DECODE MAX n_pad<=32: mean ms per layer-step over 96: total 2.861 | pre 0.009 moe 2.849 post 0.002
+[p30_kf_s1024] [layer timing rank 0] DECODE MAX n_pad<=16: mean ms per layer-step over 48: total 2.779 | pre 0.009 moe 2.767 post 0.002
+[p30_kf_s1024] [layer timing rank 0] DECODE MAX n_pad<=32: mean ms per layer-step over 48: total 2.905 | pre 0.009 moe 2.894 post 0.002
+[p30_kf_s1024] [layer timing rank 0] DECODE MAX n_pad<=32: mean ms per layer-step over 48: total 2.875 | pre 0.009 moe 2.863 post 0.002
+03:04:12 p30_baseA_s4096: healthy after 50 s
+03:04:12 p30_baseA_s4096: CONTROL per-rank [max_total_num_tokens=50000, chunked_prefill_size=4096, max_prefill_tokens=16384, max_running_requests=128, context_len=2048, available_gpu_mem=30.07 GB] disable_cuda_graph=True cuda_graph_max_bs=160 enable_dp_lm_head=False
+03:04:12 p30_baseA_s4096: pool 50000 tokens per GPU (pinned 50000)
+03:04:12 p30_baseA_s4096: bench lcbp x128
+[p30_baseA_s4096 lcbp] Successful requests:                     30720     
+[p30_baseA_s4096 lcbp] Benchmark duration (s):                  212.17    
+[p30_baseA_s4096 lcbp] Input token throughput (tok/s):          48833.68  
+[p30_baseA_s4096 lcbp] Output token throughput (tok/s):         579.16    
+[p30_baseA_s4096 lcbp] Mean TTFT (ms):                          15948.12  
+[p30_baseA_s4096 lcbp] Median TTFT (ms):                        17049.84  
+[p30_baseA_s4096 lcbp] Mean ITL (ms):                           3649.14   
+[p30_baseA_s4096 lcbp] Median ITL (ms):                         714.77    
+03:08:32 p30_baseA_s4096: prefill chunk tokens per GPU median 1778 (SMAX 4096, np 30720, conc 4096)
+03:08:32 p30_baseA_s4096: growths 0 tracebacks 0
+[p30_baseA_s4096] [layer timing rank 0] DECODE MAX n_pad<=16: mean ms per layer-step over 144: total 1.285 | pre 0.559 moe 0.210 post 0.517
+[p30_baseA_s4096] [layer timing rank 0] DECODE MAX n_pad<=64: mean ms per layer-step over 96: total 2.824 | pre 1.073 moe 0.535 post 1.215
+[p30_baseA_s4096] [layer timing rank 0] DECODE MAX n_pad<=64: mean ms per layer-step over 144: total 2.833 | pre 1.066 moe 0.553 post 1.214
+[p30_baseA_s4096] [layer timing rank 0] DECODE MAX n_pad<=64: mean ms per layer-step over 96: total 2.819 | pre 1.062 moe 0.555 post 1.201
+03:08:32 p30_kf_s4096: calibration calib_30b16n_lcbp4k_overlap_s1 heap 7G
+03:11:46 p30_kf_s4096: SERVER FAILED
+[2026-10-03T10:11:31.009] error: *** STEP 59254087.15 ON nid001149 CANCELLED AT 2026-10-03T10:11:31 DUE TO TIME LIMIT ***
+[2026-10-03T10:11:32.133] error: Failed to destroy CXI Service ID 5 (cxi0): Device or resource busy
+[2026-10-03T10:11:32.144] error: Failed to destroy CXI Service ID 5 (cxi0): Device or resource busy
+[2026-10-03T10:11:32.156] error: Failed to destroy CXI Service ID 5 (cxi0): Device or resource busy
+[2026-10-03T10:11:32.161] error: Failed to destroy CXI Service ID 5 (cxi0): Device or resource busy
+03:12:24 serve_fig 30b16n_40g DONE

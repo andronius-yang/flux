@@ -1,0 +1,13 @@
+panel,nodes,budget_mib,per_gpu,system,value,runs,status,source
+decode,4,1,256,stock,88.56,88.45;88.66,measured,data/30b4n/: plan10_r8/j4nDr8_report.txt:d30_baseA plan10_r8/j4nDr8_report.txt:d30_baseA2 [EXTERNAL: plan 10 R8 job 59242113 4n 40 GB nodes (other bars 80 GB) lopep p10-s7 d588f725]
+decode,4,1,256,ours,85.07,85.02;85.12,measured,data/30b4n/: plan10_r8/j4nDr8_report.txt:d30_ks7 plan10_r8/j4nDr8_report.txt:d30_ks72 [EXTERNAL: plan 10 R8 job 59242113 4n 40 GB nodes (other bars 80 GB) lopep p10-s7 d588f725]
+decode,4,4,1024,stock,258.49,258.48;258.49,measured,data/30b4n/: jfig_30b4n_report.txt:d30_s1 jfig_30b4n_report.txt:d30_s2
+decode,4,4,1024,ours,180.70,180.80;180.60,measured,data/30b4n/: jfig_30b4n_report.txt:d30_o1 jfig_30b4n_report.txt:d30_o2
+decode,4,16,4096,stock,1025.46,994.67;1056.26,measured,data/30b4n/: jfig_30b4n_report.txt:d30_s1 jfig_30b4n_report.txt:d30_s2
+decode,4,16,4096,ours,654.51,664.39;644.64,measured,data/30b4n/: jfig_30b4n_report.txt:d30_o1 jfig_30b4n_report.txt:d30_o2
+prefill,4,1,256,stock,27300.62,27300.62,measured,data/30b4n/: jfig_30b4n_report.txt:p30_baseA_s256
+prefill,4,1,256,ours,36115.47,36115.47,measured,data/30b4n/: jfig_30b4n_report.txt:p30_kf_s256
+prefill,4,4,1024,stock,39335.54,39335.54,measured,data/30b4n/: jfig_30b4n_supp_report.txt:p30_baseA_s1024
+prefill,4,4,1024,ours,62914.73,62914.73,measured,data/30b4n/: jfig_30b4n_supp_report.txt:p30_kf_s1024
+prefill,4,16,4096,stock,46623.08,46623.08,measured,data/30b4n/: jfig_30b4n_r2q_report.txt:p30_baseA_s4096
+prefill,4,16,4096,ours,89616.76,89616.76,measured,data/30b4n/: jfig_30b4n_r2q_report.txt:p30_kf_s4096

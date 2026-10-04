@@ -1,0 +1,5 @@
+/pscratch/sd/y/yufeid/conda_envs/andrewy-sglang/lib/python3.11/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[wave] C=4096 (256/rank x 16) batch 512 -> 8 calls in flight, osl 48, prompt tokens with template min 55 median 56 max 56
+[wave] 0: 4096 requests, 196608 output tokens in 9.88 s (wave wall time; includes prefill) OK
+[wave] 1: 4096 requests, 196608 output tokens in 9.04 s (wave wall time; includes prefill) OK

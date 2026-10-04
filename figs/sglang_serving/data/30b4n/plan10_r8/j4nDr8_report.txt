@@ -1,0 +1,214 @@
+18:13:06 jobDr8 59242113: 4 nodes (16 ranks) node0 nid001732 constraint gpu&a100&hbm40g knob arms 'baseA s7=lopep_p10s7|LOPEP_DEVICE_META=1,LOPEP_PLAN_BRANCHES=1,LOPEP_TAIL_REDUCE_BLOCKS=108,LOPEP_HOST_AHEAD=1,LOPEP_META_FUSED=1,LOPEP_ROUTE_FUSED=1,LOPEP_SAMPLE_BEFORE_CHECK=1,LOPEP_COMBINE_PREP_SIDE=1 s72=lopep_p10s7|LOPEP_DEVICE_META=1,LOPEP_PLAN_BRANCHES=1,LOPEP_TAIL_REDUCE_BLOCKS=108,LOPEP_HOST_AHEAD=1,LOPEP_META_FUSED=1,LOPEP_ROUTE_FUSED=1,LOPEP_SAMPLE_BEFORE_CHECK=1,LOPEP_COMBINE_PREP_SIDE=1 baseA2'
+18:13:15 arm baseA: tree /pscratch/sd/y/yufeid/workspace/andrewy/lopep_d1rt binary a13762d74790
+18:15:41 d30_baseA: healthy after 90 s
+18:15:41 d30_baseA: CONTROL per-rank [max_total_num_tokens=110000, chunked_prefill_size=4096, max_prefill_tokens=16384, max_running_requests=1024, context_len=256, available_gpu_mem=21.68 GB] disable_cuda_graph=True cuda_graph_max_bs=160 enable_dp_lm_head=True
+18:15:41 d30_baseA: waves at 256 running requests per rank
+[wave] C=4096 (256/rank x 16) batch 512 -> 8 calls in flight, osl 48, prompt tokens with template min 55 median 56 max 56
+[wave] 0: 4096 requests, 196608 output tokens in 10.97 s (wave wall time; includes prefill) OK
+[wave] 1: 4096 requests, 196608 output tokens in 10.00 s (wave wall time; includes prefill) OK
+18:16:11 d30_baseA: waves at 512 running requests per rank
+[wave] C=8192 (512/rank x 16) batch 512 -> 16 calls in flight, osl 48, prompt tokens with template min 55 median 56 max 56
+[wave] 0: 8192 requests, 393216 output tokens in 18.38 s (wave wall time; includes prefill) OK
+[wave] 1: 8192 requests, 393216 output tokens in 18.42 s (wave wall time; includes prefill) OK
+18:17:01 d30_baseA: waves at 1024 running requests per rank
+[wave] C=16384 (1024/rank x 16) batch 512 -> 32 calls in flight, osl 48, prompt tokens with template min 55 median 56 max 56
+[wave] 0: 16384 requests, 786432 output tokens in 36.07 s (wave wall time; includes prefill) OK
+[wave] 1: 16384 requests, 786432 output tokens in 35.67 s (wave wall time; includes prefill) OK
+running/rank 256: 192 intervals over 16 ranks | decode step median 88.45 ms (IQR 87.72-92.94) | output tok/s per GPU median 2894 | cuda graph [False] | KV usage max 0.23
+running/rank 512: 192 intervals over 16 ranks | decode step median 151.06 ms (IQR 150.04-159.97) | output tok/s per GPU median 3389 | cuda graph [False] | KV usage max 0.47
+running/rank 1024: 192 intervals over 16 ranks | decode step median 284.40 ms (IQR 281.87-296.72) | output tok/s per GPU median 3601 | cuda graph [False] | KV usage max 0.95
+18:18:22 d30_baseA: growths 0 tracebacks 0
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.564 | pre 0.453 moe 0.618 post 0.494
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.553 | pre 0.451 moe 0.629 post 0.474
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.549 | pre 0.447 moe 0.630 post 0.472
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 240: total 1.638 | pre 0.453 moe 0.632 post 0.554
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.639 | pre 0.451 moe 0.598 post 0.590
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.566 | pre 0.450 moe 0.613 post 0.503
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.551 | pre 0.447 moe 0.627 post 0.477
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.550 | pre 0.446 moe 0.629 post 0.475
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 192: total 1.537 | pre 0.442 moe 0.630 post 0.465
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 336: total 2.963 | pre 0.688 moe 1.184 post 1.091
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.807 | pre 0.678 moe 1.123 post 1.006
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.709 | pre 0.679 moe 1.152 post 0.878
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.678 | pre 0.669 moe 1.160 post 0.849
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.669 | pre 0.667 moe 1.161 post 0.842
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 48: total 3.023 | pre 0.703 moe 1.301 post 1.018
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.951 | pre 0.677 moe 1.146 post 1.129
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.753 | pre 0.679 moe 1.130 post 0.944
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.699 | pre 0.680 moe 1.157 post 0.862
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.688 | pre 0.677 moe 1.159 post 0.853
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 288: total 2.673 | pre 0.671 moe 1.158 post 0.843
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 384: total 5.575 | pre 1.155 moe 2.304 post 2.116
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 5.330 | pre 1.142 moe 2.194 post 1.994
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 5.161 | pre 1.157 moe 2.265 post 1.739
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 5.111 | pre 1.147 moe 2.277 post 1.687
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 384: total 5.101 | pre 1.147 moe 2.273 post 1.681
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 240: total 5.649 | pre 1.154 moe 2.292 post 2.203
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 5.411 | pre 1.150 moe 2.211 post 2.050
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 5.187 | pre 1.150 moe 2.248 post 1.789
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 5.127 | pre 1.151 moe 2.276 post 1.700
+[d30_baseA] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 5.103 | pre 1.142 moe 2.271 post 1.690
+18:18:22 arm s7: tree /pscratch/sd/y/yufeid/workspace/andrewy/lopep_p10s7 binary d588f725e2b1
+18:18:22 d30_ks7: env [PYTHONPATH=/pscratch/sd/y/yufeid/workspace/andrewy/lopep_p10s7/integrations/sglang:/pscratch/sd/y/yufeid/workspace/andrewy/lopep_p10s7/python LOPEP_DEVICE_META=1 LOPEP_PLAN_BRANCHES=1 LOPEP_TAIL_REDUCE_BLOCKS=108 LOPEP_HOST_AHEAD=1 LOPEP_META_FUSED=1 LOPEP_ROUTE_FUSED=1 LOPEP_SAMPLE_BEFORE_CHECK=1 LOPEP_COMBINE_PREP_SIDE=1]
+18:21:50 d30_ks7: healthy after 160 s
+18:21:50 d30_ks7: CONTROL per-rank [max_total_num_tokens=110000, chunked_prefill_size=4096, max_prefill_tokens=16384, max_running_requests=1024, context_len=256, available_gpu_mem=5.58 GB] disable_cuda_graph=True cuda_graph_max_bs=160 enable_dp_lm_head=True
+18:21:50 d30_ks7: waves at 256 running requests per rank
+[wave] C=4096 (256/rank x 16) batch 512 -> 8 calls in flight, osl 48, prompt tokens with template min 55 median 56 max 56
+[wave] 0: 4096 requests, 196608 output tokens in 7.56 s (wave wall time; includes prefill) OK
+[wave] 1: 4096 requests, 196608 output tokens in 6.46 s (wave wall time; includes prefill) OK
+18:22:20 d30_ks7: waves at 512 running requests per rank
+[wave] C=8192 (512/rank x 16) batch 512 -> 16 calls in flight, osl 48, prompt tokens with template min 55 median 56 max 56
+[wave] 0: 8192 requests, 393216 output tokens in 10.53 s (wave wall time; includes prefill) OK
+[wave] 1: 8192 requests, 393216 output tokens in 10.55 s (wave wall time; includes prefill) OK
+18:22:50 d30_ks7: waves at 1024 running requests per rank
+[wave] C=16384 (1024/rank x 16) batch 512 -> 32 calls in flight, osl 48, prompt tokens with template min 55 median 56 max 56
+[wave] 0: 16384 requests, 786432 output tokens in 18.58 s (wave wall time; includes prefill) OK
+[wave] 1: 16384 requests, 786432 output tokens in 19.53 s (wave wall time; includes prefill) OK
+running/rank 256: 192 intervals over 16 ranks | decode step median 85.02 ms (IQR 81.62-88.91) | output tok/s per GPU median 3012 | cuda graph [False] | KV usage max 0.23
+running/rank 512: 192 intervals over 16 ranks | decode step median 116.82 ms (IQR 114.49-125.34) | output tok/s per GPU median 4383 | cuda graph [False] | KV usage max 0.47
+running/rank 1024: 192 intervals over 16 ranks | decode step median 186.51 ms (IQR 184.46-202.73) | output tok/s per GPU median 5490 | cuda graph [False] | KV usage max 0.95
+18:23:41 d30_ks7: growths 0 tracebacks 0
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.562 | pre 0.009 moe 1.550 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.443 | pre 0.009 moe 1.432 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.415 | pre 0.009 moe 1.403 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.397 | pre 0.009 moe 1.386 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 240: total 1.493 | pre 0.010 moe 1.481 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.583 | pre 0.010 moe 1.571 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.478 | pre 0.010 moe 1.466 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.425 | pre 0.010 moe 1.413 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.407 | pre 0.010 moe 1.395 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 192: total 1.407 | pre 0.010 moe 1.395 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 336: total 2.203 | pre 0.011 moe 2.190 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.125 | pre 0.011 moe 2.112 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 1.978 | pre 0.011 moe 1.965 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 1.957 | pre 0.011 moe 1.944 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 1.940 | pre 0.011 moe 1.927 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 96: total 2.229 | pre 0.011 moe 2.215 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.184 | pre 0.011 moe 2.170 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.014 | pre 0.011 moe 2.001 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 1.963 | pre 0.011 moe 1.949 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 1.938 | pre 0.011 moe 1.925 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 240: total 1.935 | pre 0.011 moe 1.922 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.546 | pre 0.013 moe 3.531 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.249 | pre 0.013 moe 3.234 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.111 | pre 0.013 moe 3.095 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.074 | pre 0.013 moe 3.059 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 336: total 3.068 | pre 0.013 moe 3.052 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 384: total 3.562 | pre 0.013 moe 3.547 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.333 | pre 0.013 moe 3.318 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.111 | pre 0.013 moe 3.095 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.060 | pre 0.013 moe 3.044 post 0.002
+18:23:41 d30_ks7: growths 0 tracebacks 0
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.074 | pre 0.013 moe 3.059 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 336: total 3.068 | pre 0.013 moe 3.052 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 384: total 3.562 | pre 0.013 moe 3.547 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.333 | pre 0.013 moe 3.318 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.111 | pre 0.013 moe 3.095 post 0.002
+[d30_ks7] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.060 | pre 0.013 moe 3.044 post 0.002
+18:23:41 arm s72: tree /pscratch/sd/y/yufeid/workspace/andrewy/lopep_p10s7 binary d588f725e2b1
+18:23:41 d30_ks72: env [PYTHONPATH=/pscratch/sd/y/yufeid/workspace/andrewy/lopep_p10s7/integrations/sglang:/pscratch/sd/y/yufeid/workspace/andrewy/lopep_p10s7/python LOPEP_DEVICE_META=1 LOPEP_PLAN_BRANCHES=1 LOPEP_TAIL_REDUCE_BLOCKS=108 LOPEP_HOST_AHEAD=1 LOPEP_META_FUSED=1 LOPEP_ROUTE_FUSED=1 LOPEP_SAMPLE_BEFORE_CHECK=1 LOPEP_COMBINE_PREP_SIDE=1]
+18:26:53 d30_ks72: healthy after 150 s
+18:26:53 d30_ks72: CONTROL per-rank [max_total_num_tokens=110000, chunked_prefill_size=4096, max_prefill_tokens=16384, max_running_requests=1024, context_len=256, available_gpu_mem=5.58 GB] disable_cuda_graph=True cuda_graph_max_bs=160 enable_dp_lm_head=True
+18:26:53 d30_ks72: waves at 256 running requests per rank
+[wave] C=4096 (256/rank x 16) batch 512 -> 8 calls in flight, osl 48, prompt tokens with template min 55 median 56 max 56
+[wave] 0: 4096 requests, 196608 output tokens in 7.45 s (wave wall time; includes prefill) OK
+[wave] 1: 4096 requests, 196608 output tokens in 6.45 s (wave wall time; includes prefill) OK
+18:27:23 d30_ks72: waves at 512 running requests per rank
+[wave] C=8192 (512/rank x 16) batch 512 -> 16 calls in flight, osl 48, prompt tokens with template min 55 median 56 max 56
+[wave] 0: 8192 requests, 393216 output tokens in 10.91 s (wave wall time; includes prefill) OK
+[wave] 1: 8192 requests, 393216 output tokens in 10.45 s (wave wall time; includes prefill) OK
+18:27:53 d30_ks72: waves at 1024 running requests per rank
+[wave] C=16384 (1024/rank x 16) batch 512 -> 32 calls in flight, osl 48, prompt tokens with template min 55 median 56 max 56
+[wave] 0: 16384 requests, 786432 output tokens in 18.64 s (wave wall time; includes prefill) OK
+[wave] 1: 16384 requests, 786432 output tokens in 18.87 s (wave wall time; includes prefill) OK
+running/rank 256: 192 intervals over 16 ranks | decode step median 85.12 ms (IQR 82.35-89.06) | output tok/s per GPU median 3008 | cuda graph [False] | KV usage max 0.23
+running/rank 512: 192 intervals over 16 ranks | decode step median 117.44 ms (IQR 114.92-126.94) | output tok/s per GPU median 4360 | cuda graph [False] | KV usage max 0.47
+running/rank 1024: 192 intervals over 16 ranks | decode step median 186.73 ms (IQR 184.18-202.15) | output tok/s per GPU median 5484 | cuda graph [False] | KV usage max 0.95
+18:28:43 d30_ks72: growths 0 tracebacks 0
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.469 | pre 0.010 moe 1.457 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.427 | pre 0.010 moe 1.414 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.419 | pre 0.010 moe 1.407 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 240: total 1.513 | pre 0.010 moe 1.501 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.574 | pre 0.010 moe 1.562 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.453 | pre 0.010 moe 1.441 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.420 | pre 0.010 moe 1.408 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.414 | pre 0.010 moe 1.402 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 144: total 1.416 | pre 0.010 moe 1.404 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 432: total 2.204 | pre 0.011 moe 2.191 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.094 | pre 0.011 moe 2.081 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 1.967 | pre 0.011 moe 1.954 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 1.938 | pre 0.011 moe 1.925 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 384: total 1.944 | pre 0.011 moe 1.931 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 192: total 2.249 | pre 0.011 moe 2.236 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.212 | pre 0.011 moe 2.199 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.012 | pre 0.011 moe 1.999 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 1.973 | pre 0.011 moe 1.960 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 1.937 | pre 0.011 moe 1.924 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 144: total 1.934 | pre 0.011 moe 1.920 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 96: total 3.601 | pre 0.013 moe 3.585 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.502 | pre 0.013 moe 3.487 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.191 | pre 0.013 moe 3.175 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.099 | pre 0.013 moe 3.083 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.057 | pre 0.013 moe 3.042 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 240: total 3.049 | pre 0.014 moe 3.033 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.556 | pre 0.013 moe 3.540 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.256 | pre 0.013 moe 3.240 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.110 | pre 0.013 moe 3.094 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.050 | pre 0.013 moe 3.034 post 0.002
+18:28:43 d30_ks72: growths 0 tracebacks 0
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.057 | pre 0.013 moe 3.042 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 240: total 3.049 | pre 0.014 moe 3.033 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.556 | pre 0.013 moe 3.540 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.256 | pre 0.013 moe 3.240 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.110 | pre 0.013 moe 3.094 post 0.002
+[d30_ks72] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 3.050 | pre 0.013 moe 3.034 post 0.002
+18:28:43 arm baseA2: tree /pscratch/sd/y/yufeid/workspace/andrewy/lopep_d1rt binary a13762d74790
+18:30:26 d30_baseA2: healthy after 60 s
+18:30:26 d30_baseA2: CONTROL per-rank [max_total_num_tokens=110000, chunked_prefill_size=4096, max_prefill_tokens=16384, max_running_requests=1024, context_len=256, available_gpu_mem=21.68 GB] disable_cuda_graph=True cuda_graph_max_bs=160 enable_dp_lm_head=True
+18:30:26 d30_baseA2: waves at 256 running requests per rank
+[wave] C=4096 (256/rank x 16) batch 512 -> 8 calls in flight, osl 48, prompt tokens with template min 55 median 56 max 56
+[wave] 0: 4096 requests, 196608 output tokens in 11.03 s (wave wall time; includes prefill) OK
+[wave] 1: 4096 requests, 196608 output tokens in 9.83 s (wave wall time; includes prefill) OK
+18:30:56 d30_baseA2: waves at 512 running requests per rank
+[wave] C=8192 (512/rank x 16) batch 512 -> 16 calls in flight, osl 48, prompt tokens with template min 55 median 56 max 56
+[wave] 0: 8192 requests, 393216 output tokens in 18.38 s (wave wall time; includes prefill) OK
+[wave] 1: 8192 requests, 393216 output tokens in 18.57 s (wave wall time; includes prefill) OK
+18:31:46 d30_baseA2: waves at 1024 running requests per rank
+[wave] C=16384 (1024/rank x 16) batch 512 -> 32 calls in flight, osl 48, prompt tokens with template min 55 median 56 max 56
+[wave] 0: 16384 requests, 786432 output tokens in 35.80 s (wave wall time; includes prefill) OK
+[wave] 1: 16384 requests, 786432 output tokens in 36.25 s (wave wall time; includes prefill) OK
+running/rank 256: 192 intervals over 16 ranks | decode step median 88.66 ms (IQR 87.91-92.86) | output tok/s per GPU median 2888 | cuda graph [False] | KV usage max 0.23
+running/rank 512: 192 intervals over 16 ranks | decode step median 150.68 ms (IQR 149.58-160.72) | output tok/s per GPU median 3398 | cuda graph [False] | KV usage max 0.47
+running/rank 1024: 192 intervals over 16 ranks | decode step median 284.57 ms (IQR 282.84-297.58) | output tok/s per GPU median 3599 | cuda graph [False] | KV usage max 0.95
+18:33:06 d30_baseA2: growths 0 tracebacks 0
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.611 | pre 0.457 moe 0.600 post 0.554
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.566 | pre 0.453 moe 0.620 post 0.493
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.557 | pre 0.452 moe 0.629 post 0.475
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.557 | pre 0.452 moe 0.629 post 0.476
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 240: total 1.671 | pre 0.455 moe 0.618 post 0.598
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.627 | pre 0.454 moe 0.605 post 0.567
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.569 | pre 0.454 moe 0.618 post 0.497
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.554 | pre 0.450 moe 0.631 post 0.473
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 480: total 1.555 | pre 0.452 moe 0.631 post 0.473
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=256: mean ms per layer-step over 144: total 1.550 | pre 0.451 moe 0.632 post 0.467
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 432: total 2.976 | pre 0.685 moe 1.174 post 1.117
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.772 | pre 0.669 moe 1.123 post 0.980
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.691 | pre 0.672 moe 1.155 post 0.863
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.672 | pre 0.670 moe 1.159 post 0.844
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 384: total 2.660 | pre 0.665 moe 1.158 post 0.836
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 144: total 2.897 | pre 0.664 moe 1.166 post 1.066
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.837 | pre 0.682 moe 1.136 post 1.019
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.719 | pre 0.677 moe 1.141 post 0.901
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.680 | pre 0.674 moe 1.158 post 0.848
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 480: total 2.675 | pre 0.678 moe 1.158 post 0.839
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=512: mean ms per layer-step over 144: total 2.647 | pre 0.668 moe 1.160 post 0.819
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 5.617 | pre 1.157 moe 2.264 post 2.196
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 5.271 | pre 1.152 moe 2.210 post 1.909
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 5.140 | pre 1.155 moe 2.270 post 1.715
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 5.123 | pre 1.151 moe 2.274 post 1.699
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 288: total 5.099 | pre 1.146 moe 2.272 post 1.682
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 336: total 5.632 | pre 1.176 moe 2.296 post 2.161
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 5.367 | pre 1.152 moe 2.194 post 2.021
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 5.164 | pre 1.166 moe 2.262 post 1.737
+[d30_baseA2] [layer timing rank 0] DECODE MAX n_pad<=1024: mean ms per layer-step over 480: total 5.132 | pre 1.159 moe 2.277 post 1.697
+18:33:47 jobDr8 DONE
