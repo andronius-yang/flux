@@ -20,7 +20,7 @@ from matplotlib.patches import Patch
 # ============================== CONFIG =======================================
 CONFIG = dict(
     # ---- data selection ----
-    BUDGETS=[1, 4, 16],                       # MiB, group order left->right
+    BUDGETS=[1, 4, 16],                       # MB (labels; = MiB per GPU), group order left->right
     ROWS=["4", "8", "16"],                    # topology per subfigure ROW (top->bottom)
     COLS=["Qwen", "K2"],                      # model per subfigure COLUMN (left->right)
     # v4 (2026-09-25, user ruling): the COMET+EPLB bar is an explicit knob,
@@ -128,8 +128,8 @@ CONFIG = dict(
     # (sweep cells.csv tokens_per_rank; K2 chunk 14336 B, Qwen 8192 B)
     TOK_PER_GPU={"K2": {1: 72, 4: 296, 16: 1168, 64: 4680},
                  "Qwen": {1: 128, 4: 512, 16: 2048, 64: 8192}},
-    GROUP_LABEL_FMT="{b} MiB\n(= {tok} tok/GPU)",
-    GROUP_LABELS={1: "1 MiB", 4: "4 MiB", 16: "16 MiB"},   # fallback (no tokens table)
+    GROUP_LABEL_FMT="{b} MB\n(= {tok} tok/GPU)",
+    GROUP_LABELS={1: "1 MB", 4: "4 MB", 16: "16 MB"},   # fallback (no tokens table)
     X_LABEL=None,          # axis-level x title; None = budgets defined in caption
     Y_LABEL="Latency (ms)",   # single shared label on the figure's left edge
     N_YTICKS=3,
