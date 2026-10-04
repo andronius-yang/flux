@@ -27,7 +27,11 @@ CONFIG = dict(
         ("prefill", "Prefill", "TPS (k)", True, 1e-3),
         ("decode", "Decode", "TPOT (ms)", False, 1.0),
     ],
-    GROUP_FMT="{b} MB",                    # group label under each pair; tokens / requests per GPU go in the caption
+    GROUP_FMT="{b} MB",                    # group label under each pair
+    # second label row: tokens per GPU per layer-step (prefill: chunk tokens; decode: running requests, one token
+    # each); 30B hidden 2048 x 2 B -> 1 MB = 256 tokens. Numbers only under each group, the unit once at the row's left.
+    TOKENS={1: 256, 4: 1024, 16: 4096},
+    TOK_FMT="{tok}", TOK_ROW_LABEL="tok/GPU",
     SYSTEMS=["stock", "ours"],             # bar order inside a group
     LEGEND_NAMES={"stock": "SGLang", "ours": "Ours"},
     COLORS={"stock": "#cfccc2", "ours": "#4878b0"},     # Ours = main_perf_v5's Ours blue
@@ -44,11 +48,12 @@ CONFIG = dict(
     # ---- layout, inches at final size (the PDF is placed at \columnwidth = 3.33 in; ~20 % of the 9 in column) ----
     FIG_W=3.33, FIG_H=1.75,
     TOP_IN=0.17,                           # legend strip
-    BOTTOM_IN=0.14,                        # group labels
-    LEFT_IN=0.33, RIGHT_IN=0.02, GAP_IN=0.50,   # GAP = between the panels (holds the right panel's y labels)
+    BOTTOM_IN=0.22,                        # group labels + token row
+    LEFT_IN=0.37, RIGHT_IN=0.02, GAP_IN=0.50,   # GAP = between the panels (holds the right panel's y labels)
     FONT_FAMILY=["Helvetica", "Arial", "DejaVu Sans"],
-    FONT_SIZES=dict(legend=7, title=7, ylabel=6.8, tick=6.3, group=6.8, speedup=5.8, pending=5.6),
+    FONT_SIZES=dict(legend=7, title=7, ylabel=6.8, tick=6.3, group=6.8, tok=5.8, speedup=5.8, pending=5.6),
     GROUP_DY_PT=2.0,                       # group label row: points below the x axis
+    TOK_DY_PT=9.0,                         # token row: points below the x axis
     OUTPUTS=[("sglang_serving_draft.pdf", {}), ("sglang_serving_draft.png", {"dpi": 300})],
 )
 # =============================================================================
@@ -144,6 +149,13 @@ def main(cfg=CONFIG):
                         fontweight=sp["weight"], color=sp["color"], zorder=5, bbox=bbox)
             ax.text(gi, 0, cfg["GROUP_FMT"].format(b=b), transform=below(cfg["GROUP_DY_PT"]), ha="center", va="top",
                     fontsize=fs["group"], color=ink["primary"])
+            if cfg.get("TOKENS"):
+                ax.text(gi, 0, cfg["TOK_FMT"].format(tok=cfg["TOKENS"][b]), transform=below(cfg["TOK_DY_PT"]),
+                        ha="center", va="top", fontsize=fs["tok"], color=ink["secondary"])
+        if cfg.get("TOKENS"):
+            row = matplotlib.transforms.offset_copy(ax.transAxes, fig=fig, x=-1.5, y=-cfg["TOK_DY_PT"], units="points")
+            ax.text(0, 0, cfg["TOK_ROW_LABEL"], transform=row, ha="right", va="top", fontsize=fs["tok"],
+                    color=ink["secondary"])
     handles = [Patch(facecolor=cfg["COLORS"][s], hatch=cfg["HATCHES"][s], edgecolor=ink["primary"],
                      linewidth=cfg["OURS_EDGE_LW"] if s == "ours" else cfg["EDGE_LW"], label=cfg["LEGEND_NAMES"][s])
                for s in cfg["SYSTEMS"]]
