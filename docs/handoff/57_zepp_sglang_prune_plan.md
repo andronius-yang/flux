@@ -125,3 +125,14 @@ Open for the user: (1) the 1024 harness point is -4.1 % (faster) and outside the
 was not run; (2) direct-strategy and single-node serving are broken in p10-f too and are now refused, so a real fix is
 follow-up work; (3) optional comment-only pass over both branches for the main-identical labels ('legacy', 'v2 M2',
 '3D scheduling'), with no GPU rerun needed (SASS identity proves it); (4) research-tree changes uncommitted.
+
+## Comment pass (2026-10-05, user: "comment only pass over both branches ... to remove internal labels")
+
+Both branches, work repo `cmt-main` (main) and `prune` (sglang-dev): 9534564 / 6c2dbc1 (agent; 22 files each, 227 / 146
+comment blocks, 140 shared verbatim) + 8cf7731 / 7accbdb (compare.py usage line; upstream Flux reference). Proof:
+`comment_only_check.py` PASS on every step (COMMENT-ONLY / DOCSTRING+COMMENT / TEXT; one STRINGS-ONLY: the FLUX_CHECK
+message "untimed host metadata" -> "host metadata"); SASS of both rebuilt libraries IDENTICAL to the release builds
+(main 55/55, sglang-dev 85/85). Review of every released comment: `logs/zepp_rename/comment_pass/REVIEW.md` (+ main.diff,
+sglang.diff). Remaining label-like tokens are identifiers/CLI values only: local `tier_b` (dispatch_gemm.cc), the
+server.sh mode `ours`, the file name tests/test_r5_resources.py (renaming = code change; optional, SASS-provable).
+FINAL zepp: main 3e5f42e, sglang-dev e4bc6a8 (Andrew Yang), audit PASS. Research tree committed ab0eb67 (+ this update).
