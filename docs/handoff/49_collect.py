@@ -18,7 +18,7 @@ BENCH = re.compile(r"^\[(\S+) lcbp\] (Successful requests|Benchmark duration \(s
 DEC = re.compile(r"^running/rank (\d+): (\d+) intervals over (\d+) ranks \| decode step median ([0-9.]+) ms "
                  r"\(IQR ([0-9.]+)-([0-9.]+)\) \| output tok/s per GPU median (\d+) \| cuda graph \[([^\]]*)\]")
 WAVES = re.compile(r"^\S+ (\S+): waves at")
-LEDGER = re.compile(r"lopep timing rank 0\] S<=(\d+)(\+swap)?: mean ms per layer-step over (\d+): total ([0-9.]+)")
+LEDGER = re.compile(r"(?:lopep|zepp) timing rank 0\] S<=(\d+)(\+swap)?: mean ms per layer-step over (\d+): total ([0-9.]+)")
 BRACKET = re.compile(r"layer timing rank 0\] (DECODE|EXTEND) (MAX|SUM) n_pad<=(\d+): mean ms per layer-step over (\d+): "
                      r"total ([0-9.]+)")
 

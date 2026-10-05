@@ -1,7 +1,7 @@
 """gap_report2.py <report.sqlite> [--range NAME] [--csv out.csv] [--top N]
 
 Per-phase attribution of an nsys trace (handoff 47). For every instance of an NVTX push/pop range
-whose text starts with NAME (default: the most frequent of "lopep.step", "moe_layer", "iter", "fwd"),
+whose text starts with NAME (default: the most frequent of "zepp.step", "lopep.step", "moe_layer", "iter", "fwd"),
 the phases are the intervals between successive NVTX marks emitted on the same thread inside the range
 (a phase is named by the mark that closes it; the first phase runs from the range start to the first
 mark). Every CUDA runtime call issued on that thread inside a phase interval is joined by
@@ -75,7 +75,7 @@ def main():
           db.execute("select start, end, text, textId, globalTid from NVTX_EVENTS")]
     ranges = [(s, e, n, g) for (s, e, n, g) in nv if e is not None and e > s and n]
     marks = [(s, n, g) for (s, e, n, g) in nv if (e is None or e == s) and n]
-    prefixes = ["lopep.step", "moe_layer", "iter", "fwd"]
+    prefixes = ["zepp.step", "lopep.step", "moe_layer", "iter", "fwd"]
     if a.range:
         pref = a.range
     else:

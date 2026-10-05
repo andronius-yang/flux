@@ -1,6 +1,6 @@
-"""49_hostcalls.py <report.sqlite> [--range lopep.step] [--phase NAME ...]: host-call deep dive per phase (handoff 49).
+"""49_hostcalls.py <report.sqlite> [--range zepp.step|lopep.step] [--phase NAME ...]: host-call deep dive per phase (handoff 49).
 
-For every instance of an NVTX range (default lopep.step) on its busiest thread, the phases are the intervals between
+For every instance of an NVTX range (default zepp.step if the report has it, else lopep.step) on its busiest thread, the phases are the intervals between
 successive NVTX marks (as in 47_gap_report2.py). Per phase, medians over instances of:
   host us            phase span on the host
   in-API us          host time inside CUDA runtime / driver calls (launch overhead, copies, syncs)
@@ -29,7 +29,7 @@ def med(v):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("sqlite")
-    ap.add_argument("--range", default="lopep.step")
+    ap.add_argument("--range", default=None)
     ap.add_argument("--phase", nargs="*", default=[], help="phases to detail (default: all)")
     ap.add_argument("--top", type=int, default=12)
     a = ap.parse_args()
@@ -37,6 +37,8 @@ def main():
     strs = dict(db.execute("select id, value from StringIds"))
     nv = [(s, e, t if t is not None else strs.get(tid), g) for (s, e, t, tid, g) in
           db.execute("select start, end, text, textId, globalTid from NVTX_EVENTS")]
+    if a.range is None:  # Zepp builds name the range zepp.step, LoPEP builds lopep.step (handoff 56)
+        a.range = "zepp.step" if any(n and n.startswith("zepp.step") for (_, _, n, _) in nv) else "lopep.step"
     ranges = [(s, e, n, g) for (s, e, n, g) in nv if e is not None and e > s and n and n.startswith(a.range)]
     by_tid = defaultdict(list)
     for r in ranges:

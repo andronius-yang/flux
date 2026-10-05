@@ -2,7 +2,7 @@
 
 Ledger of a chain_prof run: parses every `server_<tag>_<arm>_s<smax>.log` for the periodic bracket reports
   [layer timing rank r] <MODE> <PAD> n_pad<=b: mean ms per layer-step over n: total t | pre a moe b post c
-  [lopep timing rank r] S<=b[+swap]: mean ms per layer-step over n: total t | phase v ...
+  [lopep|zepp timing rank r] S<=b[+swap]: mean ms per layer-step over n: total t | phase v ...
 and the fit lines, and prints per arm x smax: the stock-span table per (mode, pad, bin) and the lopep
 sub-phase table per bucket, weighting every report window by its step count. Warm-up windows land in the
 tiny bins and do not pollute the regime bins."""
@@ -13,8 +13,8 @@ import re
 from collections import defaultdict
 
 RE_L = re.compile(r"\[layer timing rank \d+\] (\S+) (\S+) n_pad<=(\d+): mean ms per layer-step over (\d+): total ([\d.]+) \| (.*)")
-RE_P = re.compile(r"\[lopep timing rank \d+\] (S<=\d+(?:\+swap)?): mean ms per layer-step over (\d+): total ([\d.]+) \| (.*)")
-RE_FIT = re.compile(r"\[(?:layer|lopep) timing rank \d+\] fit (.*)")
+RE_P = re.compile(r"\[(?:lopep|zepp) timing rank \d+\] (S<=\d+(?:\+swap)?): mean ms per layer-step over (\d+): total ([\d.]+) \| (.*)")
+RE_FIT = re.compile(r"\[(?:layer|lopep|zepp) timing rank \d+\] fit (.*)")
 
 
 def parse(path):

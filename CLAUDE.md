@@ -197,18 +197,26 @@ whether the key implication or design choice actually landed, and that require
 transferring the idea to a new situation (never answerable by restating the
 explanation). Wait for the answer and correct any misunderstanding.
 
-## LoPEP open-source release rules (user rulings 2026-09-28)
+## Zepp open-source release rules (user rulings 2026-09-28; LoPEP renamed to Zepp 2026-10-04)
 
-The public repository is `$PSCRATCH/workspace/andrewy/lopep` (branches `master` = published tree,
-`sglang-dev`) and its single-commit snapshot `$PSCRATCH/workspace/andrewy/lopep_release`. Before any
-snapshot is refreshed or pushed, run `scripts/oss_audit.sh [repo]` from this tree; it must print
-`AUDIT PASS`. The rules it enforces, which also bind every edit to that repository:
+The release repository is `$PSCRATCH/workspace/andrewy/zepp` (handoff 56): branch `main` = the system,
+branch `sglang-dev` = the consolidated serving tree (the system + the SGLang v0.5.3 integration), each ONE
+commit (`sglang-dev` = one commit on top of `main`), author and committer `Andrew Yang
+<androniusyang@gmail.com>` (user ruling 10-04), no remote: it stays on PSCRATCH until the user publishes. Names: package `zepp`,
+adapter `zepp_sglang`, library `libzepp_cuda.so`, environment `ZEPP_*`, SGLang backend `zepp`; Zepp has no
+expansion; paper *Zepp: Accelerating Distributed MoE Serving under Relaxed Balance Constraints*. The LoPEP
+repository `$PSCRATCH/workspace/andrewy/lopep` (full history, p8-p10 experiment branches and worktrees,
+`LOPEP_*` knobs) and the 9/28 snapshot `lopep_release` are the private record and are never published.
+Before any change to `zepp` is committed or pushed, run `scripts/oss_audit.sh [repo]` from this tree; it
+must print `AUDIT PASS`. The rules it enforces, which also bind every edit to that repository:
 
-1. **No provenance leaks.** No Claude / Anthropic / co-authorship text in files, commit messages, or
-   authors (never add `Co-Authored-By` lines there); no usernames (`yufeid`, `andrewy`, `changchen`);
-   no site paths (`/pscratch`, `$PSCRATCH`, `/global/homes`, `/global/u1`); no Slurm accounts anywhere
-   (no `m5350_g`/`m5424_g`/... defaults, no `--account <id>` examples: scripts must require the user
-   to pass the account); no old names (`moe_ep`, `LibraX`). Commit author of the snapshot: `LoPEP authors`.
+1. **No provenance leaks.** No Claude / Anthropic / co-authorship text anywhere in the history (files of
+   every commit, commit messages, authors; never add `Co-Authored-By` lines there, and the repository's
+   commit-msg hook refuses them); no usernames (`yufeid`, `andrewy`, `changchen`); no site paths
+   (`/pscratch`, `$PSCRATCH`, `/global/homes`, `/global/u1`); no Slurm accounts anywhere (no
+   `m5350_g`/`m5424_g`/... defaults, no `--account <id>` examples: scripts must require the user to pass
+   the account; the SGLang env script must require `ZEPP_CONDA_ENV`); no old names (`lopep`, `moe_ep`,
+   `LibraX`; NOTICE is not exempt).
 2. **No latency or throughput data anywhere.** No `results/` directory, no CSV/PNG/PDF/JSONL data
    files, no measured numbers with time or throughput units in the README, docs, scripts, or code
    comments, no speedup ratios. The measurements live in the paper (Figure 9) and, in this tree, under
@@ -218,6 +226,10 @@ snapshot is refreshed or pushed, run `scripts/oss_audit.sh [repo]` from this tre
    paper reference, layout, build, run, using the layer, license. Model: FAST's 30-line README and the
    "Getting started" section of Flux. Mechanism detail belongs in `docs/design.md`, process detail
    stays in this tree's `docs/handoff/`.
-4. The working repository's history was rewritten on 2026-09-28 to remove attribution trailers
-   (backup bundle under `$PSCRATCH/workspace/andrewy/logs/`); the snapshot is always a fresh single
-   commit made from `master` with `git archive` + `git init`, never a copy of the working history.
+4. **Fresh history.** `zepp` was made by `git init` from the verified rename trees (handoff 56: the
+   mechanical commit is exactly the name map, and the SASS is identical to the measured binaries), never by
+   copying the working history (its blobs hold attribution text, the deleted measurement data and the old
+   names). A change regenerates the branch commits (`git archive` + `commit-tree`), it does not append, until
+   the user decides otherwise. The zepp ops lane lives in `$PSCRATCH/workspace/andrewy/logs/zepp_rename/ops/`:
+   its tripwire refuses any `LOPEP_*` knob reaching a zepp binary and any `ZEPP_*` knob reaching a frozen
+   lopep binary (either would be silently ignored).
