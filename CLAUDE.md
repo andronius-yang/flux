@@ -202,7 +202,9 @@ explanation). Wait for the answer and correct any misunderstanding.
 The release repository is `$PSCRATCH/workspace/andrewy/zepp` (handoff 56): branch `main` = the system,
 branch `sglang-dev` = the consolidated serving tree (the system + the SGLang v0.5.3 integration), each ONE
 commit (`sglang-dev` = one commit on top of `main`), author and committer `Andrew Yang
-<androniusyang@gmail.com>` (user ruling 10-04), no remote: it stays on PSCRATCH until the user publishes. Names: package `zepp`,
+<androniusyang@gmail.com>` (user ruling 10-04). PUBLISHED 2026-10-05 to `github.com/andronius-yang/zepp` (remote
+`origin` = `git@github-zepp:...`, the repo-scoped deploy key `~/.ssh/id_ed25519_zepp_any013`; run git from the zepp
+directory: the flux tree's `core.sshCommand` forces the flux deploy key). Names: package `zepp`,
 adapter `zepp_sglang`, library `libzepp_cuda.so`, environment `ZEPP_*`, SGLang backend `zepp`; Zepp has no
 expansion; paper *Zepp: Accelerating Distributed MoE Serving under Relaxed Balance Constraints*. The LoPEP
 repository `$PSCRATCH/workspace/andrewy/lopep` (full history, p8-p10 experiment branches and worktrees,
@@ -229,7 +231,7 @@ must print `AUDIT PASS`. The rules it enforces, which also bind every edit to th
 4. **Fresh history.** `zepp` was made by `git init` from the verified rename trees (handoff 56: the
    mechanical commit is exactly the name map, and the SASS is identical to the measured binaries), never by
    copying the working history (its blobs hold attribution text, the deleted measurement data and the old
-   names). A change regenerates the branch commits (`git archive` + `commit-tree`), it does not append, until
-   the user decides otherwise. The zepp ops lane lives in `$PSCRATCH/workspace/andrewy/logs/zepp_rename/ops/`:
+   names). Since publication, changes are ordinary commits on top (never a force push or a rewrite), still by
+   `Andrew Yang <androniusyang@gmail.com>` and without attribution text; run the audit before every push. The zepp ops lane lives in `$PSCRATCH/workspace/andrewy/logs/zepp_rename/ops/`:
    its tripwire refuses any `LOPEP_*` knob reaching a zepp binary and any `ZEPP_*` knob reaching a frozen
    lopep binary (either would be silently ignored).

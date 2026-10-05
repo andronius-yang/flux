@@ -3,7 +3,7 @@
 # Default target: $PSCRATCH/workspace/andrewy/zepp. Exit 1 on any finding. Checks every branch tip and every commit.
 #   1. provenance: no Claude/Anthropic/co-authorship, no usernames, no site paths, no Slurm accounts, no old names
 #   2. no latency / throughput data anywhere (files or numbers with time/throughput units), no results/ directory
-#   3. history: main = one root commit, sglang-dev = one commit on top of main, no other refs, one author identity
+#   3. history: one release root shared by both branches, no refs besides the branches / origin / v* tags, one author identity
 set -uo pipefail
 R="${1:-$PSCRATCH/workspace/andrewy/zepp}"
 cd "$R" || { echo "no such repo: $R"; exit 2; }
@@ -36,10 +36,12 @@ done
 
 # 3. history shape and identity
 [ "$TIPS" = "main sglang-dev" ] || hit "branches are not exactly main + sglang-dev" "$TIPS"
-other=$(git for-each-ref --format='%(refname)' | grep -v -E '^refs/heads/(main|sglang-dev)$'); [ -n "$other" ] && hit "refs besides the two branches" "$other"
-[ "$(git rev-list --count main 2>/dev/null)" = "1" ] || hit "main is not a single root commit" "$(git rev-list --count main 2>/dev/null) commits"
-[ "$(git rev-parse sglang-dev~1 2>/dev/null)" = "$(git rev-parse main)" ] && [ "$(git rev-list --count sglang-dev 2>/dev/null)" = "2" ] \
-  || hit "sglang-dev is not one commit on top of main" "$(git log --oneline sglang-dev 2>/dev/null | head -3)"
+other=$(git for-each-ref --format='%(refname)' | grep -v -E '^refs/(heads|remotes/origin)/(main|sglang-dev|HEAD)$|^refs/tags/v[0-9]'); [ -n "$other" ] && hit "refs besides the two branches (and origin, v* tags)" "$other"
+# published 2026-10-05 (github.com/andronius-yang/zepp): history grows by ordinary commits; both branches must keep
+# the release root, and sglang-dev must contain main's first commit
+root=$(git rev-list --max-parents=0 main 2>/dev/null)
+[ "$(echo $root | wc -w)" = "1" ] || hit "main does not have exactly one root commit" "$root"
+git merge-base --is-ancestor "$root" sglang-dev 2>/dev/null || hit "sglang-dev does not descend from the release root" "$root"
 out=$(git log --all --format='%an <%ae>%n%cn <%ce>' | sort -u | grep -v -x -F "$AUTHOR"); [ -n "$out" ] && hit "unexpected author/committer" "$out"
 [ -n "$(git remote)" ] && echo "note: remotes configured: $(git remote -v | head -2 | tr '\n' ' ')"
 
