@@ -37,7 +37,7 @@ done
 # 3. history shape and identity
 [ "$TIPS" = "main sglang-dev" ] || hit "branches are not exactly main + sglang-dev" "$TIPS"
 other=$(git for-each-ref --format='%(refname)' | grep -v -E '^refs/(heads|remotes/origin)/(main|sglang-dev|HEAD)$|^refs/tags/v[0-9]'); [ -n "$other" ] && hit "refs besides the two branches (and origin, v* tags)" "$other"
-# published 2026-10-05 (github.com/andronius-yang/zepp): history grows by ordinary commits; both branches must keep
+# published 2026-10-05, re-released 2026-10-07 as fresh single commits: history grows by ordinary commits; both branches must keep
 # the release root, and sglang-dev must contain main's first commit
 root=$(git rev-list --max-parents=0 main 2>/dev/null)
 [ "$(echo $root | wc -w)" = "1" ] || hit "main does not have exactly one root commit" "$root"

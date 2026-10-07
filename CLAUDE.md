@@ -202,9 +202,13 @@ explanation). Wait for the answer and correct any misunderstanding.
 The release repository is `$PSCRATCH/workspace/andrewy/zepp` (handoff 56): branch `main` = the system,
 branch `sglang-dev` = the consolidated serving tree (the system + the SGLang v0.5.3 integration), each ONE
 commit (`sglang-dev` = one commit on top of `main`), author and committer `Andrew Yang
-<androniusyang@gmail.com>` (user ruling 10-04). PUBLISHED 2026-10-05 to `github.com/andronius-yang/zepp` (remote
-`origin` = `git@github-zepp:...`, the repo-scoped deploy key `~/.ssh/id_ed25519_zepp_any013`; run git from the zepp
-directory: the flux tree's `core.sshCommand` forces the flux deploy key). Names: package `zepp`,
+<androniusyang@gmail.com>` (user ruling 10-04). PUBLISHED 2026-10-05 to `github.com/andronius-yang/zepp`, still
+private; RE-RELEASED 2026-10-07 (user ruling: fresh single commits, force-pushed over the 10-05 history): `main`
+`a622091` = the `sglang-dev` library + the `gpu-plan` option (default on) + `scripts/sweep.py`, no `docs/`;
+`sglang-dev` `7882c86` = `main` + `integrations/sglang` + `env/setup_sglang.sh`. Release candidate and its
+measurements: clone `$PSCRATCH/workspace/andrewy/zepp_gpuplan`, `figs/main_perf_v6/`. Remote
+`origin` = `git@github-zepp:...` (the repo-scoped deploy key `~/.ssh/id_ed25519_zepp_any013`); run git from the zepp
+directory: the flux tree's `core.sshCommand` forces the flux deploy key. Names: package `zepp`,
 adapter `zepp_sglang`, library `libzepp_cuda.so`, environment `ZEPP_*`, SGLang backend `zepp`; Zepp has no
 expansion; paper *Zepp: Accelerating Distributed MoE Serving under Relaxed Balance Constraints*. The LoPEP
 repository `$PSCRATCH/workspace/andrewy/lopep` (full history, p8-p10 experiment branches and worktrees,
@@ -223,15 +227,20 @@ must print `AUDIT PASS`. The rules it enforces, which also bind every edit to th
    files, no measured numbers with time or throughput units in the README, docs, scripts, or code
    comments, no speedup ratios. The measurements live in the paper (Figure 9) and, in this tree, under
    `figs/main_perf_v5/oss_measured/` (the archived open-source `results/`, the only copy) and
-   `figs/main_perf_v5/figure_src.csv`. The README must say where the measurements are published.
-3. **Simplicity over completeness** for the public README: title, one-paragraph description with the
-   paper reference, layout, build, run, using the layer, license. Model: FAST's 30-line README and the
-   "Getting started" section of Flux. Mechanism detail belongs in `docs/design.md`, process detail
-   stays in this tree's `docs/handoff/`.
+   `figs/main_perf_v5/figure_src.csv`; since the re-release, `figs/main_perf_v6/` (`gpuplan_measured/`).
+   The docs never point at specific results (user ruling 10-07, rule 3).
+3. **Simplicity over completeness** for every public `.md` (user rulings 10-07): the README is the FAST-style
+   paper reference + authors, layout (`src |- ...` tree, high-level one-liners), build, run (ONE command, one
+   short line per option), using the layer, license. Nothing about the paper beyond that reference (no
+   figures, cells, "reproduce", reference values: hence no `compare.py` / `--expected`, the sweep is
+   `scripts/sweep.py`); nothing hardware-specific (nodes, GPUs, NICs, site) except libraries in the build /
+   environment setup; no verbose or precautionary guardrails. No `docs/design.md`; process detail stays in
+   this tree's `docs/handoff/`.
 4. **Fresh history.** `zepp` was made by `git init` from the verified rename trees (handoff 56: the
    mechanical commit is exactly the name map, and the SASS is identical to the measured binaries), never by
    copying the working history (its blobs hold attribution text, the deleted measurement data and the old
-   names). Since publication, changes are ordinary commits on top (never a force push or a rewrite), still by
+   names). Since the 10-07 re-release (the one sanctioned rewrite), changes are ordinary commits on top (never a
+   force push or a rewrite), still by
    `Andrew Yang <androniusyang@gmail.com>` and without attribution text; run the audit before every push. The zepp ops lane lives in `$PSCRATCH/workspace/andrewy/logs/zepp_rename/ops/`:
    its tripwire refuses any `LOPEP_*` knob reaching a zepp binary and any `ZEPP_*` knob reaching a frozen
    lopep binary (either would be silently ignored).
