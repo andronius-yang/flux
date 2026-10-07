@@ -41,6 +41,8 @@ KERNEL_CLASSES = [
     (r"^nvshmemi_proxy_rma", ("nic", "nic.put")),          # blocking wire put (stream busy while NIC moves data)
     (r"^barrier_on_stream", ("wait", "barrier")),
     (r"^ncclDevKernel_(AllGather|AllReduce|Broadcast)", ("gpu", "plan.comm")),
+    # 2026-10-06 (case study v6): the device swap decision (swap_decide_ext) is planning
+    (r"^swap_decide_kernel", ("gpu", "plan.compute")),
     (r"^(pll_|compress_plan_|a2av_meta_counts|a2av_stable_scatter|a2av_consumer_build|a2av_stage1|prepare_workspace|DeviceRadixSort|searchsorted|indexSelect|indexFunc|kernelHistogram|CatArrayBatchedCopy|calc_gather_index|sort_scatter_index|device_kernel|make_workspace)", ("gpu", "plan.compute")),
     (r"^(vectorized_|unrolled_)?elementwise_kernel$|^reduce_kernel$|^fill", ("gpu", "misc")),
     (r".*", ("gpu", "other")),

@@ -321,6 +321,24 @@ def parse_args():
     p.add_argument("--swap_bal_C", type=float, default=-1.0,
                    help="band trigger relaxation C; < 0 = reuse --eps (the"
                         " router's C: one configured load constraint).")
+    p.add_argument("--swap_decide", choices=("host", "device"),
+                   default="host",
+                   help="where the --swap_rounds all decision runs: 'host'"
+                        " = D2H of the gathered loads + numpy orbit + pinned"
+                        " table upload (the place-bracket host chain);"
+                        " 'device' (2026-10-06, case study v6) = the serving"
+                        " path's swap_decide kernel (swap_decide_ext.py):"
+                        " same orbit bit for bit, p2l / l2p rewritten in"
+                        " place before routing, the pull lists read by the"
+                        " host after the planning sync (no extra sync). The"
+                        " band gates the device decision only with"
+                        " --swap_trigger band; otherwise C = -1 puts every"
+                        " node out of band = the tau=1 orbit.")
+    p.add_argument("--swap_decide_check", type=int, default=0,
+                   help="with --swap_decide device: also run the host orbit"
+                        " on the same loads every iteration and assert the"
+                        " moves and p2l are identical (validation only;"
+                        " adds the host chain back)")
     p.add_argument("--wire", choices=["fused", "direct", "dov"],
                    default="fused",
                    help="l0/l1 transport: fused = the canonical Slipstream"
@@ -1358,6 +1376,42 @@ def main():
 
     d_gather_buf = torch.zeros(W, args.G, dtype=torch.int32, device="cuda")
 
+    # device swap decision (2026-10-06, case study v6): kernel state, a pinned
+    # mirror of the result block (read after the planning sync), warm-up launch
+    swap_dev = None
+    if args.swap_decide == "device":
+        assert args.s2_swap and args.swap_rounds == "all", (
+            "--swap_decide device implements the composed (--swap_rounds all)"
+            " orbit")
+        assert args.swap_pair_moves == 1, "device decision: per_pair 1"
+        assert not args.route_global, "device decision: per-rank loads"
+        from flux.testing import swap_decide_ext as _sdx
+        _sde = _sdx.load_ext()
+        _blk_n = _sde.swap_decide_out_ints(W, args.G, cfg.nlp,
+                                           args.swap_max_moves)
+        assert planner.p2l.dtype == torch.long, planner.p2l.dtype
+        assert planner.l2p.dtype == torch.int32, planner.l2p.dtype
+        assert tuple(planner.l2p.shape) == (args.G, W), tuple(planner.l2p.shape)
+        assert planner.lcnts.dtype == torch.int32, planner.lcnts.dtype
+        swap_dev = dict(
+            ext=_sde, mod=_sdx,
+            C=(swap_bal_C if swap_bal_C is not None else -1.0),
+            blk=torch.zeros(_blk_n, dtype=torch.int64, device="cuda"),
+            pin=torch.zeros(_blk_n, dtype=torch.int64).pin_memory(),
+            ntok=torch.full((W,), S, dtype=torch.int64, device="cuda"),
+            ev=torch.cuda.Event(), pending=False, rounds=0)
+        # warm-up launch on scratch tables: the lazy module load happens here,
+        # outside every timed window and before any spinning kernel exists
+        _sde.swap_decide(d_gather_buf, swap_dev["ntok"], S, args.topk,
+                         planner.p2l.clone(), planner.l2p.clone(),
+                         planner.lcnts, L, cfg.nlp, swap_dev["C"],
+                         args.swap_max_moves, 32, swap_dev["blk"])
+        torch.cuda.synchronize()
+        if rank == 0:
+            print(f"[swap-decide] device kernel, C={swap_dev['C']}, cap"
+                  f" {args.swap_max_moves}, block {_blk_n} int64",
+                  flush=True)
+
     gen_x = torch.Generator(device="cuda").manual_seed(4242 + rank)
     inputs_shard = ((torch.rand((S, args.H), device="cuda",
                                 generator=gen_x) * 0.02) - 0.01
@@ -1608,7 +1662,25 @@ def main():
                 torch.distributed.all_gather_into_tensor(
                     d_gather_buf, planner.local_loads(), group=TP_GROUP)
             plan_comm_end[i].record()
-            if lane is not None and args.s2_swap:
+            if swap_dev is not None:
+                # DEVICE swap decision (2026-10-06, case study v6): the
+                # serving path's kernel rewrites the planner's p2l / l2p in
+                # place, so the router below runs on the swapped tables in
+                # the same iteration; the result block rides a non-blocking
+                # D2H that the planning sync (derive_routed_meta) completes.
+                # The host reads the pull lists after that sync.
+                if args.swap_decide_check:
+                    swap_dev["chk"] = (plan.p2l.clone(), plan.l2p.clone())
+                with _cs_nvtx("swap.decide_dev"):
+                    swap_dev["ext"].swap_decide(
+                        d_gather_buf, swap_dev["ntok"], S, args.topk,
+                        planner.p2l, planner.l2p, planner.lcnts, L, cfg.nlp,
+                        swap_dev["C"], args.swap_max_moves, 32,
+                        swap_dev["blk"])
+                    swap_dev["pin"].copy_(swap_dev["blk"], non_blocking=True)
+                    swap_dev["ev"].record()
+                swap_dev["pending"] = True
+            elif lane is not None and args.s2_swap:
                 # SWAP place lane (timed, counts toward total_ms): D2H of
                 # d -> greedy intra-node pair+swap decision (sub-ms host
                 # integer, EPIC §4.3 analog) -> table transposition ->
@@ -1886,6 +1958,52 @@ def main():
             _hbp("plan")
             ip = planner.derive(d_gather_buf)
             runner.plan_meta(ip)
+            if swap_dev is not None and swap_dev["pending"]:
+                # device decision: plan_meta's sync has completed the block's
+                # D2H (same stream, earlier) -> pull lists -> the unchanged
+                # 3D-scheduled lane (phase 0 under l0, phase 1 under l1)
+                swap_dev["pending"] = False
+                with _cs_nvtx("swap.prepare"):
+                    swap_dev["ev"].synchronize()
+                    _rounds, _err, all_moves, _p2l_new = swap_dev["mod"].parse_block(
+                        swap_dev["pin"], W, cfg.nlp, args.swap_max_moves)
+                    assert _err == 0, f"swap_decide error flags {_err}"
+                    swaps = [mv for lst in all_moves for mv in lst]
+                    if _rounds:
+                        # host mirrors of the tables the kernel rewrote
+                        _l2p_h = torch.full_like(plan.l2p, -1)
+                        _l2p_np = _l2p_h.numpy()
+                        _ncol = [0] * args.G
+                        for _ph, _e in enumerate(_p2l_new):
+                            if _e >= 0:
+                                _l2p_np[_e, _ncol[_e]] = _ph
+                                _ncol[_e] += 1
+                        plan.p2l = torch.tensor(_p2l_new, dtype=plan.p2l.dtype)
+                        plan.l2p = _l2p_h
+                    swap_lane.prepare(all_moves)
+                    swap_lane.issue_early()
+                swap_dev["rounds"] = _rounds
+                move_stats.append((int(bool(swaps)), len(swaps),
+                                   swap_lane.move_bytes_this_iter, 0))
+                if args.swap_decide_check:
+                    # validation: the host orbit on the same loads and tables
+                    _p0, _l0 = swap_dev["chk"]
+                    _lg = d_gather_buf.cpu().long().sum(0)
+                    _pf, _lf, _nr = oswap_rt.swap_orbit_capped(
+                        _lg, _p0, _l0, plan.lcnts, L, cfg.nlp,
+                        args.swap_max_moves, per_pair=1, bal_C=swap_bal_C)
+                    _hm = oswap_rt.net_moves(_p0, _pf, L, cfg.nlp)
+                    _hm = [[tuple(int(v) for v in mv) for mv in lst] for lst in _hm]
+                    _ok = (_hm == [list(lst) for lst in all_moves]
+                           and _pf.tolist() == list(_p2l_new) and _nr == _rounds
+                           and torch.equal(_lf.int(), planner.l2p.cpu())
+                           and torch.equal(_pf.long(), planner.p2l.cpu()))
+                    if rank == 0 or not _ok:
+                        print(f"[swap-decide-check] r{rank} iter {i}: rounds"
+                              f" dev {_rounds} host {_nr}, moves"
+                              f" {len(swaps)} -> {'MATCH' if _ok else 'MISMATCH'}",
+                              flush=True)
+                    assert _ok, "device swap decision != host orbit"
             plan_end[i].record()
             e2e_start[i].record()
             runner.issue_combine_meta(ip)
@@ -1968,18 +2086,34 @@ def main():
             # against the routing-independent logical reference. Catches
             # first-call-freeze / stale-metadata bugs in the fused path.
             torch.cuda.synchronize()
+            # 2026-10-06: under a topic schedule the reference must use the
+            # topic this iteration routed (it used topic 0 before; with
+            # outputs ~1e-3 << atol the gate still caught only garbage rows)
+            _tk_ref = (_sched_dev[_sched_cur][rank] if _sched_dev
+                       else topk_all[rank])
             ref_i = torch_reference_local(
-                inputs_shard, topk_all[rank],
+                inputs_shard, _tk_ref,
                 probs_all_setup[rank * S:(rank + 1) * S],
                 args.ffn_hidden_size, args.H, input_dtype)
-            bad_i = int((~torch.isclose(out.float(), ref_i.float(),
-                                        atol=1e-2, rtol=1.5e-2))
-                        .any(dim=1).sum())
+            _bad_m = (~torch.isclose(out.float(), ref_i.float(),
+                                     atol=1e-2, rtol=1.5e-2)).any(dim=1)
+            bad_i = int(_bad_m.sum())
+            _dif = (out.float() - ref_i.float()).abs()
+            _info = (f" maxdiff {float(_dif.max()):.3e} ref_absmax"
+                     f" {float(ref_i.float().abs().max()):.3e}")
+            if bad_i:
+                _rows = _bad_m.nonzero(as_tuple=True)[0][:4].tolist()
+                _info += " rows " + " ".join(
+                    f"{t}:diff{float(_dif[t].max()):.3e}"
+                    f"/out{float(out[t].float().abs().max()):.3e}"
+                    f"/e{_tk_ref[t].tolist()}" for t in _rows)
             print(f"ours #{rank}: iter {i} gate "
-                  f"{'OK' if bad_i == 0 else 'BAD'} ({bad_i} bad rows)")
-            assert bad_i == 0, (
-                f"rank {rank} iter {i}: {bad_i} bad rows under changing "
-                f"routing — fused-path per-iteration metadata bug")
+                  f"{'OK' if bad_i == 0 else 'BAD'} ({bad_i} bad rows)"
+                  f"{_info}", flush=True)
+            if not int(os.environ.get("FLUX_OURS_GATE_NOASSERT", "0")):
+                assert bad_i == 0, (
+                    f"rank {rank} iter {i}: {bad_i} bad rows under changing "
+                    f"routing — fused-path per-iteration metadata bug")
         if rank == 0:
             print(f"[hb] window {i + 1}/{total_iters}")
 

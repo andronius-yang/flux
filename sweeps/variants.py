@@ -4031,3 +4031,19 @@ VARIANTS["ours_l01_s1_pv2_r2_dov_dev_gate"] = dict(
     VARIANTS["ours_l01_s1_pv2_r2_dov_dev"],
     test_args=VARIANTS["ours_l01_s1_pv2_r2_dov_dev"]["test_args"] + ["--check_iters", "1"],
 )
+
+# ---- case study v6 (2026-10-06): device swap decision. `_dsd` = the case-study
+# arm with --swap_decide device: the serving path's swap_decide kernel
+# (python/flux/testing/_swap_decide_ext.cu) replaces the host chain (loads D2H +
+# numpy orbit + table upload); the orbit is the same (no band trigger on this
+# arm -> C = -1, the tau=1 orbit), the tables are rewritten on the device before
+# routing, and the 3D-scheduled lane reads the pull lists after the planning
+# sync. `_dsd_gate` = check_iters + the per-iteration host-orbit equality check.
+for _base in ("ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_pv3c_eps025",):
+    _src = VARIANTS[_base]
+    VARIANTS[_base + "_dsd"] = dict(
+        _src, test_args=_src["test_args"] + ["--swap_decide", "device"])
+    VARIANTS[_base + "_dsd_gate"] = dict(
+        VARIANTS[_base + "_dsd"],
+        test_args=VARIANTS[_base + "_dsd"]["test_args"]
+        + ["--check_iters", "1", "--swap_decide_check", "1"])

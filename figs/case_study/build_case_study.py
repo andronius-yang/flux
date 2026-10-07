@@ -233,6 +233,7 @@ def build(data, out):
     rank_h = len(lanes) * LANE_H + (len(lanes) - 1) * LANE_GAP
     row_h = 2 * rank_h + RANK_GAP
     tpl = TEMPLATE in ("cs_v1", "cs_v3", "cs_v4"); v3 = TEMPLATE in ("cs_v3", "cs_v4")
+    n_host_drawn = 0                   # hatched Host bands actually drawn (legend entry only when > 0)
     gut = TEMPLATE_GUT if tpl else L_GUT
     tx0 = gut; tw = TEXT_W - gut - R_PAD
     rows = []
@@ -280,6 +281,7 @@ def build(data, out):
                 # cs_v3: hatched Host bands on the GPU lane where the device is idle inside a host range
                 for (a, b, names) in host_bands(it):
                     if b - a < HOST_MIN_MS: continue
+                    n_host_drawn += 1
                     D.hrect(tx0 + a * sc, ly["gpu"], (b - a) * sc, LANE_H, "bars", f"r{r} host {', '.join(names)} {a:.2f}–{b:.2f} ms")
             # rank span tick (end of device work)
             ex = tx0 + S[r]["end"] * sc
@@ -302,7 +304,7 @@ def build(data, out):
     # legend: task colours, span tick, resource patterns
     ly_ = ay + AXIS_H + 1; lx = gut
     legend = ((("token", "Token Comm."), ("expert_comm", "Expert Swap"), ("comp", "Expert Comp."), ("reduce", "Top-k Reduce"),
-               ("plan", "Plan / Metadata" if v3 else "Plan / Meta"), ("wait", "Wait")) + ((("host", "Host"),) if v3 else ())
+               ("plan", "Plan / Metadata" if v3 else "Plan / Meta"), ("wait", "Wait")) + ((("host", "Host"),) if v3 and n_host_drawn else ())
               if tpl else
               (("token", "Token Comm."), ("expert_comm", "Expert Swap (disp.)"), ("expert_comm_w2", "Expert Swap (comb.)"), ("comp", "Expert Comp."),
                ("reduce", "Top-k Reduce"), ("plan", "Plan / Meta"), ("wait", "Wait")))

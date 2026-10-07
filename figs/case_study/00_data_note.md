@@ -271,3 +271,60 @@ the balanced case. Ranks, data and geometry unchanged. The section text that
 goes with the figure is drafted in `case_study_section_draft.md`. Build:
 `build_case_study.py <json> --out figs/case_study/CS_v5 --rows cs3
 --template cs_v4 --variant-suffix _pv3c_eps025 --prefer-swapping --skewed-first`.
+
+## CS_v6 (2026-10-06): the swap decision on the GPU (no host wait)
+
+User directive: the paper figure must not show a host wait; follow the serving path's planning
+changes, no mechanism change, minimal work. Measured on CS_v5's data first: the device was idle
+2.1–3.1 ms before the layer-0 GEMM on every drawn rank, of which 1.2–2.2 ms was ONE gap = the host
+swap chain (`swap.d2h` + numpy orbit + table upload + prepare), 0.2 ms the metadata sync
+(`derive_routed_meta`), the rest 0.06–0.08 ms slivers. So the minimal port is the decision only.
+
+**Change (branch `cs6-devswap`, worktree `$PSCRATCH/workspace/andrewy/flux-cs6`, libflux unchanged
+= the flux-pv3 build 4ab20ff4/ddc8682e):** `python/flux/testing/_swap_decide_ext.cu` = the serving
+path's `swap_decide_kernel` (Zepp sglang-dev `src/planner/swap_decide.cu`) verbatim as a JIT
+extension (registry/verdict glue removed, pad correction a no-op with ntok = S). Runner
+`--swap_decide device`: after the loads all-gather the kernel rewrites the planner's p2l / l2p in
+place (the router runs on the swapped tables in the same iteration), its result block rides a
+non-blocking D2H that the existing planning sync completes, and the unchanged 3D-scheduled lane
+(dual3: w1 under the l0 GEMM, w2 under the l1 GEMM, 4 streams) is armed from the pull lists after
+that sync. Swap policy = CS_v5's (user ruling 10-06: "force" so both phases show): reset to the
+oracle placement before every timed iteration and NO band test (C = -1 puts every node out of band
+= the tau=1 orbit). Under the paper's band rule at C = 0.25 LiveCodeBench never swaps (worst node
+max/mean 1.09); professional law does (node 2 at 1.98). Arms `..._pv3c_eps025_dsd` (+ `_dsd_gate`),
+specs `cs6_*.yaml`.
+
+**Gate (capsule 20261007-023406):** the device decision equals the host orbit bit for bit in every
+checked iteration (moves, p2l, device l2p / p2l; LiveCodeBench 10/10 iterations, 12 moves each;
+schedule 2/2). LiveCodeBench torch-reference check 160/160 rank-iterations OK. The schedule cell
+hit 1 bad row on ranks 8 and 13 in WARM-UP iteration 1 (carried swaps across a topic switch; the
+host-decision arm was never gated on this family). Note: outputs are ~1e-3 vs atol 1e-2, so this
+gate only catches garbage rows, and under a topic schedule its reference used topic 0 (fixed 10-06:
+reference = the iteration's topic). Attribution run: capsule 20261007-032214 (host vs device,
+non-asserting) — RESOLVED: with the topic-correct reference BOTH arms pass 160/160 rank-iterations
+on the schedule (max |out - ref| 6.1e-5 vs |ref| <= 7.0e-3 = bf16 rounding), device decision 10/10
+equal to the host orbit. The 023406 bad row was the old wrong-topic reference: outputs reach ~7e-3,
+so two opposite-sign outputs can differ by more than atol 1e-2 (rare, one row).
+
+**Capture (capsule 20261007-025748, 8/8 ok, one binary):** `_dsd` and the host-decision arm, nsys +
+isolated, CS_v5 recipe. Isolated (median over iterations of the max over ranks, ms):
+
+| workload | decision | plan_comm | place | plan | e2e | total |
+|---|---|---|---|---|---|---|
+| LiveCodeBench (32 it) | host | 0.18 | 1.22 | 1.96 | 44.91 | 48.16 |
+| LiveCodeBench (32 it) | device | 0.19 | 0.11 | 1.91 | 45.31 | 47.42 |
+| prof. law block (4 it) | host | 0.18 | 2.44 | 2.20 | 55.20 | 59.70 |
+| prof. law block (4 it) | device | 0.18 | 0.22 | 2.00 | 55.61 | 57.94 |
+
+nsys (drawn ranks): device idle before the l0 GEMM 0.85–0.92 ms (was 2.1–3.1 on CS_v5): 0.20 ms
+metadata sync, ~0.27 ms `swap.prepare` (pull-list parse + lane arming, now after that sync), rest
+slivers; none >= 0.3 ms, so no Host band is drawn and the legend drops "Host". The l0 GEMM starts at
+4.9–5.8 ms (device) vs 6.1–8.1 ms (host) in every captured iteration; iteration END varies 2–3 ms
+with the combine-egress tail independently of the decision.
+
+Builds (from the flux-cs6 tree; JSON = `figs_data/case_study/timeline_20261007-025748_perlmutter_a694f55d.json`):
+- `CS_v6`: `--rows cs3 --template cs_v4 --variant-suffix _pv3c_eps025_dsd --prefer-swapping --skewed-first`
+  (iter33 / iter4 as CS_v5; drawn ranks prof. law r11 / r12, LiveCodeBench r4 / r3). Iter33 is the
+  slowest iteration of its block on this arm (61.2 ms vs 57.7–58.4 for iter32/34/35).
+- `CS_v6_law35`: same + `--skew-iter iter35` (57.7 ms, closest to the isolated block median 57.9).
+- `CS_v6_hostdecide`: `--variant-suffix _pv3c_eps025` = the same-binary host-decision "before".

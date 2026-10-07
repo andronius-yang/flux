@@ -1,0 +1,26 @@
+# 2026-10-06 case study v6 (branch cs6-devswap): GATE for the device swap decision arm —
+# check_iters (torch reference every iteration) + the per-iteration host-orbit equality
+# check (--swap_decide_check 1); the S-C schedule at 2+8 iterations visits topics 5, 6,
+# 7 (professional law) and 0.
+platform: perlmutter
+nodes: 4
+shape: k2
+families:
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32;opool=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy;sched=livecodebench/execution+mmlu/clinical_knowledge+mmlu/college_mathematics+mmlu/electrical_engineering+mmlu/high_school_psychology+mmlu/high_school_world_history+mmlu/philosophy+mmlu/professional_law;dwell=4"
+  - "trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32"
+budgets_mib: [64]
+modes: [isolated]
+iters: 8
+warmup_iters: 2
+skip_correctness: true
+timeout_s: 1500
+idle_timeout_s: 600
+retries: 0
+extra_env:
+  FLUX_OURS_NVTX: "1"
+  FLUX_A2AV_NVTX_PROXY: "1"
+  FLUX_A2AV_EARLY_LAUNCH: "1"
+  FLUX_SWEEP_ISOLATED_ITERS: "1"
+variants:
+  - ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_pv3c_eps025_dsd_gate
+notes: "case study v6 gate: device swap decision (check_iters + host-orbit equality)"
