@@ -328,3 +328,50 @@ Builds (from the flux-cs6 tree; JSON = `figs_data/case_study/timeline_20261007-0
   slowest iteration of its block on this arm (61.2 ms vs 57.7–58.4 for iter32/34/35).
 - `CS_v6_law35`: same + `--skew-iter iter35` (57.7 ms, closest to the isolated block median 57.9).
 - `CS_v6_hostdecide`: `--variant-suffix _pv3c_eps025` = the same-binary host-decision "before".
+
+## CS_v7 (2026-10-06): one MoE layer on the serving path (full device offload)
+
+User ruling 10-06: the case study shows ONE MoE layer as it runs in serving, with every planning step and
+every communication issue on the device (no host read of a routing count inside the forward); the case-study
+text names it "the case study of one MoE layer". Research-tree only: the library is used as an engine, nothing
+is committed to the release repository.
+
+**Engine:** the private lopep `p10-f` build (`$PSCRATCH/workspace/andrewy/lopep_p10f`, 3d83066 = the serving
+defaults Zepp `sglang-dev` was pruned from) with its debug timestamp instruments on (`LOPEP_WIRE_TRACE=1`,
+`LOPEP_PACK_TRACE=1`; Zepp's release build has none). Per step on device: step head, loads all-gather, swap
+decision, lane arm, pad rebuild, fused router, routing all-gather, planner tail, fused metadata front, dispatch
+plan block, demands, arena; dispatch = pack-push kernel (own-node rows into the node peers over NVLink), relay
+kernel, one-warp wire kernel (non-blocking puts in groups of 2 + quiet + signals), gateway forward kernel;
+staged swap lane (push W1 / W2 into the destination's staging over NVLink, the GEMMs read the staging behind
+their gates, commit staging -> slot after each GEMM); combine pack / pre-reduce / device combine wire /
+bucket reduce; the forward's capacity verdict = one NCCL all-reduce at its end (drawn as Wait). Eager steps
+(the 4680-token bucket is above the graph limit).
+
+**Driver** `serving_case_study.py` (+ inputs from `export_serving_inputs.py`: the research oracle placement,
+the routing files and topic schedule, gate weights; K2 shape with the case-study arm's one-matrix GELU expert,
+ffn 2048): one layer per forward (begin / step / end, verdict after the `iter<i>` NVTX range), isolated
+(sync + barrier), swap forced as CS_v5 / CS_v6 (decision band -1 after the serving warm-up, oracle placement +
+slot weights reset before every timed iteration), capacities = provable bounds over every topic and its forced
+orbit (scale 1; an x2 run died on GPU memory), heap 12 GiB (S-C) / 8 GiB (LCB).
+Capture `$PSCRATCH/workspace/andrewy/sweep_data/cs7_20261006-213442` (job 59468509, 4n): `sc_check` (2+8
+iterations, PyTorch reference every iteration: 0 bad rows, 22-43 moves per iteration, no verdict abort),
+`sc_nsys` (5+32) and `lcb_nsys` (3+3) with the traces, `sc_time` / `lcb_time` (5+32, no profiler, no traces).
+
+**Lanes** (`extract_serving_timeline.py`): NIC = wire-trace windows (dispatch round: put issued -> its group's
+quiet + signals returned; combine position: pre-reduce flag seen -> returned); NVLink = pack-push spans,
+gateway-forward windows (block 0), the combine pack's per-block push windows, swap pushes (`lane_push_kernel`
+>= 0.05 ms; shorter launches are ranks with nothing to send); GPU = kernels by name. NOT drawn: the relay's
+NVLink pulls (no timestamps; its span is mostly waiting) and every spin-dominated span (wire, combine wire,
+relay, forward, lane wait, lane commit, whose copy is local). Stamps aligned to nsys per (rank, iteration) by
+the stamped kernels' entry stamps: the two anchors of one GPU agree to 0.43 us median (28 us max).
+
+**Timings** (no profiler, step = begin_forward -> end_forward event bracket incl. the verdict all-reduce, median
+over iterations of the max over ranks): LiveCodeBench 48.23 ms; S-C schedule 52.61 ms, prof. law block 59.59 ms.
+nsys spans of the drawn iterations: prof. law iter32-35 55.3-57.7 ms (iter33 55.9), LiveCodeBench iter3-5
+48.4-48.7 (iter4 48.4); the layer-0 GEMM starts at 3.2-5.4 ms (CS_v6 4.9-5.8, CS_v5 6-8).
+
+Build: `build_case_study.py figs_data/case_study/timeline_cs7.json --out figs/case_study/CS_v7 --rows cs3
+--template cs_v4 --variant-suffix _serving --prefer-swapping --skewed-first` (drawn ranks: prof. law r8 / r15,
+LiveCodeBench r9 / r10). Text changes vs CS_v6 for the section: the swap shows as the staged lane's pushes of
+both matrices early in the step (the commits are local and not drawn); the dispatch wire is issued by kernels;
+the iteration ends with the forward's capacity verdict (Wait).
