@@ -19,6 +19,7 @@ reset to the oracle before every timed iteration.
 """
 import argparse
 import importlib
+import importlib.util
 import json
 import os
 import sys
@@ -63,6 +64,10 @@ def main():
     ap.add_argument("--caps-scale", type=float, default=1.0)
     ap.add_argument("--check", type=int, default=0, help="compare every output with the PyTorch reference")
     ap.add_argument("--records", default="", help="directory for per-rank JSONL timings")
+    ap.add_argument("--lane", default="staged", choices=("staged", "dual3"),
+                    help="swap lane: the runtime's staged lane, or the research tree's device dual3 lane "
+                         "(python/flux/testing/serving_dual3.py: W1 pushed under the dispatch GEMM, W2 pulled under "
+                         "the combine GEMM, both driven by the device decision)")
     a = ap.parse_args()
 
     pkg = importlib.import_module(a.pkg)
@@ -105,16 +110,26 @@ def main():
         print(f"[cs] {a.pkg} W={W} S={S} G={G} H={H} ffn={ffn} gelu topics={inp['topk'].shape[0]} dwell={inp['dwell']} "
               f"caps={caps0} heap={os.environ.get('NVSHMEM_SYMMETRIC_SIZE')}", flush=True)
 
+    C = importlib.import_module(f"{a.pkg}._ext").C
+    d3 = None
+    w2_local = w2_views = None
+    if a.lane == "dual3":
+        here = os.path.dirname(os.path.abspath(__file__))
+        spec = importlib.util.spec_from_file_location(
+            "serving_dual3", os.path.join(here, "..", "..", "python", "flux", "testing", "serving_dual3.py"))
+        d3 = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(d3)
+        importlib.import_module(f"{a.pkg}._ext").ensure_shm(group)
+        w2_local, w2_views = d3.symmetric_w2(C, group, cfg.groups_per_rank, H, ffn, dtype, rank % L)
     try:
         shared = serving.SharedComm(cfg, group, caps0, dtype=dtype, layer_graphs=False)
     except TypeError:                            # lopep p10-f: graphs follow LOPEP_LAYER_GRAPH (eager above 1024 tokens)
         shared = serving.SharedComm(cfg, group, caps0, dtype=dtype)
-    C = importlib.import_module(f"{a.pkg}._ext").C
     env = a.pkg.upper()
     want_wire = os.environ.get(f"{env}_WIRE_TRACE", "0") == "1" and hasattr(C, "wire_trace")
     want_pack = os.environ.get(f"{env}_PACK_TRACE", "0") == "1" and hasattr(C, "combine_pack_trace")
     wire_tr, pack_tr = [], []
-    st = serving.LayerState(0, cfg, pl0, rank, dtype=dtype)
+    st = serving.LayerState(0, cfg, pl0, rank, dtype=dtype, w2=w2_local)
     for j in range(nlp):
         e = int(p2l[rank * nlp + j])
         if e >= 0:
@@ -124,6 +139,10 @@ def main():
     shared.prime(st)
     shared.warmup(st)
     torch.cuda.synchronize()
+    if d3 is not None:
+        d3.install(shared, w2_views, C, group)
+        if rank == 0:
+            print(f"[cs] lane: device dual3 ({type(shared.lane).__name__})", flush=True)
     if a.force_swap:
         band = shared._swap_band_c
         shared._swap_band_c = lambda kept=False: band(kept) if (shared._warmup_mode or kept) else -1.0

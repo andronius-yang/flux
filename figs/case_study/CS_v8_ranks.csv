@@ -1,0 +1,5 @@
+row,cell,family,iteration,rank,node,why,span_ms,gemm_ms,nic_ms,nvlink_ms,reduce_ms,wait_ms
+Skewed / 3D-scheduled swap,ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_serving,"trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32;sched=8 topics (S-C, dwell 4)",iter33,9,2,longest expert GEMM,65.84,46.68,21.56,15.56,70.87,0.14
+Skewed / 3D-scheduled swap,ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_serving,"trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32;sched=8 topics (S-C, dwell 4)",iter33,0,0,shortest expert GEMM,65.84,24.14,20.51,7.86,42.9,3.65
+Efficient / 3D-scheduled swap,ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_serving,trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32,iter4,13,3,longest expert GEMM,46.99,32.74,19.76,7.33,39.65,0.45
+Efficient / 3D-scheduled swap,ablation_l01_s2_swapall_rst_3d_dual3_str4_p2p_r2_serving,trace:model=Kimi-K2;pools=livecodebench/execution;layer=5;sem=homog;dslots=64:32,iter4,3,0,shortest expert GEMM,46.99,23.79,18.84,7.81,44.19,1.44

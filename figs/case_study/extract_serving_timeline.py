@@ -37,7 +37,10 @@ SERVING_CLASSES = [
     (r"^Kernel$", ("gpu", "gemm")),
     (r"^(pack_push_kernel)", ("nvlink", "nvlink.token")),
     (r"^(relay_kernel|wire_kernel|forward_kernel|combine_wire_kernel|a2av_lane_wait_kernel|lane_commit_kernel|wait_geq_kernel)", (None, "spin")),
-    (r"^lane_push_kernel", ("nvlink", "nvlink.swap")),
+    # the device dual3 lane (python/flux/testing/serving_dual3.py): push_w1 = W1 phase under the dispatch GEMM,
+    # pull_w2 = W2 phase under the combine GEMM; both spin on their GEMM's start mark before copying (trimmed below)
+    (r"^(lane_push_kernel|pull_w2_kernel|push_w1_kernel)", ("nvlink", "nvlink.swap")),
+    (r"^(wait_acks_kernel|wait_pushed_kernel)", (None, "spin")),
     (r"^a2av_combine_prereduce", ("gpu", "combine.prereduce")),
     (r"^a2av_combine_(pack|tail_push)", ("gpu", "combine.pack")),
     (r"^a2av_combine_bucket_reduce", ("gpu", "combine.reduce")),
@@ -78,6 +81,13 @@ def kernel_events(cur, pid, s, e):
         if x["task"] == "gemm":
             x["task"] = "gemm.l0" if n == 0 else ("gemm.l1" if n == 1 else f"gemm.{n}")
             n += 1
+    # dual3 phase kernels are launched before their GEMM and wait for its start mark: the copy starts with the GEMM
+    g = {x["task"]: x["t0"] for x in ev if x["task"] in ("gemm.l0", "gemm.l1")}
+    for x in ev:
+        if x["name"].startswith("push_w1_kernel") and "gemm.l0" in g:
+            x["t0"] = min(max(x["t0"], g["gemm.l0"]), x["t1"]); x["phase"] = "late"
+        elif x["name"].startswith("pull_w2_kernel") and "gemm.l1" in g:
+            x["t0"] = min(max(x["t0"], g["gemm.l1"]), x["t1"]); x["phase"] = "l1"
     return ev
 
 

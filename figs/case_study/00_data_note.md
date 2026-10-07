@@ -375,3 +375,46 @@ Build: `build_case_study.py figs_data/case_study/timeline_cs7.json --out figs/ca
 LiveCodeBench r9 / r10). Text changes vs CS_v6 for the section: the swap shows as the staged lane's pushes of
 both matrices early in the step (the commits are local and not drawn); the dispatch wire is issued by kernels;
 the iteration ends with the forward's capacity verdict (Wait).
+
+## CS_v8 (2026-10-06): the serving path with a device dual3 lane (research tree only)
+
+User directive: "for the research tree only, do a dual3 implementation, but ALL ON GPU, with no additional
+latency". CS_v7's serving path swaps through the staged lane (both matrices pushed before the dispatch GEMM);
+CS_v8 replaces it with a device-driven 3D (dual3) schedule, installed into the unmodified lopep p10-f runtime by
+the driver (`--lane dual3`):
+
+- `python/flux/testing/serving_dual3.py` + `_dual3_ext.cu`: phase 0 = `push_w1_kernel`, the sender pushes W1
+  of every moved slot into the receiver's staging under its own dispatch GEMM; phase 1 = `pull_w2_kernel`, the
+  receiver pulls W2 from the sender's slot (W2 slots allocated on the symmetric heap) into its staging under its
+  own combine GEMM. The GEMMs read the moved experts from the staging behind the per-slot gate words with the
+  moved-last schedule (the staged lane's `lane_arm` / overrides / `lane_commit` are reused); the W1 commit waits
+  until its pushes raised the receivers' gates (`wait_pushed`), the W2 commit until the receivers acknowledged
+  their pulls (`wait_acks`). All driven by the device decision block: no host read, no host-issued copy.
+- Why a pull for W2: a sender-side W2 push gated on the sender's combine GEMM makes the receiver's gated combine
+  GEMM depend on the sender's dispatch-phase waits (the serving W2 cycle of 2026-10-01, which W2_EARLY fixed).
+- Hang found and fixed on the way: the first version parked `cuStreamWaitValue64` waits on the GEMM-start marks
+  on side streams; the runtime has more streams than hardware queues, so a parked wait can block the queue that
+  carries the forward stream's later mark write (both first runs hung in the first step). Now the phase kernels
+  spin on the marks themselves and every join is a device word (no side-stream waits or event joins).
+- Every kernel launched beside a spinning GEMM fits rule R5 (push_w1 40 / pull_w2 38 registers x 512 threads,
+  waits one warp).
+
+Capture `$PSCRATCH/workspace/andrewy/sweep_data/cs8_20261006-222934` (job 59470763, 4n): `d3_sc_check` (1+3,
+PyTorch reference every iteration: 64/64 rank-iterations OK, max |out - ref| 6.1e-5 vs |ref| <= 7.5e-3, 43/43/43/22
+moves), `sc_nsys` / `lcb_nsys` (dual3 + wire / pack traces), and same-allocation timing (no profiler, median over
+iterations of the max over ranks):
+
+| workload | staged | dual3 |
+|---|---|---|
+| S-C schedule, 32 iterations | 50.50 ms | 49.43 ms |
+| topics 0-6 (light swaps) | 49.4-52.4 | 47.9-52.4 (equal or lower) |
+| prof. law block (4 it, 43 moves) | 61.94 (63.35 63.76 60.52 56.69) | 63.07 (63.11 66.19 63.03 57.47) |
+| LiveCodeBench, 32 iterations | 47.13 ms | 45.71 ms |
+
+The prof. law block difference (+1.1 ms median) is inside its 7-10 ms iteration spread; everywhere else dual3 is
+equal or faster. Extraction: `push_w1_kernel` / `pull_w2_kernel` = Expert Swap, their spans trimmed to start at
+the GEMM they wait for (the kernels are launched before it and spin on its start mark); the waits are not drawn.
+Build: `build_case_study.py figs_data/case_study/timeline_cs8.json --out figs/case_study/CS_v8 --rows cs3
+--template cs_v4 --variant-suffix _serving --prefer-swapping --skewed-first` (prof. law iter33 = 65.8 ms, its block
+64.9-65.8 under nsys; LiveCodeBench iter4 47.0; ranks r9 / r0, r13 / r3): green at both GEMM starts (W1 under the
+dispatch GEMM, W2 under the combine GEMM) on every drawn rank.
