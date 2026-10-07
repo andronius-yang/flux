@@ -47,3 +47,10 @@ direct-wire arm per node). New same-binary one-capsule sets at 1 MiB:
 timed loop is complete but the process hung at teardown -> status timeout,
 flagged in figure_src.csv). 1 MiB speedups vs ring: 1.18 / 1.33 / 1.62 /
 3.44 / 8.84x.
+
+## 2026-10-07: gpu-plan update (1 MiB row)
+
+The live `figure_src.csv` and renders now carry, at 1 MiB, the main_perf_v6 values at 4 / 8 / 16 nodes (A2AV+GEMM and
+Ours identical to Figure 9; Ours = gpu-plan on, Zepp release build) and a 2-node release-build run (3.260 ms).
+1 MiB speedups vs A2AV+GEMM: 1.53 / 2.10 / 2.96 / 5.77 / 9.49x (2-32 nodes). The 64 MiB row and 32 nodes are
+unchanged. Provenance: `gpuplan_v6/README.md`; the previous files are in `pre_gpuplan_20261007/`.
