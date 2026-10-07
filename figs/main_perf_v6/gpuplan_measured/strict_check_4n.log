@@ -1,0 +1,16 @@
+00:19:57 job 59473983 running
+00:20:49 on_qwen3_b1_swap0 rc=0 [strict] VERDICT PASS | fails 0 | 
+00:21:35 on_qwen3_b1_swap1 rc=0 [strict] VERDICT PASS | fails 0 | 
+00:23:51 on_k2_b4_swap0 rc=0 [strict] VERDICT PASS | fails 0 | 
+00:26:06 on_k2_b4_swap1 rc=0 [strict] VERDICT PASS | fails 0 | 
+00:26:51 on_qwen3_b16_swap0 rc=0 [strict] VERDICT PASS | fails 0 | 
+00:27:36 on_qwen3_b16_swap1 rc=0 [strict] VERDICT PASS | fails 0 | 
+00:28:20 off_qwen3_b4_swap0 rc=0 [strict] VERDICT PASS | fails 0 | 
+00:29:06 off_qwen3_b4_swap1 rc=0 [strict] VERDICT PASS | fails 0 | 
+00:29:06 DONE released 59473983
+00:29:14 job 59474196 running
+00:30:05 on_qwen3_b1_swap1_c16 rc=0 [strict] VERDICT PASS | fails 0 | 
+00:32:29 on_k2_b4_swap1_c16 rc=0 [strict] VERDICT PASS | fails 0 | 
+00:33:16 on_qwen3_b16_swap1_c16 rc=0 [strict] VERDICT PASS | fails 0 | 
+00:33:57 off_qwen3_b4_swap1_c16 rc=0 [strict] VERDICT PASS | fails 0 | 
+00:33:59 DONE released 59474196

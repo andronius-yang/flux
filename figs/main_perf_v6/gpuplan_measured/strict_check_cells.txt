@@ -1,0 +1,132 @@
+== strict_on_k2_b4_swap0.log
+[strict] k2 nodes=4 b4 overlap swap=0 gpu_plan=1 T=296 batches=4
+[strict] it 2 batch 0: rel max 4.12e-03 row-rel max 4.84e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 3 batch 1: rel max 4.07e-03 row-rel max 4.84e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.37, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 4 batch 2: rel max 4.06e-03 row-rel max 4.80e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.37, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 5 batch 3: rel max 4.09e-03 row-rel max 4.87e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.38, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 6 batch 0: rel max 4.12e-03 row-rel max 4.86e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 7 batch 1: rel max 4.06e-03 row-rel max 4.94e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.37, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 8 batch 2: rel max 4.07e-03 row-rel max 4.84e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.37, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 9 batch 3: rel max 4.09e-03 row-rel max 4.81e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.38, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] VERDICT PASS
+== strict_on_k2_b4_swap1.log
+[strict] k2 nodes=4 b4 overlap swap=1 gpu_plan=1 T=296 batches=4
+[strict] it 2 batch 0: rel max 4.12e-03 row-rel max 4.84e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 3 batch 1: rel max 4.07e-03 row-rel max 4.84e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.37, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 4 batch 2: rel max 4.06e-03 row-rel max 4.80e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.37, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 5 batch 3: rel max 4.10e-03 row-rel max 4.87e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.38, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 6 batch 0: rel max 4.12e-03 row-rel max 4.86e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 7 batch 1: rel max 4.06e-03 row-rel max 4.94e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.37, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 8 batch 2: rel max 4.07e-03 row-rel max 4.84e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.37, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 9 batch 3: rel max 4.09e-03 row-rel max 4.81e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.38, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] VERDICT PASS
+== strict_on_qwen3_b16_swap0.log
+[strict] qwen3 nodes=4 b16 overlap swap=0 gpu_plan=1 T=2048 batches=4
+[strict] it 2 batch 0: rel max 4.39e-03 row-rel max 5.00e-03 bad rows 0/32768 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 3 batch 1: rel max 4.41e-03 row-rel max 5.03e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 4 batch 2: rel max 4.38e-03 row-rel max 4.99e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 5 batch 3: rel max 4.41e-03 row-rel max 5.05e-03 bad rows 0/32768 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 6 batch 0: rel max 4.38e-03 row-rel max 5.05e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 7 batch 1: rel max 4.41e-03 row-rel max 5.05e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 8 batch 2: rel max 4.38e-03 row-rel max 5.01e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 9 batch 3: rel max 4.41e-03 row-rel max 5.05e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] VERDICT PASS
+== strict_on_qwen3_b16_swap1.log
+[strict] qwen3 nodes=4 b16 overlap swap=1 gpu_plan=1 T=2048 batches=4
+[strict] it 2 batch 0: rel max 4.39e-03 row-rel max 5.00e-03 bad rows 0/32768 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 3 batch 1: rel max 4.41e-03 row-rel max 5.03e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 4 batch 2: rel max 4.38e-03 row-rel max 4.99e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 5 batch 3: rel max 4.41e-03 row-rel max 5.01e-03 bad rows 0/32768 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 6 batch 0: rel max 4.38e-03 row-rel max 5.05e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 7 batch 1: rel max 4.41e-03 row-rel max 5.05e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 8 batch 2: rel max 4.38e-03 row-rel max 5.01e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 9 batch 3: rel max 4.41e-03 row-rel max 5.05e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] VERDICT PASS
+== strict_on_qwen3_b1_swap0.log
+[strict] qwen3 nodes=4 b1 overlap swap=0 gpu_plan=1 T=128 batches=4
+[strict] it 2 batch 0: rel max 3.38e-03 row-rel max 4.09e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 3 batch 1: rel max 3.30e-03 row-rel max 3.89e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 4 batch 2: rel max 3.32e-03 row-rel max 4.15e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.31, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 5 batch 3: rel max 3.38e-03 row-rel max 4.23e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 6 batch 0: rel max 3.39e-03 row-rel max 3.99e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 7 batch 1: rel max 3.29e-03 row-rel max 3.93e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.31, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 8 batch 2: rel max 3.31e-03 row-rel max 4.06e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.31, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 9 batch 3: rel max 3.38e-03 row-rel max 4.33e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] VERDICT PASS
+== strict_on_qwen3_b1_swap1.log
+[strict] qwen3 nodes=4 b1 overlap swap=1 gpu_plan=1 T=128 batches=4
+[strict] it 2 batch 0: rel max 3.38e-03 row-rel max 3.98e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 3 batch 1: rel max 3.30e-03 row-rel max 3.96e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 4 batch 2: rel max 3.32e-03 row-rel max 4.15e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.31, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 5 batch 3: rel max 3.38e-03 row-rel max 4.26e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 6 batch 0: rel max 3.39e-03 row-rel max 3.99e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 7 batch 1: rel max 3.29e-03 row-rel max 3.93e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.31, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 8 batch 2: rel max 3.32e-03 row-rel max 4.06e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.31, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 9 batch 3: rel max 3.39e-03 row-rel max 4.24e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] VERDICT PASS
+== strict_off_qwen3_b4_swap0.log
+[strict] qwen3 nodes=4 b4 overlap swap=0 gpu_plan=0 T=512 batches=4
+[strict] it 2 batch 0: rel max 4.53e-03 row-rel max 5.10e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 3 batch 1: rel max 4.53e-03 row-rel max 5.10e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 4 batch 2: rel max 4.55e-03 row-rel max 5.05e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 5 batch 3: rel max 4.56e-03 row-rel max 5.00e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 6 batch 0: rel max 4.53e-03 row-rel max 5.06e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 7 batch 1: rel max 4.53e-03 row-rel max 5.07e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 8 batch 2: rel max 4.55e-03 row-rel max 5.08e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 9 batch 3: rel max 4.56e-03 row-rel max 5.07e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] VERDICT PASS
+== strict_off_qwen3_b4_swap1.log
+[strict] qwen3 nodes=4 b4 overlap swap=1 gpu_plan=0 T=512 batches=4
+[strict] it 2 batch 0: rel max 4.53e-03 row-rel max 5.10e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 3 batch 1: rel max 4.53e-03 row-rel max 5.10e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 4 batch 2: rel max 4.55e-03 row-rel max 5.05e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 5 batch 3: rel max 4.56e-03 row-rel max 4.99e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 6 batch 0: rel max 4.53e-03 row-rel max 5.03e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 7 batch 1: rel max 4.53e-03 row-rel max 5.07e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 8 batch 2: rel max 4.55e-03 row-rel max 5.08e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 9 batch 3: rel max 4.56e-03 row-rel max 5.07e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] VERDICT PASS
+== strict_mv_off_qwen3_b4_swap1_c16.log
+[strict] qwen3 nodes=4 b4 overlap swap=1 gpu_plan=0 T=512 batches=4
+[strict] it 2 batch 0: rel max 4.52e-03 row-rel max 5.08e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 3 batch 1: rel max 4.53e-03 row-rel max 5.10e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 4 batch 2: rel max 4.54e-03 row-rel max 5.07e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 5 batch 3: rel max 4.55e-03 row-rel max 4.99e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 6 batch 0: rel max 4.52e-03 row-rel max 5.06e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 7 batch 1: rel max 4.52e-03 row-rel max 5.07e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 8 batch 2: rel max 4.54e-03 row-rel max 5.08e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 9 batch 3: rel max 4.55e-03 row-rel max 5.07e-03 bad rows 0/8192 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] VERDICT PASS
+== strict_mv_on_k2_b4_swap1_c16.log
+[strict] k2 nodes=4 b4 overlap swap=1 gpu_plan=1 T=296 batches=4
+[strict] it 2 batch 0: rel max 4.12e-03 row-rel max 4.84e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 3 batch 1: rel max 4.07e-03 row-rel max 4.85e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.37, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 4 batch 2: rel max 4.06e-03 row-rel max 4.80e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.37, zeros pass old atol on 16/16 ranks | redos 0 moves 2 -> PASS
+[strict] it 5 batch 3: rel max 4.09e-03 row-rel max 4.84e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.38, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 6 batch 0: rel max 4.12e-03 row-rel max 4.79e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 7 batch 1: rel max 4.06e-03 row-rel max 4.94e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.37, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 8 batch 2: rel max 4.07e-03 row-rel max 4.84e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.37, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 9 batch 3: rel max 4.09e-03 row-rel max 4.81e-03 bad rows 0/4736 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.38, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] VERDICT PASS
+== strict_mv_on_qwen3_b16_swap1_c16.log
+[strict] qwen3 nodes=4 b16 overlap swap=1 gpu_plan=1 T=2048 batches=4
+[strict] it 2 batch 0: rel max 4.38e-03 row-rel max 5.00e-03 bad rows 0/32768 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 3 batch 1: rel max 4.41e-03 row-rel max 4.99e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 4 batch 2: rel max 4.37e-03 row-rel max 4.99e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 5 batch 3: rel max 4.40e-03 row-rel max 5.05e-03 bad rows 0/32768 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 6 batch 0: rel max 4.37e-03 row-rel max 5.05e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 7 batch 1: rel max 4.40e-03 row-rel max 5.05e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 8 batch 2: rel max 4.37e-03 row-rel max 5.01e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 9 batch 3: rel max 4.40e-03 row-rel max 5.05e-03 bad rows 0/32768 | controls: prev-output rel min 1.41, batch-0-routing rel min 1.33, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] VERDICT PASS
+== strict_mv_on_qwen3_b1_swap1_c16.log
+[strict] qwen3 nodes=4 b1 overlap swap=1 gpu_plan=1 T=128 batches=4
+[strict] it 2 batch 0: rel max 3.37e-03 row-rel max 3.98e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 3 batch 1: rel max 3.28e-03 row-rel max 3.89e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 4 -> PASS
+[strict] it 4 batch 2: rel max 3.32e-03 row-rel max 4.15e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.31, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 5 batch 3: rel max 3.37e-03 row-rel max 4.21e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 6 batch 0: rel max 3.38e-03 row-rel max 3.99e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 9.00, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 7 batch 1: rel max 3.28e-03 row-rel max 3.93e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.31, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 8 batch 2: rel max 3.31e-03 row-rel max 4.06e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.31, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] it 9 batch 3: rel max 3.38e-03 row-rel max 4.23e-03 bad rows 0/2048 | controls: prev-output rel min 1.42, batch-0-routing rel min 1.32, zeros pass old atol on 16/16 ranks | redos 0 moves 0 -> PASS
+[strict] VERDICT PASS

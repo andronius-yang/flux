@@ -1,0 +1,27 @@
+nodes  model   MiB strategy swap  measured  expected   delta  verdict
+    8     k2     1   direct  off     5.744     5.737  +0.1%  ok
+    8     k2     1  overlap  off     3.415     4.371 -21.9%  OUT
+    8     k2     1  overlap   on     3.640     5.377 -32.3%  OUT
+    8     k2     4   direct  off    12.099    12.079  +0.2%  ok
+    8     k2     4  overlap  off     6.043     7.271 -16.9%  OUT
+    8     k2     4  overlap   on     6.370     8.064 -21.0%  OUT
+    8     k2    16   direct  off    39.552    38.712  +2.2%  ok
+    8     k2    16  overlap  off    15.285    17.774 -14.0%  OUT
+    8     k2    16  overlap   on    15.682    17.613 -11.0%  OUT
+    8  qwen3     1   direct  off     5.233     5.173  +1.2%  ok
+    8  qwen3     1  overlap  off     2.615     4.462 -41.4%  OUT
+    8  qwen3     1  overlap   on     2.819     4.193 -32.8%  OUT
+    8  qwen3     4   direct  off    12.062    12.106  -0.4%  ok
+    8  qwen3     4  overlap  off     4.463     6.004 -25.7%  OUT
+    8  qwen3     4  overlap   on     4.904     6.832 -28.2%  OUT
+    8  qwen3    16   direct  off    39.769    40.072  -0.8%  ok
+    8  qwen3    16  overlap  off    13.149    15.580 -15.6%  OUT
+    8  qwen3    16  overlap   on    12.933    15.629 -17.3%  OUT
+
+cells within 5%: 6/18
+    8     k2     1  best 3.415 ms  vs published best 4.371  vs reference ceiling 6.773  below
+    8     k2     4  best 6.043 ms  vs published best 7.271  vs reference ceiling 10.899  below
+    8     k2    16  best 15.285 ms  vs published best 17.613  vs reference ceiling 28.462  below
+    8  qwen3     1  best 2.615 ms  vs published best 4.193  vs reference ceiling 7.301  below
+    8  qwen3     4  best 4.463 ms  vs published best 6.004  vs reference ceiling 10.632  below
+    8  qwen3    16  best 12.933 ms  vs published best 15.580  vs reference ceiling 28.341  below
