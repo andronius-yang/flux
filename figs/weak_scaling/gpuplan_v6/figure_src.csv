@@ -1,7 +1,7 @@
 nodes,ranks,system,budget_mib,total_ms,tokens_per_rank,total_tokens,throughput_mtok_s,speedup_vs_comet,speedup_vs_nvshmem,status,capsule,cell_id,source_dataset,note
 2,8,comet,1,3.873,72,576,0.1487,,,ok,20260901-101958_perlmutter_03919f49,l01_allgather_dense_trace-610042_b1_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,
 2,8,nvshmem,1,5.003,72,576,0.1151,,,ok,20260904-004243_perlmutter_da6f9186,l01_nvshmem_trace-610042_b1_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,
-2,8,ours,1,4.202,72,576,0.1371,0.9217,1.1906,ok,20260915-082011,ours_l01_s1_pv2_r2_pv3c_eps025_trace-610042_b1_k8_isolated,pv3c (handoff 39),pv3c C=1/4 kernel=campaign n_capsules=1 d_vs_loccap_twin=-2.0%
+2,8,ours,1,3.260,72,576,0.1767,1.1880,1.5347,ok,gpuplan_v6/k2_b1_2n.csv.gz (job 59494219),k2_b1_overlap_swap0_2n,figs/weak_scaling/gpuplan_v6 (2-node run 2026-10-07),"release build ours12 (gpu-plan on, zepp_gpuplan d0ab91f = zepp a622091 tree)"
 2,8,comet,64,36.503,4680,37440,1.0257,,,ok,20260901-101958_perlmutter_03919f49,l01_allgather_dense_trace-610042_b64_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,
 2,8,nvshmem,64,105.516,4680,37440,0.3548,,,ok,20260904-004243_perlmutter_da6f9186,l01_nvshmem_trace-610042_b64_k8_isolated,figs/weak_scaling/weak_scaling_results_tidy.csv,
 2,8,ours,64,36.023,4680,37440,1.0393,1.0133,2.9291,ok,20260915-082011,ours_l01_s1_pv2_r2_pv3c_eps025_trace-610042_b64_k8_isolated,pv3c (handoff 39),pv3c C=1/4 kernel=campaign n_capsules=1 d_vs_loccap_twin=-0.1%
