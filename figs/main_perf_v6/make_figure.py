@@ -72,9 +72,9 @@ CONFIG = dict(
     OURS_EDGE_LW=0.7,                         # heavier edge on the Ours bar
     HATCHES={                                 # print/grayscale channel
         "fast_gemm": "////", "nvshmem_gemm": "--", "moonep": "\\\\\\\\",
-        "eplb": "..", "epic": "xx", "comet": None, "comet_eplb": "++",
+        "eplb": "..", "epic": "xx", "comet": "||||", "comet_eplb": "++",
         "OURS": None,
-    },
+    },                                        # 2026-10-07 (user): COMET gets its own hatch, vertical |||| (was None; density 4 so the narrow bars show >= 2 stripes)
     HATCH_LW=0.4,                             # pt
     # ---- ceiling + truncation (SPEC 2.3) ----
     OUTLIER_FACTOR=1.5,   # bar is an outlier if > factor * next system's max

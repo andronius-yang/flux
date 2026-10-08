@@ -13,6 +13,9 @@
    (`INCLUDE_COMET_EPLB=True`; plum `#7a3b7a`, hatch `++`, the v3-validated style). Its in-bar ratio labels are
    white (`dark_text_L` 0.40 -> 0.48; only the plum fill is below 0.48).
 
+Style edit (2026-10-07, user, re-rendered in place): the COMET bar gets its own hatch, vertical `||||` (was none),
+the same in the ablation figure (`figs/ablation_cycling`).
+
 Baseline rows are v5's, byte-identical. v5's Ours rows at b2 / b64 are carried (`carried_from_v5`). The plotted Ours
 bar is the min over `ours12` / `ours12_dispatch` / `ours2_direct` as in v4/v5 (direct is host-planned: gpu-plan
 applies to the overlap strategy only).

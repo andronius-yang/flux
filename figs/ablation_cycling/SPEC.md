@@ -72,8 +72,8 @@ reads as a reported miss rather than a typo.
   x extent = 0.45 + 4 + 0.7 + 4 + 0.45 = 9.6 slots.
 - Fill = the feature-stack encoding **[knob: STACK_STYLE]**, cumulative
   along the chain so that "one more feature" reads as "one step darker":
-  COMET olive `#999933`, no hatch (the same hue COMET has in every other
-  figure); Ours bars in steel-blue tints of `#4878b0`: bar 2 = 40 % tint
+  COMET olive `#999933`, hatch `||||` (2026-10-07, was none; the same hue and
+  hatch COMET has in the main figure); Ours bars in steel-blue tints of `#4878b0`: bar 2 = 40 % tint
   with hatch `///`, bar 3 = 70 % tint with hatch `\\\`, bar 4 = full
   `#4878b0` with hatch `xx`. Hatch linewidth 0.4 pt in the edge ink; edge
   stroke 0.45 pt primary ink `#0b0b0b` on every bar (print/grayscale

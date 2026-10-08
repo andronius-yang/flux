@@ -63,6 +63,7 @@ KNOBS = dict(
     # bars
     BAR_WIDTH=1.0, GROUP_GAP=0.7, EDGE_PAD=0.45,  # in slot units
     COMET_COLOR="#999933", OURS_COLOR="#4878b0",
+    COMET_HATCH="||||",                           # 2026-10-07 (user): same COMET hatch as the main figure (was None)
     STACK_TINTS=[0.40, 0.70, 1.00],               # tint of OURS_COLOR for bars 2, 3, 4 (seq bar reuses bar 4's tint)
     STACK_HATCH=["///", "\\\\\\", "xx"],
     SEQ_HATCH="..",
@@ -131,7 +132,7 @@ def chain_for(cfg, version):
 def style_for(cfg, idx, role, n_ours):
     """fill, hatch for bar index idx (0 = COMET) — cumulative tint along the chain."""
     if role == "COMET":
-        return cfg["COMET_COLOR"], None
+        return cfg["COMET_COLOR"], cfg["COMET_HATCH"]
     if role == "seq":
         return tint(cfg["OURS_COLOR"], cfg["STACK_TINTS"][-1]), cfg["SEQ_HATCH"]
     # ours bars: map position among the (non-seq) ours bars onto the tint list
